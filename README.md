@@ -59,4 +59,5 @@ Presentation
 •	Project scope and Phase 1 goals
 •	Will be presented in Cohort NIC.
 •	The focus is on clear roles, responsibilities, and early integration.
+LAST DATE FOR THIS PHASE : 10TH OCTOBER
 
