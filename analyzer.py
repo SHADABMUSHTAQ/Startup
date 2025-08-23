@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from collections import defaultdict, Counter
 
-# ---------------------------- CONSTANTS ---------------------------- #
+# threat intel basic(main file config json ha jisme saray malicious code given ha waqt k sath sath wo file b ham expand krenge #
 DEFAULT_CONFIG = {
     "threat_intelligence": {
         "ips": [],
