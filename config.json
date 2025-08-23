@@ -1,1 +1,62 @@
 
+{
+  {
+  "threat_intelligence": {
+    "ips": [
+      "192.168.1.100",
+      "10.0.0.200",
+      "203.0.113.45"
+    ],
+    "cidrs": [
+      "185.220.101.0/24",
+      "45.133.1.0/24"
+    ],
+    "files": [
+      "threat_intel/malicious_ips.txt",
+      "threat_intel/suspicious_domains.txt"
+    ]
+  },
+  "detection": {
+    "brute_force_threshold": 5,
+    "port_scan_threshold": 5,
+    "failed_login_patterns": [
+      "failed password",
+      "authentication failure",
+      "login failed",
+      "invalid user",
+      "access denied",
+      "authentication error",
+      "wrong password"
+    ],
+    "suspicious_keywords": [
+      "malware",
+      "trojan",
+      "exploit",
+      "ransomware",
+      "backdoor",
+      "powershell -enc",
+      "iex",
+      "invoke-expression",
+      "nishang",
+      "mimikatz",
+      "cobaltstrike",
+      "metasploit",
+      "reverse shell",
+      "privilege escalation"
+    ]
+  },
+  "system": {
+    "max_file_size_mb": 100,
+    "log_level": "INFO",
+    "log_file": "logs/analyzer.log",
+    "output_format": "both"
+  }
+}
+  },
+  "system": {
+    "max_file_size_mb": 100,
+    "log_level": "INFO",
+    "log_file": "logs/analyzer.log",
+    "output_format": "both"
+  }
+}
