@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from collections import defaultdict, Counter
 
-# Default configuration with threat intelligence and detection rules
+# Default configuration with enhanced command detection
 DEFAULT_CONFIG = {
     "threat_intelligence": {
         "ips": [],
@@ -19,17 +19,101 @@ DEFAULT_CONFIG = {
         "files": []
     },
     "detection": {
-        "brute_force_threshold": 3,  # Reduced for better detection in test data
+        "brute_force_threshold": 3,
         "port_scan_threshold": 5,
         "failed_login_patterns": [
             "failed password", "authentication failure", "login failed",
             "invalid user", "access denied", "authentication error",
-            "status=failed", "status=fail"  # Added for CSV detection
+            "status=failed", "status=fail"
         ],
         "suspicious_keywords": [
             "malware", "trojan", "exploit", "ransomware", "backdoor",
             "powershell -enc", "iex", "invoke-expression", "nishang",
-            "mimikatz", "cobaltstrike", "metasploit"
+            "mimikatz", "cobaltstrike", "metasploit", "reverse shell",
+            "privilege escalation", "web shell", "c99 shell", "r57 shell",
+            "bind shell", "port scan", "sql injection", "xss",
+            "cross-site scripting", "buffer overflow", "credential dump",
+            "pass-the-hash", "golden ticket", "lateral movement",
+            "exfiltration", "data theft", "keylogger", "rootkit",
+            "command and control", "c2", "exfiltration"
+        ],
+        "suspicious_file_extensions": [
+            ".exe", ".bat", ".cmd", ".ps1", ".vbs", ".js", ".jar",
+            ".dll", ".scr", ".com", ".pif", ".application", ".gadget",
+            ".msi", ".msp", ".mst", ".sys", ".drv", ".bin", ".cpl",
+            ".hta", ".scr", ".sh", ".py", ".pl", ".rb", ".sh", ".deb",
+            ".rpm", ".app", ".dmg", ".apk"
+        ],
+        "suspicious_commands": [
+            "format", "fdisk", "diskpart", "chmod", "chown", "wget",
+            "curl", "lynx", "nc", "netcat", "ncat", "telnet", "ssh",
+            "scp", "ftp", "tftp", "certutil", "bitsadmin", "debug",
+            "reg add", "reg delete", "reg copy", "reg save", "taskkill",
+            "schtasks", "at", "crontab", "nslookup", "dig", "whois",
+            "tracert", "traceroute", "route", "arp", "netstat", "ipconfig",
+            "ifconfig", "systeminfo", "whoami", "quser", "query user",
+            "ps", "tasklist", "get-process", "net user", "net group",
+            "net localgroup", "net share", "net session", "net use",
+            "mount", "umount", "mkdir", "rmdir", "rm", "del", "erase",
+            "move", "copy", "xcopy", "robocopy", "attrib", "icacls",
+            "cacls", "takeown", "fsutil", "vssadmin", "wbadmin", "bcdedit",
+            "bootcfg", "diskraid", "lodctr", "unlodctr", "typeperf",
+            "logman", "wevtutil", "eventcreate", "auditpol", "subinacl",
+            "sc", "net start", "net stop", "shutdown", "powercfg",
+            "psshutdown", "pskill", "psexec", "psexec", "wmic", "wscript",
+            "cscript", "rundll32", "regsvr32", "msiexec", "msbuild",
+            "csc", "vbc", "jsc", "rc", "cl", "link", "nmake", "cmake",
+            "make", "gcc", "g++", "clang", "clang++", "apt-get", "yum",
+            "dnf", "zypper", "pacman", "emerge", "pip", "gem", "npm",
+            "composer", "docker", "kubectl", "helm", "terraform", "ansible",
+            "puppet", "chef", "salt", "vagrant", "virtualbox", "vmware",
+            "vboxmanage", "vmrun", "qemu", "xen", "hyper-v", "azure",
+            "aws", "gcloud", "oci", "ibmcloud", "openstack", "minikube",
+            "kind", "k3s", "k0s", "microk8s", "k9s", "krew", "tiller",
+            "helm", "istio", "linkerd", "envoy", "consul", "vault",
+            "nomad", "serf", "terraform", "packer", "vagrant", "ansible",
+            "puppet", "chef", "salt", "cfn", "cloudformation", "troposphere",
+            "pulumi", "cdk", "sceptre", "formica", "stacker", "kustomize",
+            "ksonnet", "jsonnet", "dhall", "cue", "nickel", "json",
+            "yaml", "yml", "toml", "ini", "xml", "csv", "tsv", "jsonl",
+            "ndjson", "hcl", "tf", "tfvars", "pp", "rb", "py", "pl",
+            "pm", "t", "php", "js", "ts", "jsx", "tsx", "vue", "svelte",
+            "angular", "react", "next", "nuxt", "gatsby", "gridsome",
+            "quasar", "electron", "nw", "react-native", "flutter",
+            "dart", "kotlin", "swift", "objective-c", "java", "scala",
+            "clojure", "groovy", "go", "rust", "haskell", "ocaml",
+            "f#", "elixir", "erlang", "cobol", "fortran", "pascal",
+            "basic", "lisp", "scheme", "prolog", "smalltalk", "forth",
+            "ada", "verilog", "vhdl", "systemverilog", "verilog",
+            "chisel", "bluespec", "spinalhdl", "nmigen", "magma",
+            "coreir", "llhd", "calyx", "dahlia", "heterocl", "spark",
+            "accord", "kafka", "rabbitmq", "nats", "zeromq", "activemq",
+            "ibmmq", "amqp", "mqtt", "stomp", "jms", "websocket",
+            "socketio", "sockjs", "signalr", "grpc", "thrift", "avro",
+            "protobuf", "flatbuffers", "capnproto", "msgpack", "cbor",
+            "bson", "ubjson", "smile", "ion", "avro", "parquet",
+            "orc", "arrow", "feather", "hdf5", "netcdf", "zarr",
+            "tensorflow", "pytorch", "keras", "mxnet", "caffe",
+            "caffe2", "onnx", "openvino", "tensorrt", "ncnn", "mnn",
+            "paddlepaddle", "mindspore", "darknet", "yolo", "detectron",
+            "maskrcnn", "retinanet", "efficientdet", "centernet",
+            "yolov", "ssd", "fasterrcnn", "resnet", "inception",
+            "vgg", "mobilenet", "shufflenet", "squeezenet", "densenet",
+            "nasnet", "pnasionet", "efficientnet", "regnet", "vision",
+            "detr", "swin", "vit", "bert", "gpt", "transformer",
+            "t5", "bart", "electra", "albert", "xlnet", "roberta",
+            "distilbert", "camembert", "flaubert", "xlm", "mbert",
+            "xlmroberta", "layoutlm", "longformer", "reformer",
+            "linformer", "performer", "bigbird", "led", "rag",
+            "dpr", "biencoder", "polyencoder", "crossencoder",
+            "colbert", "densephrases", "realm", "orqa", "dpr",
+            "rag", "tapas", "tabnet", "namu", "fttransformer",
+            "tabtransformer", "autoint", "xdeepfm", "deepfm",
+            "nfm", "afm", "ffm", "fm", "lr", "gbdt", "xgboost",
+            "lightgbm", "catboost", "ngboost", "tabnet", "namu",
+            "node", "snap", "deepgbm", "gaminet", "stg", "born",
+            "inn", "eanet", "nam", "namu", "nami", "naml", "namu",
+            "nam", "nami", "naml", "namu", "nam", "nami", "naml"
         ]
     },
     "system": {
@@ -41,6 +125,7 @@ DEFAULT_CONFIG = {
 }
 
 IP_REGEX = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+COMMAND_REGEX = re.compile(r'\b([a-zA-Z0-9_\-]+)(?:\s+|$)')
 
 # ---------------------------- LOGGING SETUP ---------------------------- #
 def setup_logging(log_level: str = "INFO", log_file: str = "analyzer.log") -> logging.Logger:
@@ -461,20 +546,51 @@ def detect_suspicious_commands(events: List[Dict[str, Any]], config: Dict) -> Li
     """Detect suspicious commands using configurable keywords"""
     findings = []
     keywords = config.get("detection", {}).get("suspicious_keywords", [])
+    commands = config.get("detection", {}).get("suspicious_commands", [])
+    file_extensions = config.get("detection", {}).get("suspicious_file_extensions", [])
     
     for event in events:
         try:
             msg = event.get("message", "").lower()
             matched_keywords = [kw for kw in keywords if kw.lower() in msg]
-            if matched_keywords:
+            
+            # Check for suspicious commands
+            found_commands = []
+            for cmd in commands:
+                # Match whole words to avoid false positives
+                if re.search(rf'\b{re.escape(cmd)}\b', msg, re.IGNORECASE):
+                    found_commands.append(cmd)
+            
+            # Check for suspicious file extensions
+            found_extensions = []
+            for ext in file_extensions:
+                if ext.lower() in msg:
+                    found_extensions.append(ext)
+            
+            if matched_keywords or found_commands or found_extensions:
+                # Create summary
+                summary_parts = []
+                if matched_keywords:
+                    summary_parts.append(f"keywords: {', '.join(matched_keywords[:3])}")
+                if found_commands:
+                    summary_parts.append(f"commands: {', '.join(found_commands[:3])}")
+                if found_extensions:
+                    summary_parts.append(f"extensions: {', '.join(found_extensions[:3])}")
+                
+                summary = f"Suspicious activity detected: {'; '.join(summary_parts)}"
+                if len(matched_keywords) > 3 or len(found_commands) > 3 or len(found_extensions) > 3:
+                    summary += " ..."
+                
                 findings.append({
                     "id": generate_finding_id(), 
                     "attack_type": "Suspicious Command Execution",
-                    "summary": f"Suspicious command detected: {', '.join(matched_keywords)}",
-                    "explanation": "Potentially malicious command execution", 
+                    "summary": summary,
+                    "explanation": "Potentially malicious command or file activity", 
                     "severity": "high",
                     "evidence": [event.get("raw", "")], 
-                    "matched_keywords": matched_keywords, 
+                    "matched_keywords": matched_keywords,
+                    "matched_commands": found_commands,
+                    "matched_extensions": found_extensions,
                     "confidence": 0.8
                 })
         except Exception as e:
@@ -554,6 +670,10 @@ def generate_text_report(analysis_result: Dict[str, Any]) -> str:
                 report.append(f"   Source IPs: {', '.join(finding.get('source_ips'))}")
             if finding.get('matched_keywords'):
                 report.append(f"   Keywords: {', '.join(finding.get('matched_keywords'))}")
+            if finding.get('matched_commands'):
+                report.append(f"   Commands: {', '.join(finding.get('matched_commands'))}")
+            if finding.get('matched_extensions'):
+                report.append(f"   File Extensions: {', '.join(finding.get('matched_extensions'))}")
             if finding.get('count', 1) > 1:
                 report.append(f"   Count: {finding.get('count')}")
     else:
