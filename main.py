@@ -1,3 +1,11 @@
+import os
+import sys
+import json
+import time
+from datetime import datetime
+from collections import Counter
+from typing import Dict, Any, List
+
 #!/usr/bin/env python3
 """SIEM Analyzer - Main entry point"""
 import argparse
