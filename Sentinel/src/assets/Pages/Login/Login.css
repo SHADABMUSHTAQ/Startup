@@ -1,0 +1,129 @@
+/* Login.css */
+.login {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #10152A, #1a1f3b);
+  padding-top: 10px; /* Navbar ke liye space */
+}
+
+.login-form {
+  width: 100%;
+  max-width: 400px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 40px;
+  border-radius: 16px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0px 8px 25px rgba(0,0,0,0.6);
+  text-align: center;
+  animation: fadeIn 0.6s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.login-form h1 {
+  color: #fff;
+  margin-bottom: 20px;
+  font-size: 28px;
+  letter-spacing: 1px;
+}
+
+.login-form input {
+  width: 100%;
+  padding: 14px;
+  margin: 10px 0;
+  border-radius: 8px;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  font-size: 16px;
+  transition: 0.3s;
+}
+
+.login-form input:focus {
+  background: rgba(255, 255, 255, 0.15);
+  outline: 2px solid #e50914;
+}
+
+.login-form input::placeholder {
+  color: #aaa;
+}
+
+.login-form button {
+  width: 100%;
+  padding: 14px;
+  margin-top: 15px;
+  background: linear-gradient(90deg, #e50914, #ff414d);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: transform 0.2s ease-in-out;
+}
+
+.login-form button:hover {
+  transform: scale(1.05);
+}
+
+.form-help {
+  display: flex;
+  justify-content: space-between;
+  margin: 12px 0;
+  color: #bbb;
+  font-size: 14px;
+}
+
+.form-switch {
+  margin-top: 16px;
+  color: #fff;
+}
+
+.form-switch span {
+  color: #1e90ff;
+  cursor: pointer;
+  font-weight: bold;
+  transition: 0.2s;
+}
+
+.form-switch span:hover {
+  text-decoration: underline;
+}
+
+.form-help {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 12px 0;
+  font-size: 14px;
+  color: #bbb;
+}
+
+.form-help .remember {
+  display: flex;
+  align-items: center;
+  gap: 6px; /* Checkbox aur text ke beech space */
+}
+
+.form-help input[type="checkbox"] {
+  accent-color: #e50914; /* Netflix red style checkbox */
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.form-help p {
+  margin: 0;
+  cursor: pointer;
+  transition: color 0.2s ease-in-out;
+}
+
+.form-help p:hover {
+  color: #fff;
+}
+
