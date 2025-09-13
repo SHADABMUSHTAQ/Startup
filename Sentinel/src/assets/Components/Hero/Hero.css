@@ -1,7 +1,8 @@
 .hero-wrapper {
   width: 100%;
-   min-height: calc(100vh - 70px);
+   min-height: calc(10vh - 70px);
   padding: 3rem 7rem;
+  /* background-color: aliceblue; */
   background-color: #10152A;
   display: flex;
   align-items: center;

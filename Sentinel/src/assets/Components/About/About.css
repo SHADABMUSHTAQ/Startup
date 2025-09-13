@@ -12,11 +12,13 @@
   max-width: 1200px;
   margin: 0 auto;
   flex-wrap: wrap;
+  
 }
 
 .about-text {
   flex: 1;
   min-width: 300px;
+  text-align: left;
 }
 
 .about-text h2 {
@@ -38,7 +40,7 @@
 }
 
 .about-text p {
-  font-size: 1.1rem;
+  font-size: 1rem;
   line-height: 1.7;
   margin-bottom: 1.2rem;
   color: #d1d5db;

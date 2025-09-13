@@ -175,6 +175,8 @@ button:hover::after {
     flex-direction: column;
     padding: 3rem 2rem;
     text-align: center;
+    margin-top: 6rem;
+    
   }
 
   .h-right {
@@ -183,12 +185,13 @@ button:hover::after {
 
   .navbar ul {
     gap: 1rem;
+    display: none; 
   }
 }
 
 @media (max-width: 768px) {
   .navbar ul {
-    display: none; /* Mobile me hamburger menu banega */
+    display: none; 
   }
 
   .hero-wrapper {
@@ -214,16 +217,8 @@ button:hover::after {
     font-size: 14px;
   }
 }
-/* Tablet */
-@media (max-width: 1024px) {
-  .navbar {
-    padding: 1.5rem 4rem;
-  }
 
-  .nav-list > ul {
-    gap: 30px;
-  }
-}
+
 
 /* Mobile */
 @media (max-width: 768px) {
@@ -250,6 +245,11 @@ button:hover::after {
   .nav-list > ul {
     flex-direction: column;
     gap: 20px;
+  }
+
+   img.logo{
+    height: 100px;
+    width: auto;
   }
 
   .nav-list > ul > li > a {

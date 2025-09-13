@@ -26,7 +26,7 @@ const Navbar = () => {
 
   return (
     <nav className={`navbar ${isOpen ? "menu-open" : ""}`}>
-      <h2 className="logo">SENTINEL</h2>
+      <img className="logo" src="/Logo.png" alt="error image" />
 
       {/* burger button */}
       <button

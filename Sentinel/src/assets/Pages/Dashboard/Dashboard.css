@@ -1,0 +1,114 @@
+.dashboard {
+  padding: 2rem;
+  background: #0d1b2a;
+  color: white;
+  min-height: 100vh;
+   margin-top: 80px;  
+  padding: 20px;
+}
+
+/* Stats Cards */
+.stats {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+.card {
+  flex: 1;
+  padding: 1.5rem;
+  background: #1b263b;
+  border-radius: 12px;
+  text-align: center;
+  transition: transform 0.2s;
+}
+.card:hover { transform: translateY(-5px); }
+.card h3 { color: #4da6ff; font-size: 24px; }
+
+/* Upload Section */
+.uploaded-details {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #0d1b2a;
+  border: 1px solid #4da6ff;
+  border-radius: 8px;
+  text-align: left;
+}
+.uploaded-details h3 {
+  margin: 0 0 5px 0;
+  font-size: 16px;
+  color: #68b1ff;
+}
+.uploaded-details p {
+  margin: 0;
+  font-size: 14px;
+  color: #fff;
+}
+
+
+
+
+.upload-box {
+  padding: 2rem;
+  background: #1b263b;
+  border-radius: 12px;
+  margin-bottom: 2rem;
+  text-align: center;
+}
+.upload-box input[type="file"] {
+  margin: 1rem 0;
+  padding: 10px;
+  background: #0d1b2a;
+  border: 1px solid #4da6ff;
+  border-radius: 8px;
+  color: #4da6ff;
+  cursor: pointer;
+}
+.file-list {
+  margin-top: 1rem;
+  text-align: left;
+}
+.file-item {
+  padding: 8px;
+  border-radius: 6px;
+  background: #0d1b2a;
+  margin-bottom: 5px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+.file-item:hover { background: #243b55; }
+.file-item.active { background: #4da6ff; color: black; }
+
+/* Charts */
+.charts {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+  justify-content: space-between;
+}
+
+/* Logs Section */
+.logs {
+  padding: 1.5rem;
+  background: #1b263b;
+  border-radius: 12px;
+}
+.logs input {
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 1rem;
+  border-radius: 6px;
+  border: none;
+  outline: none;
+}
+.log-box {
+  max-height: 250px;
+  overflow-y: auto;
+}
+.log-item {
+  padding: 6px;
+  border-bottom: 1px solid #243b55;
+}
+.log-item.info { color: #4da6ff; }
+.log-item.warn { color: #ffc107; }
+.log-item.error { color: #ff4d4d; }
+

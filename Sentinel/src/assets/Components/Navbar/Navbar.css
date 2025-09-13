@@ -16,10 +16,8 @@
 
 /* Logo */
 .logo {
-  color: #4da6ff;
-  font-size: 22px;
-  font-weight: bold;
-  letter-spacing: 1px;
+  height: 120px;
+  border-radius: 50%;
 }
 
 /* Desktop links */
@@ -118,7 +116,7 @@
   .navbar { padding: 0 1.25rem; }
 
   /* show burger */
-  .burger { display: flex; }
+  .burger { display: flex;}
 
   /* hide desktop login */
   .login-btn.desktop-only { display: none; }
