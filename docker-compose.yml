@@ -1,0 +1,35 @@
+version: "3.8"
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+  backend:
+    build: ./backend
+    ports:
+      - "5000:5000"
+    depends_on:
+      - analyzer
+      - mongo
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/logsdb
+
+  analyzer:
+    build: ./analyzer
+    command: ["python", "main.py"]
+    volumes:
+      - ./analyzer:/app
+    depends_on:
+      - mongo
+
+  mongo:
+    image: mongo:latest
+    container_name: mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./database:/data/db
