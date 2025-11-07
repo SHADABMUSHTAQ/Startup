@@ -17,11 +17,7 @@ services:
     environment:
       - MONGO_URI=mongodb://mongo:27017/logsdb
 
-  analyzer:
-    build: ./analyzer
-    command: ["python", "main.py"]
-    volumes:
-      - ./analyzer:/app
+  
     depends_on:
       - mongo
 
