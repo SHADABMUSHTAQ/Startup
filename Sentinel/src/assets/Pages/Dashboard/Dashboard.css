@@ -1,0 +1,352 @@
+.dashboard {
+  background: #0d1b2a;
+  color: white;
+  min-height: 100vh;
+  margin-top: 80px;  
+  padding: 20px 2rem; /* Thoda clean kiya padding ko */
+}
+
+/* Stats Cards */
+.stats {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+.card {
+  flex: 1;
+  padding: 1.5rem;
+  background: #1b263b;
+  border-radius: 12px;
+  text-align: center;
+  transition: transform 0.2s;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+.card:hover { transform: translateY(-5px); }
+.card h3 { color: #4da6ff; font-size: 24px; margin-bottom: 5px; }
+.card p { margin: 0; color: #cbd5e1; }
+
+/* Upload Section */
+.upload-box {
+  padding: 2rem;
+  background: #1b263b;
+  border-radius: 12px;
+  margin-bottom: 2rem;
+  text-align: center;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+
+.upload-box h2 { margin-top: 0; color: #fff; }
+
+.upload-box input[type="file"] {
+  margin: 1rem 0;
+  padding: 10px;
+  background: #0d1b2a;
+  border: 1px solid #4da6ff;
+  border-radius: 8px;
+  color: #4da6ff;
+  cursor: pointer;
+  width: 100%;
+  max-width: 400px;
+}
+.upload-hint { color: #888; font-size: 0.9rem; margin-top: 0; }
+
+/* File List Styles */
+.file-list {
+  margin-top: 1.5rem;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.file-item {
+  padding: 12px 15px;
+  border-radius: 8px;
+  background: #0d1b2a;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid transparent;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.file-item:hover { 
+  background: #243b55; 
+  border-color: #4da6ff;
+}
+.file-item.active { 
+  background: rgba(77, 166, 255, 0.1); 
+  border-color: #4da6ff; 
+  color: white; 
+}
+
+/* Charts */
+.charts {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+  justify-content: space-between;
+}
+
+/* Logs Section */
+.logs {
+  padding: 1.5rem;
+  background: #1b263b;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+.logs input {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 1rem;
+  border-radius: 6px;
+  border: 1px solid #334155;
+  background: #0d1b2a;
+  color: white;
+  outline: none;
+}
+.logs input:focus { border-color: #4da6ff; }
+
+.log-box {
+  max-height: 300px;
+  overflow-y: auto;
+  background: #0d1b2a;
+  padding: 10px;
+  border-radius: 6px;
+}
+.log-item {
+  padding: 8px;
+  border-bottom: 1px solid #243b55;
+  font-family: monospace;
+  font-size: 0.9rem;
+}
+.log-item.info { color: #4da6ff; }
+.log-item.warn { color: #ffc107; }
+.log-item.error { color: #ff4d4d; }
+
+
+/* =========================================
+   ✅ MODAL / POPUP STYLES (CENTERED FIX)
+   ========================================= */
+
+/* 1. Background Overlay (Dark & Fixed) */
+.modal-overlay {
+  position: fixed; /* Screen par chipka rahega */
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0, 0, 0, 0.75); /* Dark background */
+  z-index: 9999; /* Sabse upar */
+  display: flex;
+  justify-content: center; /* Horizontal Center */
+  align-items: center; /* Vertical Center */
+  backdrop-filter: blur(4px); /* Peeche ka content blur */
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* 2. White Popup Box */
+.modal-content {
+  background-color: #ffffff;
+  width: 90%;
+  max-width: 650px;
+  max-height: 85vh;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  color: #333; /* Text color dark for readability */
+}
+
+/* Animations */
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideUp { from { transform: translateY(50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+/* Popup Header */
+.modal-header {
+  padding: 15px 20px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.modal-header h2 { margin: 0; color: #1e293b; font-size: 1.3rem; }
+
+.close-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.8rem;
+  line-height: 1;
+  color: #64748b;
+  cursor: pointer;
+}
+.close-btn:hover { color: #ff4d4d; }
+
+/* Popup Body */
+.modal-body {
+  padding: 20px;
+  overflow-y: auto;
+}
+
+/* Summary Cards inside Popup */
+.report-summary {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.summary-box {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  padding: 10px;
+  border-radius: 8px;
+  text-align: center;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+.summary-box h3 { margin: 5px 0; font-size: 1.5rem; color: #333; }
+.summary-box span { font-size: 0.8rem; color: #666; font-weight: 600; text-transform: uppercase;}
+
+/* Findings List inside Popup */
+.finding-row {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  padding: 12px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  border-left: 4px solid #ccc;
+}
+.finding-row.critical { border-left-color: #ff4d4d; }
+.finding-row.high { border-left-color: #ff9f43; }
+.finding-row.medium { border-left-color: #feca57; }
+.finding-row.info { border-left-color: #4da6ff; }
+
+.finding-row strong { display: block; color: #1e293b; margin-bottom: 4px; }
+.finding-row p { margin: 0; color: #475569; font-size: 0.9rem; }
+.finding-timestamp { float: right; font-size: 0.75rem; color: #94a3b8; }
+
+/* Popup Footer */
+.modal-footer {
+  padding: 15px 20px;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* =========================================
+   ✅ PROFESSIONAL DELETE MODAL (Dark Theme)
+   ========================================= */
+
+.modal-content.delete-confirmation {
+  background-color: #1e293b; /* Dark Blue-Grey (Matches Dashboard Cards) */
+  border: 1px solid #334155; /* Subtle border */
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6); /* Deep Shadow */
+  max-width: 420px;
+  text-align: center;
+  padding: 35px;
+  color: #e2e8f0; /* Light text */
+  position: relative;
+  overflow: visible; /* Glow effect ke liye */
+}
+
+/* Red Danger Glow on Top */
+.modal-content.delete-confirmation::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  background: linear-gradient(90deg, #ff4d4d, #ff0000);
+}
+
+/* Icon Styling */
+.delete-icon-circle {
+  width: 70px;
+  height: 70px;
+  background: rgba(255, 77, 77, 0.1); /* Very light transparent red */
+  color: #ff4d4d; /* Bright Red Icon */
+  font-size: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px auto;
+  border: 2px solid rgba(255, 77, 77, 0.2);
+  animation: pulseRed 2s infinite;
+}
+
+@keyframes pulseRed {
+  0% { box-shadow: 0 0 0 0 rgba(255, 77, 77, 0.4); }
+  70% { box-shadow: 0 0 0 10px rgba(255, 77, 77, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 77, 77, 0); }
+}
+
+/* Typography */
+.modal-content.delete-confirmation h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 10px;
+}
+
+.modal-content.delete-confirmation p {
+  color: #94a3b8; /* Muted text */
+  font-size: 0.95rem;
+  line-height: 1.5;
+  margin-bottom: 30px;
+}
+
+.modal-content.delete-confirmation strong {
+  color: #ff4d4d; /* File name in Red */
+}
+
+/* Buttons Container */
+.modal-actions {
+  display: flex;
+  justify-content: center;
+  gap: 15px;
+  width: 100%;
+}
+
+/* Cancel Button */
+.btn-cancel {
+  padding: 12px 24px;
+  border-radius: 8px;
+  border: 1px solid #475569;
+  background: transparent;
+  color: #cbd5e1;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex: 1;
+}
+
+.btn-cancel:hover {
+  background: #334155;
+  color: white;
+}
+
+/* Delete Button */
+.btn-delete {
+  padding: 12px 24px;
+  border-radius: 8px;
+  border: none;
+  background: #ff4d4d;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex: 1;
+  box-shadow: 0 4px 12px rgba(255, 77, 77, 0.3); /* Red Glow */
+}
+
+.btn-delete:hover {
+  background: #ff1a1a;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 15px rgba(255, 77, 77, 0.5);
+}
