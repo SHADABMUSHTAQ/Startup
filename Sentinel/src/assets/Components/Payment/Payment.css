@@ -1,0 +1,144 @@
+/* Container - Center everything */
+.payment-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: #0d1b2a; /* Dark Background */
+  color: white;
+  padding: 20px;
+}
+
+/* Card Style */
+.payment-card {
+  background: #1b263b; /* Slightly lighter dark blue */
+  padding: 40px;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 15px 40px rgba(0,0,0,0.6);
+  text-align: center;
+  border: 1px solid #334155;
+  animation: fadeIn 0.5s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.payment-card h2 {
+  margin-top: 0;
+  margin-bottom: 20px;
+  color: #fff;
+}
+
+/* Plan Summary Box */
+.plan-summary {
+  background: #0d1b2a;
+  padding: 15px;
+  border-radius: 8px;
+  margin-bottom: 25px;
+  border: 1px solid #4da6ff; /* Blue Border */
+}
+
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 5px;
+  font-size: 1rem;
+}
+
+/* Form Styles */
+.payment-form label {
+  display: block;
+  text-align: left;
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+  color: #a0aec0;
+}
+
+.card-input {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 15px;
+  background: #2d3748;
+  border: 1px solid #4a5568;
+  color: #cbd5e1;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 1rem;
+  cursor: not-allowed; /* Disabled look */
+}
+
+.row {
+  display: flex;
+  gap: 15px;
+}
+
+/* Pay Button */
+.pay-btn {
+  width: 100%;
+  padding: 14px;
+  background: #2ecc71; /* Green */
+  border: none;
+  color: white;
+  font-size: 1.1rem;
+  font-weight: bold;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-top: 10px;
+  transition: all 0.2s;
+  box-shadow: 0 4px 15px rgba(46, 204, 113, 0.3);
+}
+
+.pay-btn:hover {
+  background: #27ae60;
+  transform: translateY(-2px);
+}
+
+.pay-btn:disabled {
+  background: #718096;
+  cursor: wait;
+  transform: none;
+}
+
+.secure-text {
+  font-size: 0.8rem;
+  color: #718096;
+  margin-top: 15px;
+}
+
+.cancel-link {
+  background: none;
+  border: none;
+  color: #4da6ff;
+  margin-top: 10px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* Success Animation */
+.success-view {
+  animation: popIn 0.3s ease;
+}
+
+.checkmark {
+  width: 80px;
+  height: 80px;
+  background: rgba(46, 204, 113, 0.1);
+  color: #2ecc71;
+  font-size: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px auto;
+  border: 2px solid #2ecc71;
+}
+
+@keyframes popIn {
+  from { transform: scale(0.8); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
