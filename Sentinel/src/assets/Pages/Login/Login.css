@@ -1,131 +1,290 @@
-/* Login.css */
-.login {
-  height: 100vh;
+/* --- VARIABLES --- */
+:root {
+  --bg-dark: #0a0e14; /* Updated to Deep Cyber Black (Same as Payment Page) */
+  --card-bg: rgba(22, 27, 34, 0.9); /* Thoda refined dark overlay */
+  --text-primary: #e6f1ff;
+  --text-secondary: #8b949e;
+  --accent-blue: #4da6ff;
+  --accent-teal: #2ecc71; /* Teal ko Green kiya success ke liye, ya Teal hi rakhein */
+  --error-red: #ff6b6b;
+  --nav-height: 80px; 
+}
+
+/* --- GLOBAL RESET --- */
+body, html {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-dark);
+  height: 100%;
+  font-family: 'Inter', sans-serif;
+}
+
+/* --- CONTAINER --- */
+.auth-container {
+  min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #10152A, #1a1f3b);
-  padding-top: 10px; /* Navbar ke liye space */
+  background-color: var(--bg-dark);
+  position: relative;
+  overflow: hidden;
+  padding: 20px;
+  /* Navbar overlap na ho isliye padding di */
+  padding-top: calc(var(--nav-height) + 20px); 
+  box-sizing: border-box;
 }
 
-.login-form {
-  /* height: 85%; */
+/* Background Ambient Glows */
+.auth-glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  opacity: 0.15;
+  z-index: 0;
+}
+
+.glow-1 {
+  width: 300px;
+  height: 300px;
+  background: var(--accent-blue);
+  top: 10%;
+  left: 20%;
+}
+
+.glow-2 {
+  width: 350px;
+  height: 350px;
+  background: #2ecc71; /* Greenish glow for security feel */
+  bottom: 10%;
+  right: 20%;
+}
+
+/* --- CARD DESIGN --- */
+.auth-card {
   width: 100%;
-  max-width: 400px;
-  background: rgba(255, 255, 255, 0.05);
-  padding: 40px;
-  border-radius: 16px;
-  backdrop-filter: blur(12px);
-  box-shadow: 0px 8px 25px rgba(0,0,0,0.6);
-  text-align: center;
-  animation: fadeIn 0.6s ease-in-out;
-  margin-top: 50px;
+  max-width: 360px; /* Compact & Sleek */
+  background: var(--card-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 2rem;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+  z-index: 1;
+  animation: cardEntry 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(-20px); }
+@keyframes cardEntry {
+  from { opacity: 0; transform: translateY(30px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-.login-form h1 {
-  color: #fff;
-  margin-bottom: 20px;
-  font-size: 28px;
-  letter-spacing: 1px;
+/* --- HEADER --- */
+.auth-header {
+  text-align: center;
+  margin-bottom: 1.5rem;
 }
 
-.login-form input {
-  width: 100%;
-  padding: 14px;
-  margin: 10px 0;
-  border-radius: 8px;
-  border: none;
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
-  font-size: 16px;
-  transition: 0.3s;
+.auth-logo-icon {
+  color: var(--accent-blue);
+  margin-bottom: 0.5rem;
+  width: 40px;
+  height: 40px;
 }
 
-.login-form input:focus {
-  background: rgba(255, 255, 255, 0.15);
-  outline: 2px solid #e50914;
+.auth-header h2 {
+  color: var(--text-primary);
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
 }
 
-.login-form input::placeholder {
-  color: #aaa;
+.auth-header p {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.4;
 }
 
-.login-form button {
-  width: 100%;
-  padding: 14px;
-  margin-top: 15px;
-  background: linear-gradient(90deg, #e50914, #ff414d);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 16px;
-  font-weight: bold;
-  cursor: pointer;
-  transition: transform 0.2s ease-in-out;
-}
-
-.login-form button:hover {
-  transform: scale(1.05);
-}
-
-.form-help {
+/* --- FORM INPUTS --- */
+.auth-form {
   display: flex;
-  justify-content: space-between;
-  margin: 12px 0;
-  color: #bbb;
-  font-size: 14px;
+  flex-direction: column;
+  gap: 1rem;
 }
 
-.form-switch {
-  margin-top: 16px;
-  color: #fff;
+.input-group {
+  position: relative;
 }
 
-.form-switch span {
-  color: #1e90ff;
+.input-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-secondary);
+  transition: color 0.3s;
+  width: 18px;
+}
+
+.input-group input {
+  width: 100%;
+  padding: 12px 14px 12px 40px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  outline: none;
+  transition: all 0.2s ease;
+  box-sizing: border-box; /* Fix for overflow */
+}
+
+.input-group input::placeholder {
+  color: #484f58;
+}
+
+.input-group input:focus {
+  border-color: var(--accent-blue);
+  background: #161b22;
+  box-shadow: 0 0 0 3px rgba(77, 166, 255, 0.15);
+}
+
+.input-group input:focus + .input-icon {
+  color: var(--accent-blue);
+}
+
+/* --- BUTTON --- */
+.auth-btn {
+  margin-top: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, #4da6ff, #2563eb);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  font-weight: 600;
   cursor: pointer;
-  font-weight: bold;
-  transition: 0.2s;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
 }
 
-.form-switch span:hover {
+.auth-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 15px rgba(37, 99, 235, 0.4);
+}
+
+.auth-btn:disabled {
+  background: #30363d;
+  color: #8b949e;
+  cursor: wait;
+  box-shadow: none;
+}
+
+/* --- FOOTER --- */
+.auth-footer {
+  text-align: center;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.auth-footer p {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.auth-footer span {
+  color: var(--accent-blue);
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: 5px;
+  transition: color 0.2s;
+}
+
+.auth-footer span:hover {
+  color: #fff;
   text-decoration: underline;
 }
 
-.form-help {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin: 12px 0;
-  font-size: 14px;
-  color: #bbb;
+/* --- ✅ CUSTOM TOAST NOTIFICATION STYLES --- */
+/* Yeh zaroori hai taake naya alert system sahi dikhe */
+.toast-notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: rgba(13, 17, 23, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    padding: 12px 16px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: #fff;
+    font-size: 14px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.5);
+    z-index: 1000;
+    animation: slideInRight 0.4s ease-out;
+    min-width: 300px;
 }
 
-.form-help .remember {
-  display: flex;
-  align-items: center;
-  gap: 6px; /* Checkbox aur text ke beech space */
+/* Success Green Stripe */
+.toast-notification.success {
+    border-left: 4px solid #2ecc71;
+}
+.toast-notification.success svg {
+    color: #2ecc71;
 }
 
-.form-help input[type="checkbox"] {
-  accent-color: #e50914; /* Netflix red style checkbox */
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
+/* Error Red Stripe */
+.toast-notification.error {
+    border-left: 4px solid #ff4d4d;
+}
+.toast-notification.error svg {
+    color: #ff4d4d;
 }
 
-.form-help p {
-  margin: 0;
-  cursor: pointer;
-  transition: color 0.2s ease-in-out;
+/* Close Button */
+.toast-notification button {
+    background: none;
+    border: none;
+    color: #8b949e;
+    cursor: pointer;
+    margin-left: auto;
+    padding: 0;
+    display: flex;
+}
+.toast-notification button:hover {
+    color: #fff;
 }
 
-.form-help p:hover {
-  color: #fff;
+@keyframes slideInRight {
+    from { opacity: 0; transform: translateX(50px); }
+    to { opacity: 1; transform: translateX(0); }
 }
 
+/* --- RESPONSIVE MOBILE FIXES --- */
+@media (max-width: 480px) {
+  .auth-container {
+    padding: 20px;
+    padding-top: 100px; /* Navbar space */
+    align-items: flex-start;
+  }
+
+  .auth-card {
+    padding: 1.5rem;
+    max-width: 100%;
+  }
+  
+  .toast-notification {
+    width: 90%;
+    right: 5%;
+    left: 5%;
+    top: 10px;
+  }
+}

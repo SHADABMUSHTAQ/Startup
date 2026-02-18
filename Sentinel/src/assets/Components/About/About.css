@@ -1,95 +1,219 @@
-.about {
-  /* background: #0a192f; */
-  padding: 5rem 2rem;
-  color: #fff;
+/* --- VARIABLES --- */
+:root {
+  --bg-dark: #0a192f;
+  --text-primary: #e6f1ff;
+  --text-secondary: #8892b0;
+  --accent-teal: #64ffda;
+  --accent-blue: #4da6ff;
+}
+
+/* --- SECTION --- */
+.about-section {
+  padding: 6rem 2rem;
+  background-color: var(--bg-dark);
+  color: var(--text-primary);
+  overflow: hidden;
+  position: relative;
 }
 
 .about-container {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 3rem;
+  gap: 5rem;
   max-width: 1200px;
   margin: 0 auto;
-  flex-wrap: wrap;
-  
 }
 
-.about-text {
+/* --- IMAGE SIDE (Left) --- */
+.about-image-wrapper {
   flex: 1;
-  min-width: 300px;
-  text-align: left;
-}
-
-.about-text h2 {
-  font-size: 2.5rem;
-  color: #4da6ff; /* accent color */
-  margin-bottom: 1.5rem;
   position: relative;
+  min-width: 350px;
 }
 
-.about-text h2::after {
+/* Main Image */
+.about-img {
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  position: relative;
+  z-index: 2;
+  filter: grayscale(20%) contrast(1.1);
+  transition: all 0.3s ease;
+  box-shadow: 0 20px 40px -10px rgba(2, 12, 27, 0.7);
+}
+
+.about-img:hover {
+  filter: grayscale(0%);
+  transform: translateY(-5px);
+}
+
+/* Cyber Frame (Border Effect) */
+.img-frame {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  width: 100%;
+  height: 100%;
+  border: 2px solid var(--accent-teal);
+  border-radius: 4px;
+  z-index: 1;
+  transition: transform 0.3s ease;
+}
+
+.about-image-wrapper:hover .img-frame {
+  transform: translate(10px, 10px);
+}
+
+/* Floating Badge */
+.experience-badge {
+  position: absolute;
+  bottom: -30px;
+  right: -20px;
+  background: #112240;
+  border: 1px solid var(--accent-blue);
+  padding: 1.5rem;
+  border-radius: 8px;
+  z-index: 3;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  min-width: 180px;
+}
+
+.years {
+  font-size: 2.5rem;
+  font-weight: 800;
+  color: var(--accent-blue);
+  line-height: 1;
+}
+
+.experience-badge .text {
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+/* --- CONTENT SIDE (Right) --- */
+.about-content {
+  flex: 1;
+}
+
+.section-tag {
+  color: var(--accent-teal);
+  font-family: monospace;
+  font-size: 1rem;
+  margin-bottom: 1rem;
+}
+
+.about-content h2 {
+  font-size: 2.5rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 1.5rem;
+  color: var(--text-primary);
+}
+
+.highlight {
+  color: var(--accent-blue);
+  position: relative;
+  display: inline-block;
+}
+
+.highlight::after {
   content: "";
   position: absolute;
-  bottom: -6px;
+  width: 100%;
+  height: 8px;
+  bottom: 5px;
   left: 0;
-  width: 60px;
-  height: 3px;
-  background: #4da6ff;
-  border-radius: 3px;
+  background: rgba(77, 166, 255, 0.2);
+  z-index: -1;
 }
 
-.about-text p {
-  font-size: 1rem;
+.description {
+  color: var(--text-secondary);
+  font-size: 1.05rem;
   line-height: 1.7;
-  margin-bottom: 1.2rem;
-  color: #d1d5db;
+  margin-bottom: 2rem;
 }
 
+/* Checklist Grid */
+.points-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 2.5rem;
+}
+
+.point-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: 0.95rem;
+}
+
+.point-icon {
+  color: var(--accent-teal);
+  min-width: 20px;
+}
+
+/* Button */
 .about-btn {
-  display: inline-block;
-  padding: 12px 28px;
-  border-radius: 8px;
-  background: #4da6ff;
-  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 32px;
+  background: transparent;
+  color: var(--accent-teal);
+  border: 1px solid var(--accent-teal);
+  border-radius: 4px;
   text-decoration: none;
   font-weight: 600;
   transition: all 0.3s ease;
 }
 
 .about-btn:hover {
-  background: #2563eb;
-  transform: translateY(-3px);
-  box-shadow: 0 8px 20px rgba(77, 166, 255, 0.4);
+  background: rgba(100, 255, 218, 0.1);
+  transform: translateX(5px);
 }
 
-.about-image {
-  flex: 1;
-  min-width: 300px;
-  display: flex;
-  justify-content: center;
-}
-
-.about-image img {
-  max-width: 100%;
-  border-radius: 16px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
-  transition: transform 0.4s ease;
-}
-
-.about-image img:hover {
-  transform: scale(1.05);
-}
-
-/* Responsive */
-@media (max-width: 768px) {
+/* --- RESPONSIVE --- */
+@media (max-width: 992px) {
   .about-container {
     flex-direction: column;
-    text-align: center;
+    gap: 4rem;
   }
 
-  .about-text h2::after {
-    left: 50%;
-    transform: translateX(-50%);
+  .about-image-wrapper {
+    width: 100%;
+    max-width: 500px;
+    margin: 0 auto;
+  }
+  
+  .img-frame {
+    top: 15px; left: 15px;
+  }
+}
+
+@media (max-width: 768px) {
+  .about-content h2 {
+    font-size: 2rem;
+  }
+  
+  .points-grid {
+    grid-template-columns: 1fr; /* Stack points on mobile */
+    gap: 1rem;
+  }
+  
+  .experience-badge {
+    bottom: -20px;
+    right: 0;
+    padding: 1rem;
   }
 }

@@ -1,53 +1,165 @@
-.cta-section {
-  background: linear-gradient(135deg, #041e47, #2563eb);
-  padding: 80px 20px;
-  text-align: center;
-  border-radius: 16px;
-  margin: 60px auto;
-  max-width: 1000px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+/* --- VARIABLES --- */
+:root {
+  --bg-dark: #0a192f;
+  --card-bg: #112240;
+  --accent-blue: #4da6ff;
+  --accent-teal: #64ffda;
+  --text-primary: #e6f1ff;
+  --text-secondary: #8892b0;
 }
 
+/* --- SECTION LAYOUT --- */
+.cta-section {
+  padding: 4rem 2rem;
+  background-color: var(--bg-dark);
+  display: flex;
+  justify-content: center;
+}
+
+/* --- WRAPPER (The Card) --- */
+.cta-wrapper {
+  position: relative;
+  background: linear-gradient(135deg, #112240 0%, #0a192f 100%);
+  border: 1px solid #233554;
+  border-radius: 24px;
+  padding: 4rem 3rem;
+  text-align: center;
+  max-width: 1000px;
+  width: 100%;
+  overflow: hidden;
+  box-shadow: 0 20px 50px -10px rgba(2, 12, 27, 0.7);
+  isolation: isolate; /* Z-index fix for pseudo elements */
+}
+
+/* Background Effects */
+.cta-glow {
+  position: absolute;
+  top: -50%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(77, 166, 255, 0.15) 0%, transparent 70%);
+  z-index: -1;
+  pointer-events: none;
+}
+
+.cta-grid-pattern {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: 
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 30px 30px;
+  z-index: -1;
+  opacity: 0.5;
+  mask-image: radial-gradient(circle at center, black 40%, transparent 80%);
+}
+
+/* --- CONTENT --- */
+.cta-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Badge Icon */
+.icon-badge {
+  background: rgba(100, 255, 218, 0.1);
+  color: var(--accent-teal);
+  padding: 12px;
+  border-radius: 50%;
+  margin-bottom: 1.5rem;
+  border: 1px solid rgba(100, 255, 218, 0.2);
+  box-shadow: 0 0 20px rgba(100, 255, 218, 0.1);
+}
+
+/* Typography */
 .cta-content h2 {
-  font-size: 2.2rem;
-  color: #ffffff;
-  margin-bottom: 20px;
+  font-size: 2.5rem;
+  color: var(--text-primary);
+  margin-bottom: 1rem;
   font-weight: 700;
+  letter-spacing: -0.5px;
 }
 
 .cta-content p {
   font-size: 1.1rem;
-  color: #e2e8f0;
-  margin-bottom: 30px;
+  color: var(--text-secondary);
+  margin-bottom: 2.5rem;
   line-height: 1.6;
+  max-width: 600px;
+}
+
+/* --- BUTTONS --- */
+.cta-actions {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .cta-btn {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   padding: 14px 32px;
-  background: #ffffff;
-  color: #1e3a8a;
+  border-radius: 8px;
   font-size: 1rem;
   font-weight: 600;
   text-decoration: none;
-  border-radius: 50px;
-  transition: all 0.3s ease;
+  transition: all 0.3s cubic-bezier(0.645, 0.045, 0.355, 1);
 }
 
-.cta-btn:hover {
-  background: #1e3a8a;
-  color: #ffffff;
+/* Primary Button (Blue Glow) */
+.cta-btn.primary {
+  background: var(--accent-blue);
+  color: white;
+  box-shadow: 0 4px 20px rgba(77, 166, 255, 0.3);
+  border: none;
+}
+
+.cta-btn.primary:hover {
+  background: #3d8cdb;
   transform: translateY(-3px);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 10px 30px rgba(77, 166, 255, 0.4);
 }
 
-/* Responsive */
+/* Secondary Button (Outline) */
+.cta-btn.secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid #233554;
+}
+
+.cta-btn.secondary:hover {
+  border-color: var(--accent-teal);
+  color: var(--accent-teal);
+  background: rgba(100, 255, 218, 0.05);
+}
+
+/* --- RESPONSIVE --- */
 @media (max-width: 768px) {
+  .cta-wrapper {
+    padding: 3rem 1.5rem;
+  }
+
   .cta-content h2 {
     font-size: 1.8rem;
   }
 
-  .cta-content p {
-    font-size: 1rem;
+  .cta-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .cta-btn {
+    width: 100%;
+    justify-content: center;
   }
 }

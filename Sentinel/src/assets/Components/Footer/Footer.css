@@ -1,81 +1,235 @@
+/* --- VARIABLES --- */
+:root {
+  --bg-dark: #0a192f;
+  --bg-darker: #020c1b;
+  --text-primary: #e6f1ff;
+  --text-secondary: #8892b0;
+  --accent-teal: #64ffda;
+  --accent-blue: #4da6ff;
+}
+
+/* --- FOOTER BASE --- */
 .footer {
-  background: #0a192f; 
-  color: #ccd6f6;
-  padding: 3rem 1.5rem 1rem;
-  text-align: center;
-  font-family: "Poppins", sans-serif;
+  background-color: var(--bg-darker);
+  color: var(--text-secondary);
+  padding: 5rem 2rem 2rem;
+  font-size: 0.9rem;
+  border-top: 1px solid #112240;
 }
 
 .footer-container {
-  max-width: 1100px;
+  max-width: 1200px;
   margin: 0 auto;
+}
+
+/* --- TOP SECTION --- */
+.footer-top {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4rem;
+  margin-bottom: 4rem;
+}
+
+/* Brand Column */
+.footer-brand-section {
+  flex: 1;
+  min-width: 280px;
+  max-width: 350px;
+}
+
+.brand-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 1rem;
+  color: var(--text-primary);
+}
+
+.brand-logo h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.brand-desc {
+  line-height: 1.6;
+  margin-bottom: 1.5rem;
+}
+
+/* Social Icons */
+.social-links {
+  display: flex;
+  gap: 1rem;
+}
+
+.social-links a {
+  color: var(--text-secondary);
+  transition: all 0.3s ease;
+  width: 40px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+}
+
+.social-links a:hover {
+  color: var(--accent-teal);
+  background: rgba(100, 255, 218, 0.1);
+  border-color: var(--accent-teal);
+  transform: translateY(-3px);
+}
+
+/* --- LINKS GRID --- */
+.footer-links-grid {
+  flex: 2;
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
   gap: 2rem;
 }
 
-.footer-brand h2 {
-  font-size: 1.5rem;
-  color: #4da6ff;
+.link-column h4 {
+  color: var(--text-primary);
+  font-size: 1.1rem;
+  margin-bottom: 1.2rem;
+  font-weight: 600;
 }
 
-.footer-brand p {
-  font-size: 0.9rem;
-  color: #8892b0;
-  margin-top: 4px;
-}
-
-.footer-links {
+.link-column ul {
   list-style: none;
-  display: flex;
-  justify-content: center;
-  gap: 1.5rem;
   padding: 0;
   margin: 0;
 }
 
-.footer-links li a {
-  color: #ccd6f6;
+.link-column ul li {
+  margin-bottom: 0.8rem;
+}
+
+.link-column ul li a {
+  color: var(--text-secondary);
   text-decoration: none;
-  font-size: 0.95rem;
-  transition: color 0.3s ease;
+  transition: color 0.2s ease;
 }
 
-.footer-links li a:hover {
-  color: #4da6ff;
+.link-column ul li a:hover {
+  color: var(--accent-teal);
 }
 
-.footer-social {
+/* --- NEWSLETTER FORM FIX --- */
+.newsletter-col {
+  min-width: 280px;
+}
+
+.newsletter-form {
   display: flex;
+  margin-top: 1rem;
+  position: relative;
+  max-width: 320px;
+}
+
+.newsletter-form input {
+  width: 100%;
+  padding: 12px 50px 12px 15px; /* Right padding button ke liye */
+  background: #112240;
+  border: 1px solid #233554;
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.newsletter-form input::placeholder {
+  color: #8892b0;
+  opacity: 0.7;
+}
+
+.newsletter-form input:focus {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px rgba(77, 166, 255, 0.2);
+}
+
+/* Button Styling & Fixes */
+.newsletter-form button {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  bottom: 4px;
+  width: 40px;
+  background: var(--accent-blue);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;       /* Centering ke liye */
+  align-items: center; 
   justify-content: center;
+  transition: background 0.3s ease;
+  z-index: 10;         /* ✅ Ensure karein ye upar ho */
+}
+
+.newsletter-form button:hover {
+  background: #3d8cdb;
+}
+
+/* ✅ FORCE ICON COLOR & VISIBILITY */
+.newsletter-form button svg {
+  stroke: white !important;
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
+/* --- BOTTOM SECTION --- */
+.footer-bottom {
+  border-top: 1px solid #112240;
+  padding-top: 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 1rem;
 }
 
-.footer-social a {
-  color: #ccd6f6;
-  font-size: 1.2rem;
-  transition: color 0.3s ease;
+.legal-links {
+  display: flex;
+  gap: 2rem;
 }
 
-.footer-social a:hover {
-  color: #4da6ff;
-}
-
-.footer-bottom {
-  margin-top: 2rem;
+.legal-links a {
+  color: var(--text-secondary);
+  text-decoration: none;
   font-size: 0.85rem;
-  color: #8892b0;
-  border-top: 1px solid rgba(100, 100, 100, 0.2);
-  padding-top: 1rem;
+  transition: color 0.2s;
 }
 
-/* Responsive */
+.legal-links a:hover {
+  color: var(--accent-teal);
+}
+
+/* --- RESPONSIVE --- */
 @media (max-width: 768px) {
-  .footer-container {
-    gap: 1.5rem;
-  }
-  .footer-links {
+  .footer-top {
     flex-direction: column;
-    gap: 0.8rem;
+    gap: 3rem;
+  }
+  
+  .footer-links-grid {
+    flex-direction: column;
+    gap: 2.5rem;
+  }
+  
+  .footer-bottom {
+    flex-direction: column;
+    text-align: center;
+  }
+  
+  .legal-links {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 1.5rem;
   }
 }

@@ -1,206 +1,346 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import { api, threatIntel } from "../../../api"; 
+import useWebSocket from "react-use-websocket"; 
+import { ToastContainer, toast } from "react-toastify"; 
+import "react-toastify/dist/ReactToastify.css";
+import { AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { 
+  Shield, Activity, Lock, Unlock, FileText, Zap, BrainCircuit, 
+  Server, Users, Globe, LogOut, Menu, X, Download, 
+  Bell, UploadCloud, RefreshCw, Trash2, Eye, Sun, Moon, FileSpreadsheet, Search,
+  Cpu, HardDrive, User, ChevronDown
+} from "lucide-react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import "./Dashboard.css";
-import Alert from "../../Components/Alert/Alert";
-import {
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
 
-function Dashboard() {
-  const [files, setFiles] = useState([]);
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [logs, setLogs] = useState([]);
-  const [search, setSearch] = useState("");
-  const [alert, setAlert] = useState(null);
-
-  // Allowed formats
-  const allowedFormats = ["csv", "evtx", "log"];
-
-  // File upload handler
-const handleFileUpload = (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  const ext = file.name.split(".").pop().toLowerCase();
-
-  // Check format
-  if (!allowedFormats.includes(ext)) {
-    setAlert({
-      type: "error",
-      message: "❌ Only CSV, EVTX, or LOG files allowed!",
-    });
-    return;
-  }
-
-  // ✅ Check duplicate file (by name + size in bytes)
-  if (files.some((f) => f.name === file.name && f.rawSize === file.size)) {
-    setAlert({
-      type: "warning",
-      message: `⚠️ ${file.name} is already uploaded!`,
-    });
-    return;
-  }
-
-  // Add new file
-  const newFile = {
-    name: file.name,
-    type: ext,
-    size: (file.size / 1024).toFixed(2) + " KB",
-    rawSize: file.size, // 👈 add raw size for comparison
-  };
-  setFiles([...files, newFile]);
-  setSelectedFile(newFile);
-
-  setAlert({
-    type: "success",
-    message: `✅ ${file.name} uploaded successfully!`,
-  });
-
-  // Fake logs
-  const fakeLogs = [
-    { time: "10:00", level: "INFO", message: "System boot successful" },
-    { time: "10:05", level: "WARN", message: "Unusual login attempt detected" },
-    { time: "10:10", level: "ERROR", message: "Failed authentication from 192.168.1.10" },
-  ];
-  setLogs(fakeLogs);
+const formatTime = (timestamp) => {
+    if (!timestamp) return "N/A";
+    try {
+        const strTime = String(timestamp); 
+        return strTime.includes("T") ? strTime.split("T")[1].substring(0, 8) : strTime.substring(11, 19) || strTime;
+    } catch (e) { return "00:00:00"; }
 };
 
+const MetricCard = ({ title, value, icon: Icon, color }) => (
+  <div className="metric-card" style={{ '--accent-color': color }}>
+    <div className="metric-icon"><Icon size={22} /></div>
+    <div className="metric-info"><h3>{value || 0}</h3><p>{title}</p></div>
+    <div className="metric-glow" style={{ background: color }}></div>
+  </div>
+);
 
+const UserMenu = ({ user, onLogout }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const menuRef = useRef(null);
+    useEffect(() => {
+        const handleClickOutside = (event) => { if (menuRef.current && !menuRef.current.contains(event.target)) setIsOpen(false); };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+    return (
+        <div className="user-menu-container" ref={menuRef}>
+            <button className="user-btn" onClick={() => setIsOpen(!isOpen)}>
+                <div className="avatar-circle">{user?.username ? user.username.charAt(0).toUpperCase() : "U"}</div>
+                <div className="user-text-info"><span className="user-name-label">{user?.username || "User"}</span><span className="user-role-label">Admin</span></div>
+                <ChevronDown size={14} className={`chevron ${isOpen ? 'rotate' : ''}`} />
+            </button>
+            {isOpen && (
+                <div className="dropdown-menu">
+                    <div className="dropdown-header"><span className="dp-name">{user?.username}</span><span className="dp-email">{user?.email}</span></div>
+                    <div className="dropdown-divider"></div>
+                    <button className="dropdown-item"><User size={14}/> My Profile</button>
+                    <button className="dropdown-item danger" onClick={onLogout}><LogOut size={14}/> Sign Out</button>
+                </div>
+            )}
+        </div>
+    );
+};
 
-  // Filter logs by search
-  const filteredLogs = logs.filter(
-    (log) =>
-      log.message.toLowerCase().includes(search.toLowerCase()) ||
-      log.level.toLowerCase().includes(search.toLowerCase())
-  );
+function Dashboard() {
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [theme, setTheme] = useState(localStorage.getItem("theme") || "dark");
+  const [files, setFiles] = useState([]);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [logs, setLogs] = useState([]); 
+  const [search, setSearch] = useState("");
+  const [globalQuery, setGlobalQuery] = useState(""); // ✅ Global Search State
+  const [blockedList, setBlockedList] = useState([]); 
+  const [loading, setLoading] = useState(false);
+  const [viewFile, setViewFile] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
+  const navigate = useNavigate();
+  const WS_URL = "ws://127.0.0.1:8000/ws/alerts";
+  
+  useEffect(() => { document.documentElement.setAttribute("data-theme", theme); localStorage.setItem("theme", theme); }, [theme]);
 
-  // Chart sample data
+  useEffect(() => {
+      const fetchUserData = async () => {
+          const token = localStorage.getItem("token");
+          if (!token) { navigate("/login"); return; }
+          try {
+              const response = await fetch("http://127.0.0.1:8000/api/v1/auth/me", { headers: { "Authorization": `Bearer ${token}` } });
+              if (response.ok) setCurrentUser(await response.json());
+          } catch (e) { console.error(e); }
+      };
+      fetchUserData(); fetchHistory(); fetchBlockedList();
+  }, []);
+
+  const toggleTheme = () => setTheme(prev => prev === "dark" ? "light" : "dark");
+  const { lastJsonMessage } = useWebSocket(WS_URL, { shouldReconnect: () => true });
+
+  useEffect(() => {
+    if (lastJsonMessage) {
+        if (lastJsonMessage.type === "MITIGATION_SUCCESS") {
+            setLogs(prev => prev.map(log => log.ip === lastJsonMessage.ip ? { ...log, status: "mitigated" } : log));
+            return;
+        }
+        if (lastJsonMessage.severity && !lastJsonMessage.type) {
+            setLogs(prev => {
+                const exists = prev.find(l => l.ip === lastJsonMessage.source_ip && l.message === lastJsonMessage.title);
+                if (exists) return prev; 
+                return [{
+                    id: Date.now(),
+                    time: lastJsonMessage.timestamp,
+                    level: (lastJsonMessage.severity || "INFO").toUpperCase(),
+                    message: lastJsonMessage.title,
+                    ip: lastJsonMessage.source_ip,
+                    engine: lastJsonMessage.engine_source,
+                    status: "active",
+                    occurrences: 1
+                }, ...prev];
+            });
+            if(lastJsonMessage.severity === "CRITICAL") toast.error(`🚨 ${lastJsonMessage.title}`);
+        }
+    }
+  }, [lastJsonMessage]);
+
+  const fetchFileDetails = async (analysisId) => {
+    try {
+        const token = localStorage.getItem("token");
+        const res = await fetch(`http://127.0.0.1:8000/api/v1/upload/results/${analysisId}`, { headers: { "Authorization": `Bearer ${token}` }});
+        if(res.ok) setSelectedFile(await res.json());
+    } catch(e) {}
+  };
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      const data = await api.getAnalyses();
+      setFiles(Array.isArray(data) ? data.map(f => ({ ...f, name: f.filename })) : []);
+    } catch (err) {}
+  }, []);
+
+  const fetchBlockedList = async () => {
+    try {
+      const list = await threatIntel.getBlockedList();
+      setBlockedList(Array.isArray(list) ? list.map(i => i.ip) : []);
+    } catch (e) {}
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setLoading(true);
+    try { await api.uploadLog(file); await fetchHistory(); toast.success("Uploaded!"); } 
+    catch (err) { toast.error("Failed"); } finally { setLoading(false); }
+  };
+
+  const handleBan = async (ip, isBanned) => {
+    try {
+        isBanned ? await threatIntel.revokeIP(ip) : await threatIntel.mitigateIP(ip, "Manual Ops");
+        setBlockedList(prev => isBanned ? prev.filter(b => b !== ip) : [...prev, ip]);
+    } catch (e) { toast.error("Action Failed"); }
+  };
+
+  const handleDelete = async (analysisId) => {
+    if(!window.confirm("Delete?")) return;
+    try {
+        const token = localStorage.getItem("token");
+        await fetch(`http://127.0.0.1:8000/api/v1/upload/results/${analysisId}`, { method: "DELETE", headers: { "Authorization": `Bearer ${token}` }});
+        setFiles(prev => prev.filter(f => (f.analysisId || f._id) !== analysisId));
+    } catch (e) {}
+  };
+
+  const handleLogout = () => { localStorage.clear(); navigate("/"); };
+
+  const handleDownloadReport = () => {
+    const dataToReport = logs.length > 0 ? logs : (selectedFile?.findings || []);
+    if (dataToReport.length === 0) { toast.error("No data."); return; }
+    const doc = new jsPDF();
+    doc.setFillColor(15, 23, 42); doc.rect(0, 0, 210, 45, "F");
+    doc.setTextColor(255); doc.setFontSize(24); doc.text("WarSOC", 14, 25);
+    doc.setFontSize(10); doc.text("THREAT REPORT", 14, 32); doc.text(`Date: ${new Date().toLocaleString()}`, 195, 20, { align: "right" });
+    const tableData = dataToReport.map(l => [
+        formatTime(l.time || l.timestamp), l.occurrences ? `x${l.occurrences}` : "x1", l.level || l.severity, l.message || l.title, l.engine || l.engine_source, l.ip || l.source_ip
+    ]);
+    autoTable(doc, { startY: 60, head: [["Time", "Count", "Sev", "Alert", "Engine", "IP"]], body: tableData, theme: 'grid', headStyles: { fillColor: [30, 41, 59] } });
+    doc.save(`WarSOC_Report_${Date.now()}.pdf`);
+  };
+
+  // ✅ SMART SEARCH FUNCTION (Yeh hai wo function jo search karega)
+const handleGlobalSearch = async (e) => {
+    if (e.key === 'Enter') {
+        const query = globalQuery.trim();
+        if (!query) return;
+        
+        setLoading(true);
+        try {
+            const token = localStorage.getItem("token");
+            // ✅ FIX: Added encodeURIComponent to handle spaces and special chars
+            const res = await fetch(`http://127.0.0.1:8000/api/v1/data/search?q=${encodeURIComponent(query)}`, {
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            
+            if (res.ok) {
+                const data = await res.json();
+                if (data.results && data.results.length > 0) {
+                    setLogs(data.results.map((f, i) => ({
+                        id: i,
+                        time: f.timestamp,
+                        level: (f.severity || "INFO").toUpperCase(),
+                        message: f.message || f.title,
+                        ip: f.source_ip || f.ip || "N/A",
+                        engine: f.engine_source || "Stateless",
+                        status: f.status || "active",
+                        occurrences: f.occurrences || 1
+                    })));
+                    toast.success(`Found ${data.count} matches for "${query}"`);
+                } else {
+                    toast.info(`No matching logs found for "${query}" in global database.`);
+                }
+            }
+        } catch (err) {
+            toast.error("Connection Error with Backend.");
+        } finally {
+            setLoading(false);
+        }
+    }
+  };
+
+  useEffect(() => {
+    if (selectedFile?.findings) {
+        setLogs(selectedFile.findings.map((f, i) => ({
+            id: i, time: f.timestamp, level: (f.severity || "INFO").toUpperCase(),
+            message: f.title || f.message || "Unknown", ip: f.source_ip || f.ip || "N/A",
+            engine: f.engine_source || "Stateless", status: f.status || "active",
+            occurrences: f.occurrences || 1
+        })));
+    }
+  }, [selectedFile]);
+
+  const activeThreatsCount = logs.filter(log => log.status !== 'mitigated' && !blockedList.includes(log.ip)).length;
   const chartData = [
-    { name: "Events", value: logs.length },
-    { name: "Errors", value: logs.filter((l) => l.level === "ERROR").length },
-    { name: "Warnings", value: logs.filter((l) => l.level === "WARN").length },
+    { name: "Low", value: logs.filter(l => l.level === "LOW").length },
+    { name: "Med", value: logs.filter(l => l.level === "MEDIUM").length },
+    { name: "High", value: logs.filter(l => l.level === "HIGH").length },
+    { name: "Crit", value: logs.filter(l => ["CRITICAL", "ALERT"].includes(l.level)).length },
   ];
-  const COLORS = ["#4da6ff", "#ff4d4d", "#ffc107"];
 
   return (
-    <div className="dashboard">
-      {/* 🔔 Alert Box */}
-      {alert && (
-        <Alert
-          type={alert.type}
-          message={alert.message}
-          onClose={() => setAlert(null)}
-        />
-      )}
-
-      {/* 📊 Stats Section */}
-      <div className="stats">
-        <div className="card">
-          <h3>{logs.length}</h3>
-          <p>Total Events</p>
-        </div>
-        <div className="card">
-          <h3>{logs.filter((l) => l.level === "ERROR").length}</h3>
-          <p>Errors</p>
-        </div>
-        <div className="card">
-          <h3>{logs.filter((l) => l.level === "WARN").length}</h3>
-          <p>Warnings</p>
-        </div>
-        <div className="card">
-          <h3>{files.length}</h3>
-          <p>Files Uploaded</p>
-        </div>
-      </div>
-
-      {/* 📂 File Upload */}
-      <div className="upload-box">
-        <h2>Upload Security Data</h2>
-        <input type="file" onChange={handleFileUpload} />
-        <p className="upload-hint">Allowed: CSV, EVTX, LOG</p>
-        <div className="file-list">
-          {files.map((f, i) => (
-            <div
-              key={i}
-              className={`file-item ${selectedFile?.name === f.name ? "active" : ""}`}
-              onClick={() => setSelectedFile(f)}
-            >
-              📄 {f.name} ({f.size})
+    <div className="siem-layout" data-theme={theme}>
+      <ToastContainer position="bottom-right" theme={theme === 'dark' ? "dark" : "light"} />
+      <aside className={`siem-sidebar ${isMobileMenuOpen ? 'mobile-open' : ''}`}>
+        <div className="logo-container"><div className="logo-box"><Shield size={24} /></div><h2>WarSOC</h2></div>
+        <nav className="nav-links">
+            <button className={activeTab === 'dashboard' ? 'active' : ''} onClick={() => setActiveTab('dashboard')}><Activity size={18}/> Dashboard</button>
+            <button className={activeTab === 'network' ? 'active' : ''} onClick={() => setActiveTab('network')}><Globe size={18}/> Network Map</button>
+        </nav>
+      </aside>
+      <main className="siem-main">
+        <header className="siem-header">
+            <button className="menu-toggle" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}><Menu size={24}/></button>
+            
+            {/* ✅ SEARCH BAR (Updated to use handleGlobalSearch) */}
+            <div className="search-wrapper">
+                <Search size={16} className="search-icon"/>
+                <input 
+                    type="text" 
+                    className="global-search" 
+                    placeholder="Search (e.g. 'faield lgoin')..." 
+                    value={globalQuery}
+                    onChange={(e) => setGlobalQuery(e.target.value)}
+                    onKeyDown={handleGlobalSearch} // Enter dabane par ye function chalega
+                />
             </div>
-          ))}
+
+            <div className="header-actions">
+                <button onClick={toggleTheme} className="icon-btn theme-toggle">{theme === 'dark' ? <Moon size={18}/> : <Sun size={18}/>}</button>
+                <div className="live-pill"><div className="pulse"></div> LIVE</div>
+                <div className="divider-v"></div>
+                <UserMenu user={currentUser} onLogout={() => setShowLogoutModal(true)} />
+            </div>
+        </header>
+        <div className="content-scrollable">
+            <div className="dashboard-container">
+                {activeTab === 'dashboard' && (
+                    <>
+                        <div className="metrics-grid">
+                            <MetricCard title="Active Threats" value={activeThreatsCount} icon={Shield} color="#ef4444" />
+                            <MetricCard title="Behavioral" value={logs.filter(l => l.engine === "Stateful").length} icon={BrainCircuit} color="#f59e0b" />
+                            <MetricCard title="Signature" value={logs.filter(l => l.engine === "Stateless").length} icon={Zap} color="#3b82f6" />
+                            <MetricCard title="Active Bans" value={blockedList.length} icon={Lock} color="#10b981" />
+                        </div>
+                        <div className="chart-section-full">
+                            <div className="chart-box"><h4>Threat Volume</h4><ResponsiveContainer width="100%" height={200}><AreaChart data={chartData}><XAxis dataKey="name" stroke="#64748b" fontSize={12}/><Tooltip contentStyle={{background:'#1e293b',border:'none'}}/ ><Area type="monotone" dataKey="value" stroke="#3b82f6" fill="rgba(59, 130, 246, 0.2)" /></AreaChart></ResponsiveContainer></div>
+                            <div className="chart-box"><h4>Severity Mix</h4><ResponsiveContainer width="100%" height={200}><PieChart><Pie data={chartData} dataKey="value" innerRadius={60} outerRadius={80} paddingAngle={5}><Cell fill="#3b82f6"/><Cell fill="#ef4444"/><Cell fill="#f59e0b"/><Cell fill="#10b981"/></Pie><Tooltip contentStyle={{background:'#1e293b',border:'none'}}/></PieChart></ResponsiveContainer></div>
+                        </div>
+                        <div className="bottom-split-grid">
+                            <div className="logs-table-card">
+                                <div className="table-header">
+                                    <div className="th-left"><FileText size={16}/> <span>Live Inspection</span></div>
+                                    <div className="th-right"><input type="text" placeholder="Filter current view..." onChange={(e) => setSearch(e.target.value)} /><button className="btn-primary" onClick={handleDownloadReport}><Download size={14}/> Report</button></div>
+                                </div>
+                                <div className="table-body">
+                                    {logs.filter(l => (l.message || "").toLowerCase().includes(search.toLowerCase())).map((log, i) => (
+                                        <div key={i} className={`tr ${log.status === 'mitigated' ? 'dimmed' : ''}`}>
+                                            <div className="td time">{formatTime(log.time)}</div>
+                                            <div className="td sev"><span className={`badge ${log.level}`}>{log.level}</span></div>
+                                            <div className="td msg">
+                                                <span className={`engine-badge ${log.engine}`}>{log.engine || "Stateless"}</span>
+                                                <span className="msg-text">{log.message}</span>
+                                                {log.occurrences > 1 && (<span className="count-badge">x{log.occurrences}</span>)}
+                                                <span className="ip-tag">{log.ip}</span>
+                                            </div>
+                                            <div className="td action">
+                                                {log.ip !== "N/A" && (
+                                                    <button className={`act-btn ${blockedList.includes(log.ip) ? 'unblock' : 'block'}`} onClick={() => handleBan(log.ip, blockedList.includes(log.ip))}>
+                                                        {blockedList.includes(log.ip) ? "Unblock" : "Block"}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="history-panel">
+                                <div className="panel-header"><h4>Data Sources</h4><button onClick={fetchHistory} className="refresh-btn"><RefreshCw size={14}/></button></div>
+                                <div className="upload-area">
+                                    {loading ? <div className="loader"></div> : <UploadCloud size={32} className="up-icon"/>}
+                                    <span>Drop logs here</span>
+                                    <input type="file" onChange={handleFileUpload} disabled={loading} />
+                                </div>
+                                <div className="history-list">
+                                    {files.map((f, i) => (
+                                        <div key={i} className={`history-item ${selectedFile?._id === f._id ? 'active' : ''}`} onClick={() => fetchFileDetails(f.analysisId || f._id)}>
+                                            <FileText size={16} className="file-icon"/>
+                                            <div className="file-info"><span className="fname">{(f.name || "").substring(0,22)}...</span><span className="fdate">{new Date(f.uploaded_at).toLocaleDateString()}</span></div>
+                                            <button className="del-btn" onClick={(e) => { e.stopPropagation(); handleDelete(f.analysisId || f._id); }}><Trash2 size={14}/></button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </>
+                )}
+                {activeTab === 'network' && (<div className="dashboard-grid" style={{gridTemplateColumns:'1fr'}}></div>)}
+            </div>
         </div>
-      </div>
-
-      {/* 📈 Charts */}
-      <div className="charts">
-        <ResponsiveContainer width="30%" height={250}>
-          <BarChart data={chartData}>
-            <XAxis dataKey="name" />
-            <YAxis />
-            <Tooltip />
-            <Bar dataKey="value" fill="#4da6ff" />
-          </BarChart>
-        </ResponsiveContainer>
-
-        <ResponsiveContainer width="30%" height={250}>
-          <LineChart data={chartData}>
-            <XAxis dataKey="name" />
-            <YAxis />
-            <Tooltip />
-            <Line type="monotone" dataKey="value" stroke="#ff4d4d" />
-          </LineChart>
-        </ResponsiveContainer>
-
-        <ResponsiveContainer width="30%" height={250}>
-          <PieChart>
-            <Pie
-              data={chartData}
-              dataKey="value"
-              cx="50%"
-              cy="50%"
-              outerRadius={80}
-              label
-            >
-              {chartData.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={COLORS[index]} />
-              ))}
-            </Pie>
-            <Tooltip />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* 📜 Logs Viewer */}
-      {selectedFile && (
-        <div className="logs">
-          <h2>Logs from {selectedFile.name}</h2>
-          <input
-            type="text"
-            placeholder="Search logs..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          <div className="log-box">
-            {filteredLogs.map((log, i) => (
-              <div key={i} className={`log-item ${log.level.toLowerCase()}`}>
-                <span>[{log.time}]</span>
-                <strong>{log.level}</strong> - {log.message}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      </main>
+      {showLogoutModal && <div className="modal-overlay"><div className="modal-card confirm-box"><h3>Sign Out?</h3><div className="modal-btns"><button className="btn-cancel" onClick={() => setShowLogoutModal(false)}>Cancel</button><button className="btn-danger" onClick={handleLogout}>Logout</button></div></div></div>}
+      {viewFile && (<div className="modal-overlay" style={{zIndex:10000}} onClick={() => setViewFile(null)}><div className="modal-card details-modal" onClick={e => e.stopPropagation()}><div className="modal-header"><h3 className="modal-filename">{viewFile.filename}</h3><button onClick={() => setViewFile(null)} className="close-btn"><X size={20}/></button></div><div className="modal-body scroll-custom"><div className="findings-list">{viewFile.findings?.map((f,i)=>(<div key={i} className="finding-card"><div className="finding-content"><div className="finding-top"><span className={`badge ${f.severity.toLowerCase()}`}>{f.severity}</span></div><h5 className="finding-title">{f.title || f.type}</h5><p className="finding-summary">{f.description || f.message}</p><div className="meta-item"><span>IP: {f.source_ip || f.ip}</span></div></div></div>))}</div></div></div></div>)}
     </div>
   );
 }
-
 export default Dashboard;

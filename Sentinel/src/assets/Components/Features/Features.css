@@ -1,56 +1,170 @@
-.features {
-  /* padding: 1rem 7rem; */
-  background-color: #10152A; /* dark bg */
-  color: #fff;
+/* --- VARIABLES --- */
+:root {
+  --bg-dark: #0a192f;
+  --card-bg: #112240;
+  --text-primary: #e6f1ff;
+  --text-secondary: #8892b0;
+  --accent-teal: #64ffda;
+  --accent-blue: #4da6ff;
+  --hover-bg: rgba(77, 166, 255, 0.05);
+}
+
+/* --- SECTION LAYOUT --- */
+.features-section {
+  position: relative;
+  padding: 6rem 2rem;
+  background-color: var(--bg-dark);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+/* Subtle Glow Background */
+.feature-glow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 80%;
+  height: 80%;
+  background: radial-gradient(circle, rgba(77, 166, 255, 0.05) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.features-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
+/* --- HEADER --- */
+.section-header {
   text-align: center;
-  /* background-color: #4da6ff; */
+  margin-bottom: 4rem;
+  max-width: 700px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
-.features h2 {
-  font-size: 2.5rem;
+.section-badge {
+  display: inline-block;
+  color: var(--accent-teal);
+  font-size: 0.85rem;
   font-weight: 600;
-  margin-bottom: 3rem;
-  color: #fff;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 1rem;
+  background: rgba(100, 255, 218, 0.1);
+  padding: 4px 12px;
+  border-radius: 20px;
+  border: 1px solid rgba(100, 255, 218, 0.2);
 }
 
-/* Grid Layout */
+.section-header h2 {
+  font-size: 2.5rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  color: #e6f1ff;
+}
+
+.highlight-text {
+  color: var(--accent-blue);
+  position: relative;
+  display: inline-block;
+}
+
+.highlight-text::after {
+  content: '';
+  position: absolute;
+  width: 100%;
+  height: 8px;
+  bottom: 2px;
+  left: 0;
+  background: rgba(77, 166, 255, 0.2);
+  z-index: -1;
+  border-radius: 4px;
+}
+
+.section-header p {
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+  line-height: 1.6;
+}
+
+/* --- GRID LAYOUT --- */
 .feature-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 2rem;
-  max-width: 1100px;
-  margin: 0 auto;
 }
 
-/* Card Style */
+/* --- FEATURE CARD --- */
 .feature-card {
-  background: #1a2240;
+  background: var(--card-bg);
+  border: 1px solid #233554;
   border-radius: 12px;
-  padding: 2rem 1.5rem;
-  transition: transform 0.3s ease, box-shadow 0.3s ease;
-  box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+  padding: 2.5rem 2rem;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
 }
 
+/* Hover Effects */
 .feature-card:hover {
   transform: translateY(-8px);
-  box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+  background: #152749; /* Thoda lighter navy */
+  border-color: var(--accent-blue);
+  box-shadow: 0 20px 30px -15px rgba(2, 12, 27, 0.7);
 }
 
-
-.icon {
-  color: #4da6ff;
-  margin-bottom: 1rem;
+/* Icon Styling */
+.icon-wrapper {
+  margin-bottom: 1.5rem;
+  padding: 12px;
+  background: rgba(77, 166, 255, 0.1);
+  border-radius: 12px;
+  color: var(--accent-blue);
+  transition: all 0.3s ease;
 }
 
-  .feature-card h3 {
+.feature-card:hover .icon-wrapper {
+  background: var(--accent-blue);
+  color: white;
+  transform: scale(1.1) rotate(5deg);
+}
+
+/* Card Text */
+.feature-card h3 {
   font-size: 1.3rem;
-  margin-bottom: 0.8rem;
-  color: #fff;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: #e6f1ff;
 }
-
 
 .feature-card p {
   font-size: 0.95rem;
-  color: #b0b8d1;
-  line-height: 1.6;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+/* --- RESPONSIVE --- */
+@media (max-width: 768px) {
+  .section-header h2 {
+    font-size: 2rem;
+  }
+  
+  .feature-grid {
+    grid-template-columns: 1fr;
+    padding: 0 1rem;
+  }
+  
+  .feature-card {
+    align-items: center;
+    text-align: center;
+  }
 }
