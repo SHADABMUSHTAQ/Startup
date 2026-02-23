@@ -31,7 +31,8 @@ const Navbar = () => {
   };
 
   useEffect(() => {
-    const handleScroll = () => setScrolled(window.scrollY > 20);
+    // ✅ FIX: 20 ki jagah 80px kar diya taake thoda scroll hone ke baad pill bane
+    const handleScroll = () => setScrolled(window.scrollY > 80);
     
     // Check User Data on Mount & Location Change
     const checkAuth = () => {
@@ -41,7 +42,6 @@ const Navbar = () => {
         if (storedUser && token && !isTokenExpired(token)) {
             setUser(JSON.parse(storedUser));
         } else {
-            // Agar token expired hai ya nahi hai, to state clear karo
             setUser(null);
         }
     };
@@ -50,7 +50,7 @@ const Navbar = () => {
 
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
-  }, [location]); // Location change hone par re-check karega
+  }, [location]); 
 
   useEffect(() => {
     const handleResize = () => { if (window.innerWidth > 992 && isOpen) setIsOpen(false); };
@@ -71,7 +71,6 @@ const Navbar = () => {
 
   const getInitials = (name) => name ? name.charAt(0).toUpperCase() : "U";
 
-  // 1. Dashboard par Navbar mat dikhao
   if (isDashboardPage) return null;
 
   return (
@@ -95,8 +94,10 @@ const Navbar = () => {
             <li><HashLink smooth to="/#about" onClick={close}>About</HashLink></li>
             <li><HashLink smooth to="/#features" onClick={close}>Features</HashLink></li>
             <li><HashLink smooth to="/#pricing" onClick={close}>Pricing</HashLink></li>
+            {/* ✅ Contact link yahan add kar diya gaya hai */}
+            <li><HashLink smooth to="/#Contact" onClick={close}>Contact</HashLink></li>
 
-            {/* MOBILE AUTH: Sirf tab dikhega agar Login Page par NAHI hain */}
+            {/* MOBILE AUTH */}
             <li className="navbar-mobile-auth">
                {user && !isLoginPage ? (
                  <>
@@ -111,7 +112,7 @@ const Navbar = () => {
 
           {/* DESKTOP AUTH */}
           <div className="navbar-desktop-auth">
-            {user && !isLoginPage ? ( // ✅ Strict Check: Agar Login page par hain to Avatar mat dikhao
+            {user && !isLoginPage ? ( 
               <div className="navbar-profile-container">
                 <div className="navbar-profile-trigger" onClick={() => setShowDropdown(!showDropdown)}>
                   <div className="navbar-avatar-circle">
@@ -136,7 +137,6 @@ const Navbar = () => {
                 </div>
               </div>
             ) : (
-              // Agar Login page par hain, to button bhi mat dikhao (cleaner look)
               !isLoginPage && (
                 <Link to="/login" className="navbar-btn-login">
                   Login

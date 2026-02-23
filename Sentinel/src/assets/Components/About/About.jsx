@@ -3,26 +3,28 @@ import { ArrowRight, CheckCircle } from "lucide-react";
 import "./About.css";
 
 const About = () => {
+  // ✅ UPDATED: Real features based on your project reality
   const points = [
-    "AI-Driven Threat Analysis",
-    "24/7 Real-Time Monitoring",
-    "Zero-Trust Architecture",
-    "Seamless Cloud Integration"
+    "NLP-Powered Log Analysis",      // AI ki jagah NLP
+    "Automated Windows Agent",       // Agent ka zikar
+    "Manual Log Upload & Audit",     // Manual feature ka zikar
+    "Real-Time Threat Alerting"      // 24/7 monitoring ka behtar version
   ];
 
   return (
     <section className="about-section" id="about">
       <div className="about-container">
         
-        {/* Left Side: Image with Cyber Frame */}
+        {/* Left Side: Modern Image */}
         <div className="about-image-wrapper">
-          <div className="img-frame"></div>
-          <img src="/hero-img.png" alt="WarSOC Dashboard Analysis" className="about-img" />
+          {/* Note: In React/Vite, usually you just use "/2 image.jpg" if it's in the public folder */}
+          <img src="/2 image.jpg" alt="WarSOC Cyber Defense Node" className="about-img" />
           
-          {/* Floating Badge */}
+          {/* ✅ UPDATED: Floating Badge for Startup Vibe */}
           <div className="experience-badge">
-            <span className="years">5+</span>
-            <span className="text">Years of<br/>Excellence</span>
+            {/* "years" class use kar rahe hain taake styling same rahe, par text change kar diya */}
+            <span className="years" style={{ fontSize: '1.8rem', letterSpacing: '1px' }}>NLP</span>
+            <span className="text">Powered<br/>Intelligence</span>
           </div>
         </div>
 
@@ -30,14 +32,17 @@ const About = () => {
         <div className="about-content">
           <div className="section-tag">About WarSOC</div>
           <h2>
-            Pioneering the Future of <br />
-            <span className="highlight">Cyber Defense</span>
+            Democratizing Security For  <span className="highlight">SMBs</span>
           </h2>
           
+          {/* ✅ UPDATED: Description reflecting NLP and Hybrid approach */}
           <p className="description">
-            We are not just a security tool; we are your digital shield. 
-            Born from the need for smarter, faster, and more reliable threat detection, 
-            WarSOC combines machine learning with human expertise to stop attacks before they happen.
+            WarSOC is a B2B SaaS platform redefining modern security operations.
+We combine powerful SIEM capabilities with compliance-ready SOC workflows.
+Our platform unifies monitoring, detection, and response in one system.
+We eliminate operational complexity while ensuring regulatory compliance.
+Built for efficiency, WarSOC cuts security costs without cutting protection.
+Enterprise-grade SOC security — accessible, scalable, and affordable.
           </p>
 
           <div className="points-grid">
@@ -50,7 +55,7 @@ const About = () => {
           </div>
 
           <a href="/about" className="about-btn">
-            More About Us <ArrowRight size={18} />
+            Discover Our Tech <ArrowRight size={18} />
           </a>
         </div>
 

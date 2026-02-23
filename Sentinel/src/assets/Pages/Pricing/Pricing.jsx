@@ -24,11 +24,11 @@ function Pricing() {
     {
       id: 1,
       name: "Starter",
-      price: billingCycle === "monthly" ? "0" : "0",
+      price: billingCycle === "monthly" ? "70" : "700",
       description: "Perfect for students and hobbyists.",
       features: [
         { name: "1 Project", included: true },
-        { name: "Community Support", included: true },
+        // { name: "Community Support", included: true },
         { name: "Basic Security Scan", included: true },
         { name: "Real-time Alerts", included: false },
         { name: "API Access", included: false },
@@ -37,7 +37,7 @@ function Pricing() {
     {
       id: 2,
       name: "Pro",
-      price: billingCycle === "monthly" ? "29" : "290",
+      price: billingCycle === "monthly" ? "159" : "1590",
       description: "For security professionals & teams.",
       isPopular: true, 
       features: [
@@ -51,7 +51,7 @@ function Pricing() {
     {
       id: 3,
       name: "Enterprise",
-      price: billingCycle === "monthly" ? "99" : "990",
+      price: billingCycle === "monthly" ? "350" : "3500",
       description: "For large scale organizations.",
       features: [
         { name: "Unlimited Projects", included: true },

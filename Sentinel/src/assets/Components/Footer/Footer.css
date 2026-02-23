@@ -35,7 +35,7 @@
 .footer-brand-section {
   flex: 1;
   min-width: 280px;
-  max-width: 350px;
+  max-width: 400px; /* Thoda bada kiya kyunki newsletter hat gaya */
 }
 
 .brand-logo {
@@ -85,11 +85,11 @@
 
 /* --- LINKS GRID --- */
 .footer-links-grid {
-  flex: 2;
+  flex: 1;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end; /* Links ko right side push kiya */
   flex-wrap: wrap;
-  gap: 2rem;
+  gap: 6rem; /* Gap badha diya 2 columns ke darmiyan */
 }
 
 .link-column h4 {
@@ -117,70 +117,6 @@
 
 .link-column ul li a:hover {
   color: var(--accent-teal);
-}
-
-/* --- NEWSLETTER FORM FIX --- */
-.newsletter-col {
-  min-width: 280px;
-}
-
-.newsletter-form {
-  display: flex;
-  margin-top: 1rem;
-  position: relative;
-  max-width: 320px;
-}
-
-.newsletter-form input {
-  width: 100%;
-  padding: 12px 50px 12px 15px; /* Right padding button ke liye */
-  background: #112240;
-  border: 1px solid #233554;
-  border-radius: 6px;
-  color: var(--text-primary);
-  font-size: 0.95rem;
-  outline: none;
-  transition: border-color 0.3s, box-shadow 0.3s;
-}
-
-.newsletter-form input::placeholder {
-  color: #8892b0;
-  opacity: 0.7;
-}
-
-.newsletter-form input:focus {
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 0 2px rgba(77, 166, 255, 0.2);
-}
-
-/* Button Styling & Fixes */
-.newsletter-form button {
-  position: absolute;
-  right: 4px;
-  top: 4px;
-  bottom: 4px;
-  width: 40px;
-  background: var(--accent-blue);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;       /* Centering ke liye */
-  align-items: center; 
-  justify-content: center;
-  transition: background 0.3s ease;
-  z-index: 10;         /* ✅ Ensure karein ye upar ho */
-}
-
-.newsletter-form button:hover {
-  background: #3d8cdb;
-}
-
-/* ✅ FORCE ICON COLOR & VISIBILITY */
-.newsletter-form button svg {
-  stroke: white !important;
-  width: 20px;
-  height: 20px;
-  display: block;
 }
 
 /* --- BOTTOM SECTION --- */
@@ -218,8 +154,8 @@
   }
   
   .footer-links-grid {
-    flex-direction: column;
-    gap: 2.5rem;
+    justify-content: flex-start; /* Mobile par wapas left align */
+    gap: 3rem;
   }
   
   .footer-bottom {

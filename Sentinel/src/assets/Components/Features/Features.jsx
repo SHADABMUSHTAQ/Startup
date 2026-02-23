@@ -1,8 +1,10 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { ShieldCheck, Activity, Zap, Lock, Database, Globe } from "lucide-react"; 
 import "./Features.css";
 
 function Features() {
+  const sectionRef = useRef(null);
+
   const features = [
     {
       id: 1,
@@ -42,13 +44,42 @@ function Features() {
     },
   ];
 
+  // SCROLL ANIMATION LOGIC
+// SCROLL ANIMATION LOGIC
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            // Jab screen par aaye to animate karo
+            entry.target.classList.add("visible");
+          } else {
+            // ✅ THE FIX: Jab screen se bahar jaye to class hata do!
+            // Is se har baar scroll karne par animation dobara chalegi.
+            entry.target.classList.remove("visible");
+          }
+        });
+      },
+      { threshold: 0.15 } 
+    );
+
+    const elements = document.querySelectorAll(".reveal-on-scroll");
+    elements.forEach((el) => observer.observe(el));
+
+    return () => {
+      elements.forEach((el) => observer.unobserve(el));
+    };
+  }, []);
+
   return (
-    <section className="features-section" id="features">
+    <section className="features-section" id="features" ref={sectionRef}>
       {/* Background Decor */}
       <div className="feature-glow"></div>
 
       <div className="features-container">
-        <div className="section-header">
+        
+        {/* HEADER ANIMATION */}
+        <div className="section-header reveal-on-scroll">
           <span className="section-badge">Why Choose WarSOC?</span>
           <h2>
             Enterprise-Grade <span className="highlight-text">Security</span>
@@ -58,15 +89,21 @@ function Features() {
           </p>
         </div>
 
+        {/* CARDS ANIMATION (Staggered Delay) */}
         <div className="feature-grid">
-          {features.map((feature) => (
-            <div key={feature.id} className="feature-card">
+          {features.map((feature, index) => (
+            <div 
+              key={feature.id} 
+              className="feature-card reveal-on-scroll"
+              style={{ transitionDelay: `${index * 0.1}s` }} // Har card 0.1s ke gap se aayega
+            >
               <div className="icon-wrapper">{feature.icon}</div>
               <h3>{feature.title}</h3>
               <p>{feature.description}</p>
             </div>
           ))}
         </div>
+
       </div>
     </section>
   );

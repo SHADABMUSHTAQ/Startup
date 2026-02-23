@@ -20,7 +20,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 5rem;
+  gap: 6rem; /* Gap thoda increase kiya saaf look ke liye */
   max-width: 1200px;
   margin: 0 auto;
 }
@@ -30,61 +30,44 @@
   flex: 1;
   position: relative;
   min-width: 350px;
+  max-width: 550px; /* Max width add ki taake image control mein rahe */
 }
 
 /* Main Image */
 .about-img {
   width: 100%;
   height: auto;
-  border-radius: 4px;
+  border-radius: 12px; /* Smooth corners */
   position: relative;
   z-index: 2;
-  filter: grayscale(20%) contrast(1.1);
-  transition: all 0.3s ease;
-  box-shadow: 0 20px 40px -10px rgba(2, 12, 27, 0.7);
+  box-shadow: 0 20px 40px -10px rgba(2, 12, 27, 0.8); /* Depth shadow */
+  transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
 .about-img:hover {
-  filter: grayscale(0%);
   transform: translateY(-5px);
-}
-
-/* Cyber Frame (Border Effect) */
-.img-frame {
-  position: absolute;
-  top: 20px;
-  left: 20px;
-  width: 100%;
-  height: 100%;
-  border: 2px solid var(--accent-teal);
-  border-radius: 4px;
-  z-index: 1;
-  transition: transform 0.3s ease;
-}
-
-.about-image-wrapper:hover .img-frame {
-  transform: translate(10px, 10px);
 }
 
 /* Floating Badge */
 .experience-badge {
   position: absolute;
-  bottom: -30px;
+  bottom: -20px;
   right: -20px;
   background: #112240;
-  border: 1px solid var(--accent-blue);
-  padding: 1.5rem;
+  border: 1px solid rgba(77, 166, 255, 0.3); /* Subtle blue border */
+  padding: 1.2rem;
   border-radius: 8px;
   z-index: 3;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.6);
   display: flex;
   align-items: center;
   gap: 15px;
   min-width: 180px;
+  backdrop-filter: blur(10px);
 }
 
 .years {
-  font-size: 2.5rem;
+  font-size: 2.2rem;
   font-weight: 800;
   color: var(--accent-blue);
   line-height: 1;
@@ -105,12 +88,13 @@
 .section-tag {
   color: var(--accent-teal);
   font-family: monospace;
-  font-size: 1rem;
-  margin-bottom: 1rem;
+  font-size: 0.95rem;
+  margin-bottom: 1.2rem;
+  letter-spacing: 1px;
 }
 
 .about-content h2 {
-  font-size: 2.5rem;
+  font-size: 2.6rem;
   font-weight: 700;
   line-height: 1.2;
   margin-bottom: 1.5rem;
@@ -123,22 +107,24 @@
   display: inline-block;
 }
 
+/* Thick blue line theek kardi */
 .highlight::after {
   content: "";
   position: absolute;
   width: 100%;
-  height: 8px;
-  bottom: 5px;
+  height: 4px; /* Line patli kar di */
+  bottom: 6px;
   left: 0;
-  background: rgba(77, 166, 255, 0.2);
+  background: rgba(77, 166, 255, 0.4);
   z-index: -1;
+  border-radius: 2px;
 }
 
 .description {
   color: var(--text-secondary);
   font-size: 1.05rem;
   line-height: 1.7;
-  margin-bottom: 2rem;
+  margin-bottom: 2.5rem;
 }
 
 /* Checklist Grid */
@@ -152,7 +138,7 @@
 .point-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   color: var(--text-primary);
   font-weight: 500;
   font-size: 0.95rem;
@@ -168,11 +154,11 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 32px;
+  padding: 12px 28px;
   background: transparent;
   color: var(--accent-teal);
-  border: 1px solid var(--accent-teal);
-  border-radius: 4px;
+  border: 1px solid rgba(100, 255, 218, 0.5); /* Lighter border */
+  border-radius: 6px;
   text-decoration: none;
   font-weight: 600;
   transition: all 0.3s ease;
@@ -180,6 +166,7 @@
 
 .about-btn:hover {
   background: rgba(100, 255, 218, 0.1);
+  border-color: var(--accent-teal);
   transform: translateX(5px);
 }
 
@@ -195,10 +182,6 @@
     max-width: 500px;
     margin: 0 auto;
   }
-  
-  .img-frame {
-    top: 15px; left: 15px;
-  }
 }
 
 @media (max-width: 768px) {
@@ -212,7 +195,7 @@
   }
   
   .experience-badge {
-    bottom: -20px;
+    bottom: -15px;
     right: 0;
     padding: 1rem;
   }
