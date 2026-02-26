@@ -1,0 +1,135 @@
+/* Container */
+.network-container {
+    background: #0f172a;
+    border-radius: 12px;
+    padding: 20px;
+    height: 600px;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid #1e293b;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Background Grid (Cyber Effect) */
+.network-grid-bg {
+    position: absolute;
+    width: 200%;
+    height: 200%;
+    background-image: 
+        linear-gradient(rgba(30, 41, 59, 0.5) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(30, 41, 59, 0.5) 1px, transparent 1px);
+    background-size: 40px 40px;
+    opacity: 0.3;
+    animation: gridMove 20s linear infinite;
+    z-index: 0;
+}
+
+@keyframes gridMove {
+    0% { transform: translate(0, 0); }
+    100% { transform: translate(-40px, -40px); }
+}
+
+/* SVG Lines Layer */
+.connections-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.connection-line {
+    stroke: #334155;
+    stroke-width: 1;
+    opacity: 0.6;
+}
+
+.connection-line.critical { stroke: #ef4444; stroke-width: 2; opacity: 0.8; }
+.connection-line.blocked { stroke: #10b981; stroke-dasharray: 5,5; opacity: 0.4; }
+
+/* Nodes */
+.node {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    cursor: pointer;
+    z-index: 2;
+    transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+/* Central Server Node */
+.node.server .icon-box {
+    width: 60px;
+    height: 60px;
+    background: #3b82f6;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 30px rgba(59, 130, 246, 0.6);
+    border: 3px solid #1d4ed8;
+    z-index: 10;
+}
+
+/* Threat Nodes */
+.node.threat .icon-box {
+    width: 40px;
+    height: 40px;
+    background: #1e293b;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid #ef4444;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+    animation: pulseRed 2s infinite;
+}
+
+.node.threat.blocked .icon-box {
+    border-color: #10b981;
+    box-shadow: none;
+    animation: none;
+    opacity: 0.7;
+}
+
+@keyframes pulseRed {
+    0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+    70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+/* Labels */
+.node-label {
+    margin-top: 8px;
+    background: rgba(15, 23, 42, 0.9);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    color: #cbd5e1;
+    font-family: monospace;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+/* Tooltip (Hover Details) */
+.map-tooltip {
+    position: absolute;
+    background: rgba(0, 0, 0, 0.9);
+    border: 1px solid #334155;
+    padding: 10px;
+    border-radius: 8px;
+    color: white;
+    z-index: 20;
+    min-width: 150px;
+    pointer-events: none;
+}
+
+.tooltip-header { font-weight: bold; color: #f8fafc; border-bottom: 1px solid #334155; padding-bottom: 5px; margin-bottom: 5px; }
+.tooltip-row { display: flex; justify-content: space-between; font-size: 0.8rem; color: #94a3b8; margin-bottom: 3px; }
+.tooltip-val { color: #e2e8f0; }

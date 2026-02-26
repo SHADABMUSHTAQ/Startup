@@ -1,0 +1,171 @@
+/* --- VARIABLES --- */
+:root {
+  --bg-dark: #0a192f;
+  --bg-darker: #020c1b;
+  --text-primary: #e6f1ff;
+  --text-secondary: #8892b0;
+  --accent-teal: #64ffda;
+  --accent-blue: #4da6ff;
+}
+
+/* --- FOOTER BASE --- */
+.footer {
+  background-color: var(--bg-darker);
+  color: var(--text-secondary);
+  padding: 5rem 2rem 2rem;
+  font-size: 0.9rem;
+  border-top: 1px solid #112240;
+}
+
+.footer-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* --- TOP SECTION --- */
+.footer-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4rem;
+  margin-bottom: 4rem;
+}
+
+/* Brand Column */
+.footer-brand-section {
+  flex: 1;
+  min-width: 280px;
+  max-width: 400px; /* Thoda bada kiya kyunki newsletter hat gaya */
+}
+
+.brand-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 1rem;
+  color: var(--text-primary);
+}
+
+.brand-logo h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.brand-desc {
+  line-height: 1.6;
+  margin-bottom: 1.5rem;
+}
+
+/* Social Icons */
+.social-links {
+  display: flex;
+  gap: 1rem;
+}
+
+.social-links a {
+  color: var(--text-secondary);
+  transition: all 0.3s ease;
+  width: 40px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+}
+
+.social-links a:hover {
+  color: var(--accent-teal);
+  background: rgba(100, 255, 218, 0.1);
+  border-color: var(--accent-teal);
+  transform: translateY(-3px);
+}
+
+/* --- LINKS GRID --- */
+.footer-links-grid {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end; /* Links ko right side push kiya */
+  flex-wrap: wrap;
+  gap: 6rem; /* Gap badha diya 2 columns ke darmiyan */
+}
+
+.link-column h4 {
+  color: var(--text-primary);
+  font-size: 1.1rem;
+  margin-bottom: 1.2rem;
+  font-weight: 600;
+}
+
+.link-column ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.link-column ul li {
+  margin-bottom: 0.8rem;
+}
+
+.link-column ul li a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.link-column ul li a:hover {
+  color: var(--accent-teal);
+}
+
+/* --- BOTTOM SECTION --- */
+.footer-bottom {
+  border-top: 1px solid #112240;
+  padding-top: 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.legal-links {
+  display: flex;
+  gap: 2rem;
+}
+
+.legal-links a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.85rem;
+  transition: color 0.2s;
+}
+
+.legal-links a:hover {
+  color: var(--accent-teal);
+}
+
+/* --- RESPONSIVE --- */
+@media (max-width: 768px) {
+  .footer-top {
+    flex-direction: column;
+    gap: 3rem;
+  }
+  
+  .footer-links-grid {
+    justify-content: flex-start; /* Mobile par wapas left align */
+    gap: 3rem;
+  }
+  
+  .footer-bottom {
+    flex-direction: column;
+    text-align: center;
+  }
+  
+  .legal-links {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 1.5rem;
+  }
+}
