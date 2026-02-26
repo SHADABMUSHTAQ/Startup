@@ -1,0 +1,3 @@
+Timestamp,Severity,Message,Source IP,Status
+2026-02-05T15:54:31.671547,CRITICAL,"Detected WannaCry signature pattern",192.168.1.91,Active
+2026-02-05T15:54:31.672367,HIGH,"Multiple failed login attempts",45.33.22.28,Active
