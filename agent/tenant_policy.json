@@ -1,6 +1,6 @@
 {
   "agent_settings": {
-    "tenant_id": "WARSOC_6E0E7F87",
+    "tenant_id": "WARSOC_99E662CC",
     "backend_url": "http://127.0.0.1:8000",
     "agent_secret": "warsoc_enterprise_agent_key_2026",
     "heartbeat_interval_seconds": 5,
