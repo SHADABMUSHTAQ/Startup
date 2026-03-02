@@ -7,13 +7,11 @@ import socket
 import subprocess
 import os
 import sys
-import json
 import threading
 from datetime import datetime
-# 🔐 ENV COMPLIANCE: Import decouple or python-dotenv if you use them, 
-# otherwise use standard os.environ
+
+# 🔐 ENV COMPLIANCE
 from dotenv import load_dotenv, find_dotenv
-import os
 
 # ==========================================
 # 1. ENTERPRISE CONFIG & STATE
@@ -29,7 +27,9 @@ if not TENANT_ID:
     sys.exit(1)
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-AGENT_SECRET = os.getenv("AGENT_SECRET", "warsoc_enterprise_agent_key_2026")
+
+# 🚨 CRITICAL PIPELINE FIX: Matches the exact key in your .env and auth.py
+AGENT_SECRET = os.getenv("AGENT_MASTER_SECRET", "warsoc_enterprise_agent_key_2026")
 
 WHITELIST_IPS = set(["127.0.0.1", "localhost", "::1", "0.0.0.0"])
 POLL_INTERVAL = 1  
@@ -40,7 +40,7 @@ BANNED_IPS = set()
 BAN_LOCK = threading.Lock()
 
 # ==========================================
-# 2. HELPER FUNCTIONS & MITIGATION (UNTOUCHED)
+# 2. HELPER FUNCTIONS & MITIGATION 
 # ==========================================
 def get_local_ip():
     try:
@@ -83,7 +83,6 @@ def authenticate_agent():
     global JWT_TOKEN
     print(f"[🔐] Authenticating Tenant {TENANT_ID} with WarSOC Backbone...")
     try:
-        # 🚨 SURGICAL FIX: Aligned with your auth route requirements
         resp = requests.post(f"{BACKEND_URL}/api/v1/auth/agent-login", 
                              json={"agent_id": TENANT_ID, "agent_secret": AGENT_SECRET}, 
                              timeout=5)
@@ -129,12 +128,12 @@ def secure_request(method, url, **kwargs):
         return None
 
 # ==========================================
-# 4. THREADS (REMAIN AS PROVIDED)
+# 4. THREADS 
 # ==========================================
 def heartbeat_thread():
     heartbeat_url = f"{BACKEND_URL}/api/v1/agent/heartbeat/{TENANT_ID}"
     while True:
-        resp = secure_request("GET", heartbeat_url, timeout=3)
+        resp = secure_request("GET", heartbeat_url, timeout=10)
         if resp and resp.status_code == 200:
             data = resp.json()
             for bad_ip in data.get("enforce_bans", []):
@@ -143,7 +142,10 @@ def heartbeat_thread():
 
 def log_hunter_thread():
     print(f"[*] Log Hunter Online. Streaming via Secure Tunnel...")
+    
+    # Strictly aligned to your Ingest router
     ingest_url = f"{BACKEND_URL}/api/v1/ingest/windows"
+    
     log_type = "Security"
 
     try:

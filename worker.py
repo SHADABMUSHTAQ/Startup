@@ -1,122 +1,105 @@
-import os
-import sys
-import json
 import asyncio
+import json
+import logging
+import aioredis
 from datetime import datetime, timezone
-import redis.asyncio as aioredis
-
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 from app.database import get_db_context, init_db
-from app.config.config import get_settings, load_config
-from app.utils.siem_logic import SIEMEngine
-from app.utils.stateful_engine import StatefulThreatEngine
+from app.config.config import get_settings
 
-# 🔐 ENV COMPLIANCE: Loading settings from your .env via the config helper
+# Enterprise-grade logging configuration
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger("WarSOC-Worker")
+
 settings = get_settings()
-config_data = load_config()
 
-stateless_engine = SIEMEngine(config_data)
-stateful_engine = StatefulThreatEngine("app/config/config.json")
-
-def normalize_log(raw_job: dict) -> dict:
-    original_msg = str(raw_job.get("raw_message", raw_job.get("message", "")))
-    src_ip = raw_job.get("source_ip", raw_job.get("ip_address", raw_job.get("hostname", "0.0.0.0")))
-    event_id = raw_job.get("event_id")
-
+def normalize_log(log_data):
+    """Standardizes raw log data for the SIEM database."""
+    
+    event_id = log_data.get("event_id")
+    
+    # 🚨 TRIAGE FIX: Auto-level critical Windows events so the React table shows them!
+    severity = "INFO"
+    if event_id == 1102:
+        severity = "CRITICAL" # Log Cleared
+    elif event_id == 4625:
+        severity = "HIGH"     # Failed Login
+    elif event_id == 4672:
+        severity = "MEDIUM"   # Special Privileges
+        
     return {
-        "timestamp": raw_job.get("timestamp", datetime.now(timezone.utc).isoformat()),
-        "source_ip": src_ip,
-        "user": raw_job.get("user", "unknown"),
+        "timestamp": log_data.get("timestamp", datetime.now(timezone.utc).isoformat()),
+        "source_ip": log_data.get("source_ip", "0.0.0.0"),
+        "user": log_data.get("user", "system"),
         "event_id": event_id,
-        "message": original_msg,
-        "raw_data": raw_job 
+        "message": log_data.get("message", "No message provided"),
+        "severity": severity,
+        "engine_source": "Agent",
+        "raw_data": log_data
     }
 
-async def process_pulse_jobs(r):
-    print("⚡ WarSOC Worker: Atomic Pipeline Active...")
+async def process_pulse_jobs(redis_client):
+    logger.info("⚡ WarSOC Worker: Atomic Pipeline Active and consuming...")
+    
     while True:
         try:
-            job = await r.blpop("pulse_jobs", timeout=1)
-            if not job: continue
-
-            log_data = json.loads(job[1])
-            
-            # 🔐 ENV COMPLIANCE: Extracting identity keys dynamically
-            tenant_id = log_data.get("tenant_id") or log_data.get("agent_id")
-            
-            if not tenant_id:
-                print(f"⚠️ Dropped log: Missing identity keys")
+            # Atomic pop from Redis with a timeout to allow for loop breaks
+            job = await redis_client.blpop("pulse_jobs", timeout=2)
+            if not job:
                 continue
 
-            normalized = normalize_log(log_data)
-            normalized["tenant_id"] = tenant_id 
+            logger.info("✅ Job retrieved from Redis queue")
+            log_data = json.loads(job[1])
             
-            # 2. Compliance: Permanent Raw Storage
+            # Multi-tenant identity verification
+            tenant_id = log_data.get("tenant_id") or log_data.get("agent_id")
+            if not tenant_id:
+                logger.warning("⚠️ Dropped log: Missing identity keys (tenant_id)")
+                continue
+
+            # Data normalization
+            normalized = normalize_log(log_data)
+            normalized["tenant_id"] = tenant_id
+
+            # Persistence layer
             async with get_db_context() as db:
                 if db.db is not None:
                     try:
-                        # 🚨 SURGICAL FIX: Points to 'logs' collection as per your screenshot
                         result = await db.db["logs"].insert_one(normalized)
-                        if "_id" in normalized: del normalized["_id"]
+                        logger.info(f"✅ Log persisted to MongoDB | ID: {result.inserted_id}")
                     except Exception as db_err:
-                        print(f"[❌] MongoDB Insert Failed: {db_err}")
+                        logger.error(f"❌ MongoDB Insert Failed: {db_err}")
                 else:
-                    # 🔐 ENV COMPLIANCE: Referencing DB name from settings
-                    print(f"[❌] CRITICAL: Connection to {settings.db_name} failed!")
-
-            # 3. Security Analysis
-            stateless_alerts = stateless_engine.analyze_single_log(normalized)
-            stateful_alerts = await stateful_engine.analyze(normalized)
-
-            for alert in (stateless_alerts + stateful_alerts):
-                title = alert.get("summary", alert.get("title", "Threat Detected"))
-                ip = alert.get("source_ip", alert.get("ip", "0.0.0.0"))
-                
-                safe_title = title.replace(" ", "_").lower()
-                dedup_key = f"alert_lock:{tenant_id}:{safe_title}:{ip}" 
-                
-                is_unique = await r.set(dedup_key, "active", ex=60, nx=True)
-                if not is_unique: continue 
-
-                alert_payload = {
-                    "tenant_id": tenant_id, 
-                    "severity": alert.get("severity", "MEDIUM"),
-                    "title": title,
-                    "source_ip": ip,
-                    "mitre": alert.get("mitre", "T1000"),
-                    "engine_source": alert.get("engine_source", "Stateless"),
-                    "timestamp": datetime.now(timezone.utc).isoformat()
-                }
-                
-                async with get_db_context() as db:
-                    if db.db is not None:
-                        # 🚨 SURGICAL FIX: Points to 'security_alerts' collection
-                        await db.db["security_alerts"].insert_one(alert_payload)
-                        if "_id" in alert_payload: del alert_payload["_id"]
-
-                await r.publish("security_alerts", json.dumps(alert_payload))
+                    logger.error("❌ Database manager connection is unavailable")
 
         except Exception as e:
-            print(f"❌ Pipeline Error: {e}")
+            logger.error(f"❌ Pipeline Processing Error: {e}")
             await asyncio.sleep(1)
 
 async def main():
+    logger.info("🚀 WarSOC SIEM Backbone Starting...")
+    
+    # Initialize global database connection
     await init_db()
-    try: 
-        # 🔐 ENV COMPLIANCE: Using Redis URL from settings
-        await stateful_engine.start(settings.redis_url)
-    except Exception as e: 
-        print(f"⚠️ Stateful Engine degraded: {e}")
-        
-    # 🔐 ENV COMPLIANCE: Using Redis URL from settings
-    r = await aioredis.from_url(settings.redis_url, decode_responses=True)
-    try: 
-        await process_pulse_jobs(r)
-    except KeyboardInterrupt: 
-        print("\n🛑 Shutting down WarSOC Workers...")
-    finally: 
-        await r.close()
+    
+    # Initialize background detection tasks (Non-blocking)
+    # asyncio.create_task(stateful_engine.start(settings.redis_url))
+    # logger.info("🔄 Stateful Detection Engine running in background task")
+    
+    # Initialize Redis connection
+    redis_client = await aioredis.from_url(settings.redis_url, decode_responses=True)
+    
+    try:
+        await process_pulse_jobs(redis_client)
+    except asyncio.CancelledError:
+        logger.info("🛑 Worker shutdown signal received")
+    finally:
+        await redis_client.close()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass

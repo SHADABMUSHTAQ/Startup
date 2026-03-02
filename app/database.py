@@ -2,6 +2,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from app.config.config import get_settings
 from bson import ObjectId
 import logging
+from contextlib import asynccontextmanager
 
 # Logger Setup
 logger = logging.getLogger(__name__)
@@ -15,7 +16,7 @@ class DatabaseManager:
         """Initializes the connection to MongoDB."""
         settings = get_settings()
         
-        # ✅ DB Name fixed as per your setup
+        # ✅ DB Name fixed for WarSOC
         db_name = "WarSOC_DB"  
         
         try:
@@ -37,7 +38,7 @@ class DatabaseManager:
             print("🔌 MongoDB Connection Closed")
 
     # 🔥🔥 MAGIC METHOD 🔥🔥
-    # Ye method 'db.users' jaisi calls ko handle karta hai
+    # Handles dynamic calls like 'db.users'
     def __getattr__(self, name):
         if self.db is not None:
             return getattr(self.db, name)
@@ -60,20 +61,33 @@ class DatabaseManager:
             return None
         return await self.db.analysis_results.find_one({"_id": ObjectId(analysis_id)})
     
-    # ✅ NEW: Ye function Dashboard Sidebar ke liye list layega
+    # ✅ PIPE 1: Strictly for Manual File Uploads
     async def get_all_analyses(self):
-        """Fetches all uploaded files sorted by newest first."""
+        """Fetches manual uploads from the analysis_results collection."""
         if self.db is None: await self.connect()
         
-        # Sort by 'uploaded_at' descending (-1) taake nayi file sabse upar aaye
         cursor = self.db.analysis_results.find().sort("uploaded_at", -1)
         results = await cursor.to_list(length=100)
         
-        # Frontend ke liye ID convert karna zaroori hai
         clean_results = []
         for res in results:
             res["_id"] = str(res["_id"])
             res["analysisId"] = str(res["_id"]) 
+            clean_results.append(res)
+            
+        return clean_results
+
+    # ✅ PIPE 2: Strictly for Live Windows Agent
+    async def get_all_logs(self):
+        """Fetches live agent streaming data from the logs collection."""
+        if self.db is None: await self.connect()
+        
+        cursor = self.db.logs.find().sort("timestamp", -1)
+        results = await cursor.to_list(length=100)
+        
+        clean_results = []
+        for res in results:
+            res["_id"] = str(res["_id"])
             clean_results.append(res)
             
         return clean_results
@@ -98,8 +112,6 @@ async def get_db():
     return db_manager
 
 # --- CONTEXT MANAGER FOR WORKER ---
-from contextlib import asynccontextmanager
-
 @asynccontextmanager
 async def get_db_context():
     if db_manager.db is None:

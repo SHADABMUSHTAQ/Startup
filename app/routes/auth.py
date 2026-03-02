@@ -14,11 +14,11 @@ settings = get_settings()
 router = APIRouter()
 
 # --- CONFIGURATION ---
-# Secrets are now pulled securely from settings/.env
-SECRET_KEY = settings.jwt_secret_key if hasattr(settings, 'jwt_secret_key') else "warsoc_secret_key_change_this_in_production"
-AGENT_MASTER_SECRET = settings.agent_master_secret if hasattr(settings, 'agent_master_secret') else "warsoc_enterprise_agent_key_2026"
+# Cleaned up mapping: Uses getattr to safely check settings, avoiding strict hasattr crashes
+SECRET_KEY = getattr(settings, 'jwt_secret_key', "warsoc_secret_key_change_this_in_production")
+AGENT_MASTER_SECRET = getattr(settings, 'agent_master_secret', "warsoc_enterprise_agent_key_2026")
+ACCESS_TOKEN_EXPIRE_MINUTES = getattr(settings, 'access_token_expire_minutes', 1440)
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -155,7 +155,7 @@ async def get_user_me(current_user=Depends(get_current_user)):
         "full_name": current_user.get("full_name", ""),
         "tenant_id": current_user.get("tenant_id"),
         "plan_type": current_user.get("plan_type", "Free"),
-        "has_active_plan": current_user.get("has_active_plan", False) # 🚨 Added this back!
+        "has_active_plan": current_user.get("has_active_plan", False)
     }
 
 @router.post("/agent-login")
@@ -177,8 +177,6 @@ async def update_plan(data: PlanUpdate, db=Depends(get_db), current_user=Depends
     Updates the user's subscription plan after a successful payment.
     Locked down: Only updates the plan for the currently authenticated user.
     """
-    # 🚨 CTO FIX: We ignore data.username from the frontend payload to prevent spoofing.
-    # We ONLY trust the username cryptographically verified in the JWT.
     secure_username = current_user["username"]
     
     await db.users.update_one(
@@ -201,5 +199,5 @@ async def update_plan(data: PlanUpdate, db=Depends(get_db), current_user=Depends
         "username": db_user["username"],
         "tenant_id": tenant_id,
         "plan_type": db_user.get("plan_type", "Free"),
-        "has_active_plan": db_user.get("has_active_plan", False) # 🚨 Added this back!
+        "has_active_plan": db_user.get("has_active_plan", False)
     }

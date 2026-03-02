@@ -1,23 +1,22 @@
 import os
 import json
 import shutil
-import redis.asyncio as aioredis  
+import csv
+import io
 from datetime import datetime, timezone
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from bson import ObjectId
 
 from app.database import get_db
-# 🚨 Required to lock the routes down
 from app.routes.auth import get_current_user
 
 router = APIRouter()
 
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 UPLOAD_DIR = "uploaded_files"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ---------------------------------------------------------
-# 1. UPLOAD & ANALYZE
+# 1. UPLOAD & INSTANT ANALYZE
 # ---------------------------------------------------------
 @router.post("/analyze")
 async def analyze_log_file(file: UploadFile = File(...), db=Depends(get_db), current_user=Depends(get_current_user)):
@@ -28,37 +27,50 @@ async def analyze_log_file(file: UploadFile = File(...), db=Depends(get_db), cur
         safe_filename = f"WarSOC_{secure_tenant_id}_{file_id}_{file.filename}"
         file_path = os.path.join(UPLOAD_DIR, safe_filename)
         
+        content = await file.read()
+        
         with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            buffer.write(content)
+            
+        findings = []
+        try:
+            decoded_content = content.decode('utf-8-sig')
+            csv_reader = csv.DictReader(io.StringIO(decoded_content))
+            
+            for row in csv_reader:
+                findings.append({
+                    "timestamp": row.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                    "source_ip": row.get("source_ip", "0.0.0.0"),
+                    "event_id": row.get("event_id", "Unknown"),
+                    "severity": row.get("severity", "INFO"),
+                    "title": row.get("message", "Unknown Event"),
+                    "engine_source": row.get("engine_source", "Forensic File"),
+                    "tenant_id": secure_tenant_id
+                })
+        except Exception as csv_err:
+            print(f"❌ Error parsing CSV: {csv_err}")
+            raise HTTPException(status_code=400, detail="Invalid CSV format. Please ensure headers match.")
         
         analysis_doc = {
             "tenant_id": secure_tenant_id,
             "filename": file.filename,
             "file_path": file_path,
-            "status": "pending",
+            "status": "completed", 
             "uploaded_at": datetime.now(timezone.utc),
-            "findings": [],
-            "total_events": 0
+            "findings": findings,
+            "total_events": len(findings)
         }
-        result = await db.analyses.insert_one(analysis_doc)
+        
+        # 🚨 FIXED: Now explicitly saving to 'analysis_results'
+        result = await db.analysis_results.insert_one(analysis_doc)
         analysis_id = str(result.inserted_id)
         
-        job_data = {
-            "tenant_id": secure_tenant_id,
-            "file_path": file_path,
-            "analysis_id": analysis_id,
-            "filename": file.filename
-        }
-        
-        redis_client = await aioredis.from_url(f"redis://{REDIS_HOST}:6379", decode_responses=True)
-        await redis_client.rpush('file_jobs', json.dumps(job_data))
-        await redis_client.close()
-        
         return {
-            "status": "queued",
+            "status": "completed",
             "analysis_id": analysis_id,
-            "message": "File accepted for analysis."
+            "message": "File instantly analyzed and ready for viewing."
         }
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
 
@@ -69,7 +81,8 @@ async def analyze_log_file(file: UploadFile = File(...), db=Depends(get_db), cur
 async def get_upload_history(db=Depends(get_db), current_user=Depends(get_current_user)):
     try:
         secure_tenant_id = current_user.get("tenant_id")
-        cursor = db.analyses.find({"tenant_id": secure_tenant_id}).sort("uploaded_at", -1)
+        # 🚨 FIXED: Now explicitly fetching from 'analysis_results'
+        cursor = db.analysis_results.find({"tenant_id": secure_tenant_id}).sort("uploaded_at", -1)
         results = []
         async for doc in cursor:
             doc["_id"] = str(doc["_id"])
@@ -84,7 +97,8 @@ async def get_upload_history(db=Depends(get_db), current_user=Depends(get_curren
 @router.get("/results/{analysis_id}")
 async def get_analysis_result(analysis_id: str, db=Depends(get_db), current_user=Depends(get_current_user)):
     secure_tenant_id = current_user.get("tenant_id")
-    result = await db.analyses.find_one({"_id": ObjectId(analysis_id), "tenant_id": secure_tenant_id})
+    # 🚨 FIXED: Now explicitly fetching from 'analysis_results'
+    result = await db.analysis_results.find_one({"_id": ObjectId(analysis_id), "tenant_id": secure_tenant_id})
     if not result:
         raise HTTPException(status_code=404, detail="Report not found")
     
@@ -98,17 +112,8 @@ async def get_analysis_result(analysis_id: str, db=Depends(get_db), current_user
 @router.delete("/delete/{analysis_id}")
 async def delete_log(analysis_id: str, db=Depends(get_db), current_user=Depends(get_current_user)):
     secure_tenant_id = current_user.get("tenant_id")
-    result = await db.analyses.delete_one({"_id": ObjectId(analysis_id), "tenant_id": secure_tenant_id})
+    # 🚨 FIXED: Now explicitly deleting from 'analysis_results'
+    result = await db.analysis_results.delete_one({"_id": ObjectId(analysis_id), "tenant_id": secure_tenant_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="File not found or unauthorized")
     return {"status": "deleted", "id": analysis_id}
-
-# ---------------------------------------------------------
-# 5. SERVER SIDE REPORT (Backup)
-# ---------------------------------------------------------
-@router.get("/report/{analysis_id}")
-async def download_server_report(analysis_id: str, db=Depends(get_db), current_user=Depends(get_current_user)):
-    secure_tenant_id = current_user.get("tenant_id")
-    result = await db.analyses.find_one({"_id": ObjectId(analysis_id), "tenant_id": secure_tenant_id})
-    if not result: raise HTTPException(status_code=404, detail="Not Found")
-    return {"message": "Use frontend generator"}

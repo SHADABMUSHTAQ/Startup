@@ -2,14 +2,15 @@ import asyncio
 import json
 import jwt
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from app.routes.auth import get_current_user
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import redis.asyncio as aioredis
 
 # ==========================================
 # 1. ENTERPRISE IMPORTS
 # ==========================================
-from app.database import init_db
+from app.database import init_db, get_db
 from app.config.config import get_settings
 from app.routes import auth, ingest_pulse, threat_intel, upload
 from app.api.ws_manager import manager 
@@ -86,6 +87,35 @@ app.include_router(threat_intel.router, prefix="/firewall", tags=["Legacy Mitiga
 app.include_router(upload.router, prefix="/upload", tags=["Legacy Upload"])
 app.include_router(auth.router, prefix="/auth", tags=["Legacy Auth"])
 
+# ==========================================
+# 5.5 DASHBOARD ROUTES (🔥 THE FIX FOR THE BLANK TABLE)
+# ==========================================
+@app.get("/api/v1/logs", tags=["Dashboard"])
+async def fetch_live_logs(db = Depends(get_db), current_user = Depends(get_current_user)):
+    """The Secure Bridge: Only fetches logs belonging to the logged-in user's Tenant ID"""
+    try:
+        # 🚨 DEFENSIVE FIX: Safely extract Tenant ID whether it's a dict or a Database Model
+        if isinstance(current_user, dict):
+            secure_tenant_id = current_user.get("tenant_id")
+        else:
+            secure_tenant_id = getattr(current_user, "tenant_id", None)
+            
+        print(f"🔍 [DASHBOARD TRACER] React is requesting logs for Tenant ID: '{secure_tenant_id}'")
+        
+        # 🚨 Fetching exactly from the collection the worker wrote to
+        cursor = db.db["logs"].find({"tenant_id": secure_tenant_id}).sort("timestamp", -1).limit(100)
+        
+        data = []
+        async for doc in cursor:
+            doc["_id"] = str(doc["_id"]) # Convert MongoDB ID to string for React
+            data.append(doc)
+            
+        print(f"✅ [DASHBOARD TRACER] Sending {len(data)} logs to the React Screen.")
+        return {"status": "success", "data": data}
+        
+    except Exception as e:
+        print(f"❌ [DASHBOARD ERROR]: {e}")
+        return {"status": "error", "message": str(e)}
 # ==========================================
 # 6. WEBSOCKET ENDPOINT (BULLETPROOF AUTH)
 # ==========================================

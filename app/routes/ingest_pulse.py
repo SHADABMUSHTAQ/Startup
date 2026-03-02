@@ -6,7 +6,7 @@ import json
 from app.config.config import get_settings
 from app.database import get_db_context 
 
-# 🚨 CTO FIX: Import the user verification so we can secure the dashboard route
+# 🚨 Secures the Dashboard endpoints below
 from app.routes.auth import get_current_user
 
 router = APIRouter()
@@ -23,7 +23,7 @@ class WindowsAgentPayload(BaseModel):
     agent_version: str
 
 # ---------------------------------------------------------
-# 📥 1. INGEST WINDOWS AGENT LOGS
+# 📥 1. INGEST WINDOWS AGENT LOGS (DECOUPLED REDIS PIPELINE)
 # ---------------------------------------------------------
 @router.post("/windows")
 async def ingest_pulse_logs(payload: WindowsAgentPayload, request: Request):
@@ -35,7 +35,7 @@ async def ingest_pulse_logs(payload: WindowsAgentPayload, request: Request):
     
     token = auth_header.split(" ")[1]
     
-    # verify_agent_token is returning a STRING (the tenant_id/agent_id)
+    # Cryptographically verify the token and get the true Tenant ID
     verified_id = await verify_agent_token(token)
 
     try:
@@ -43,16 +43,18 @@ async def ingest_pulse_logs(payload: WindowsAgentPayload, request: Request):
         if not job_data.get("timestamp"):
             job_data["timestamp"] = datetime.now(timezone.utc).isoformat()
 
-        # 🔐 THE STAMP: Assign the string we got to both fields
+        # 🔐 Enterprise Isolation: Hardcode the verified Tenant ID into the payload
         job_data["tenant_id"] = verified_id 
         job_data["agent_id"] = verified_id 
 
-        async with aioredis.from_url(settings.redis_url, decode_responses=True) as r:
-            await r.rpush("pulse_jobs", json.dumps(job_data))
+        # Push to Redis Queue (Decoupled Message Broker)
+        redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+        await redis_client.rpush("pulse_jobs", json.dumps(job_data))
+        await redis_client.aclose()
         
         return {
             "status": "success", 
-            "message": "Log queued for detection pipeline",
+            "message": "Log securely queued in Redis for processing",
             "action": "ALLOW"
         }
     except Exception as e:
@@ -63,12 +65,12 @@ async def ingest_pulse_logs(payload: WindowsAgentPayload, request: Request):
 # 📜 2. FETCH MITIGATED ALERTS HISTORY
 # ---------------------------------------------------------
 @router.get("/alerts/history")
-async def get_alert_history():
-    """Fetches the last 50 mitigated security alerts for the Dashboard refresh."""
+async def get_alert_history(current_user: dict = Depends(get_current_user)):
+    """Securely fetches history, strictly isolated by Tenant ID"""
+    secure_tenant_id = current_user.get("tenant_id")
     try:
-        async with get_db_context() as db:
-            # 🚨 CTO FIX: Restored this to point to the correct 'security_alerts' collection
-            cursor = db.db["security_alerts"].find().sort("timestamp", -1).limit(50)
+        async with get_db_context() as database:
+            cursor = database.db["security_alerts"].find({"tenant_id": secure_tenant_id}).sort("timestamp", -1).limit(50)
             history = await cursor.to_list(length=50)
             
             for doc in history:
@@ -86,15 +88,14 @@ async def fetch_agent_logs(
     limit: int = Query(10, le=100), 
     current_user: dict = Depends(get_current_user)
 ):
-    """Securely fetches the raw Windows agent logs for the live dashboard feed."""
+    """Securely fetches raw logs, strictly isolated by Tenant ID"""
     secure_tenant_id = current_user.get("tenant_id")
     if not secure_tenant_id:
         raise HTTPException(status_code=403, detail="Critical: User lacks tenant assignment.")
 
     try:
-        async with get_db_context() as db:
-            # 🚨 CTO FIX: Pointing exactly to your "logs" collection and enforcing Tenant Isolation
-            cursor = db.db["logs"].find({"tenant_id": secure_tenant_id}).sort("timestamp", -1).limit(limit)
+        async with get_db_context() as database:
+            cursor = database.db["logs"].find({"tenant_id": secure_tenant_id}).sort("timestamp", -1).limit(limit)
             logs = await cursor.to_list(length=limit)
             
             for doc in logs:
