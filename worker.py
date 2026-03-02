@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-import aioredis
+import redis.asyncio as aioredis
 from datetime import datetime, timezone
 from app.database import get_db_context, init_db
 from app.config.config import get_settings

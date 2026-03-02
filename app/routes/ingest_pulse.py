@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, Query
 from pydantic import BaseModel
 from datetime import datetime, timezone
-import redis.asyncio as aioredis
 import json
+import redis.asyncio as aioredis
 from app.config.config import get_settings
 from app.database import get_db_context 
 

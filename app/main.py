@@ -2,10 +2,10 @@ import asyncio
 import json
 import jwt
 from contextlib import asynccontextmanager
+import redis.asyncio as aioredis
 from app.routes.auth import get_current_user
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
-import redis.asyncio as aioredis
 
 # ==========================================
 # 1. ENTERPRISE IMPORTS
