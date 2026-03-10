@@ -1,0 +1,14 @@
+timestamp,source_ip,event_id,user,message
+2026-03-07T12:00:00Z,192.168.1.10,4624,jsmith,Event 4624: An account was successfully logged on.
+2026-03-07T12:05:00Z,10.0.0.55,4625,hacker,Event 4625: An account failed to log on.
+2026-03-07T12:06:00Z,10.0.0.55,4625,hacker,Event 4625: An account failed to log on.
+2026-03-07T12:07:00Z,10.0.0.55,4625,hacker,Event 4625: An account failed to log on.
+2026-03-07T12:10:00Z,192.168.1.2,1102,SYSTEM,The security audit log was cleared by an administrator.
+2026-03-07T12:15:00Z,45.33.22.11,0,anonymous,GET /products?id=1 UNION SELECT username, password FROM users--
+2026-03-07T12:16:00Z,45.33.22.11,0,anonymous,POST /comment body=<script>alert('XSS_PAYLOAD')</script>
+2026-03-07T12:17:00Z,192.168.1.100,0,anonymous,POST /login.php admin login failed due to incorrect credentials
+2026-03-07T12:20:00Z,172.16.0.5,0,root,sshd[1234]: Failed password for invalid user admin from 172.16.0.5
+2026-03-07T12:25:00Z,10.0.0.99,0,dev_user,sudo command executed without permission: cat /etc/shadow
+2026-03-07T12:30:00Z,192.168.2.50,0,SYSTEM,Background process xmrig started mining crypto silently
+2026-03-07T12:35:00Z,192.168.2.55,0,SYSTEM,Multiple file encrypted events detected indicating ransomware activity
+2026-03-07T12:40:00Z,88.99.11.22,0,unknown,Port scan detected: SYN packet flood towards internal subnet

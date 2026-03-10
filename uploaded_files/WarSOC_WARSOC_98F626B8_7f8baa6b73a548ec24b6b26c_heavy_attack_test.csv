@@ -1,0 +1,35 @@
+timestamp,source_ip,destination_ip,user,message,event_id
+2024-02-17T14:00:01,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:02,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:03,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:04,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:05,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:06,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:07,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:08,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:09,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:10,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:11,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:12,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:13,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:14,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:15,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:16,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:17,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:18,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:19,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:00:20,192.168.1.55,10.0.0.1,admin,Failed password for invalid user admin,4625
+2024-02-17T14:05:00,45.33.22.11,10.0.0.8,www-data,GET /login.php?user=' OR 1=1--,500
+2024-02-17T14:05:01,45.33.22.11,10.0.0.8,www-data,GET /products?id=1 UNION SELECT username password FROM users,500
+2024-02-17T14:05:02,45.33.22.11,10.0.0.8,www-data,GET /admin?id=1; DROP TABLE users--,500
+2024-02-17T14:10:00,172.16.0.99,172.16.0.5,system,File encrypted: salaries.xlsx.locked by process bad.exe,4663
+2024-02-17T14:10:01,172.16.0.99,172.16.0.5,system,File encrypted: passwords.txt.locked by process bad.exe,4663
+2024-02-17T14:10:02,172.16.0.99,172.16.0.5,system,File encrypted: backup.zip.enc by process bad.exe,4663
+2024-02-17T14:15:00,10.0.0.200,8.8.8.8,unknown,Background process xmrig started mining monero,9999
+2024-02-17T14:15:05,10.0.0.200,8.8.8.8,unknown,Crypto miner detected: high CPU usage hidden process,9999
+2024-02-17T14:20:00,192.168.1.77,10.0.0.1,guest,Sudo command executed without permission: cat /etc/shadow,4672
+2024-02-17T14:20:01,192.168.1.77,10.0.0.1,guest,Root access granted via exploit payload,4672
+2024-02-17T14:25:00,88.99.11.22,10.0.0.5,none,Port scan detected: TCP connect to port 22,7001
+2024-02-17T14:25:01,88.99.11.22,10.0.0.5,none,Port scan detected: TCP connect to port 80,7001
+2024-02-17T14:25:02,88.99.11.22,10.0.0.5,none,Port scan detected: TCP connect to port 443,7001
+2024-02-17T14:30:00,192.168.1.13,10.0.0.2,user1,Payload delivered via <script>alert(document.cookie)</script>,200

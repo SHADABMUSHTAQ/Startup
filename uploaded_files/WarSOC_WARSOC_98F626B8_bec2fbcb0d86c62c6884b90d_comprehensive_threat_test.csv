@@ -1,0 +1,19 @@
+timestamp,source_ip,username,event_id,message,file_path,url,status_code
+2026-02-12T12:00:01Z,192.168.1.50,admin,4625,Failed password for user admin,,,
+2026-02-12T12:00:02Z,192.168.1.50,admin,4625,Failed password for user admin,,,
+2026-02-12T12:00:03Z,192.168.1.50,admin,4625,Failed password for user admin,,,
+2026-02-12T12:00:04Z,192.168.1.50,admin,4625,Failed password for user admin,,,
+2026-02-12T12:00:05Z,192.168.1.50,admin,4625,Failed password for user admin,,,
+2026-02-12T12:05:00Z,10.0.0.5,hacker,,UNION SELECT * FROM users,,/login?user=' OR 1=1,200
+2026-02-12T12:06:00Z,10.0.0.6,script_kiddie,,<script>alert('XSS')</script>,,/comment,200
+2026-02-12T12:10:00Z,172.16.0.50,insider,,File encryption started,C:\Finance\salary.xlsx.locked,,
+2026-02-12T12:10:01Z,172.16.0.50,insider,,File encryption started,C:\Finance\budget.docx.locked,,
+2026-02-12T12:10:02Z,172.16.0.50,insider,,File encryption started,C:\Finance\report.pdf.locked,,
+2026-02-12T12:10:03Z,172.16.0.50,insider,,File encryption started,C:\Finance\memo.txt.locked,,
+2026-02-12T12:10:04Z,172.16.0.50,insider,,File encryption started,C:\Finance\db.sql.locked,,
+2026-02-12T12:15:00Z,192.168.1.200,guest,,Directory traversal attempt detected,../../etc/passwd,/download,200
+2026-02-12T12:20:00Z,192.168.1.200,guest,,Privilege escalation attempt: sudo su -,,,
+2026-02-12T12:25:00Z,192.168.1.99,admin,1102,The security audit log was cleared.,,,
+2026-02-12T12:30:00Z,45.33.22.11,botnet,,Known malicious IP connection attempt,,,
+2026-02-12T12:35:00Z,10.10.10.5,scanner,,Port scanning detected: SYN packet flood,,,
+2026-02-12T12:40:00Z,192.168.1.150,user1,,Accessing sensitive shadow file,/etc/shadow,,
