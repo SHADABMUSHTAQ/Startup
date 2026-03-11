@@ -13,7 +13,7 @@ hiredis>=3.0.0
 # --- Pulse Agent & Communication ---
 requests>=2.31.0
 pyyaml>=6.0.2
-pywin32>=306           # Windows Event Log access [cite: 2026-02-26]
+# pywin32>=306  # Windows Event Log access — install ONLY on Windows agents (not the server)
 
 # --- Security & Auth Bridge ---
 python-multipart>=0.0.9    # REQUIRED for OAuth2 login [cite: 2026-02-20]

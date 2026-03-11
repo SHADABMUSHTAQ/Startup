@@ -118,7 +118,7 @@ async def signup(user: UserCreate, db=Depends(get_db)):
         "hashed_password": hashed_password,
         "tenant_id": new_tenant_id,
         "plan_type": "Free",
-        "has_active_plan": False,
+        "has_active_plan": True,
         "created_at": datetime.now(timezone.utc)
     }
     await db.users.insert_one(new_user)

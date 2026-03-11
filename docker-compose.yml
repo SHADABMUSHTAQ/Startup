@@ -1,0 +1,64 @@
+version: "3.9"
+
+services:
+  # ─────────────────────────────────────────
+  # 1. MongoDB
+  # ─────────────────────────────────────────
+  mongodb:
+    image: mongo:7.0
+    container_name: warsoc_mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: WarSOC_DB
+
+  # ─────────────────────────────────────────
+  # 2. Redis
+  # ─────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: warsoc_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  # ─────────────────────────────────────────
+  # 3. FastAPI Backend
+  # ─────────────────────────────────────────
+  api:
+    build: .
+    container_name: warsoc_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - mongodb
+      - redis
+
+  # ─────────────────────────────────────────
+  # 4. Background Worker
+  # ─────────────────────────────────────────
+  worker:
+    build: .
+    container_name: warsoc_worker
+    restart: unless-stopped
+    command: ["python", "worker.py"]
+    env_file:
+      - .env
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - mongodb
+      - redis
+
+volumes:
+  mongo_data:

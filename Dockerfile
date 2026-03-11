@@ -12,6 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy your project into container
 COPY ./app ./app
+COPY worker.py .
+COPY verify.py .
 
 # Expose FastAPI port
 EXPOSE 8000
