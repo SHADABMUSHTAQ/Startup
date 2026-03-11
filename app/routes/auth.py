@@ -144,7 +144,8 @@ async def login(user_data: LoginSchema, db=Depends(get_db)):
         "token_type": "bearer",
         "username": db_user["username"],
         "tenant_id": tenant_id,
-        "plan_type": db_user.get("plan_type", "Free")
+        "plan_type": db_user.get("plan_type", "Free"),
+        "has_active_plan": db_user.get("has_active_plan", False)
     }
 
 @router.get("/me")

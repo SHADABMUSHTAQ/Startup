@@ -4,6 +4,7 @@ import csv
 import io
 from datetime import datetime, timezone
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi.responses import JSONResponse, Response
 from bson import ObjectId
 
 from app.database import get_db
@@ -144,8 +145,9 @@ async def get_upload_history(db=Depends(get_db), current_user=Depends(get_curren
         results = []
         async for doc in cursor:
             doc["_id"] = str(doc["_id"])
+            doc["analysisId"] = doc["_id"]
             results.append(doc)
-        return results
+        return {"status": "success", "data": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -161,7 +163,7 @@ async def get_analysis_result(analysis_id: str, db=Depends(get_db), current_user
     result["analysisId"] = str(result["_id"]) 
     return result
 
-# DELETE UPLOAD
+# DELETE UPLOAD (primary path)
 @router.delete("/results/{analysis_id}")
 async def delete_log(analysis_id: str, db=Depends(get_db), current_user=Depends(get_current_user)):
     secure_tenant_id = current_user.get("tenant_id")
@@ -171,3 +173,28 @@ async def delete_log(analysis_id: str, db=Depends(get_db), current_user=Depends(
         raise HTTPException(status_code=404, detail="File not found or unauthorized")
     
     return {"status": "deleted", "id": analysis_id}
+
+# DELETE UPLOAD (alias path used by api.js deleteFile)
+@router.delete("/delete/{analysis_id}")
+async def delete_log_alias(analysis_id: str, db=Depends(get_db), current_user=Depends(get_current_user)):
+    return await delete_log(analysis_id, db, current_user)
+
+# GET REPORT (blob download used by api.js getReport)
+@router.get("/report/{analysis_id}")
+async def download_report(analysis_id: str, db=Depends(get_db), current_user=Depends(get_current_user)):
+    secure_tenant_id = current_user.get("tenant_id")
+    result = await db.analysis_results.find_one({"_id": ObjectId(analysis_id), "tenant_id": secure_tenant_id})
+    if not result:
+        raise HTTPException(status_code=404, detail="Report not found")
+    
+    result["_id"] = str(result["_id"])
+    result["analysisId"] = result["_id"]
+    
+    report_json = json.dumps(result, default=str, indent=2)
+    filename = f"WarSOC_Report_{analysis_id}.json"
+    
+    return Response(
+        content=report_json,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
