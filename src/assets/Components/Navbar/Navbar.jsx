@@ -27,7 +27,7 @@ const Navbar = () => {
           '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
       ).join(''));
       return JSON.parse(jsonPayload).exp < Date.now() / 1000;
-    } catch (e) { return true; }
+    } catch { return true; }
   };
 
   useEffect(() => {

@@ -20,14 +20,14 @@ body, html {
 
 /* --- CONTAINER (FIXED FOR NAVBAR OVERLAP) --- */
 .auth-container {
-min-height: calc(100vh - 80px); 
+  min-height: calc(100vh - 80px);
   display: flex;
-  align-items: flex-start; /* Card ko center ki bajaye upar ki taraf set karega */
-  justify-content: center; /* Horizontally bilkul center rakhega */
+  align-items: center;
+  justify-content: center;
   background-color: var(--bg-dark);
   position: relative;
   overflow-x: hidden;
-  padding: 60px 20px 40px 20px; /* Top gap ko exactly 60px par lock kar diya */
+  padding: 80px 20px 40px 20px;
   box-sizing: border-box;
 }
 

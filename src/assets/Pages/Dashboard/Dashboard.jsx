@@ -58,7 +58,7 @@ const formatTime = (timestamp) => {
     return strTime.includes("T")
       ? strTime.split("T")[1].substring(0, 8)
       : strTime.substring(11, 19) || strTime;
-  } catch (e) {
+  } catch {
     return "00:00:00";
   }
 };
@@ -162,8 +162,6 @@ function Dashboard() {
   const [files, setFiles] = useState([]);
   const [selectedFile, setSelectedFile] = useState(null);
   const [logs, setLogs] = useState([]);
-  const [search, setSearch] = useState("");
-
   const [globalQuery, setGlobalQuery] = useState("");
   const [timeFilter, setTimeFilter] = useState("");
 
@@ -287,14 +285,14 @@ function Dashboard() {
       } else if (Array.isArray(data)) {
         setFiles(data.map((f) => ({ ...f, name: f.filename })));
       }
-    } catch (err) {}
+    } catch { /* silently ignore fetch errors */ }
   }, []);
 
   const fetchBlockedList = useCallback(async () => {
     try {
       const list = await threatIntel.getBlockedList();
       setBlockedList(Array.isArray(list) ? list.map((i) => i.ip) : []);
-    } catch (e) {
+    } catch {
       setBlockedList([]);
     }
   }, []);
@@ -359,34 +357,34 @@ function Dashboard() {
 
       // 2. Handle Incoming Live Logs
       if ((lastJsonMessage.title || lastJsonMessage.message || lastJsonMessage.severity) && !lastJsonMessage.type) {
-        setLogs((prev) => {
-          const rawMessage = lastJsonMessage.title || lastJsonMessage.message || "Unknown Event";
-          const msgLower = rawMessage.toLowerCase();
-          const eventId = lastJsonMessage.event_id || (lastJsonMessage.raw_data && lastJsonMessage.raw_data.event_id) || 0;
+        const rawMessage = lastJsonMessage.title || lastJsonMessage.message || "Unknown Event";
+        const msgLower = rawMessage.toLowerCase();
+        const eventId = lastJsonMessage.event_id || (lastJsonMessage.raw_data && lastJsonMessage.raw_data.event_id) || 0;
 
-          let smartSeverity = (lastJsonMessage.severity || "INFO").toUpperCase();
-          let smartEngine = lastJsonMessage.engine_source || "Agent";
+        let smartSeverity = (lastJsonMessage.severity || "INFO").toUpperCase();
+        let smartEngine = lastJsonMessage.engine_source || "Agent";
 
-          if (eventId === 80 || msgLower.includes("get /") || msgLower.includes("post /")) {
-            smartEngine = "WEB-WAF";
-            if (msgLower.includes("union select") || msgLower.includes("xss") || msgLower.includes("<script>") || msgLower.includes("/etc/passwd")) {
-              smartSeverity = "CRITICAL";
-            } else if (msgLower.includes("failed") || msgLower.includes("unauthorized") || msgLower.includes("403") || msgLower.includes("401")) {
-              smartSeverity = "HIGH";
-            } else {
-              smartSeverity = "MEDIUM";
-            }
-          } else if (eventId === 4625) {
-            smartSeverity = "HIGH";
-            smartEngine = "WINDOWS-SEC";
-          } else if (eventId === 1102) {
+        if (eventId === 80 || msgLower.includes("get /") || msgLower.includes("post /")) {
+          smartEngine = "WEB-WAF";
+          if (msgLower.includes("union select") || msgLower.includes("xss") || msgLower.includes("<script>") || msgLower.includes("/etc/passwd")) {
             smartSeverity = "CRITICAL";
-            smartEngine = "WINDOWS-SEC";
-          } else if (eventId === 4720 || eventId === 4726) {
+          } else if (msgLower.includes("failed") || msgLower.includes("unauthorized") || msgLower.includes("403") || msgLower.includes("401")) {
+            smartSeverity = "HIGH";
+          } else {
             smartSeverity = "MEDIUM";
-            smartEngine = "WINDOWS-SEC";
           }
+        } else if (eventId === 4625) {
+          smartSeverity = "HIGH";
+          smartEngine = "WINDOWS-SEC";
+        } else if (eventId === 1102) {
+          smartSeverity = "CRITICAL";
+          smartEngine = "WINDOWS-SEC";
+        } else if (eventId === 4720 || eventId === 4726) {
+          smartSeverity = "MEDIUM";
+          smartEngine = "WINDOWS-SEC";
+        }
 
+        setLogs((prev) => {
           const existingIndex = prev.findIndex((l) => l.ip === ip && l.message === rawMessage);
 
           if (existingIndex !== -1) {
@@ -441,7 +439,7 @@ function Dashboard() {
       } else {
         toast.error("File not found on server.");
       }
-    } catch (e) {
+    } catch {
       toast.error("Failed to load file details");
     }
   };
@@ -468,7 +466,7 @@ function Dashboard() {
       } else {
         toast.error("Upload failed on server.");
       }
-    } catch (err) {
+    } catch {
       toast.error("Network Error during upload.");
     } finally {
       setLoading(false);
@@ -517,11 +515,11 @@ function Dashboard() {
         try {
           const errData = await res.json();
           if (errData.detail) errorMsg = errData.detail;
-        } catch (e) {}
+        } catch { /* ignore JSON parse error, use default message */ }
         toast.error(`API Error: ${errorMsg}`);
         setLogs([]);
       }
-    } catch (err) {
+    } catch {
       toast.error("Network Error: Could not connect to API.");
       setLogs([]);
     } finally {
@@ -549,7 +547,7 @@ function Dashboard() {
       setBlockedList((prev) =>
         ipIsBanned ? prev.filter((b) => b !== ip) : [...prev, ip],
       );
-    } catch (e) {
+    } catch {
       toast.error("Action Failed");
     }
   };
@@ -572,7 +570,7 @@ function Dashboard() {
       } else {
         toast.error("Failed to delete file from Database.");
       }
-    } catch (e) {
+    } catch {
       toast.error("Network Error. Cannot reach server.");
     }
     setFileToDelete(null);
@@ -1273,7 +1271,7 @@ function Dashboard() {
                         .filter((l) =>
                           (l.message || "")
                             .toLowerCase()
-                            .includes(search.toLowerCase()),
+                            .includes(globalQuery.toLowerCase()),
                         )
                         .map((log, i) => (
                           <div

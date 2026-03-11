@@ -9,32 +9,27 @@ const getHeaders = (isMultipart = false) => {
 };
 
 const request = async (endpoint, options = {}) => {
-  try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-      ...options,
-      headers: { ...getHeaders(options.isMultipart), ...options.headers },
-    });
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    ...options,
+    headers: { ...getHeaders(options.isMultipart), ...options.headers },
+  });
 
-    if (response.status === 401) {
-      if (window.location.pathname !== "/login") {
-        localStorage.removeItem("token");
-        window.location.href = "/login";
-      }
-      throw new Error("Session expired.");
+  if (response.status === 401) {
+    if (window.location.pathname !== "/login") {
+      localStorage.removeItem("token");
+      window.location.href = "/login";
     }
-
-    if (options.isBlob) {
-        if (!response.ok) throw new Error("Download failed");
-        return await response.blob();
-    }
-
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.detail || "API Request Failed");
-    return data;
-
-  } catch (err) {
-    throw err;
+    throw new Error("Session expired.");
   }
+
+  if (options.isBlob) {
+      if (!response.ok) throw new Error("Download failed");
+      return await response.blob();
+  }
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || "API Request Failed");
+  return data;
 };
 
 export const api = {

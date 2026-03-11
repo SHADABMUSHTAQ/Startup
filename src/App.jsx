@@ -38,7 +38,7 @@ const PrivateRoute = ({ children }) => {
       try {
         const userData = JSON.parse(userDataStr);
         username = userData.username;
-      } catch (e) {
+      } catch {
         handleLogout();
         return;
       }
