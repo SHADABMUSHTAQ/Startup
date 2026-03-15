@@ -1,0 +1,245 @@
+/* --- VARIABLES --- */
+:root {
+  --bg-dark: #0a192f;
+  --text-primary: #e6f1ff;
+  --text-secondary: #8892b0;
+  --accent-teal: #64ffda;
+  --accent-blue: #4da6ff;
+}
+
+/* --- SECTION --- */
+.about-section {
+  padding: 6rem 24px; /* Thodi zyada space upar/neeche */
+  background-color: var(--bg-dark);
+  color: var(--text-primary);
+  overflow: hidden;
+  position: relative;
+  box-sizing: border-box;
+}
+
+.about-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6rem; 
+  max-width: 1200px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+/* =========================================
+   ✅ IMAGE SIDE (Left) - CYBER BLEND FIX
+========================================= */
+.about-image-wrapper {
+  flex: 1;
+  position: relative;
+  min-width: 350px;
+  max-width: 550px; 
+  z-index: 1;
+}
+
+/* Glow behind the blue image */
+.about-image-glow {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 90%; height: 90%;
+    background: radial-gradient(circle, rgba(77, 166, 255, 0.15) 0%, transparent 60%);
+    filter: blur(40px);
+    z-index: -1;
+}
+
+/* Main Image with Fading Mask */
+.about-img {
+  width: 100%;
+  height: auto;
+  border-radius: 16px; 
+  position: relative;
+  z-index: 2;
+  /* THE MAGIC MASK: Nechay se dark background mein fade hogi */
+  -webkit-mask-image: linear-gradient(to bottom, black 75%, transparent 100%);
+  mask-image: linear-gradient(to bottom, black 75%, transparent 100%);
+  /* Subtle border and shadow */
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 20px 40px -10px rgba(2, 12, 27, 0.8); 
+  transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.about-image-wrapper:hover .about-img {
+  transform: translateY(-5px) scale(1.01);
+}
+
+/* Premium Floating Badge (Glassmorphism) */
+.experience-badge {
+  position: absolute;
+  bottom: 10px; /* Thoda upar kiya mask ki wajah se */
+  right: -30px; /* Thoda bahar nikala */
+  background: rgba(17, 34, 64, 0.85); /* Transparent dark blue */
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(77, 166, 255, 0.25); 
+  padding: 1.2rem 1.5rem;
+  border-radius: 12px;
+  z-index: 3;
+  box-shadow: 0 15px 35px rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  min-width: 180px;
+  transition: transform 0.3s ease;
+}
+
+.experience-badge:hover {
+  transform: translateY(-3px) scale(1.02);
+}
+
+.years {
+  font-size: 2.2rem;
+  font-weight: 800;
+  color: var(--accent-blue);
+  line-height: 1;
+  text-shadow: 0 0 10px rgba(77, 166, 255, 0.3);
+}
+
+.experience-badge .text {
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+/* --- CONTENT SIDE (Right) --- */
+.about-content {
+  flex: 1;
+}
+
+.section-tag {
+  color: var(--accent-teal);
+  font-family: monospace;
+  font-size: 0.95rem;
+  margin-bottom: 1.2rem;
+  letter-spacing: 1px;
+}
+
+.about-content h2 {
+  font-size: 2.6rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 1.5rem;
+  color: var(--text-primary);
+}
+
+.highlight {
+  color: var(--accent-blue);
+  position: relative;
+  display: inline-block;
+}
+
+.highlight::after {
+  content: "";
+  position: absolute;
+  width: 100%;
+  height: 4px; 
+  bottom: 6px;
+  left: 0;
+  background: rgba(77, 166, 255, 0.4);
+  z-index: -1;
+  border-radius: 2px;
+}
+
+.description {
+  color: var(--text-secondary);
+  font-size: 1.05rem;
+  line-height: 1.7;
+  margin-bottom: 2.5rem;
+}
+
+/* Checklist Grid */
+.points-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 2.5rem;
+}
+
+.point-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: 0.95rem;
+}
+
+.point-icon {
+  color: var(--accent-teal);
+  min-width: 20px;
+}
+
+/* Button */
+.about-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 32px;
+  background: transparent;
+  color: var(--accent-teal);
+  border: 1px solid rgba(100, 255, 218, 0.5); 
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: 600;
+  transition: all 0.3s ease;
+}
+
+.about-btn:hover {
+  background: rgba(100, 255, 218, 0.1);
+  border-color: var(--accent-teal);
+  transform: translateX(5px);
+  box-shadow: 0 5px 15px rgba(100, 255, 218, 0.1);
+}
+
+/* --- RESPONSIVE --- */
+/* --- RESPONSIVE --- */
+@media (max-width: 992px) {
+  .about-container {
+    flex-direction: column;
+    gap: 4rem;
+  }
+
+  .about-image-wrapper {
+    width: 100%;
+    max-width: 500px;
+    margin: 0 auto;
+  }
+  
+  .experience-badge {
+    right: 15px;
+    bottom: -15px;
+  }
+}
+
+@media (max-width: 768px) {
+  .about-section {
+    padding: 4rem 20px; /* ✅ Mobile par perfectly balanced equal padding */
+  }
+  
+  .about-content h2 {
+    font-size: 2.2rem;
+  }
+  
+  .points-grid {
+    grid-template-columns: 1fr; 
+    gap: 1rem;
+  }
+  
+  .experience-badge {
+    right: 5px; /* Badge ko zyada bahar nikalne se roka */
+    bottom: -10px;
+    padding: 1rem;
+    min-width: unset;
+  }
+  
+  .years {
+    font-size: 1.8rem;
+  }
+}
