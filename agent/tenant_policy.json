@@ -1,0 +1,18 @@
+{
+  "agent_settings": {
+    "tenant_id": "WARSOC_99E662CC",
+    "backend_url": "http://127.0.0.1:8000",
+    "agent_secret": "warsoc_enterprise_agent_key_2026",
+    "heartbeat_interval_seconds": 5,
+    "log_poll_interval_seconds": 1,
+    "safe_whitelist_ips": [
+      "127.0.0.1",
+      "0.0.0.0",
+      "8.8.8.8",
+      "192.168.1.1"
+    ]
+  },
+  "monitoring": {
+    "target_event_ids": [4624, 4625, 1102, 4688]
+  }
+}

@@ -1,0 +1,25 @@
+timestamp,source_ip,user,type,severity,message,mitre_id
+2026-02-08T08:55:00,192.168.1.10,system,System,INFO,Daily system backup started,N/A
+2026-02-08T09:00:01,192.168.1.105,j.doe,Login,INFO,User logged in successfully,N/A
+2026-02-08T09:01:15,192.168.1.108,m.smith,File Access,INFO,Accessed file /finance/Q1_Report.xlsx,N/A
+2026-02-08T09:05:00,45.33.22.11,root,Authentication,HIGH,Failed password for invalid user root from 45.33.22.11 port 48292,T1110
+2026-02-08T09:05:02,45.33.22.11,root,Authentication,HIGH,Failed password for invalid user root from 45.33.22.11 port 48294,T1110
+2026-02-08T09:05:05,45.33.22.11,root,Authentication,HIGH,Failed password for invalid user root from 45.33.22.11 port 48296,T1110
+2026-02-08T09:05:07,45.33.22.11,admin,Authentication,HIGH,Failed password for user admin from 45.33.22.11 port 48300,T1110
+2026-02-08T09:10:00,192.168.1.110,hr_manager,Login,INFO,User logged in successfully,N/A
+2026-02-08T09:15:00,192.168.1.50,server_admin,Network,INFO,Internal RDP connection established,N/A
+2026-02-08T10:15:00,103.55.12.99,www-data,Web Attack,CRITICAL,Detected SQLi pattern ' UNION SELECT 1, database(), user() -- in URI,T1190
+2026-02-08T10:15:05,103.55.12.99,www-data,Web Attack,CRITICAL,Detected SQLi pattern ' OR 1=1 -- in Login Form,T1190
+2026-02-08T10:30:00,192.168.1.105,j.doe,Email,INFO,Sent email to external domain gmail.com,N/A
+2026-02-08T11:20:00,192.168.1.52,finance_user,Malware,CRITICAL,Ransomware file extension .wnry detected in /shared/finance/,T1486
+2026-02-08T11:20:01,192.168.1.52,finance_user,Malware,CRITICAL,Detected WannaCry signature pattern in memory,T1486
+2026-02-08T11:20:05,192.168.1.52,finance_user,System,HIGH,Mass file modification detected (500+ files in 1 min),T1485
+2026-02-08T12:00:00,185.220.101.5,N/A,Web Attack,HIGH,Reflected XSS attempt <script>alert('hacked')</script> in search parameter,T1059.007
+2026-02-08T12:05:00,192.168.1.200,backup_svc,System,INFO,Incremental backup completed,N/A
+2026-02-08T12:45:00,192.168.1.45,system,Network,CRITICAL,Connection attempted to known C2 Botnet Server (Malicious IP),T1071
+2026-02-08T13:00:00,192.168.1.108,m.smith,Login,INFO,User logged in successfully,N/A
+2026-02-08T14:10:00,203.0.113.42,N/A,Network,MEDIUM,Port Scan detected: Source scanned ports 21, 22, 23, 80, 443 sequentially,T1046
+2026-02-08T14:15:00,192.168.1.12,dev_user,Web Attack,HIGH,Directory Traversal attempt ../../../etc/passwd detected,T1083
+2026-02-08T15:00:00,192.168.1.10,system,System,INFO,System health check passed,N/A
+2026-02-08T15:30:00,192.168.1.88,ceo,Login,CRITICAL,Impossible Travel Detected: Login from New York (US) 5 mins after login from London (UK),T1078
+2026-02-08T16:00:00,192.168.1.105,j.doe,Logout,INFO,User logged out,N/A
