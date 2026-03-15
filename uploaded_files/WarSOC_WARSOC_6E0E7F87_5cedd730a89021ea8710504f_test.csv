@@ -1,6 +1,0 @@
-timestamp,source_ip,event_id,severity,message,engine_source
-2026-03-01T08:00:00Z,192.168.100.45,4624,INFO,Successful Logon for user Admin,Stateless
-2026-03-01T08:05:00Z,192.168.100.50,4624,INFO,Successful Logon for user JSmith,Stateless
-2026-03-01T08:12:33Z,10.0.5.99,4625,HIGH,Failed Logon - Brute Force Attempt,Behavioral
-2026-03-01T08:14:00Z,192.168.100.38,4672,MEDIUM,Special privileges assigned to logon,Stateless
-2026-03-01T08:20:00Z,192.168.100.38,1102,CRITICAL,The audit log was cleared by SYSTEM,Behavioral
