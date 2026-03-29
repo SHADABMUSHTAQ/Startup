@@ -207,12 +207,12 @@ async def analyze_log_file(request: Request, file: UploadFile = File(...), db=De
 
                 # ✅ CTO FIX 3: Batch Insert to MongoDB to respect the 16MB document limit
                 if len(logs_batch) >= batch_size:
-                    await db.logs.insert_many(logs_batch)
+                    await db["logs"].insert_many(logs_batch)
                     logs_batch.clear()
 
             # Insert any remaining logs
             if logs_batch:
-                await db.logs.insert_many(logs_batch)
+                await db["logs"].insert_many(logs_batch)
 
             if parsed_rows == 0:
                 raise HTTPException(status_code=400, detail="No valid log rows were found in the CSV.")
@@ -234,7 +234,7 @@ async def analyze_log_file(request: Request, file: UploadFile = File(...), db=De
             "analysis_tag": analysis_tag
         }
         
-        result = await db.analysis_results.insert_one(analysis_doc)
+        result = await db["analysis_results"].insert_one(analysis_doc)
         
         return {
             "status": "completed",
@@ -262,7 +262,7 @@ async def get_upload_history(db=Depends(get_db), current_user=Depends(get_curren
             except Exception:
                 pass
 
-        cursor = db.analysis_results.find(query).sort("uploaded_at", -1)
+        cursor = db["analysis_results"].find(query).sort("uploaded_at", -1)
         results = []
         async for doc in cursor:
             doc["_id"] = str(doc["_id"])
@@ -279,7 +279,7 @@ async def get_analysis_result(analysis_id: str, db=Depends(get_db), current_user
     if not ObjectId.is_valid(analysis_id):
         raise HTTPException(status_code=404, detail="Invalid analysis ID")
         
-    result = await db.analysis_results.find_one({"_id": ObjectId(analysis_id), "tenant_id": secure_tenant_id})
+    result = await db["analysis_results"].find_one({"_id": ObjectId(analysis_id), "tenant_id": secure_tenant_id})
     if not result:
         raise HTTPException(status_code=404, detail="Report not found")
     
@@ -287,7 +287,7 @@ async def get_analysis_result(analysis_id: str, db=Depends(get_db), current_user
     tag = result.get("analysis_tag")
     findings = []
     if tag:
-        cursor = db.logs.find({"tenant_id": secure_tenant_id, "analysis_tag": tag}).limit(1000)
+        cursor = db["logs"].find({"tenant_id": secure_tenant_id, "analysis_tag": tag}).limit(1000)
         async for log in cursor:
             log["_id"] = str(log["_id"])
             findings.append(log)
@@ -305,13 +305,13 @@ async def delete_log(analysis_id: str, db=Depends(get_db), current_user=Depends(
     if not ObjectId.is_valid(analysis_id):
         raise HTTPException(status_code=404, detail="Invalid analysis ID")
         
-    doc = await db.analysis_results.find_one({"_id": ObjectId(analysis_id), "tenant_id": secure_tenant_id})
+    doc = await db["analysis_results"].find_one({"_id": ObjectId(analysis_id), "tenant_id": secure_tenant_id})
     if not doc:
         raise HTTPException(status_code=404, detail="File not found or unauthorized")
 
     tag = doc.get("analysis_tag")
     if tag:
-        await db.logs.delete_many({"tenant_id": secure_tenant_id, "analysis_tag": tag})
+        await db["logs"].delete_many({"tenant_id": secure_tenant_id, "analysis_tag": tag})
 
     # Clean up the physical file from disk
     file_path = doc.get("file_path")
@@ -321,7 +321,7 @@ async def delete_log(analysis_id: str, db=Depends(get_db), current_user=Depends(
         except OSError:
             pass
 
-    await db.analysis_results.delete_one({"_id": doc["_id"]})
+    await db["analysis_results"].delete_one({"_id": doc["_id"]})
     return {"status": "deleted", "id": analysis_id}
 
 @router.delete("/delete/{analysis_id}")
@@ -335,7 +335,7 @@ async def download_report(analysis_id: str, db=Depends(get_db), current_user=Dep
     if not ObjectId.is_valid(analysis_id):
         raise HTTPException(status_code=404, detail="Invalid analysis ID")
         
-    result = await db.analysis_results.find_one({"_id": ObjectId(analysis_id), "tenant_id": secure_tenant_id})
+    result = await db["analysis_results"].find_one({"_id": ObjectId(analysis_id), "tenant_id": secure_tenant_id})
     if not result:
         raise HTTPException(status_code=404, detail="Report not found")
     
@@ -343,7 +343,7 @@ async def download_report(analysis_id: str, db=Depends(get_db), current_user=Dep
     tag = result.get("analysis_tag")
     findings = []
     if tag:
-        cursor = db.logs.find({"tenant_id": secure_tenant_id, "analysis_tag": tag}).limit(5000)
+        cursor = db["logs"].find({"tenant_id": secure_tenant_id, "analysis_tag": tag}).limit(5000)
         async for log in cursor:
             log["_id"] = str(log["_id"])
             findings.append(log)

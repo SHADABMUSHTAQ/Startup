@@ -81,7 +81,7 @@ async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Could not validate credentials")
     
-    user = await db.users.find_one({"username": username})
+    user = await db["users"].find_one({"username": username})
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
     
@@ -106,12 +106,11 @@ async def verify_agent_token(request: Request, token: str = Depends(oauth2_schem
             raise HTTPException(status_code=401, detail="Invalid agent token")
 
         # ✅ CTO FIX 2: Removed rogue DB connections. Rely strictly on `db` dependency.
-        db_inner = getattr(db, "db", db) # Handle varying db dependency structures cleanly
-        agent_doc = await db_inner["agents"].find_one({"agent_id": agent_id})
+        agent_doc = await db["agents"].find_one({"agent_id": agent_id})
         user = None
 
         if not agent_doc:
-            user = await db_inner["users"].find_one({"tenant_id": agent_id})
+            user = await db["users"].find_one({"tenant_id": agent_id})
 
         if agent_doc:
             if not agent_doc.get("approved", True):
@@ -136,7 +135,7 @@ async def verify_agent_token(request: Request, token: str = Depends(oauth2_schem
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
 async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
-    existing_user = await db.users.find_one({"$or": [{"email": user.email}, {"username": user.username}]})
+    existing_user = await db["users"].find_one({"$or": [{"email": user.email}, {"username": user.username}]})
     if existing_user:
         raise HTTPException(status_code=400, detail="Username or Email already registered")
 
@@ -153,7 +152,7 @@ async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
         "has_active_plan": True,
         "created_at": datetime.now(timezone.utc)
     }
-    await db.users.insert_one(new_user)
+    await db["users"].insert_one(new_user)
     return {"message": "User created successfully", "tenant_id": new_tenant_id}
 
 class LoginSchema(BaseModel):
@@ -163,7 +162,7 @@ class LoginSchema(BaseModel):
 @router.post("/login")
 @limiter.limit("10/minute")
 async def login(request: Request, user_data: LoginSchema, db=Depends(get_db)):
-    db_user = await db.users.find_one({"$or": [{"username": user_data.username}, {"email": user_data.username}]})
+    db_user = await db["users"].find_one({"$or": [{"username": user_data.username}, {"email": user_data.username}]})
     if not db_user or not verify_password(user_data.password, db_user["hashed_password"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -220,10 +219,9 @@ async def get_user_me(current_user=Depends(get_current_user)):
 async def agent_login(request: Request, data: AgentLogin, db=Depends(get_db)):
     try:
         agent_doc = None
-        db_inner = getattr(db, "db", db)
         
         try:
-            agent_doc = await db_inner["agents"].find_one({"agent_id": data.agent_id})
+            agent_doc = await db["agents"].find_one({"agent_id": data.agent_id})
         except Exception:
             agent_doc = None
 
@@ -232,7 +230,7 @@ async def agent_login(request: Request, data: AgentLogin, db=Depends(get_db)):
                 raise HTTPException(status_code=403, detail="Agent not approved")
             mapped_tenant = agent_doc.get("tenant_id") or data.agent_id
         else:
-            tenant_user = await db_inner["users"].find_one({"tenant_id": data.agent_id})
+            tenant_user = await db["users"].find_one({"tenant_id": data.agent_id})
             if not tenant_user:
                 raise HTTPException(status_code=401, detail="Unknown agent tenant")
             mapped_tenant = data.agent_id
@@ -267,7 +265,7 @@ async def agent_login(request: Request, data: AgentLogin, db=Depends(get_db)):
 async def update_plan(data: PlanUpdate, db=Depends(get_db), current_user=Depends(get_current_user)):
     secure_username = current_user["username"]
     
-    await db.users.update_one(
+    await db["users"].update_one(
         {"username": secure_username},
         {"$set": {
             "plan_type": data.plan_name, 
@@ -275,7 +273,7 @@ async def update_plan(data: PlanUpdate, db=Depends(get_db), current_user=Depends
         }}
     )
     
-    db_user = await db.users.find_one({"username": secure_username})
+    db_user = await db["users"].find_one({"username": secure_username})
     tenant_id = db_user.get("tenant_id", "WARSOC_DEFAULT")
     access_token = create_access_token(
         data={"sub": db_user["username"], "type": "user", "tenant_id": tenant_id}, 

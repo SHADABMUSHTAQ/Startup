@@ -110,7 +110,7 @@ async def get_db():
     if db_manager.db is None:
         # Fallback ONLY if lifespan somehow failed, but we raise an error instead of thrashing
         raise Exception("Database not initialized. Check lifespan startup.")
-    return db_manager
+    return db_manager.db
 
 # --- CONTEXT MANAGER FOR WORKER ---
 @asynccontextmanager

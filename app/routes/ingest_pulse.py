@@ -79,8 +79,7 @@ async def get_alert_history(
         if fresh_start_at:
             alert_query["timestamp"] = {"$gte": fresh_start_at}
 
-        db_inner = getattr(db, "db", db)
-        cursor = db_inner["security_alerts"].find(alert_query).sort("timestamp", -1).limit(50)
+        cursor = db["security_alerts"].find(alert_query).sort("timestamp", -1).limit(50)
         history = await cursor.to_list(length=50)
         for doc in history:
             doc["_id"] = str(doc["_id"])
@@ -104,8 +103,7 @@ async def fetch_agent_logs(
         raise HTTPException(status_code=403, detail="Critical: User lacks tenant assignment.")
 
     try:
-        db_inner = getattr(db, "db", db)
-        cursor = db_inner["logs"].find({"tenant_id": secure_tenant_id}).sort("timestamp", -1).limit(limit)
+        cursor = db["logs"].find({"tenant_id": secure_tenant_id}).sort("timestamp", -1).limit(limit)
         logs = await cursor.to_list(length=limit)
         for doc in logs:
             doc["_id"] = str(doc["_id"])
