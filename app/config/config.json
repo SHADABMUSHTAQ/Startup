@@ -1,0 +1,426 @@
+{
+  "mongodb": {
+    "db_name": "siem_project",
+    "uri": "mongodb://localhost:27017"
+  },
+  "redis": {
+    "url": "redis://localhost:6379",
+    "key_prefix": "warsoc:stateful:",
+    "default_ttl": 3600
+  },
+  "monitoring": {
+    "target_event_ids": [4624, 4625, 4672, 4688, 4720, 4726, 1102],
+    "capture_all_security_events": true,
+    "capture_all_windows_channels": true,
+    "windows_channels": ["Security", "System", "Application", "Microsoft-Windows-PowerShell/Operational", "Windows PowerShell"],
+    "web_log_paths": ["access.log", "logs/*.log", "C:/inetpub/logs/LogFiles/W3SVC*/u_ex*.log"]
+  },
+  "threat_intelligence": {
+    "enabled": true,
+    "ips": ["192.168.1.100", "10.0.0.200"],
+    "files": ["data/blacklist_ip.txt"],
+    "options": {
+      "ignore_private_ips": false,
+      "minimum_confidence": 80,
+      "confidence": {
+        "direct_ip": 95,
+        "file_ip": 90,
+        "cidr": 75
+      },
+      "trusted_networks": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+      "private_ip_allowlist": []
+    }
+  },
+  "whitelist": {
+    "enabled": true,
+    "service_accounts": ["svc_backup", "nagios", "backup", "root", "daemon"],
+    "ips": ["127.0.0.1", "::1", "localhost"]
+  },
+  "geoip": {
+    "enabled": true,
+    "mock_mode": true
+  },
+  "event_id_map": {
+    "4624": {"event_type": "successful_login", "severity": "INFO"},
+    "4625": {"event_type": "failed_login", "severity": "HIGH"},
+    "4672": {"event_type": "privilege_escalation", "severity": "MEDIUM"},
+    "4720": {"event_type": "account_created", "severity": "INFO"},
+    "4726": {"event_type": "account_deleted", "severity": "INFO"},
+    "1102": {"event_type": "clear_logs", "severity": "CRITICAL"},
+    "4688": {"event_type": "process_creation", "severity": "INFO"},
+    "4689": {"event_type": "process_termination", "severity": "INFO"},
+    "80": {"event_type": "http_request", "severity": "INFO"}
+  },
+  "detection": {
+    "brute_force_threshold": 3,
+    "failed_login_patterns": ["failed password", "authentication failure", "login failed", "access denied"],
+    "fp_controls": {
+      "default_min_message_length": 12,
+      "max_alerts_per_log": 2,
+      "rule_cooldown_seconds": 30,
+      "suppress_if_message_contains": ["healthcheck", "status check", "system heartbeat", "normal user login", "normal navigation", "profile update", "connectivity check", "windows update"]
+    },
+    "phishing_detection": {
+      "enabled": true,
+      "score_threshold": 50,
+      "minimum_signals": 2,
+      "credential_lure_keywords": ["verify your account", "password expired", "reset password", "urgent action required", "invoice attached", "payment failed", "mfa required", "security alert"],
+      "url_shorteners": ["bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly"],
+      "trusted_domains": ["microsoft.com", "google.com", "apple.com", "amazon.com", "github.com", "linkedin.com"],
+      "suspicious_tlds": ["xyz", "top", "click", "work", "gq", "fit", "support"],
+      "risky_attachment_extensions": [".html", ".htm", ".lnk", ".iso", ".img", ".docm", ".xlsm", ".js", ".vbs", ".zip"],
+      "lolbin_indicators": ["powershell -enc", "mshta", "wscript", "cscript", "rundll32", "regsvr32", "certutil -urlcache", "bitsadmin"],
+      "weights": {
+        "credential_lure": 20,
+        "suspicious_domain": 20,
+        "raw_ip_url": 30,
+        "punycode_domain": 35,
+        "risky_attachment": 30,
+        "lolbin_execution": 35,
+        "url_shortener": 20,
+        "sender_spoof_hint": 25
+      }
+    },
+    "rules": {
+      "SQL_INJECTION": {"regex": "(?i)(%27|'|%22)\\s*(union\\s+(all\\s+)?select|select\\s+.{0,80}from|insert\\s+into|update\\s+.*set|delete\\s+from|drop\\s+(table|database)|or\\s+['\"]?\\d+['\"]?\\s*=\\s*['\"]?\\d|--|;\\s*--|xp_cmdshell|information_schema|1\\s*=\\s*1)", "sev": "HIGH", "mitre": "T1190", "requires_context": ["http_request"], "must_include_any": ["select", "union", "or 1=1", "--", "drop", "information_schema"], "min_message_length": 24, "cooldown_seconds": 60},
+      "XSS_ATTACK": {"regex": "(?i)(<script|javascript:|onerror=|onload=)", "sev": "HIGH", "mitre": "T1190", "requires_context": ["http_request"], "must_include_any": ["<script", "javascript:", "onerror", "onload"], "min_message_length": 20, "cooldown_seconds": 45},
+      "COMMAND_INJECTION": {"regex": "(?i)(;\\s*(whoami|cat|id|ls|dir|uname|curl|wget|bash|sh|nc|python|perl|ruby|chmod|chown|rm\\s)\\b|\\|\\s*nc|\\$\\s*\\(|`[a-z]+`)", "sev": "CRITICAL", "mitre": "T1059"},
+      "PATH_TRAVERSAL": {"regex": "(?i)(\\.\\.\\/|\\.\\.\\\\|etc/passwd|win.ini)", "sev": "HIGH", "mitre": "T1083"},
+      "POWERSHELL_OBFUSCATION": {"regex": "(?i)powershell[\\s+.\\-]*(\\-e(nc)?(odedcommand)?|\\-w(indowstyle)?[\\s+]+h(idden)?)[\\s+]+[A-Za-z0-9+/=]{10,}", "sev": "CRITICAL", "mitre": "T1027"},
+      "PRIVILEGE_ESCALATION": {"regex": "(?i)(sudo\\s+su\\s+\\-|nopasswd:\\s+all|net\\s+localgroup\\s+administrators\\s+.*\\s+/add|passwd\\s+\\-d)", "sev": "HIGH", "mitre": "T1068"},
+      "LATERAL_MOVEMENT": {"regex": "(?i)(net\\s+use\\s+\\\\\\\\[a-z0-9.]+\\\\c\\$|wmic\\s+/node:.*process\\s+call\\s+create|winrm\\s+invoke|enter-pssession)", "sev": "HIGH", "mitre": "T1021"},
+      "LOG_EVASION": {"regex": "(?i)(wevtutil\\s+cl\\s+|history\\s+\\-c|rm\\s+.*\\.log|shred\\s+|clear-eventlog|set-mppreference\\s+-disablerealtime)", "sev": "HIGH", "mitre": "T1070"},
+      "REVERSE_SHELL": {"regex": "(?i)(bash\\s+\\-i\\s+>\\&\\s+/dev/tcp/|python.*\\-c.*socket|perl\\s+\\-e.*socket|nc\\s+-e\\s+/bin/sh)", "sev": "CRITICAL", "mitre": "T1059.004"},
+      "RECON_COMMANDS": {"regex": "(?i)(whoami|ipconfig|netstat|enum4linux|nmap|arp -a)", "sev": "MEDIUM", "mitre": "T1592"},
+      "PERSISTENCE": {"regex": "(?i)(crontab -e|authorized_keys|registry run keys|schtasks /create)", "sev": "HIGH", "mitre": "T1053"},
+      "DATA_EXFILTRATION": {"regex": "(?i)(wget\\s+.*(-O|--output|http)|curl\\s+.*(-d|--data|-F|--upload|POST)|nc\\s+-w\\s+\\d+|sftp\\s+.*@|scp\\s+.*:)", "sev": "HIGH", "mitre": "T1041"},
+      "STAGING": {"regex": "(?i)(7z\\s+a|zip\\s+\\-r|tar\\s+\\-czf)\\s+.*(/tmp/|/windows/temp/|/appdata/|/var/tmp/)", "sev": "MEDIUM", "mitre": "T1074"},
+      "BRUTE_FORCE_PATTERN": {"regex": "(?i)(failed password|authentication failure|login failed|access denied)", "sev": "MEDIUM", "mitre": "T1110", "requires_context": ["failed_login"], "must_include_any": ["failed", "denied"], "min_message_length": 10, "cooldown_seconds": 20},
+      "XXE_INJECTION": {"regex": "(?i)(<!ENTITY\\s+|<!DOCTYPE\\s+.*SYSTEM\\s+|SYSTEM\\s+[\"']\\s*(?:file|https?|ftp)://|file:///)", "sev": "CRITICAL", "mitre": "T1190"},
+      "MALWARE_EXECUTION": {"regex": "(?i)(mimikatz|hashcat|psexec\\.exe|lazagne|rubeus|sharphound|bloodhound|cobalt\\s*strike|meterpreter)", "sev": "CRITICAL", "mitre": "T1059"}
+    }
+  },
+  "stateful_detection_rules": {
+    "auth_identity": {
+      "phishing_kill_chain": {
+        "enabled": true,
+        "window_seconds": 900,
+        "mitre_id": "T1566",
+        "severity": "CRITICAL",
+        "description": "Correlated phishing kill-chain detected",
+        "group_by": "user",
+        "event_filter": "all",
+        "minimum_stages": 2,
+        "lure_keywords": ["verify your account", "password expired", "invoice attached", "urgent action required", "security alert"],
+        "click_keywords": ["http://", "https://", "login", "signin", "verify", "mfa", "reset"],
+        "execution_keywords": ["powershell", "mshta", "wscript", "cscript", "rundll32", "regsvr32", "certutil", "bitsadmin", "macro"]
+      },
+      "high_velocity_brute_force": {
+        "enabled": true,
+        "threshold": 10,
+        "window_seconds": 60,
+        "mitre_id": "T1110.001",
+        "severity": "HIGH",
+        "description": "High-velocity brute force attack detected",
+        "group_by": "source_ip",
+        "event_filter": "failed_login"
+      },
+      "low_slow_brute_force": {
+        "enabled": true,
+        "threshold": 20,
+        "window_seconds": 3600,
+        "mitre_id": "T1110.001",
+        "severity": "MEDIUM",
+        "description": "Low-and-slow brute force attack detected",
+        "group_by": "source_ip",
+        "event_filter": "failed_login"
+      },
+      "password_spraying": {
+        "enabled": true,
+        "threshold_users": 10,
+        "threshold_attempts": 1,
+        "window_seconds": 300,
+        "mitre_id": "T1110.003",
+        "severity": "HIGH",
+        "description": "Password spraying attack detected",
+        "group_by": "source_ip",
+        "unique_field": "username",
+        "event_filter": "failed_login"
+      },
+      "impossible_travel": {
+        "enabled": true,
+        "max_travel_time_hours": 2,
+        "min_distance_km": 500,
+        "mitre_id": "T1078",
+        "severity": "CRITICAL",
+        "description": "Impossible travel detected",
+        "event_filter": "successful_login"
+      },
+      "new_location_access": {
+        "enabled": true,
+        "mitre_id": "T1078",
+        "severity": "MEDIUM",
+        "description": "Login from new geographic location",
+        "event_filter": "successful_login"
+      },
+      "concurrent_sessions": {
+        "enabled": true,
+        "threshold": 3,
+        "window_seconds": 300,
+        "mitre_id": "T1078",
+        "severity": "MEDIUM",
+        "description": "Concurrent sessions from multiple IPs",
+        "group_by": "username",
+        "event_filter": "successful_login"
+      },
+      "after_hours_activity": {
+        "enabled": true,
+        "start_hour": 2,
+        "end_hour": 5,
+        "mitre_id": "T1078",
+        "severity": "MEDIUM",
+        "description": "After-hours suspicious activity",
+        "event_filter": "successful_login"
+      },
+      "account_storm": {
+        "enabled": true,
+        "threshold": 5,
+        "window_seconds": 60,
+        "mitre_id": "T1136",
+        "severity": "HIGH",
+        "description": "Mass account creation detected",
+        "event_filter": "account_created"
+      },
+      "privilege_escalation_spike": {
+        "enabled": true,
+        "threshold": 5,
+        "window_seconds": 60,
+        "mitre_id": "T1548",
+        "severity": "HIGH",
+        "description": "Privilege escalation spike detected",
+        "event_filter": "privilege_escalation",
+        "keywords": ["sudo", "runas", "su", "elevation"]
+      },
+      "dormant_account_activation": {
+        "enabled": true,
+        "dormant_days": 30,
+        "mitre_id": "T1078.002",
+        "severity": "MEDIUM",
+        "description": "Dormant account reactivated",
+        "event_filter": "successful_login"
+      }
+    },
+    "filesystem_ransomware": {
+      "mass_file_modification": {
+        "enabled": true,
+        "threshold": 50,
+        "window_seconds": 60,
+        "mitre_id": "T1486",
+        "severity": "CRITICAL",
+        "description": "Mass file modification - Ransomware indicator",
+        "group_by": "username",
+        "event_filter": "file_modify"
+      },
+      "mass_file_deletion": {
+        "enabled": true,
+        "threshold": 50,
+        "window_seconds": 60,
+        "mitre_id": "T1485",
+        "severity": "CRITICAL",
+        "description": "Mass file deletion detected",
+        "group_by": "username",
+        "event_filter": "file_delete"
+      },
+      "sensitive_file_touch": {
+        "enabled": true,
+        "threshold": 5,
+        "window_seconds": 60,
+        "mitre_id": "T1005",
+        "severity": "HIGH",
+        "description": "Multiple sensitive file accesses",
+        "group_by": "username",
+        "event_filter": "file_access",
+        "sensitive_keywords": ["confidential", "finance", "payroll", "secret", "private"]
+      },
+      "ransomware_extensions": {
+        "enabled": true,
+        "threshold": 1,
+        "window_seconds": 60,
+        "mitre_id": "T1486",
+        "severity": "CRITICAL",
+        "description": "Ransomware file extension detected",
+        "group_by": "username",
+        "event_filter": "file_write",
+        "ransomware_extensions": [".crypt", ".locked", ".encrypted", ".locky", ".wannacry", ".cerber", ".cryptolocker"]
+      },
+      "data_exfiltration_volume": {
+        "enabled": true,
+        "threshold_bytes": 104857600,
+        "window_seconds": 300,
+        "mitre_id": "T1041",
+        "severity": "HIGH",
+        "description": "Large data upload detected",
+        "group_by": "username",
+        "event_filter": "data_upload"
+      },
+      "log_clearing_sequence": {
+        "enabled": true,
+        "window_seconds": 60,
+        "mitre_id": "T1070",
+        "severity": "CRITICAL",
+        "description": "Log clearing sequence detected",
+        "group_by": "source_ip",
+        "event_sequence": ["stop_logging", "clear_logs"]
+      }
+    },
+    "network_lateral": {
+      "vertical_port_scan": {
+        "enabled": true,
+        "threshold": 10,
+        "window_seconds": 60,
+        "mitre_id": "T1046",
+        "severity": "HIGH",
+        "description": "Vertical port scan detected",
+        "group_by": "source_ip",
+        "unique_field": "destination_port",
+        "event_filter": "network_connection"
+      },
+      "horizontal_port_scan": {
+        "enabled": true,
+        "threshold": 10,
+        "window_seconds": 60,
+        "mitre_id": "T1046",
+        "severity": "HIGH",
+        "description": "Horizontal port scan detected",
+        "group_by": "source_ip",
+        "unique_field": "destination_ip",
+        "event_filter": "network_connection"
+      },
+      "beaconing_c2": {
+        "enabled": true,
+        "threshold": 10,
+        "variance_seconds": 1,
+        "mitre_id": "T1071",
+        "severity": "CRITICAL",
+        "description": "C2 beaconing pattern detected",
+        "group_by": "source_ip",
+        "event_filter": "network_connection"
+      },
+      "long_duration_connection": {
+        "enabled": true,
+        "threshold_hours": 24,
+        "mitre_id": "T1572",
+        "severity": "MEDIUM",
+        "description": "Long-duration connection - Potential tunnel",
+        "event_filter": "network_connection"
+      },
+      "rare_port_usage": {
+        "enabled": true,
+        "mitre_id": "T1571",
+        "severity": "MEDIUM",
+        "description": "Rare port usage detected",
+        "event_filter": "network_connection",
+        "suspicious_ports": [6667, 6697, 31337, 12345, 54321, 1337]
+      },
+      "dns_tunneling": {
+        "enabled": true,
+        "threshold": 50,
+        "window_seconds": 60,
+        "subdomain_min_length": 50,
+        "mitre_id": "T1071.004",        "severity": "HIGH",
+        "description": "DNS tunneling detected",
+        "group_by": "source_ip",
+        "event_filter": "dns_query"
+      },
+      "rdp_brute_force": {
+        "enabled": true,
+        "threshold": 10,
+        "window_seconds": 60,
+        "mitre_id": "T1021.001",
+        "severity": "HIGH",
+        "description": "RDP brute force detected",
+        "group_by": "source_ip",
+        "event_filter": "rdp_failed",
+        "target_port": 3389
+      },
+      "smb_storm": {
+        "enabled": true,
+        "threshold": 100,
+        "window_seconds": 60,
+        "mitre_id": "T1021.002",
+        "severity": "HIGH",
+        "description": "SMB access storm detected",
+        "group_by": "source_ip",
+        "event_filter": "smb_access",
+        "target_port": 445
+      }
+    },
+    "web_application": {
+      "high_vol_sql_injection": {
+        "enabled": true,
+        "threshold": 10,
+        "window_seconds": 60,
+        "mitre_id": "T1190",
+        "severity": "HIGH",
+        "description": "SQL injection flood detected",
+        "group_by": "source_ip",
+        "event_filter": "http_request",
+        "sql_patterns": ["'", "union", "select", "insert", "drop", "delete", "--", "/*"]
+      },
+      "directory_brute_force": {
+        "enabled": true,
+        "threshold": 20,
+        "window_seconds": 60,
+        "mitre_id": "T1083",
+        "severity": "MEDIUM",
+        "description": "Directory brute force detected",
+        "group_by": "source_ip",
+        "event_filter": "http_404"
+      },
+      "waf_evasion_flood": {
+        "enabled": true,
+        "threshold": 50,
+        "window_seconds": 60,
+        "max_header_size": 8192,
+        "max_payload_size": 1048576,
+        "mitre_id": "T1190",
+        "severity": "HIGH",
+        "description": "WAF evasion flood detected",
+        "group_by": "source_ip",
+        "event_filter": "http_request"
+      },
+      "xss_flooding": {
+        "enabled": true,
+        "threshold": 10,
+        "window_seconds": 60,
+        "mitre_id": "T1059.007",
+        "severity": "MEDIUM",
+        "description": "XSS flood detected",
+        "group_by": "source_ip",
+        "event_filter": "http_request",
+        "xss_patterns": ["<script", "javascript:", "onerror=", "onload="]
+      },
+      "bot_scraping": {
+        "enabled": true,
+        "threshold": 100,
+        "window_seconds": 60,
+        "mitre_id": "T1213",
+        "severity": "LOW",
+        "description": "Bot scraping detected",
+        "group_by": "source_ip",
+        "event_filter": "http_request",
+        "target_path_prefix": "/product"
+      },
+      "error_storm": {
+        "enabled": true,
+        "threshold": 50,
+        "window_seconds": 60,
+        "mitre_id": "T1499",
+        "severity": "MEDIUM",
+        "description": "Application error storm detected",
+        "group_by": "source_ip",
+        "event_filter": "http_500"
+      }
+    }
+  }
+}
