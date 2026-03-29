@@ -71,7 +71,7 @@ async def execute_mitigation(payload: BanRequest, request: Request, db=Depends(g
         raise HTTPException(status_code=400, detail="Safety Lock: Cannot ban system IP.")
 
     # 🚨 SURGICAL FIX: Consistent .db access
-    existing = await db.db["firewall_rules"].find_one({"ip": target_ip, "tenant_id": secure_tenant_id})
+    existing = await db["firewall_rules"].find_one({"ip": target_ip, "tenant_id": secure_tenant_id})
     
     if not existing:
         ban_entry = {
@@ -82,7 +82,7 @@ async def execute_mitigation(payload: BanRequest, request: Request, db=Depends(g
             "banned_at": datetime.now(timezone.utc).isoformat(),
             "banned_by": current_user["username"]
         }
-        await db.db["firewall_rules"].insert_one(ban_entry)
+        await db["firewall_rules"].insert_one(ban_entry)
 
     # Try to use the global Redis pool; if missing, create a temporary client
     redis_client = getattr(request.app.state, 'redis', None)
@@ -123,7 +123,7 @@ async def revoke_mitigation(payload: BanRequest, request: Request, db=Depends(ge
     secure_tenant_id = current_user.get("tenant_id")
 
     # 🚨 SURGICAL FIX: Added missing delete_one command and fixed db access
-    await db.db["firewall_rules"].delete_one({"ip": target_ip, "tenant_id": secure_tenant_id})
+    await db["firewall_rules"].delete_one({"ip": target_ip, "tenant_id": secure_tenant_id})
 
     redis_client = getattr(request.app.state, 'redis', None)
     temp_redis = None
@@ -183,7 +183,7 @@ async def get_blocked_list(db=Depends(get_db), current_user=Depends(get_current_
     secure_tenant_id = current_user.get("tenant_id")
     
     # 🚨 SURGICAL FIX: Dictionary access and isolation filtering
-    cursor = db.db["firewall_rules"].find({"tenant_id": secure_tenant_id}).sort("banned_at", -1)
+    cursor = db["firewall_rules"].find({"tenant_id": secure_tenant_id}).sort("banned_at", -1)
     results = []
     async for doc in cursor:
         doc["_id"] = str(doc["_id"])
@@ -200,7 +200,7 @@ async def tenant_fresh_start(db=Depends(get_db), current_user=Depends(get_curren
         raise HTTPException(status_code=403, detail="Critical: User lacks tenant assignment.")
 
     fresh_start_at = datetime.now(timezone.utc).isoformat()
-    await db.users.update_one(
+    await db["users"].update_one(
         {"tenant_id": secure_tenant_id},
         {"$set": {"agent_issued_at": fresh_start_at}},
     )
@@ -545,7 +545,7 @@ async def download_agent(current_user=Depends(get_current_user), db=Depends(get_
 
     # ✅ OPTION A: Keep agent secret across downloads (only generate once per tenant)
     # 1. Check if user already has an agent secret
-    existing_user = await db.users.find_one({"tenant_id": tenant_id})
+    existing_user = await db["users"].find_one({"tenant_id": tenant_id})
     stored_secret = existing_user.get("agent_secret") if existing_user else None
 
     # We will ensure the value stored in DB is a hashed secret, while the
@@ -558,7 +558,7 @@ async def download_agent(current_user=Depends(get_current_user), db=Depends(get_
         if isinstance(stored_secret, str) and stored_secret.startswith("$"):
             agent_secret_for_zip = _secrets.token_urlsafe(32)
             hashed_secret = get_password_hash(agent_secret_for_zip)
-            await db.users.update_one(
+            await db["users"].update_one(
                 {"tenant_id": tenant_id},
                 {"$set": {"agent_secret": hashed_secret}},
             )
@@ -567,7 +567,7 @@ async def download_agent(current_user=Depends(get_current_user), db=Depends(get_
             # keep the plaintext for the downloaded package this time.
             agent_secret_for_zip = stored_secret
             hashed_secret = get_password_hash(agent_secret_for_zip)
-            await db.users.update_one(
+            await db["users"].update_one(
                 {"tenant_id": tenant_id},
                 {"$set": {"agent_secret": hashed_secret}},
             )
@@ -575,7 +575,7 @@ async def download_agent(current_user=Depends(get_current_user), db=Depends(get_
         # No secret exists; create one, store the hash, and keep plaintext for zip
         agent_secret_for_zip = _secrets.token_urlsafe(32)
         hashed_secret = get_password_hash(agent_secret_for_zip)
-        await db.users.update_one(
+        await db["users"].update_one(
             {"tenant_id": tenant_id},
             {"$set": {"agent_secret": hashed_secret}},
         )
@@ -583,7 +583,7 @@ async def download_agent(current_user=Depends(get_current_user), db=Depends(get_
     # 3. Mark this download as a fresh start point for dashboard views.
     #    Data is not deleted; older records are simply hidden by default.
     fresh_start_at = datetime.now(timezone.utc).isoformat()
-    await db.users.update_one(
+    await db["users"].update_one(
         {"tenant_id": tenant_id},
         {"$set": {"agent_issued_at": fresh_start_at}},
     )

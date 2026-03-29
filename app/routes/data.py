@@ -29,8 +29,8 @@ async def global_search(q: str = "", days: str = "", db=Depends(get_db), current
                 {"severity": {"$regex": search_term, "$options": "i"}}
             ]
         
-        # 📥 3. Search in Live Logs (db.logs)
-        cursor = db.logs.find(query).sort("timestamp", -1)
+        # 📥 3. Search in Live Logs (db["logs"])
+        cursor = db["logs"].find(query).sort("timestamp", -1)
         logs_docs = await cursor.to_list(length=500)
         
         combined_results = []
@@ -38,8 +38,8 @@ async def global_search(q: str = "", days: str = "", db=Depends(get_db), current
             doc["_id"] = str(doc["_id"])
             combined_results.append(doc)
             
-        # 🚀 4. THE MAGIC: Search INSIDE Offline Files (db.analysis_results)
-        offline_cursor = db.analysis_results.find({"tenant_id": tenant_id})
+        # 🚀 4. THE MAGIC: Search INSIDE Offline Files (db["analysis_results"])
+        offline_cursor = db["analysis_results"].find({"tenant_id": tenant_id})
         offline_docs = await offline_cursor.to_list(length=100)
         
         for file_doc in offline_docs:
