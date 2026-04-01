@@ -3,10 +3,10 @@
    ========================================= */
 
 :root {
-  --pricing-blue: #47A5EF; /* WarSOC Logo Blue */
-  --pricing-lime: #B7EA48; /* WarSOC Logo Lime */
-  --pricing-card-bg: #131F43; /* Matches Features Card BG */
-  --pricing-border: rgba(71, 165, 239, 0.15);
+    --pricing-blue: #47A5EF; /* WarSOC Logo Blue */
+    --pricing-lime: #B7EA48; /* WarSOC Logo Lime */
+    --pricing-card-bg: #131F43; /* Matches Features Card BG */
+    --pricing-border: rgba(71, 165, 239, 0.15);
 }
 
 #pricing {
@@ -126,12 +126,20 @@
     gap: 25px;
 }
 
-/* --- Input Groups --- */
+/* =========================================
+   🚀 FIX: INPUT GROUPS COLLISION (ONLY THIS MODIFIED)
+   ========================================= */
 .customization-panel .input-group {
     background-color: rgba(0,0,0,0.2);
     padding: 20px;
     border-radius: 12px;
     border: 1px solid rgba(255,255,255,0.05);
+    /* Yahan flex-direction column kar diya taake overlap na ho */
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    justify-content: center !important;
+    gap: 12px !important;
 }
 
 .customization-panel label {
@@ -140,13 +148,15 @@
     gap: 10px;
     color: #94a3b8;
     font-size: 15px;
-    margin-bottom: 12px;
+    margin-bottom: 0px; /* Margin ko 0 kiya kyunki ab gap use ho raha hai */
     font-weight: 500;
+    width: 100%;
 }
 
 .customization-panel input,
 .customization-panel select {
-    width: 100%;
+    width: 100% !important;
+    max-width: 100% !important;
     padding: 14px 18px;
     background-color: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.1);
@@ -154,6 +164,9 @@
     border-radius: 8px;
     font-size: 16px;
     transition: border-color 0.2s;
+    box-sizing: border-box !important;
+    margin: 0 !important;
+    position: static !important;
 }
 
 .customization-panel input:focus,
@@ -165,9 +178,12 @@
 .customization-panel small {
     display: block;
     color: #64748b;
-    margin-top: 10px;
+    margin-top: 0px; 
     font-size: 13px;
+    width: 100%;
+    line-height: 1.4;
 }
+/* ========================================= */
 
 /* --- Add-ons Section --- */
 .addons-section {

@@ -57,7 +57,7 @@ function Hero() {
         {/* Right Side: Image/Visual */}
         <div className="hero-visual">
           <div className="image-backdrop"></div>
-          <img src="/hero-img.png" alt="WarSOC Dashboard Preview" className="floating-img" />
+          <img src="public/Logo.png" alt="WarSOC Dashboard Preview" className="floating-img" />
         </div>
 
       </div>
