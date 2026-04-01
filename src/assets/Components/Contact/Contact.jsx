@@ -115,7 +115,7 @@ const Contact = () => {
                 <div className="form-group half-width">
                   <label htmlFor="company">Company Name</label>
                   <div className="input-with-icon">
-                    <Building2 size={16} className="input-icon" />
+                    {/* <Building2 size={16} className="input-icon" /> */}
                     <input type="text" id="company" name="company" placeholder="Acme Corp" style={{paddingLeft: '32px'}} required />
                   </div>
                 </div>

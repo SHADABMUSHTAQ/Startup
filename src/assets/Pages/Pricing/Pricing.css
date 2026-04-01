@@ -127,14 +127,13 @@
 }
 
 /* =========================================
-   🚀 FIX: INPUT GROUPS COLLISION (ONLY THIS MODIFIED)
+   🚀 FIX: INPUT GROUPS COLLISION & ALIGNMENT
    ========================================= */
 .customization-panel .input-group {
     background-color: rgba(0,0,0,0.2);
     padding: 20px;
     border-radius: 12px;
     border: 1px solid rgba(255,255,255,0.05);
-    /* Yahan flex-direction column kar diya taake overlap na ho */
     display: flex !important;
     flex-direction: column !important;
     align-items: flex-start !important;
@@ -144,15 +143,23 @@
 
 .customization-panel label {
     display: flex;
-    align-items: center;
+    align-items: center; /* Perfect vertical center lock */
     gap: 10px;
     color: #94a3b8;
-    font-size: 15px;
-    margin-bottom: 0px; /* Margin ko 0 kiya kyunki ab gap use ho raha hai */
-    font-weight: 500;
+    font-size: 13px; /* Slightly adjusted to match icon proportions */
+    font-weight: 600;
+    text-transform: uppercase; /* Ensures crisp, uniform look */
+    letter-spacing: 1px;
     width: 100%;
+    margin-bottom: 0px; 
+    line-height: normal; /* 🚀 THE FIX: Removed line-height: 1 which was pushing text down */
 }
 
+.customization-panel label svg {
+    display: block; /* 🚀 THE FIX: Removes invisible space below SVG */
+    margin: 0 !important; /* Removes old negative margins */
+    flex-shrink: 0;
+}
 .customization-panel input,
 .customization-panel select {
     width: 100% !important;
@@ -167,6 +174,14 @@
     box-sizing: border-box !important;
     margin: 0 !important;
     position: static !important;
+    cursor: pointer;
+}
+
+/* 🔥 THE FIX: Dropdown Option White Background Issue */
+.customization-panel select option {
+    background-color: #0a1120; /* Deep dark background for dropdown */
+    color: #ffffff; /* White text */
+    padding: 10px;
 }
 
 .customization-panel input:focus,
@@ -306,26 +321,17 @@
 
 /* 🔥 THE FIX: Middle/Selected Card Animation */
 .pricing-card.selected {
-    /* Dark background HATA DIYA. Normal background rakha hai. */
     background-color: var(--pricing-card-bg);
-    
-    /* Card ko thoda bada kar ke aage laaya (Pop-out effect) */
     transform: scale(1.05);
     z-index: 10;
-    
-    /* Premium Blue Border */
     border: 2px solid var(--pricing-blue);
-    
-    /* 🚀 Professional Breathing/Pulsing Glow Animation */
     animation: premium-pulse 3s infinite alternate ease-in-out;
 }
 
-/* Jab selected card par hover karein toh wo aur smooth lage */
 .pricing-card.selected:hover {
     transform: scale(1.05) translateY(-5px);
 }
 
-/* 🚀 KEYFRAME: Soft glowing shadow animation */
 @keyframes premium-pulse {
     0% { box-shadow: 0 0 0 0 rgba(71, 165, 239, 0.4); }
     100% { box-shadow: 0 0 25px 8px rgba(71, 165, 239, 0.15); }
