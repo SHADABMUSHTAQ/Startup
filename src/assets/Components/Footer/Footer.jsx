@@ -15,7 +15,7 @@ const Footer = () => {
           {/* Brand Info */}
           <div className="footer-brand-section">
             <div className="brand-logo">
-              <img src="public/Logo.png" alt="#" className="fot-logo"/>
+              <img src="/Logo.png" alt="#" className="fot-logo"/>
               {/* <Shield size={28} color="#64ffda" className="brand-icon" /> */}
               <h2>WARSOC</h2>
             </div>
