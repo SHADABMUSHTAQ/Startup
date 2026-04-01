@@ -42,9 +42,9 @@ export default function Pricing() {
   };
 
   const plans = [
-    { id: 1, name: "Starter", description: "Small retail setups.", features: [{ name: "1 Project", included: true }, { name: "7 Days Hot Storage", included: true }] },
-    { id: 2, name: "Pro", description: "Security teams.", isPopular: true, features: [{ name: "10 Projects", included: true }, { name: "30 Days Hot Storage", included: true }] },
-    { id: 3, name: "Enterprise", description: "Large organizations.", features: [{ name: "Unlimited Projects", included: true }, { name: "90 Days Hot Storage", included: true }] }
+    { id: 1, name: "Starter",features: [{ name: "1 Project", included: true }, { name: "7 Days Hot Storage", included: true }] },
+    { id: 2, name: "Pro",  isPopular: true, features: [{ name: "10 Projects", included: true }, { name: "30 Days Hot Storage", included: true }] },
+    { id: 3, name: "Enterprise", features: [{ name: "Unlimited Projects", included: true }, { name: "90 Days Hot Storage", included: true }] }
   ];
 
   const handleChoosePlan = (planName) => {

@@ -1,27 +1,59 @@
 import React, { useEffect, useRef } from "react";
-import { ShieldCheck, Activity, Zap, Lock, Database, Globe } from "lucide-react"; 
+import { Activity, Network, BellRing, Lock, Database, FileCheck } from "lucide-react"; 
 import "./Features.css";
 
 function Features() {
   const sectionRef = useRef(null);
 
   const features = [
-    { id: 1, title: "Real-Time Threat Detection", description: "Analyze millions of events per second with our advanced AI engine to detect anomalies instantly.", icon: <Activity size={32} /> },
-    { id: 2, title: "Automated Incident Response", description: "Trigger automated playbooks to contain threats before they spread across your network.", icon: <Zap size={32} /> },
-    { id: 3, title: "Global Threat Intelligence", description: "Stay ahead of attackers with integrated threat feeds from over 50+ global sources.", icon: <Globe size={32} /> },
-    { id: 4, title: "Bank-Grade Encryption", description: "Your data is secured with AES-256 encryption at rest and TLS 1.3 in transit.", icon: <Lock size={32} /> },
-    { id: 5, title: "Unlimited Log Retention", description: "Store logs for compliance (GDPR, HIPAA, PCI-DSS) with hot and cold storage options.", icon: <Database size={32} /> },
-    { id: 6, title: "Zero Trust Architecture", description: "Verify every request, every time. Strict identity controls for maximum security.", icon: <ShieldCheck size={32} /> },
+    // --- TOP ROW: CORE SIEM CAPABILITIES ---
+    { 
+        id: 1, 
+        title: "Real-Time Threat Detection", 
+        description: "Monitor network and endpoint logs 24/7. Identify anomalies instantly via strict correlation rules.", 
+        icon: <Activity size={32} /> 
+    },
+    { 
+        id: 2, 
+        title: "Unified Log Aggregation", 
+        description: "Centralize telemetry. Collect data seamlessly via automated Windows Agents or secure manual uploads.", 
+        icon: <Network size={32} /> 
+    },
+    { 
+        id: 3, 
+        title: "Instant Threat Alerting", 
+        description: "Receive immediate alerts for critical events. Isolate threats and mitigate risks before impact.", 
+        icon: <BellRing size={32} /> 
+    },
+
+    // --- BOTTOM ROW: COMPLIANCE & AUDIT ---
+    { 
+        id: 4, 
+        title: "Immutable Evidence Vault", 
+        description: "Secure logs using WORM technology. Maintain a cryptographic chain of custody for legal admissibility.", 
+        icon: <Lock size={32} /> 
+    },
+    { 
+        id: 5, 
+        title: "Scalable Log Retention", 
+        description: "Fulfill strict regulatory policies. Scale seamlessly from instant hot storage to multi-year cold archives.", 
+        icon: <Database size={32} /> 
+    },
+    { 
+        id: 6, 
+        title: "Automated Audit Reporting", 
+        description: "Generate compliance-ready reports for PCI-DSS, GDPR, and PECA effortlessly with a single click.", 
+        icon: <FileCheck size={32} /> 
+    },
   ];
 
-  // SCROLL ANIMATION LOGIC (Nai class control karne ke liye)
+  // SCROLL ANIMATION LOGIC
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
             entry.target.classList.add("visible");
-            // ✅ THE FIX: Jab visible ho to main heading highlight class add karo animation ke liye
             if (entry.target.classList.contains('section-header')) {
                 const highlight = entry.target.querySelector('.highlight-text');
                 if (highlight) {
@@ -30,7 +62,6 @@ function Features() {
             }
           } else {
             entry.target.classList.remove("visible");
-             // ✅ THE FIX: Jab screen se bahar jaye to class hata do animation reset karne ke liye
              if (entry.target.classList.contains('section-header')) {
                 const highlight = entry.target.querySelector('.highlight-text');
                 if (highlight) {
@@ -56,7 +87,7 @@ function Features() {
 
       <div className="features-container">
         
-        {/* HEADER ANIMATION (Class trigger control) */}
+        {/* HEADER ANIMATION */}
         <div className="section-header reveal-on-scroll">
           <span className="section-badge">Why Choose WarSOC?</span>
           <h2>
@@ -71,7 +102,7 @@ function Features() {
             <div 
               key={feature.id} 
               className="feature-card reveal-on-scroll"
-              style={{ transitionDelay: `${index * 0.1}s` }} // Staggered delay
+              style={{ transitionDelay: `${index * 0.1}s` }} 
             >
               <div className="icon-wrapper">{feature.icon}</div>
               <h3>{feature.title}</h3>

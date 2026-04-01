@@ -18,7 +18,7 @@ function Hero() {
         <div className="hero-text">
           <div className="badge-container">
             <span className="badge-icon"><ShieldCheck size={14} /></span>
-            <span className="badge-text">Next-Gen SIEM Architecture</span>
+            <span className="badge-text">Stay secure. Stay compliant.</span>
           </div>
 
           <h1>

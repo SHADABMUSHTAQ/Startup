@@ -81,6 +81,8 @@
   color: var(--text-secondary);
   line-height: 1.6;
   margin-bottom: 2.5rem;
+  /* 🚀 THE FIX: Paragraph ko heading ki width ke sath lock kar diya */
+  max-width: 460px; 
 }
 
 .feature-bullets {

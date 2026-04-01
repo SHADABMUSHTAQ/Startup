@@ -277,12 +277,13 @@
 }
 
 /* =========================================
-   🚀 PRICING GRID & CARDS
+   🚀 PRICING GRID & CARDS (ENTERPRISE FIX)
    ========================================= */
 .pricing-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
     gap: 40px; 
+    align-items: center; /* Cards ko center align karega taake pop-out pyara lage */
 }
 
 .pricing-card {
@@ -292,38 +293,59 @@
     padding: 50px 40px; 
     position: relative;
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
     display: flex;
     flex-direction: column;
+    z-index: 1;
 }
 
 .pricing-card:hover {
-    transform: translateY(-5px);
-    border-color: var(--pricing-lime); /* Hover par Lime border */
+    transform: translateY(-8px);
+    border-color: var(--pricing-lime); 
 }
 
+/* 🔥 THE FIX: Middle/Selected Card Animation */
 .pricing-card.selected {
-    border-color: var(--pricing-blue);
-    box-shadow: 0 10px 30px rgba(71, 165, 239, 0.15);
-    background-color: rgba(71, 165, 239, 0.05); 
+    /* Dark background HATA DIYA. Normal background rakha hai. */
+    background-color: var(--pricing-card-bg);
+    
+    /* Card ko thoda bada kar ke aage laaya (Pop-out effect) */
+    transform: scale(1.05);
+    z-index: 10;
+    
+    /* Premium Blue Border */
+    border: 2px solid var(--pricing-blue);
+    
+    /* 🚀 Professional Breathing/Pulsing Glow Animation */
+    animation: premium-pulse 3s infinite alternate ease-in-out;
+}
+
+/* Jab selected card par hover karein toh wo aur smooth lage */
+.pricing-card.selected:hover {
+    transform: scale(1.05) translateY(-5px);
+}
+
+/* 🚀 KEYFRAME: Soft glowing shadow animation */
+@keyframes premium-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(71, 165, 239, 0.4); }
+    100% { box-shadow: 0 0 25px 8px rgba(71, 165, 239, 0.15); }
 }
 
 /* Popular Badge */
 .popular-badge {
     position: absolute;
-    top: -12px;
-    left: 40px;
+    top: -14px;
+    left: 50%;
+    transform: translateX(-50%); /* Badge ko center mein fix kiya */
     background: var(--pricing-blue);
     color: #fff;
-    padding: 5px 14px;
+    padding: 6px 18px;
     border-radius: 20px;
     font-size: 12px;
-    font-weight: bold;
+    font-weight: 800;
     text-transform: uppercase;
-}
-
-.pricing-card.popular {
-    border-color: var(--pricing-blue);
+    letter-spacing: 1px;
+    box-shadow: 0 4px 10px rgba(71, 165, 239, 0.3);
 }
 
 /* Card Header */
@@ -391,7 +413,6 @@
     margin-bottom: 15px;
 }
 
-/* 🚀 Updated Check Icon Color */
 .icon-check {
     color: var(--pricing-lime);
 }
@@ -424,14 +445,27 @@
 }
 
 .cta-btn.primary {
-    background-color: var(--pricing-blue);
+    background: linear-gradient(135deg, #47A5EF, #207bc2);
     color: #fff;
     box-shadow: 0 4px 10px rgba(71, 165, 239, 0.2);
 }
 
 .cta-btn.primary:hover {
-    background-color: #398bd1;
-    box-shadow: 0 4px 15px rgba(71, 165, 239, 0.3);
+    background: linear-gradient(135deg, #398bd1, #1a629b);
+    box-shadow: 0 4px 15px rgba(71, 165, 239, 0.4);
+    transform: translateY(-2px);
+}
+
+/* =========================================
+   📱 MOBILE FIX FOR POP-OUT CARD
+   ========================================= */
+@media (max-width: 992px) {
+    .pricing-card.selected {
+        transform: scale(1) !important; /* Mobile par width break na ho isliye scale band kar diya */
+    }
+    .pricing-card.selected:hover {
+        transform: translateY(-5px) !important;
+    }
 }
 
 /* =========================================

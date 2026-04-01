@@ -166,7 +166,7 @@ export default function Login() {
 
               <div className="auth-footer">
                   {signState === "Sign In" ? (
-                      <p>New to War-SOC? <span onClick={() => { setSignState("Sign Up"); setToast(null); }}>Create Account</span></p>
+                      <p>New to WarSOC? <span onClick={() => { setSignState("Sign Up"); setToast(null); }}>Create Account</span></p>
                   ) : (
                       <p>Already have an account? <span onClick={() => { setSignState("Sign In"); setToast(null); }}>Sign In</span></p>
                   )}

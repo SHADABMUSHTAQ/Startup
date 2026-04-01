@@ -20,7 +20,7 @@ const Footer = () => {
               <h2>WARSOC</h2>
             </div>
             <p className="brand-desc">
-              Next-generation SIEM platform securing the digital frontier.
+              Compliance-first SIEM platform securing the digital frontier.
             </p>
             <div className="social-links">
               {/* Other socials */}
