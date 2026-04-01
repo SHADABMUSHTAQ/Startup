@@ -1,0 +1,38 @@
+.team-container { padding: 30px; max-width: 1200px; margin: 0 auto; color: #fff; }
+.team-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+.team-header p { color: #94a3b8; margin-top: 5px; }
+.btn-invite { background: #3b82f6; color: #fff; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; display: flex; gap: 8px; align-items: center; }
+
+.team-table-card { background: #1e293b; border-radius: 12px; border: 1px solid #334155; overflow: hidden; }
+.team-table { width: 100%; border-collapse: collapse; }
+.team-table th { background: #0f172a; padding: 15px; text-align: left; color: #94a3b8; font-size: 14px; }
+.team-table td { padding: 15px; border-bottom: 1px solid #334155; font-size: 15px; }
+
+.role-badge.auditor { background: rgba(239, 68, 68, 0.1); color: #ef4444; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+.scope-tags { display: flex; gap: 8px; }
+.tag { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+.tag.fbr { background: rgba(59, 130, 246, 0.1); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.3); }
+.tag.peca { background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }
+
+.btn-revoke { background: transparent; border: 1px solid #ef4444; color: #ef4444; padding: 8px 12px; border-radius: 6px; cursor: pointer; display: flex; gap: 5px; font-size: 13px; font-weight: bold; }
+.btn-revoke:hover { background: rgba(239, 68, 68, 0.1); }
+
+/* Modal Styles */
+.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 100; backdrop-filter: blur(5px); }
+.invite-modal { background: #1e293b; width: 500px; border-radius: 12px; border: 1px solid #334155; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+.modal-head { display: flex; justify-content: space-between; padding: 20px; background: #0f172a; border-bottom: 1px solid #334155; }
+.btn-close { background: transparent; border: none; color: #94a3b8; cursor: pointer; }
+.invite-modal form { padding: 20px; }
+.input-group { margin-bottom: 20px; }
+.input-group label { display: flex; align-items: center; gap: 8px; color: #cbd5e1; margin-bottom: 8px; font-size: 14px; }
+.input-group input { width: 100%; padding: 12px; background: #0f172a; border: 1px solid #334155; color: #fff; border-radius: 8px; }
+.input-group small { color: #64748b; font-size: 12px; display: block; margin-top: 5px; }
+
+.scope-selection { background: #0f172a; padding: 15px; border-radius: 8px; border: 1px solid #334155; margin-bottom: 25px; }
+.scope-selection label { display: flex; align-items: center; gap: 8px; color: #fff; margin-bottom: 15px; font-weight: bold;}
+.checkbox-group { display: flex; flex-direction: column; gap: 10px; }
+.custom-check { display: flex; align-items: center; gap: 10px; cursor: pointer; color: #cbd5e1;}
+
+.modal-footer { display: flex; justify-content: flex-end; gap: 15px; border-top: 1px solid #334155; padding-top: 20px; }
+.btn-cancel { background: transparent; color: #94a3b8; border: 1px solid #334155; padding: 10px 20px; border-radius: 8px; cursor: pointer; }
+.btn-submit { background: #3b82f6; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; }

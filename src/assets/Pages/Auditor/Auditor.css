@@ -1,0 +1,173 @@
+.auditor-layout {
+    min-height: 100vh;
+    background-color: #0f172a;
+    color: #f8fafc;
+    font-family: 'Inter', sans-serif;
+}
+
+.auditor-header {
+    background-color: #1e293b;
+    border-bottom: 1px solid #334155;
+    padding: 15px 40px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.brand h2 {
+    margin: 0;
+    font-size: 20px;
+}
+
+.brand span {
+    color: #94a3b8;
+    font-weight: 400;
+}
+
+.client-info {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.badge-readonly {
+    background-color: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+.user-profile {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    font-size: 14px;
+    color: #cbd5e1;
+}
+
+.logout-btn {
+    background: #334155;
+    border: none;
+    color: #fff;
+    padding: 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: 0.2s;
+}
+
+.logout-btn:hover { background: #ef4444; }
+
+.auditor-content {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 40px 20px;
+}
+
+.overview-panel {
+    display: flex;
+    justify-content: space-between;
+    background: #1e293b;
+    padding: 25px 40px;
+    border-radius: 12px;
+    border: 1px solid #334155;
+    margin-bottom: 30px;
+}
+
+.overview-panel .label {
+    color: #94a3b8;
+    font-size: 13px;
+    margin: 0 0 5px 0;
+    text-transform: uppercase;
+}
+
+.overview-panel h3 { margin: 0; font-size: 22px; }
+
+.hash-status.verified {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.1);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 700;
+    margin-top: 5px;
+}
+
+.split-view {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 30px;
+    margin-bottom: 30px;
+}
+
+.card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 25px;
+}
+
+.card h3 {
+    margin: 0 0 20px 0;
+    font-size: 16px;
+    color: #e2e8f0;
+}
+
+.mini-table { width: 100%; border-collapse: collapse; }
+.mini-table th { text-align: left; padding-bottom: 10px; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #334155; }
+.mini-table td { padding: 12px 0; border-bottom: 1px solid rgba(51, 65, 85, 0.5); font-size: 14px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.dot.green { background: #10b981; box-shadow: 0 0 8px #10b981; }
+.dot.red { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+
+.action-card p {
+    color: #94a3b8;
+    font-size: 14px;
+    line-height: 1.6;
+    margin-bottom: 25px;
+}
+
+.btn-export {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 14px;
+    background: #10b981;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.2s;
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.2);
+}
+
+.btn-export:hover { background: #059669; }
+
+.auditor-table { width: 100%; border-collapse: collapse; }
+.auditor-table th { text-align: left; padding: 15px; background: #0f172a; color: #94a3b8; font-size: 13px; }
+.auditor-table td { padding: 15px; border-bottom: 1px solid #334155; font-size: 14px; }
+.auditor-table tr:hover td { background: rgba(51, 65, 85, 0.3); }
+
+.time { color: #cbd5e1; font-family: monospace; }
+.evt-badge { background: #334155; padding: 4px 8px; border-radius: 4px; font-weight: bold; }
+.hash { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #64748b; letter-spacing: 0.5px; }
+
+.status { display: flex; alignItems: center; gap: 5px; font-size: 12px; font-weight: bold; padding: 4px 8px; borderRadius: 4px; }
+.status.ok { color: #10b981; background: rgba(16, 185, 129, 0.1); }
+.status.bad { color: #ef4444; background: rgba(239, 68, 68, 0.1); }

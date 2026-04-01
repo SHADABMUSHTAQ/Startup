@@ -1,0 +1,252 @@
+/* --- WARSOC BRAND VARIABLES --- */
+:root {
+  --nav-bg-glass: rgba(19, 31, 67, 0.85); /* Deep Navy Glass Effect */
+  --nav-bg-solid: #0B132B; /* Deep Navy Solid */
+  --nav-dropdown-bg: #131F43; /* Match with feature cards */
+  --nav-border: rgba(71, 165, 239, 0.15); /* Subtle Brand Blue Border */
+  
+  --nav-text: #f8fafc;
+  --nav-text-muted: #94a3b8;
+  
+  /* Logo Exact Colors */
+  --nav-blue: #47A5EF; 
+  --nav-lime: #B7EA48; 
+}
+
+/* --- BASE NAVBAR (SMOOTH FIX) --- */
+.navbar-custom {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0; 
+  margin: 0 auto; 
+  width: 100%;
+  max-width: 100%; 
+  height: 80px;
+  z-index: 1000; 
+  /* 🚀 Background transparent for index.css global background */
+  background: transparent; 
+  border-radius: 0px;
+  border: 1px solid transparent; 
+  transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1); 
+}
+
+/* --- SCROLLED STATE (Vigilant360 Pill Effect) --- */
+.navbar-custom.scrolled {
+  top: 20px; 
+  max-width: 85%; 
+  height: 70px;
+  border-radius: 50px; 
+  
+  /* 🚀 Glassmorphism updated to Navy Blue */
+  background: var(--nav-bg-glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--nav-border); 
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.8);
+}
+
+/* --- CONTAINER --- */
+.navbar-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  max-width: 1300px;
+  margin: 0 auto;
+  padding: 0 24px;
+  transition: padding 0.5s cubic-bezier(0.4, 0, 0.2, 1); 
+}
+
+.navbar-custom.scrolled .navbar-container {
+  padding: 0 35px;
+}
+
+/* --- LOGO --- */
+.navbar-brand-logo {
+  height: 110px;
+  width: auto;
+  display: block;
+  cursor: pointer;
+  transition: transform 0.3s ease, height 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  margin-top: -1px;
+}
+
+.navbar-custom.scrolled .navbar-brand-logo {
+  height: 90px;
+}
+
+.navbar-brand-logo:hover {
+  transform: scale(1.05);
+}
+
+/* --- RIGHT SIDE WRAPPER --- */
+.navbar-right-content {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+}
+
+/* --- LINKS --- */
+.navbar-menu-links {
+  display: flex;
+  gap: 30px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  align-items: center;
+}
+
+.navbar-menu-links li a {
+  color: var(--nav-text-muted);
+  text-decoration: none;
+  font-size: 0.95rem;
+  font-weight: 500;
+  position: relative;
+  transition: color 0.3s;
+}
+
+/* 🚀 Link hover updated to Brand Lime */
+.navbar-menu-links li a:hover {
+  color: var(--nav-lime);
+}
+
+/* --- LOGIN BUTTON --- */
+.navbar-btn-login {
+  padding: 10px 24px;
+  background: transparent;
+  /* 🚀 Button updated to Brand Blue */
+  color: var(--nav-blue);
+  border: 2px solid var(--nav-blue);
+  border-radius: 30px; 
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.3s ease;
+}
+
+.navbar-btn-login:hover {
+  background: var(--nav-blue);
+  color: #fff;
+  box-shadow: 0 4px 15px rgba(71, 165, 239, 0.4);
+  transform: translateY(-2px);
+}
+
+/* --- PROFILE DROPDOWN --- */
+.navbar-profile-container { position: relative; }
+.navbar-profile-trigger { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+
+/* 🚀 Profile avatar updated to Solid Brand Blue */
+.navbar-avatar-circle {
+  width: 38px; height: 38px;
+  background: var(--nav-blue);
+  color: white; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; border: 2px solid transparent;
+}
+
+.navbar-profile-dropdown {
+  position: absolute; top: 120%; right: 0; width: 220px;
+  /* 🚀 Dropdown background updated */
+  background: var(--nav-dropdown-bg); 
+  border: 1px solid var(--nav-border); 
+  border-radius: 12px;
+  opacity: 0; visibility: hidden; transform: translateY(-10px);
+  transition: all 0.2s; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+
+.navbar-profile-dropdown.show { opacity: 1; visibility: visible; transform: translateY(0); }
+
+.navbar-dropdown-header { padding: 15px; border-bottom: 1px solid var(--nav-border); border-radius: 12px 12px 0 0; }
+.navbar-dropdown-item { padding: 12px 15px; color: var(--nav-text-muted); cursor: pointer; display: flex; gap: 10px; align-items: center; transition: 0.2s; }
+.navbar-dropdown-item:hover { background: rgba(255,255,255,0.05); color: var(--nav-lime); }
+.navbar-dropdown-item:last-child { border-radius: 0 0 12px 12px; }
+
+/* --- MOBILE STYLES --- */
+.navbar-mobile-toggle { 
+  position: relative !important; 
+  z-index: 99999 !important;
+  display: none; 
+  background: none; 
+  border: none; 
+  cursor: pointer; 
+  color: #fff; 
+}
+
+.navbar-mobile-auth { display: none; }
+
+@media (max-width: 992px) {
+  .navbar-mobile-toggle { display: block; }
+  .navbar-desktop-auth { display: none; }
+
+  .navbar-custom.scrolled {
+    max-width: 95%; 
+    border-radius: 30px;
+  }
+
+  /* 🚀 Mobile Drawer updated to Deep Navy */
+  .navbar-right-content {
+    position: fixed; top: 0; right: 0; width: 280px; height: 100vh;
+    background: var(--nav-dropdown-bg);
+    border-left: 1px solid var(--nav-border);
+    flex-direction: column; justify-content: flex-start;
+    padding-top: 80px; gap: 30px;
+    transform: translateX(100%); transition: transform 0.3s ease;
+    box-shadow: -10px 0 30px rgba(0,0,0,0.5);
+    border-radius: 0; 
+  }
+
+  .navbar-right-content.active { transform: translateX(0); }
+
+  .navbar-menu-links { flex-direction: column; align-items: center; width: 100%; gap: 25px; }
+  .navbar-menu-links li a { font-size: 1.2rem; color: var(--nav-text); }
+
+  .navbar-mobile-auth { display: flex; flex-direction: column; align-items: center; gap: 20px; width: 100%; }
+  .navbar-mobile-login-btn { padding: 12px 60px; border: 1px solid var(--nav-blue); color: var(--nav-blue); border-radius: 30px; text-decoration: none; font-size: 1.1rem; }
+}
+
+
+/* =========================================
+   ✅ LOGIN PAGE SPECIFIC NAVBAR STATE
+========================================= */
+
+/* 🚀 Login page background ab transparent ho gaya hai global theme ke liye */
+.navbar-custom.login-mode {
+  position: relative !important;
+  background-color: transparent !important; 
+  box-shadow: none !important; 
+  backdrop-filter: none !important; 
+  border-bottom: 1px solid var(--nav-border); 
+  top: 0 !important;
+  max-width: 100% !important;
+  height: 80px !important;
+  border-radius: 0 !important;
+}
+
+.navbar-custom.login-mode .navbar-container {
+  max-width: 1300px;
+  padding: 0 24px;
+}
+
+/* =========================================
+   ✅ MOBILE MENU CROSS BUTTON FIX (ABSOLUTE LAYERING)
+========================================= */
+@media (max-width: 992px) {
+    .navbar-container {
+        position: relative !important;
+    }
+
+    .navbar-mobile-toggle {
+        display: block !important;
+        position: absolute !important;
+        right: 24px !important;
+        top: 50% !important;
+        transform: translateY(-50%) !important; 
+        z-index: 999999 !important; 
+    }
+
+    .navbar-right-content {
+        z-index: 999990 !important; 
+    }
+}

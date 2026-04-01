@@ -1,0 +1,193 @@
+/* --- WARSOC BRAND VARIABLES --- */
+:root {
+  /* Naye Logo Colors */
+  --card-bg: #131F43; /* Deep Navy Card Surface */
+  --text-primary: #ffffff;
+  --text-secondary: #94a3b8;
+  --accent-lime: #B7EA48;
+  --accent-blue: #47A5EF;
+}
+
+/* --- SECTION LAYOUT --- */
+.features-section {
+  position: relative;
+  padding: 6rem 2rem;
+  /* 🚀 Background hata kar transparent kar diya gaya hai */
+  background-color: transparent; 
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+/* Subtle Glow Background (Using Brand Blue) */
+.feature-glow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 80%;
+  height: 80%;
+  background: radial-gradient(circle, rgba(71, 165, 239, 0.08) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.features-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
+/* --- SCROLL ANIMATION CLASSES --- */
+.reveal-on-scroll {
+  opacity: 0;
+  transform: translateY(40px); /* Neechay se upar aayega */
+  transition: opacity 0.8s cubic-bezier(0.25, 0.8, 0.25, 1), 
+              transform 0.8s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.reveal-on-scroll.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* --- HEADER --- */
+.section-header {
+  text-align: center;
+  margin-bottom: 4rem;
+  max-width: 700px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* 🚀 Badge updated to Brand Lime */
+.section-badge {
+  display: inline-block;
+  color: var(--accent-lime);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 1rem;
+  background: rgba(183, 234, 72, 0.1);
+  padding: 6px 14px;
+  border-radius: 4px;
+  border: 1px solid rgba(183, 234, 72, 0.3);
+}
+
+.section-header h2 {
+  font-size: 2.5rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  color: var(--text-primary);
+}
+
+/* 🚀 Highlight Text updated to Brand Blue */
+.highlight-text {
+  color: var(--accent-blue);
+  position: relative;
+  display: inline-block;
+}
+
+.highlight-text::after {
+  content: '';
+  position: absolute;
+  width: 100%;
+  height: 8px;
+  bottom: 2px;
+  left: 0;
+  background: rgba(71, 165, 239, 0.2);
+  z-index: -1;
+  border-radius: 4px;
+}
+
+.section-header p {
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+  line-height: 1.6;
+}
+
+/* --- GRID LAYOUT --- */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 2rem;
+}
+
+/* --- FEATURE CARD --- */
+.feature-card {
+  background: var(--card-bg);
+  /* 🚀 Subtle Blue Border */
+  border: 1px solid rgba(71, 165, 239, 0.15);
+  border-radius: 12px;
+  padding: 2.5rem 2rem;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  transition: opacity 0.8s cubic-bezier(0.25, 0.8, 0.25, 1), 
+              transform 0.8s cubic-bezier(0.25, 0.8, 0.25, 1), 
+              background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Hover Effects */
+.feature-card.visible:hover {
+  transform: translateY(-10px); 
+  background: #182854; /* Slightly lighter hover */
+  border-color: var(--accent-lime); /* 🚀 Hover par Lime Green Border */
+  box-shadow: 0 20px 30px -15px rgba(0, 0, 0, 0.5);
+  transition-delay: 0s !important; 
+}
+
+/* Icon Styling (Blue) */
+.icon-wrapper {
+  margin-bottom: 1.5rem;
+  padding: 12px;
+  background: rgba(71, 165, 239, 0.15);
+  border-radius: 12px;
+  color: var(--accent-blue);
+  transition: all 0.3s ease;
+}
+
+.feature-card.visible:hover .icon-wrapper {
+  background: var(--accent-blue);
+  color: white;
+  transform: scale(1.1) rotate(5deg);
+}
+
+/* Card Text */
+.feature-card h3 {
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: var(--text-primary);
+}
+
+.feature-card p {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+/* --- RESPONSIVE --- */
+@media (max-width: 768px) {
+  .section-header h2 {
+    font-size: 2rem;
+  }
+  
+  .feature-grid {
+    grid-template-columns: 1fr;
+    padding: 0 1rem;
+  }
+  
+  .feature-card {
+    align-items: center;
+    text-align: center;
+  }
+  
+  .reveal-on-scroll {
+    transform: translateY(20px);
+  }
+}

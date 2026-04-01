@@ -1,0 +1,118 @@
+/* Container Design */
+.agent-logs-wrapper {
+  background: #111827; /* Dark Background */
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 20px; /* Space from charts */
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+}
+
+/* Header */
+.agent-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  border-bottom: 1px solid #374151;
+  padding-bottom: 10px;
+}
+
+.title-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.title-box h3 {
+  color: #f3f4f6;
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/* Blinking Live Dot */
+.live-dot {
+  width: 10px;
+  height: 10px;
+  background-color: #10b981; /* Green */
+  border-radius: 50%;
+  box-shadow: 0 0 8px #10b981;
+  animation: blink 1.5s infinite;
+}
+
+.status-text {
+  color: #10b981;
+  font-size: 0.8rem;
+  font-weight: bold;
+}
+
+@keyframes blink {
+  50% { opacity: 0.4; }
+}
+
+/* Table Design */
+.agent-table-container {
+  overflow-x: auto;
+}
+
+.agent-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.agent-table th {
+  text-align: left;
+  padding: 12px;
+  color: #9ca3af;
+  font-weight: 600;
+  border-bottom: 1px solid #374151;
+}
+
+.agent-table td {
+  padding: 12px;
+  border-bottom: 1px solid #1f2937;
+  color: #d1d5db;
+}
+
+.agent-row:hover {
+  background-color: #1f2937; /* Hover Effect */
+}
+
+/* Columns */
+.time-col { color: #6b7280; font-family: monospace; }
+.host-col { color: #3b82f6; font-weight: bold; }
+.msg-col { color: #e5e7eb; max-width: 300px; }
+
+/* Badges */
+.log-badge {
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+.badge-red {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+}
+
+.badge-blue {
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.5);
+}
+
+.text-red { color: #ef4444; font-weight: bold; }
+.text-gray { color: #9ca3af; }
+
+.refresh-btn {
+  background: #374151;
+  color: white;
+  border: none;
+  padding: 5px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}

@@ -1,0 +1,427 @@
+/* =========================================
+   🚀 ENTERPRISE PRICING STYLES (WarSOC)
+   ========================================= */
+
+:root {
+  --pricing-blue: #47A5EF; /* WarSOC Logo Blue */
+  --pricing-lime: #B7EA48; /* WarSOC Logo Lime */
+  --pricing-card-bg: #131F43; /* Matches Features Card BG */
+  --pricing-border: rgba(71, 165, 239, 0.15);
+}
+
+#pricing {
+    position: relative;
+    /* 🚀 Background hata kar transparent kar diya */
+    background-color: transparent; 
+    overflow: hidden;
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+}
+
+.pricing-container {
+    max-width: 1500px; 
+    margin: 0 auto; 
+    padding: 100px 80px; 
+    position: relative;
+    z-index: 5;
+    box-sizing: border-box;
+}
+
+/* --- Header Section --- */
+.pricing-header {
+    text-align: center;
+    margin-bottom: 50px;
+}
+
+.section-title {
+    font-size: 3.5rem; 
+    font-weight: 800;
+    /* 🚀 Gradient Updated to Logo Colors */
+    background: linear-gradient(to right, #fff, var(--pricing-blue));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 15px;
+}
+
+.section-subtitle {
+    color: #94a3b8;
+    font-size: 1.25rem;
+    max-width: 650px;
+    margin: 0 auto 30px;
+    line-height: 1.6;
+}
+
+/* --- Billing Toggle --- */
+.billing-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 15px;
+    font-size: 16px;
+    color: #94a3b8;
+    margin-bottom: 10px;
+}
+
+.billing-toggle .active {
+    color: #fff;
+    font-weight: 600;
+}
+
+.toggle-switch {
+    width: 50px;
+    height: 26px;
+    background-color: rgba(255,255,255,0.1);
+    border-radius: 15px;
+    padding: 3px;
+    cursor: pointer;
+    position: relative;
+    transition: background-color 0.2s;
+}
+
+.switch-handle {
+    width: 20px;
+    height: 20px;
+    background-color: #fff;
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+}
+
+/* 🚀 Toggle Active Color */
+.toggle-switch.toggled {
+    background-color: var(--pricing-blue); 
+}
+
+.toggle-switch.toggled .switch-handle {
+    transform: translateX(24px);
+}
+
+.discount-badge {
+    background: rgba(183, 234, 72, 0.1);
+    color: var(--pricing-lime);
+    padding: 3px 8px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: bold;
+    margin-left: 5px;
+}
+
+/* --- Collapsible Panels --- */
+.customization-wrapper {
+    margin-bottom: 60px; 
+    animation: slideDownCards 0.3s ease-out;
+}
+
+.customization-panel {
+    background-color: var(--pricing-card-bg);
+    border: 1px solid var(--pricing-border);
+    border-radius: 16px;
+    padding: 30px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+}
+
+.customization-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 25px;
+}
+
+/* --- Input Groups --- */
+.customization-panel .input-group {
+    background-color: rgba(0,0,0,0.2);
+    padding: 20px;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.05);
+}
+
+.customization-panel label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #94a3b8;
+    font-size: 15px;
+    margin-bottom: 12px;
+    font-weight: 500;
+}
+
+.customization-panel input,
+.customization-panel select {
+    width: 100%;
+    padding: 14px 18px;
+    background-color: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #fff;
+    border-radius: 8px;
+    font-size: 16px;
+    transition: border-color 0.2s;
+}
+
+.customization-panel input:focus,
+.customization-panel select:focus {
+    border-color: var(--pricing-blue);
+    outline: none;
+}
+
+.customization-panel small {
+    display: block;
+    color: #64748b;
+    margin-top: 10px;
+    font-size: 13px;
+}
+
+/* --- Add-ons Section --- */
+.addons-section {
+    margin-top: 35px;
+}
+
+.addons-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: #fff;
+    margin-bottom: 25px;
+    font-size: 1.4rem;
+}
+
+.addons-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 25px;
+}
+
+.addon-card {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    background-color: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.1);
+    padding: 25px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+.addon-card:hover {
+    border-color: rgba(255,255,255,0.3);
+}
+
+.addon-card.active-blue {
+    border-color: var(--pricing-blue);
+    background: rgba(71, 165, 239, 0.05);
+}
+
+.addon-card.active-teal {
+    border-color: var(--pricing-lime);
+    background: rgba(183, 234, 72, 0.05);
+}
+
+.addon-card input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--pricing-blue);
+    cursor: pointer;
+}
+
+.addon-card.active-teal input[type="checkbox"] {
+    accent-color: var(--pricing-lime);
+}
+
+.addon-info {
+    flex-grow: 1;
+}
+
+.addon-info strong {
+    display: block;
+    color: #fff;
+    font-size: 17px;
+    margin-bottom: 2px;
+}
+
+.addon-info span {
+    color: #94a3b8;
+    font-size: 14px;
+}
+
+.addon-price {
+    font-weight: 700;
+    font-size: 1.2rem;
+    color: #fff;
+    text-align: right;
+}
+
+.teal-price {
+    color: var(--pricing-lime);
+}
+
+.addon-price small {
+    font-size: 12px;
+    color: #64748b;
+    font-weight: 500;
+}
+
+/* =========================================
+   🚀 PRICING GRID & CARDS
+   ========================================= */
+.pricing-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 40px; 
+}
+
+.pricing-card {
+    background-color: var(--pricing-card-bg);
+    border: 1px solid var(--pricing-border);
+    border-radius: 20px; 
+    padding: 50px 40px; 
+    position: relative;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+}
+
+.pricing-card:hover {
+    transform: translateY(-5px);
+    border-color: var(--pricing-lime); /* Hover par Lime border */
+}
+
+.pricing-card.selected {
+    border-color: var(--pricing-blue);
+    box-shadow: 0 10px 30px rgba(71, 165, 239, 0.15);
+    background-color: rgba(71, 165, 239, 0.05); 
+}
+
+/* Popular Badge */
+.popular-badge {
+    position: absolute;
+    top: -12px;
+    left: 40px;
+    background: var(--pricing-blue);
+    color: #fff;
+    padding: 5px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.pricing-card.popular {
+    border-color: var(--pricing-blue);
+}
+
+/* Card Header */
+.card-header {
+    margin-bottom: 35px;
+}
+
+.plan-name {
+    font-size: 1.7rem;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 5px;
+}
+
+.plan-desc {
+    color: #94a3b8;
+    font-size: 15px;
+    margin-bottom: 25px;
+}
+
+/* Price Font */
+.plan-price {
+    display: flex;
+    align-items: baseline;
+    color: #fff;
+}
+
+.plan-price .currency {
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin-right: 5px;
+    align-self: flex-start;
+}
+
+.plan-price .amount {
+    font-size: 3.2rem; 
+    font-weight: 800;
+}
+
+.plan-price .duration {
+    font-size: 1rem;
+    color: #64748b;
+    margin-left: 5px;
+    font-weight: 500;
+}
+
+/* Card Features */
+.card-features {
+    flex-grow: 1;
+    margin-bottom: 35px;
+}
+
+.card-features ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.card-features li {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: #cbd5e1;
+    font-size: 15px;
+    margin-bottom: 15px;
+}
+
+/* 🚀 Updated Check Icon Color */
+.icon-check {
+    color: var(--pricing-lime);
+}
+
+/* Card Footer */
+.card-footer {
+    margin-top: auto;
+}
+
+.cta-btn {
+    width: 100%;
+    padding: 16px;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+}
+
+.cta-btn.outline {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.2);
+    color: #fff;
+}
+
+.cta-btn.outline:hover {
+    background-color: rgba(255,255,255,0.05);
+    border-color: var(--pricing-blue);
+}
+
+.cta-btn.primary {
+    background-color: var(--pricing-blue);
+    color: #fff;
+    box-shadow: 0 4px 10px rgba(71, 165, 239, 0.2);
+}
+
+.cta-btn.primary:hover {
+    background-color: #398bd1;
+    box-shadow: 0 4px 15px rgba(71, 165, 239, 0.3);
+}
+
+/* =========================================
+   🚀 ANIMATIONS
+   ========================================= */
+@keyframes slideDownCards {
+    from { transform: translateY(-20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
