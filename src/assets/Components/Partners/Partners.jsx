@@ -10,7 +10,7 @@ const partnersList = [
     badgeClass: "badge-platinum",
     icon: Cloud,
     companyLogo: "/brandive_recommendation.png", 
-    snippet: "Partnering to deliver enterprise-grade monitoring and compliance automation tailored for SMBs.", // 🚀 New: Card Summary
+    snippet: "Partnering to deliver enterprise-grade monitoring and compliance automation tailored for SMBs.", 
     
     // 📄 REAL DIGITIZED CONTENT (From PDF)
     lor_header: {
@@ -38,7 +38,9 @@ const partnersList = [
         name: "Muhammad Haris",
         title: "Chief Operating Officer (COO)"
     }
-  },
+  }
+  /* 🚀 IoT Solutions Temporary Disabled (Commented Out)
+  ,
   {
     id: 2,
     name: "IoT Solutions",
@@ -46,11 +48,12 @@ const partnersList = [
     badgeClass: "badge-integration",
     icon: Globe,
     companyLogo: "/iot_logo.png",
-    snippet: "Collaborating to secure edge devices and IoT infrastructure with zero-trust architecture.", // 🚀 New: Card Summary
+    snippet: "Collaborating to secure edge devices and IoT infrastructure with zero-trust architecture.", 
     lor_subject: "PENDING VERIFICATION",
     lor_body: [{type: "p", text: "Awaiting Digitized Letter of Recommendation for IoT Solutions ecosystem verification."}],
     lor_signatory: { closing: "", name: "", title: ""}
   }
+  */
 ];
 
 export default function Partners() {
@@ -110,7 +113,7 @@ export default function Partners() {
       </div>
 
       {/* ==========================================================
-          🚀 Modal (Kept your perfected logic & layout)
+          🚀 Modal
           ========================================================== */}
       {modalOpen && selectedPartnerLOR && (
         <div className="modal-overlay" onClick={closeModal}> 

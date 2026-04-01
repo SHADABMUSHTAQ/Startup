@@ -39,7 +39,10 @@
   min-width: 280px;
   max-width: 400px;
 }
-
+.fot-logo{
+  width: auto;
+  height: 90px;
+}
 .brand-logo {
   display: flex;
   align-items: center;
@@ -178,3 +181,5 @@
     gap: 1.5rem;
   }
 }
+
+
