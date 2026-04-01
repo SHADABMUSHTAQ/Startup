@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { loginUser, registerUser } from "../../../api"; 
-import { User, Lock, Mail, ArrowRight, ShieldCheck, CheckCircle, AlertTriangle, X } from "lucide-react";
+import { Lock, Mail, ArrowRight, ArrowLeft, CheckCircle, Shield, Activity, Database, AlertTriangle, X, User } from "lucide-react";
 import "./Login.css";
 
 export default function Login() {
@@ -14,13 +14,12 @@ export default function Login() {
 
   const navigate = useNavigate();
 
-useEffect(() => {
+  useEffect(() => {
     const token = localStorage.getItem("token");
     const userDataStr = localStorage.getItem("user_data");
     
     if (token && userDataStr) {
       const user = JSON.parse(userDataStr);
-      // 🚀 THE FIX: Agar plan Free hai toh Pricing par bhejo!
       if (user.has_active_plan === true && user.plan_type !== "Free") {
          navigate("/dashboard");
       } else {
@@ -46,7 +45,6 @@ useEffect(() => {
       } else {
         const data = await loginUser(email, password);
         
-// Data Save
         localStorage.setItem("token", data.access_token);
         
         const userData = {
@@ -55,17 +53,16 @@ useEffect(() => {
             has_active_plan: data.has_active_plan, 
             plan_type: data.plan_type,
             tenant_id: data.tenant_id,
-            role: data.role || "admin" // 🚀 NAYA: Backend se role aayega (admin ya auditor)
+            role: data.role || "admin" 
         };
         localStorage.setItem("user_data", JSON.stringify(userData));
         localStorage.setItem("login_timestamp", Date.now()); 
         
         showToast("success", "Login Successful!");
 
-        // 🚀 THE FIX: Role-based Redirection
         setTimeout(() => {
             if (userData.role === "auditor") {
-                navigate("/auditor"); // Auditor ko seedha Read-Only view par bhejo
+                navigate("/auditor"); 
             } else if (userData.has_active_plan === true && userData.plan_type !== "Free") {
                 navigate("/dashboard");
             } else {
@@ -81,7 +78,7 @@ useEffect(() => {
   };
 
   return (
-    <div className="auth-container">
+    <div className="split-login-container">
       {toast && (
         <div className={`toast-notification ${toast.type}`}>
             {toast.type === 'success' ? <CheckCircle size={20} /> : <AlertTriangle size={20} />}
@@ -89,42 +86,92 @@ useEffect(() => {
             <button onClick={() => setToast(null)}><X size={16} /></button>
         </div>
       )}
-      <div className="auth-glow glow-1"></div>
-      <div className="auth-glow glow-2"></div>
 
-      <div className="auth-card">
-        <div className="auth-header">
-          <ShieldCheck size={40} className="auth-logo-icon" />
-          <h2>{signState === "Sign In" ? "Welcome Back" : "Create Account"}</h2>
-          <p>{signState === "Sign In" ? "Enter your credentials to access your secure dashboard." : "Join WarSOC to secure your digital infrastructure."}</p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="auth-form">
-          {signState === "Sign Up" && (
-            <div className="input-group">
-              <User className="input-icon" size={20} />
-              <input type="text" placeholder="Full Name" value={name} onChange={(e) => setName(e.target.value)} required />
+      {/* LEFT SIDE: BRANDING & INFO */}
+      <div className="login-left">
+        {/* 🚀 THE FIX: Sirf Back to Home, No Logo */}
+        <Link to="/" className="back-to-home">
+            <ArrowLeft size={16} /> Back to Home
+        </Link>
+        
+        <div className="left-content">
+            <h1 className="login-headline">Secure Your <br/><span className="gradient-text">Digital Frontier.</span></h1>
+            <p className="login-subheadline">
+              Log in to access your enterprise-grade SIEM dashboard. Monitor threats, ensure compliance, and manage your infrastructure in real-time.
+            </p>
+            
+            <div className="feature-bullets">
+                <div className="bullet-item">
+                    <div className="bullet-icon-box"><Shield size={18} /></div>
+                    <span>Real-Time Threat Detection & Alerting</span>
+                    <CheckCircle size={22} color="#ffffff" fill="#2ecc71" className="check-icon" />
+                </div>
+                <div className="bullet-item">
+                    <div className="bullet-icon-box"><Database size={18} /></div>
+                    <span>Immutable Audit Trails (WORM)</span>
+                    <CheckCircle size={22} color="#ffffff" fill="#2ecc71" className="check-icon" />
+                </div>
+                <div className="bullet-item">
+                    <div className="bullet-icon-box"><Activity size={18} /></div>
+                    <span>Automated Compliance Reporting</span>
+                    <CheckCircle size={22} color="#ffffff" fill="#2ecc71" className="check-icon" />
+                </div>
             </div>
-          )}
-          <div className="input-group">
-            <Mail className="input-icon" size={20} />
-            <input type="text" placeholder="Username or Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-          </div>
-          <div className="input-group">
-            <Lock className="input-icon" size={20} />
-            <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-          </div>
-          <button type="submit" className="auth-btn" disabled={loading}>
-            {loading ? "Processing..." : <>{signState} <ArrowRight size={18} /></>}
-          </button>
-        </form>
+        </div>
+      </div>
 
-        <div className="auth-footer">
-          {signState === "Sign In" ? (
-            <p>New to WarSOC? <span onClick={() => { setSignState("Sign Up"); setToast(null); }}>Create Account</span></p>
-          ) : (
-            <p>Already have an account? <span onClick={() => { setSignState("Sign In"); setToast(null); }}>Sign In</span></p>
-          )}
+      {/* RIGHT SIDE: THE FORM WITH LIGHTNING DIVIDER */}
+      <div className="login-right-wrapper">
+        <div className="login-right">
+          <div className="login-form-box">
+              <div className="form-header">
+                  <h2>{signState === "Sign In" ? "Welcome Back" : "Create Account"}</h2>
+                  <p>Enter your credentials to confirm your identity.</p>
+              </div>
+
+              <form onSubmit={handleSubmit} className="auth-form">
+                  {signState === "Sign Up" && (
+                      <div className="input-group-container">
+                          <label>Full Name</label>
+                          <div className="input-group">
+                              <User className="input-icon" size={18} />
+                              <input type="text" placeholder="John Doe" value={name} onChange={(e) => setName(e.target.value)} required />
+                          </div>
+                      </div>
+                  )}
+                  
+                  <div className="input-group-container">
+                      <label>Username or Email</label>
+                      <div className="input-group">
+                          <Mail className="input-icon" size={18} />
+                          <input type="text" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                      </div>
+                  </div>
+                  
+                  <div className="input-group-container">
+                      <div className="password-header">
+                        <label>Password</label>
+                        {signState === "Sign In" && <span className="forgot-password">Forgot Password?</span>}
+                      </div>
+                      <div className="input-group">
+                          <Lock className="input-icon" size={18} />
+                          <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                      </div>
+                  </div>
+                  
+                  <button type="submit" className="auth-btn" disabled={loading}>
+                      {loading ? "Processing..." : <>{signState} <ArrowRight size={18} /></>}
+                  </button>
+              </form>
+
+              <div className="auth-footer">
+                  {signState === "Sign In" ? (
+                      <p>New to War-SOC? <span onClick={() => { setSignState("Sign Up"); setToast(null); }}>Create Account</span></p>
+                  ) : (
+                      <p>Already have an account? <span onClick={() => { setSignState("Sign In"); setToast(null); }}>Sign In</span></p>
+                  )}
+              </div>
+          </div>
         </div>
       </div>
     </div>

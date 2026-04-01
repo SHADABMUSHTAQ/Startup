@@ -1,20 +1,22 @@
-/* --- VARIABLES --- */
+/* --- WARSOC BRAND VARIABLES --- */
 :root {
-  --bg-dark: #0a192f;
-  --bg-darker: #020c1b;
-  --text-primary: #e6f1ff;
-  --text-secondary: #8892b0;
-  --accent-teal: #64ffda;
-  --accent-blue: #4da6ff;
+  --footer-border: rgba(71, 165, 239, 0.15); /* Subtle Blue Border */
+  --text-primary: #ffffff;
+  --text-secondary: #94a3b8;
+  
+  /* Logo Exact Colors */
+  --accent-blue: #47A5EF;
+  --accent-lime: #B7EA48;
 }
 
 /* --- FOOTER BASE --- */
 .footer {
-  background-color: var(--bg-darker);
+  /* 🚀 Background transparent kar diya taake index.css wala chale */
+  background-color: transparent;
   color: var(--text-secondary);
   padding: 5rem 2rem 2rem;
   font-size: 0.9rem;
-  border-top: 1px solid #112240;
+  border-top: 1px solid var(--footer-border);
 }
 
 .footer-container {
@@ -35,7 +37,7 @@
 .footer-brand-section {
   flex: 1;
   min-width: 280px;
-  max-width: 400px; /* Thoda bada kiya kyunki newsletter hat gaya */
+  max-width: 400px;
 }
 
 .brand-logo {
@@ -78,20 +80,22 @@
   border: 1px solid transparent;
 }
 
+/* 🚀 Hover updated to Brand Blue */
 .social-links a:hover {
-  color: var(--accent-teal);
-  background: rgba(100, 255, 218, 0.1);
-  border-color: var(--accent-teal);
+  color: #ffffff;
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
   transform: translateY(-3px);
+  box-shadow: 0 5px 15px rgba(71, 165, 239, 0.3);
 }
 
 /* --- LINKS GRID --- */
 .footer-links-grid {
   flex: 1;
   display: flex;
-  justify-content: flex-end; /* Links ko right side push kiya */
+  justify-content: flex-end; 
   flex-wrap: wrap;
-  gap: 6rem; /* Gap badha diya 2 columns ke darmiyan */
+  gap: 6rem; 
 }
 
 .link-column h4 {
@@ -117,13 +121,15 @@
   transition: color 0.2s ease;
 }
 
+/* 🚀 Link Hover updated to Brand Lime */
 .link-column ul li a:hover {
-  color: var(--accent-teal);
+  color: var(--accent-lime);
 }
 
 /* --- BOTTOM SECTION --- */
 .footer-bottom {
-  border-top: 1px solid #112240;
+  /* 🚀 Border updated to Brand Blue */
+  border-top: 1px solid var(--footer-border);
   padding-top: 2rem;
   display: flex;
   justify-content: space-between;
@@ -144,8 +150,9 @@
   transition: color 0.2s;
 }
 
+/* 🚀 Legal Link Hover updated to Brand Lime */
 .legal-links a:hover {
-  color: var(--accent-teal);
+  color: var(--accent-lime);
 }
 
 /* --- RESPONSIVE --- */
@@ -156,7 +163,7 @@
   }
   
   .footer-links-grid {
-    justify-content: flex-start; /* Mobile par wapas left align */
+    justify-content: flex-start;
     gap: 3rem;
   }
   

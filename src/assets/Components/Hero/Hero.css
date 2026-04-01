@@ -1,23 +1,27 @@
-/* --- VARIABLES --- */
+/* --- WARSOC BRAND VARIABLES --- */
 :root {
-  --bg-dark: #0a192f;
-  --text-primary: #e6f1ff;
-  --text-secondary: #8892b0;
-  --accent-blue: #4da6ff;
-  --accent-teal: #64ffda;
-  --glow-color: rgba(77, 166, 255, 0.15);
+  --bg-dark: #49A7EF;           /* Deep Navy Background */
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  
+  /* 🚀 NAYE LOGO COLORS YAHAN HAIN */
+  --accent-blue: #47A5EF;       /* Logo Blue */
+  --accent-lime: #B7EA48;       /* Logo Lime Green */
+  
+  --glow-color: rgba(71, 165, 239, 0.15); /* Blue Glow */
 }
 
 /* --- WRAPPER & BACKGROUND --- */
 .hero-wrapper {
   width: 100%;
-  min-height: 100vh; /* Full screen height */
-  padding: 8rem 7rem 4rem 7rem; /* Top padding navbar ke liye */
-  background-color: var(--bg-dark);
+  min-height: 100vh;
+  padding: 8rem 7rem 4rem 7rem; 
+  /* 🚀 Force transparent takay index.css wala global gradient nazar aaye */
+  background-color: transparent; 
   display: flex;
   align-items: center;
   position: relative;
-  overflow: hidden;
+  /* overflow: hidden; */
 }
 
 /* Background Ambient Glows */
@@ -32,7 +36,7 @@
 }
 
 .glow-left { top: -100px; left: -200px; }
-.glow-right { bottom: -100px; right: -200px; background: radial-gradient(circle, rgba(100, 255, 218, 0.08) 0%, transparent 70%); }
+.glow-right { bottom: -100px; right: -200px; background: radial-gradient(circle, rgba(183, 234, 72, 0.08) 0%, transparent 70%); } /* Lime Glow */
 
 /* --- CONTAINER --- */
 .hero-container {
@@ -58,19 +62,19 @@
   display: inline-flex;
   align-items:center;
   gap: 8px;
-  background: rgba(77, 166, 255, 0.1);
-  border: 1px solid rgba(77, 166, 255, 0.3);
+  background: rgba(71, 165, 239, 0.1); /* Blue transparent */
+  border: 1px solid rgba(71, 165, 239, 0.3);
   padding: 6px 12px;
   border-radius: 20px;
   margin-bottom: 20px;
 }
 
-.badge-icon { color: var(--accent-teal); display: flex; }
+.badge-icon { color: var(--accent-lime); display: flex; }
 .badge-text { color: var(--accent-blue); font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
 
 /* Headings */
 .hero-text h1 {
-  font-size: 2.5rem;
+  font-size: 3.5rem; /* Thora bada kiya professional look ke liye */
   line-height: 1.1;
   margin-bottom: 25px;
   color: var(--text-primary);
@@ -78,13 +82,14 @@
 }
 
 .gradient-text {
-  background: linear-gradient(90deg, var(--accent-blue) 0%, var(--accent-teal) 100%);
+  /* 🚀 THE MASTERPIECE: Blue aur Lime ka gradient! */
+  background: linear-gradient(90deg, var(--accent-blue) 0%, var(--accent-lime) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
 .hero-text p {
-  font-size: 1rem;
+  font-size: 1.1rem;
   line-height: 1.7;
   font-weight: 400;
   color: var(--text-secondary);
@@ -115,11 +120,11 @@
   background: var(--accent-blue);
   color: white;
   border: none;
-  box-shadow: 0 4px 15px rgba(77, 166, 255, 0.3);
+  box-shadow: 0 4px 15px rgba(71, 165, 239, 0.3);
 }
 
 .btn-primary:hover {
-  background: #3d8cdb;
+  background: #398bd1; /* Thora dark blue hover par */
   transform: translateY(-2px);
 }
 
@@ -130,8 +135,8 @@
 }
 
 .btn-secondary:hover {
-  border-color: var(--accent-teal);
-  color: var(--accent-teal);
+  border-color: var(--accent-lime);
+  color: var(--accent-lime);
 }
 
 /* Stats */
@@ -226,7 +231,7 @@
   }
 
   .hero-container {
-    flex-direction: column-reverse; /* Image upar, Text neeche */
+    flex-direction: column-reverse;
     gap: 3rem;
   }
 

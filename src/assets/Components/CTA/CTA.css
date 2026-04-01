@@ -1,17 +1,20 @@
-/* --- VARIABLES --- */
+/* --- WARSOC BRAND VARIABLES --- */
 :root {
-  --bg-dark: #0a192f;
-  --card-bg: #112240;
-  --accent-blue: #4da6ff;
-  --accent-teal: #64ffda;
-  --text-primary: #e6f1ff;
-  --text-secondary: #8892b0;
+  --cta-card-bg: #131F43; /* Matches Features & Pricing Cards */
+  --cta-border: rgba(71, 165, 239, 0.15); /* Subtle Blue Border */
+  
+  --accent-blue: #47A5EF; /* Brand Blue */
+  --accent-lime: #B7EA48; /* Brand Lime */
+  
+  --text-primary: #ffffff;
+  --text-secondary: #94a3b8;
 }
 
 /* --- SECTION LAYOUT --- */
 .cta-section {
   padding: 4rem 2rem;
-  background-color: var(--bg-dark);
+  /* 🚀 Background hata kar transparent kar diya */
+  background-color: transparent; 
   display: flex;
   justify-content: center;
 }
@@ -19,15 +22,15 @@
 /* --- WRAPPER (The Card) --- */
 .cta-wrapper {
   position: relative;
-  background: linear-gradient(135deg, #112240 0%, #0a192f 100%);
-  border: 1px solid #233554;
+  background: var(--cta-card-bg);
+  border: 1px solid var(--cta-border);
   border-radius: 24px;
   padding: 4rem 3rem;
   text-align: center;
   max-width: 1000px;
   width: 100%;
   overflow: hidden;
-  box-shadow: 0 20px 50px -10px rgba(2, 12, 27, 0.7);
+  box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.5);
   isolation: isolate; /* Z-index fix for pseudo elements */
 }
 
@@ -39,7 +42,8 @@
   transform: translateX(-50%);
   width: 600px;
   height: 600px;
-  background: radial-gradient(circle, rgba(77, 166, 255, 0.15) 0%, transparent 70%);
+  /* 🚀 Glow updated to Brand Blue */
+  background: radial-gradient(circle, rgba(71, 165, 239, 0.15) 0%, transparent 70%);
   z-index: -1;
   pointer-events: none;
 }
@@ -70,13 +74,14 @@
 
 /* Badge Icon */
 .icon-badge {
-  background: rgba(100, 255, 218, 0.1);
-  color: var(--accent-teal);
+  /* 🚀 Badge updated to Lime Green */
+  background: rgba(183, 234, 72, 0.1);
+  color: var(--accent-lime);
   padding: 12px;
   border-radius: 50%;
   margin-bottom: 1.5rem;
-  border: 1px solid rgba(100, 255, 218, 0.2);
-  box-shadow: 0 0 20px rgba(100, 255, 218, 0.1);
+  border: 1px solid rgba(183, 234, 72, 0.2);
+  box-shadow: 0 0 20px rgba(183, 234, 72, 0.15);
 }
 
 /* Typography */
@@ -116,31 +121,32 @@
   transition: all 0.3s cubic-bezier(0.645, 0.045, 0.355, 1);
 }
 
-/* Primary Button (Blue Glow) */
+/* Primary Button (Blue) */
 .cta-btn.primary {
   background: var(--accent-blue);
   color: white;
-  box-shadow: 0 4px 20px rgba(77, 166, 255, 0.3);
-  border: none;
+  border: 1px solid var(--accent-blue);
+  box-shadow: 0 4px 20px rgba(71, 165, 239, 0.2);
 }
 
 .cta-btn.primary:hover {
-  background: #3d8cdb;
+  background: #398bd1;
+  border-color: #398bd1;
   transform: translateY(-3px);
-  box-shadow: 0 10px 30px rgba(77, 166, 255, 0.4);
+  box-shadow: 0 10px 30px rgba(71, 165, 239, 0.4);
 }
 
-/* Secondary Button (Outline) */
+/* Secondary Button (Outline Lime) */
 .cta-btn.secondary {
   background: transparent;
   color: var(--text-primary);
-  border: 1px solid #233554;
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .cta-btn.secondary:hover {
-  border-color: var(--accent-teal);
-  color: var(--accent-teal);
-  background: rgba(100, 255, 218, 0.05);
+  border-color: var(--accent-lime);
+  color: var(--accent-lime);
+  background: rgba(183, 234, 72, 0.05);
 }
 
 /* --- RESPONSIVE --- */
