@@ -9,11 +9,92 @@
     "default_ttl": 3600
   },
   "monitoring": {
-    "target_event_ids": [4624, 4625, 4672, 4688, 4720, 4726, 1102],
+    "target_event_ids": [4624, 4625, 4672, 4688, 4720, 4726, 1102, 4663, 4660, 4657, 4698, 4732, 1, 3],
     "capture_all_security_events": true,
     "capture_all_windows_channels": true,
-    "windows_channels": ["Security", "System", "Application", "Microsoft-Windows-PowerShell/Operational", "Windows PowerShell"],
+    "windows_channels": ["Security", "System", "Application", "Microsoft-Windows-PowerShell/Operational", "Windows PowerShell", "Microsoft-Windows-Sysmon/Operational"],
     "web_log_paths": ["access.log", "logs/*.log", "C:/inetpub/logs/LogFiles/W3SVC*/u_ex*.log"]
+  },
+  "normalization": {
+    "local_ips": ["127.0.0.1", "0.0.0.0", "::1", "localhost"],
+    "event_type_keywords": {
+      "http_request": ["get /", "post /", "put /", "delete /", "http/"],
+      "http_404": ["404 "],
+      "http_500": ["500 "]
+    }
+  },
+  "source_classification": {
+    "Windows-Sec": {
+      "trigger_keywords": ["event", "logon", "account", "registry", "network", "process", "scheduled", "task"],
+      "trigger_event_ids": [4624, 4625, 4672, 4688, 4689, 4720, 4726, 1102, 4663, 4660, 4657, 4698, 4732, 1, 3],
+      "severity_by_event_id": {
+        "4625": "HIGH",
+        "1102": "CRITICAL",
+        "4720": "MEDIUM",
+        "4732": "HIGH",
+        "4726": "MEDIUM",
+        "4663": "MEDIUM",
+        "4660": "MEDIUM",
+        "4657": "HIGH",
+        "4698": "HIGH",
+        "1": "INFO",
+        "3": "MEDIUM"
+      },
+      "severity_by_keyword": {
+        "failed": "HIGH",
+        "cleared": "CRITICAL",
+        "unauthorized": "HIGH"
+      }
+    },
+    "Web-WAF": {
+      "trigger_keywords": ["get /", "post /", "http", "union select", "xss"],
+      "severity_by_keyword": {
+        "union select": "CRITICAL",
+        "drop table": "CRITICAL",
+        "<script>": "CRITICAL",
+        "admin": "HIGH"
+      }
+    },
+    "Linux-Auth": {
+      "trigger_keywords": ["sudo", "root", "/etc/", "sshd", "invalid user"],
+      "severity_by_keyword": {
+        "failed password": "HIGH",
+        "invalid user": "HIGH",
+        "without permission": "CRITICAL",
+        "root access": "CRITICAL"
+      }
+    },
+    "Endpoint-EDR": {
+      "trigger_keywords": ["miner", "xmrig", "crypto", "file encrypted", "ransomware"],
+      "severity_by_keyword": {
+        "miner": "CRITICAL",
+        "xmrig": "CRITICAL",
+        "file encrypted": "CRITICAL",
+        "ransomware": "CRITICAL"
+      }
+    },
+    "Network-IDS": {
+      "trigger_keywords": ["port scan", "syn packet"],
+      "severity_by_keyword": {
+        "port scan": "MEDIUM",
+        "syn packet": "MEDIUM"
+      }
+    }
+  },
+  "alert_title_map": {
+    "High-velocity brute force attack detected": "Many failed login attempts were detected in a short time",
+    "Low-and-slow brute force attack detected": "Repeated failed login attempts were detected over time",
+    "Password spraying attack detected": "A password spraying pattern was detected",
+    "Impossible travel detected": "A login was detected from locations too far apart in a short time",
+    "Login from new geographic location": "A login from a new location was detected",
+    "Concurrent sessions from multiple IPs": "The same account is active from multiple IP addresses",
+    "After-hours suspicious activity": "Unusual activity was detected outside normal working hours",
+    "Mass account creation detected": "A large number of user accounts were created",
+    "Privilege escalation spike detected": "Multiple privilege escalation events were detected",
+    "Dormant account reactivated": "An inactive account became active again",
+    "Mass file modification - Ransomware indicator": "A large number of files were modified quickly",
+    "Mass file deletion detected": "A large number of files were deleted quickly",
+    "Correlated phishing kill-chain detected": "Multiple phishing-related stages were detected for the same user"
   },
   "threat_intelligence": {
     "enabled": true,
@@ -34,22 +115,41 @@
   "whitelist": {
     "enabled": true,
     "service_accounts": ["svc_backup", "nagios", "backup", "root", "daemon"],
-    "ips": ["127.0.0.1", "::1", "localhost"]
+    "ips": ["127.0.0.1", "::1", "localhost"],
+    "system_ips": ["127.0.0.1", "localhost", "::1", "0.0.0.0"]
+  },
+  "agent_security": {
+    "enforce_ip_whitelist": true,
+    "enforce_payload_size": true,
+    "enforce_timestamp_validation": true,
+    "allowed_ips": ["127.0.0.1", "localhost", "172.18.0.1", "172.18.0.0/12"],
+    "max_payload_bytes": 1048576,
+    "max_log_age_seconds": 300
   },
   "geoip": {
     "enabled": true,
     "mock_mode": true
   },
-  "event_id_map": {
+  "compliance_targets": {
+    "fbr": [4663, 4670, 4660, 4616, 4697, 1102, 4657],
+    "peca": [4624, 4625, 4688, 4720, 4732, 4698, 1102, 4719]
+  },  "event_id_map": {
     "4624": {"event_type": "successful_login", "severity": "INFO"},
     "4625": {"event_type": "failed_login", "severity": "HIGH"},
     "4672": {"event_type": "privilege_escalation", "severity": "MEDIUM"},
     "4720": {"event_type": "account_created", "severity": "INFO"},
     "4726": {"event_type": "account_deleted", "severity": "INFO"},
-    "1102": {"event_type": "clear_logs", "severity": "CRITICAL"},
+    "1102": {"event_type": "clear_logs", "severity": "CRITICAL", "compliance_tag": "PECA_FORENSIC"},
     "4688": {"event_type": "process_creation", "severity": "INFO"},
     "4689": {"event_type": "process_termination", "severity": "INFO"},
-    "80": {"event_type": "http_request", "severity": "INFO"}
+    "80": {"event_type": "http_request", "severity": "INFO"},
+    "4663": {"event_type": "object_access", "severity": "MEDIUM", "compliance_tag": "FBR_INTEGRITY"},
+    "4660": {"event_type": "object_deleted", "severity": "MEDIUM", "compliance_tag": "FBR_INTEGRITY"},
+    "4657": {"event_type": "registry_modified", "severity": "HIGH", "compliance_tag": "FBR_AUDIT"},
+    "4698": {"event_type": "scheduled_task_created", "severity": "HIGH", "compliance_tag": "FBR_PERSISTENCE"},
+    "4732": {"event_type": "localgroup_member_added", "severity": "HIGH", "compliance_tag": "FBR_PRIVILEGE"},
+    "1": {"event_type": "process_create_sysmon", "severity": "INFO", "source": "Sysmon"},
+    "3": {"event_type": "network_connect_sysmon", "severity": "MEDIUM", "source": "Sysmon"}
   },
   "detection": {
     "brute_force_threshold": 3,
