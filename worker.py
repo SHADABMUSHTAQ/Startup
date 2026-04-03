@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.database import get_db_context, init_db
-from app.config.config import get_settings
+from app.config.config import get_settings, load_config
 
 from app.utils.threat_intel import ThreatIntelligenceManager
 from app.utils.siem_logic import SIEMEngine
@@ -17,17 +17,25 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger("WarSOC-Worker")
 settings = get_settings()
 CONFIG_PATH = Path("app/config/config.json")
-_LOCAL_IPS = {"127.0.0.1", "0.0.0.0", "::1", "localhost"}
 _IP_IN_TEXT_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
 def _load_config() -> dict:
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+        return load_config("config.json")
     except Exception:
         return {}
 
 config = _load_config()
+_normalization_cfg = config.get("normalization", {})
+_LOCAL_IPS = {
+    str(ip).lower()
+    for ip in _normalization_cfg.get("local_ips", ["127.0.0.1", "0.0.0.0", "::1", "localhost"])
+}
+_EVENT_TYPE_KEYWORDS = {
+    str(event_type).lower(): [str(k).lower() for k in keywords]
+    for event_type, keywords in _normalization_cfg.get("event_type_keywords", {}).items()
+    if isinstance(keywords, list)
+}
 threat_intel_engine = ThreatIntelligenceManager(config)
 siem_engine         = SIEMEngine(config)
 stateful_engine     = StatefulThreatEngine(config_path=str(CONFIG_PATH))
@@ -51,25 +59,25 @@ def normalize_log(log_data: dict) -> dict:
         if extracted_ip:
             source_ip = extracted_ip
 
-    # Load event_id to event_type and severity mapping strictly from config.json
+    # Load event_id to event_type/severity/compliance mapping strictly from config
     event_id_map = config.get("event_id_map", {})
     eid = str(event_id) if event_id else ""
     event_type = log_data.get("event_type", "unknown")
     severity = "INFO"
+    compliance_tag = None
     if event_type == "unknown" and eid in event_id_map:
-        event_type = event_id_map[eid]["event_type"]
-        severity = event_id_map[eid]["severity"]
+        event_type = event_id_map[eid].get("event_type", "unknown")
+        severity = event_id_map[eid].get("severity", "INFO")
+        compliance_tag = event_id_map[eid].get("compliance_tag")
     else:
         msg_lower = message.lower()
         if event_type == "unknown":
-            if any(k in msg_lower for k in ["get /", "post /", "put /", "delete /", "http/"]):
-                event_type = "http_request"
-            elif "404" in msg_lower:
-                event_type = "http_404"
-            elif "500" in msg_lower:
-                event_type = "http_500"
+            for configured_event_type, keywords in _EVENT_TYPE_KEYWORDS.items():
+                if any(k in msg_lower for k in keywords):
+                    event_type = configured_event_type
+                    break
 
-    return {
+    output = {
         "timestamp":     log_data.get("timestamp", datetime.now(timezone.utc).isoformat()),
         "source_ip":     source_ip,
         "user":          log_data.get("user", "system"),
@@ -80,84 +88,116 @@ def normalize_log(log_data: dict) -> dict:
         "engine_source": "Agent",
         "raw_data":      log_data,
     }
+    if compliance_tag:
+        output["compliance_tag"] = compliance_tag
+        
+    return output
 
 async def process_pulse_jobs(redis_client):
-    logger.info("⚡ WarSOC Worker: Full Engine Pipeline Active...")
+    logger.info("⚡ WarSOC Worker: Full Engine Pipeline Active (raw_logs_queue)...")
+
+    # 🛠️ Create consumer group if not exists
+    RAW_LOGS_QUEUE = "raw_logs_queue"
+    SIEM_GROUP = "siem_group"
+    try:
+        await redis_client.xgroup_create(RAW_LOGS_QUEUE, SIEM_GROUP, id="0")  # Read ALL messages
+        logger.info(f"Created consumer group: {SIEM_GROUP}")
+    except Exception:
+        pass
 
     while True:
         try:
-            job = await redis_client.blpop("pulse_jobs", timeout=1)
-            if not job: continue
+            # ⚡ Read from raw_logs_queue using consumer group
+            streams = await redis_client.xreadgroup(SIEM_GROUP, "siem_consumer_1", {RAW_LOGS_QUEUE: ">"}, count=50, block=2000)
 
-            log_data = json.loads(job[1])
-            tenant_id = log_data.get("tenant_id") or log_data.get("agent_id")
-            if not tenant_id: continue
-
-            normalized = normalize_log(log_data)
-            normalized["tenant_id"] = tenant_id
-
-            hacker_ip = normalized.get("source_ip", "0.0.0.0")
-
-            # 🚀 CHECK DB ONLY FOR HACKER IP (tenant-isolated)
-            is_db_blocked = False
-            async with get_db_context() as db:
-                if db.db is not None:
-                    blocked_doc = await db.db["firewall_rules"].find_one({"ip": hacker_ip, "tenant_id": tenant_id})
-                    if blocked_doc:
-                        is_db_blocked = True
-
-            is_malicious, _ = threat_intel_engine.check_reputation(hacker_ip)
-            
-            # Log and alert on malicious IPs instead of silently dropping
-            if is_malicious or is_db_blocked:
-                logger.warning(f"🛡️ THREAT DETECTED: Malicious IP {hacker_ip}")
-                normalized["severity"] = "CRITICAL"
-                normalized["source"] = "agent"
-                threat_alert = {
-                    "id": __import__('uuid').uuid4().hex[:12],
-                    "type": "THREAT_INTEL_BLOCKED",
-                    "severity": "CRITICAL",
-                    "summary": f"Blocked malicious IP: {hacker_ip}",
-                    "ip": hacker_ip,
-                    "user": normalized.get("user", "unknown"),
-                    "mitre": "T1071",
-                    "timestamp": normalized.get("timestamp", datetime.now(timezone.utc).isoformat()),
-                    "engine_source": "ThreatIntel",
-                    "tenant_id": tenant_id,
-                }
-                async with get_db_context() as db:
-                    if db.db is not None:
-                        await db.db["logs"].insert_one(normalized)
-                        await db.db["security_alerts"].insert_one(threat_alert)
-                        await redis_client.publish("security_alerts", json.dumps(threat_alert, default=str))
+            if not streams:
                 continue
 
-            user = normalized.get("user", "unknown")
-            if threat_intel_engine.is_service_account(user):
-                async with get_db_context() as db:
-                    normalized["source"] = "agent"
-                    if db.db is not None: await db.db["logs"].insert_one(normalized)
-                continue
+            for _, messages in streams:
+                ack_ids = []
+                for message_id, payload in messages:
+                    try:
+                        log_data = json.loads(payload["payload"])
+                        ack_ids.append(message_id)
+                    except:
+                        ack_ids.append(message_id)
+                        continue
 
-            stateless_alerts = siem_engine.analyze_single_log(normalized)
-            stateful_alerts = await stateful_engine.analyze(normalized)
+                    tenant_id = log_data.get("tenant_id") or log_data.get("agent_id")
+                    if not tenant_id: continue
 
-            all_alerts = stateless_alerts + stateful_alerts
-            for alert in all_alerts: alert["tenant_id"] = tenant_id
+                    normalized = normalize_log(log_data)
+                    normalized["tenant_id"] = tenant_id
 
-            async with get_db_context() as db:
-                if db.db is None: continue
+                    hacker_ip = normalized.get("source_ip", "0.0.0.0")
 
-                normalized["source"] = "agent"
-                result = await db.db["logs"].insert_one(normalized)
-                
-                if all_alerts:
-                    await db.db["security_alerts"].insert_many(all_alerts)
-                    for alert in all_alerts:
-                        await redis_client.publish("security_alerts", json.dumps(alert, default=str))
-                    logger.info(f"🔥 [{tenant_id}] {len(all_alerts)} alert(s): {[a.get('type', a.get('title', 'unknown')) for a in all_alerts]}")
-                else:
-                    logger.info(f"📋 [{tenant_id}] Log processed (no alerts): {normalized.get('event_type', 'unknown')}")
+                    # 🚀 CHECK DB ONLY FOR HACKER IP (tenant-isolated)
+                    is_db_blocked = False
+                    async with get_db_context() as db:
+                        if db.db is not None:
+                            blocked_doc = await db.db["firewall_rules"].find_one({"ip": hacker_ip, "tenant_id": tenant_id})
+                            if blocked_doc:
+                                is_db_blocked = True
+
+                    is_malicious, _ = await threat_intel_engine.check_reputation(hacker_ip)
+
+                    # Log and alert on malicious IPs instead of silently dropping
+                    if is_malicious or is_db_blocked:
+                        logger.warning(f"🛡️ THREAT DETECTED: Malicious IP {hacker_ip}")
+                        normalized["severity"] = "CRITICAL"
+                        normalized["source"] = "agent"
+                        threat_alert = {
+                            "id": __import__('uuid').uuid4().hex[:12],
+                            "type": "THREAT_INTEL_BLOCKED",
+                            "severity": "CRITICAL",
+                            "summary": f"Blocked malicious IP: {hacker_ip}",
+                            "ip": hacker_ip,
+                            "user": normalized.get("user", "unknown"),
+                            "mitre": "T1071",
+                            "timestamp": normalized.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                            "engine_source": "ThreatIntel",
+                            "tenant_id": tenant_id,
+                        }
+                        async with get_db_context() as db:
+                            if db.db is not None:
+                                await db.db["logs"].insert_one(normalized)
+                                await db.db["security_alerts"].insert_one(threat_alert)
+                                await redis_client.publish("security_alerts", json.dumps(threat_alert, default=str))
+                        continue
+
+                    user = normalized.get("user", "unknown")
+                    if threat_intel_engine.is_service_account(user):
+                        async with get_db_context() as db:
+                            normalized["source"] = "agent"
+                            if db.db is not None: await db.db["logs"].insert_one(normalized)
+                        continue
+
+                    stateless_alerts = await siem_engine.analyze_single_log(normalized)
+                    stateful_alerts = await stateful_engine.analyze(normalized)
+
+                    all_alerts = stateless_alerts + stateful_alerts
+                    for alert in all_alerts: alert["tenant_id"] = tenant_id
+
+                    async with get_db_context() as db:
+                        if db.db is None: continue
+
+                        normalized["source"] = "agent"
+                        result = await db.db["logs"].insert_one(normalized)
+
+                        if all_alerts:
+                            await db.db["security_alerts"].insert_many(all_alerts)
+                            for alert in all_alerts:
+                                await redis_client.publish("security_alerts", json.dumps(alert, default=str))
+                            logger.info(f"🔥 [{tenant_id}] {len(all_alerts)} alert(s): {[a.get('type', a.get('title', 'unknown')) for a in all_alerts]}")
+                        else:
+                            logger.info(f"📋 [{tenant_id}] Log processed (no alerts): {normalized.get('event_type', 'unknown')}")
+
+                # Acknowledge batch
+                if ack_ids:
+                    async with redis_client.pipeline(transaction=True) as pipe:
+                        for mid in ack_ids:
+                            await pipe.xack(RAW_LOGS_QUEUE, SIEM_GROUP, mid)
+                        await pipe.execute()
 
         except Exception as e:
             logger.error(f"❌ Pipeline Error: {e}", exc_info=True)
@@ -167,8 +207,12 @@ async def main():
     logger.info("🚀 WarSOC SIEM Backbone Starting...")
     await init_db()
     redis_client = await aioredis.from_url(settings.redis_url, decode_responses=True)
+
+    # 🚀 FIX 2: Inject Redis into SIEM engine for persistent cooldown tracking
+    siem_engine.set_redis_client(redis_client)
+
     await stateful_engine.start(settings.redis_url)
-    
+
     try:
         await process_pulse_jobs(redis_client)
     except asyncio.CancelledError:

@@ -230,42 +230,166 @@ def secure_request(method, url, **kwargs):
         print(f"[📡] Connection Error to {url}: {e}")
         return None
 
-def enqueue_payload(payload):
-    """Non-blocking enqueue to keep log readers fast under burst traffic."""
-    try:
-        OUTBOUND_QUEUE.put_nowait(payload)
-    except queue.Full:
+# ==========================================
+# 2.5 FORENSIC SPOOLER & PARSER (v3.1)
+# ==========================================
+import re as _re
+import shutil
+
+class DiskSpooler:
+    """
+    🏗️ MASTER BUILD: Atomic 'Rotate & Drain' Spooler.
+    Ensures zero-loss resilience via OS-level renames (Renaming is atomic).
+    """
+    def __init__(self, spool_dir="spool"):
+        self.spool_dir = Path(spool_dir)
+        self.pending_file = self.spool_dir / "pending_logs.jsonl"
+        self.lock = threading.Lock()
+        
+        # Ensure spool environment exists
+        self.spool_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[*] DiskSpooler Active: {self.pending_file}")
+
+    def append(self, log_dict):
+        """Thread-safe append-only write to the pending buffer."""
         try:
-            OUTBOUND_QUEUE.get_nowait()
-            OUTBOUND_QUEUE.put_nowait(payload)
-            print("[⚠️] Outbound queue full. Oldest payload dropped to keep agent real-time.")
-        except Exception:
-            pass
+            line = json.dumps(log_dict, default=str) + "\n"
+            with self.lock:
+                with open(self.pending_file, "a", encoding="utf-8") as f:
+                    f.write(line)
+        except Exception as e:
+            print(f"[!] Spooler Append Error: {e}")
+
+    def consume_batch(self):
+        """
+        🚀 THE ROTATE: Atomically renames pending to processing.
+        Returns (logs_list, filename) if data exists, else (None, None).
+        """
+        # 1. Check for abandoned processing files from previous crashes
+        existing_processing = list(self.spool_dir.glob("processing_*.jsonl"))
+        if existing_processing:
+            target_file = sorted(existing_processing)[0] # Process oldest first
+            return self._read_file(target_file), str(target_file)
+
+        # 2. Rotate pending to a new processing artifact
+        with self.lock:
+            if not self.pending_file.exists() or os.path.getsize(self.pending_file) == 0:
+                return None, None
+            
+            timestamp = int(time.time() * 1000)
+            processing_file = self.spool_dir / f"processing_{timestamp}.jsonl"
+            
+            try:
+                os.rename(str(self.pending_file), str(processing_file))
+            except Exception as e:
+                print(f"[!] Spooler Rotation Error: {e}")
+                return None, None
+
+        return self._read_file(processing_file), str(processing_file)
+
+    def _read_file(self, file_path):
+        """Helper to read jsonl into list of dicts."""
+        logs = []
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        logs.append(json.loads(line))
+            return logs
+        except Exception as e:
+            print(f"[!] Spooler Read Error ({file_path}): {e}")
+            return None
+
+    def clear_batch(self, file_path):
+        """Permanently deletes the processing artifact after 200 OK."""
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception as e:
+            print(f"[!] Spooler Cleanup Error: {e}")
+
+# Global Spooler Instance
+SPOOLER = DiskSpooler()
+
+# --- FORENSIC REGEX ENGINE ---
+# 🔍 Targeted extraction for 4624 (Success) and 4625 (Failure)
+RE_TARGET_USER = _re.compile(r"Account Name:\s+(?!-)([\w\-\.\$]+)", _re.IGNORECASE)
+RE_SOURCE_IP = _re.compile(r"Source Network Address:\s+([\d\.:a-fA-F]+)", _re.IGNORECASE)
+RE_LOGON_TYPE = _re.compile(r"Logon Type:\s+(\d+)", _re.IGNORECASE)
+
+def parse_event_data(event_id, raw_msg):
+    """
+    🔬 MASTER BUILD: Deep Extraction with Raw Fallback.
+    Constructs the target payload contract for forensic searchability.
+    """
+    processed = None
+    
+    try:
+        if event_id in [4624, 4625]:
+            users = RE_TARGET_USER.findall(raw_msg)
+            # 4624/4625 usually has two 'Account Name' entries. 
+            # The first is the SUBJECT (system), the second is the TARGET (user).
+            target_user = users[1] if len(users) > 1 else (users[0] if users else "Unknown")
+            
+            source_ip_match = RE_SOURCE_IP.search(raw_msg)
+            logon_type_match = RE_LOGON_TYPE.search(raw_msg)
+            
+            processed = {
+                "target_user": target_user,
+                "source_network_address": source_ip_match.group(1) if source_ip_match else None,
+                "logon_type": int(logon_type_match.group(1)) if logon_type_match else None
+            }
+    except Exception as e:
+        print(f"[⚠️] Regex Extraction Failed: {e}")
+        processed = None
+
+    # 🔗 THE MANDATE: Construct the Forensic Payload Contract
+    return {
+        "processed_data": processed,
+        "raw_event_data": raw_msg # ORIGINAL UNTOUCHED RAW BLOCK
+    }
+
+def enqueue_payload(payload):
+    """Legacy wrapper: now routes exactly to the DiskSpooler."""
+    SPOOLER.append(payload)
 
 def ingest_sender_thread():
-    print(f"[*] Sender Online. Queue capacity={OUTBOUND_QUEUE_MAX}, batch={OUTBOUND_BATCH_SIZE}")
+    print(f"[*] Sender Online. Zero-Loss 'Rotate & Drain' Active.")
     while True:
         try:
-            first = OUTBOUND_QUEUE.get(timeout=1)
-        except queue.Empty:
-            continue
+            # 🚀 THE DRAIN: Fetch atomic processing batch
+            batch, filename = SPOOLER.consume_batch()
+            
+            if not batch:
+                time.sleep(1) # Wait for new pending logs
+                continue
 
-        batch = [first]
-        batch_deadline = time.time() + OUTBOUND_BATCH_WAIT_SECONDS
-
-        while len(batch) < OUTBOUND_BATCH_SIZE and time.time() < batch_deadline:
-            try:
-                batch.append(OUTBOUND_QUEUE.get_nowait())
-            except queue.Empty:
-                break
-
-        for i, payload in enumerate(batch):
-            resp = secure_request("POST", INGEST_URL, json=payload, timeout=10)
-            if not resp or resp.status_code != 200:
-                # Re-enqueue this payload and all remaining unsent payloads
-                for unsent in batch[i:]:
-                    enqueue_payload(unsent)
-                break
+            # 📡 TRANSMISSION
+            resp = secure_request("POST", INGEST_URL, json=batch, timeout=20)
+            
+            if resp and resp.status_code == 200:
+                # ✅ SUCCESS: Permanently delete the artifact
+                SPOOLER.clear_batch(filename)
+            
+            elif resp and resp.status_code == 422:
+                # 🧪 POISON PILL RECOVERY: Isolate malformed log
+                print(f"[⚠️] Batch rejected (422). Isolating broken records in {filename}...")
+                # We clear the batch to prevent infinite 422 loops, but re-spool the individual good ones
+                SPOOLER.clear_batch(filename)
+                for single_log in batch:
+                    sr = secure_request("POST", INGEST_URL, json=[single_log], timeout=10)
+                    if not sr or sr.status_code != 200:
+                        print(f"[🛑] Dropping malformed forensic event: {single_log.get('event_id')}")
+            
+            else:
+                # 📡 FAILURE: Leave the file on disk and backoff
+                code = resp.status_code if resp else "timeout"
+                print(f"[📡] Backend Unavailable ({code}). Retrying in 5s...")
+                time.sleep(5)
+        
+        except Exception as e:
+            print(f"[!] Bulk Sender Crash: {e}")
+            time.sleep(2)
 
 def resolve_web_log_files():
     """Resolve configured web log files and glob patterns to concrete file paths."""
@@ -399,24 +523,21 @@ def log_hunter_thread():
                             elif event_id in TARGET_EVENT_IDS:
                                 include_event = True
                         
-                        if include_event:
-                            try:
-                                msg = win32evtlogutil.SafeFormatMessage(event, log_type)
-                                clean_msg = msg.split("\n")[0] if msg else "Raw Data"
-                            except Exception:
-                                clean_msg = "Format Error"
-
+                            # 🔬 DEEP EXTRACTION & RAW FALLBACK
+                            parsed_payload = parse_event_data(event_id, msg) # Using full raw msg
+                            
                             payload = {
                                 "agent_id": TENANT_ID,
                                 "source_ip": LOCAL_IP,
                                 "user": resolve_user(event.Sid),
                                 "event_id": event_id,
-                                "message": f"[{log_type}] Event {event_id}: {clean_msg}",
+                                "message": f"[{log_type}] Event {event_id}: {clean_msg}", # Legacy summary
                                 "timestamp": event.TimeGenerated.isoformat(),
-                                "raw_data": {"raw": clean_msg, "windows_channel": log_type},
-                                "agent_version": "4.0-Omni"
+                                "processed_data": parsed_payload["processed_data"], # 👈 STRUCTURED FIELDS
+                                "raw_event_data": parsed_payload["raw_event_data"], # 👈 FORENSIC TRUTH
+                                "agent_version": "4.1-Hardened"
                             }
-                            print(f"[🛡️] Windows Event Streamed: {log_type}:{event_id}")
+                            print(f"[🛡️] Windows Event Spooled: {log_type}:{event_id}")
                             enqueue_payload(payload)
 
                     highest_record_seen[log_type] = current_batch_highest

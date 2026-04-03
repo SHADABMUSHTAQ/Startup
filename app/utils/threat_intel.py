@@ -1,14 +1,23 @@
 import os
 import ipaddress
 import logging
-from functools import lru_cache
+import time
+import httpx
 from typing import Dict, Tuple
+
+from app.config.config import get_settings
 
 class ThreatIntelligenceManager:
     """Consolidated Memory: Handles CIDRs, Files, and IP Blacklists with Zero Overlap"""
     
     def __init__(self, config: Dict):
+        self.settings = get_settings()
+        self.vt_api_key = self.settings.vt_api_key
+        self._vt_cache = {}
+        self._vt_requests = []
+        
         ti_cfg = config.get("threat_intelligence", {})
+        self.ti_cfg = ti_cfg
         ti_options = ti_cfg.get("options", {}) if isinstance(ti_cfg, dict) else {}
 
         self.ignore_private_ips = bool(ti_options.get("ignore_private_ips", True))
@@ -88,9 +97,8 @@ class ThreatIntelligenceManager:
         except ValueError:
             return False
 
-    @lru_cache(maxsize=10000)
-    def check_reputation(self, ip: str) -> Tuple[bool, str]:
-        """High-Performance Lookup: Checks Whitelist -> Blacklist -> CIDRs"""
+    async def check_reputation(self, ip: str) -> Tuple[bool, str]:
+        """High-Performance Lookup: Checks Whitelist -> Blacklist -> CIDRs -> VirusTotal"""
         if not self._validate_ip(ip): return False, "Invalid Format"
         if ip in self.whitelist_ips: return False, "Whitelisted"
 
@@ -120,6 +128,64 @@ class ThreatIntelligenceManager:
         for trusted_net in self.trusted_networks:
             if ip_obj in trusted_net and ip not in self.private_ip_allowlist:
                 return False, f"Trusted Network: {trusted_net}"
+
+        # --- VirusTotal Check (With Rate Limiting) ---
+        if not self.vt_api_key or ip in self._vt_cache:
+            # If cached or no API key, return cached result or Neutral
+            cached_res = self._vt_cache.get(ip)
+            if cached_res is not None:
+                is_malicious, msg = cached_res
+                return is_malicious, msg
+            return False, "Neutral"
+
+        # Leaky bucket rate limit: 4 requests per minute
+        now = time.time()
+        self._vt_requests = [req_time for req_time in self._vt_requests if now - req_time < 60]
+        if len(self._vt_requests) >= 4:
+            # Rate limit reached, fallback to neutral and DON'T cache
+            return False, "Neutral"
+
+        self._vt_requests.append(now)
+
+        try:
+            async with httpx.AsyncClient() as client:
+                headers = {"x-apikey": self.vt_api_key}
+                response = await client.get(f"https://www.virustotal.com/api/v3/ip_addresses/{ip}", headers=headers, timeout=5.0)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    stats = data.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
+                    malicious_count = stats.get("malicious", 0)
+                    suspicious_count = stats.get("suspicious", 0)
+
+                    if malicious_count > 0 or suspicious_count > 1:
+                        msg = f"VirusTotal Malicious IP (malicious={malicious_count}, suspicious={suspicious_count})"
+                        self._vt_cache[ip] = (True, msg)
+                        
+                        # Dynamically add to current run
+                        self.threat_data["ips"].add(ip)
+                        self.threat_data["ip_scores"][ip] = self.confidence["file_ip"]
+                        
+                        # Add to persistent local file using organic learning
+                        try:
+                            primary_file = self.ti_cfg.get("files", [])
+                            if primary_file:
+                                abs_path = os.path.abspath(os.path.join(os.getcwd(), primary_file[0]))
+                                with open(abs_path, 'a') as f:
+                                    f.write(f"\n{ip},{self.confidence['file_ip']}\n")
+                                logging.info(f"✅ Organically learned Malicious IP from VT: {ip} -> saved to {primary_file[0]}")
+                        except Exception as e:
+                            logging.error(f"Error appending organically learned IP to file: {e}")
+
+                        return True, msg
+                    
+                    # Store benign result in memory cache only
+                    self._vt_cache[ip] = (False, "VirusTotal Clean")
+                    return False, "VirusTotal Clean"
+                else:
+                    logging.warning(f"VirusTotal API Error for {ip}: {response.status_code}")
+        except Exception as e:
+            logging.error(f"VirusTotal Async Request Failed: {e}")
 
         return False, "Neutral"
 

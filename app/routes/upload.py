@@ -4,6 +4,7 @@ import csv
 import io
 import re
 import aiofiles
+from pathlib import Path
 from datetime import datetime, timezone
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -13,7 +14,7 @@ from slowapi.util import get_remote_address
 
 from app.database import get_db
 from app.routes.auth import get_current_user
-from app.config.config import get_settings
+from app.config.config import get_settings, load_config
 
 router = APIRouter()
 UPLOAD_DIR = "uploaded_files"
@@ -28,6 +29,23 @@ ALLOWED_CSV_CONTENT_TYPES = {
     "application/vnd.ms-excel",
     "text/plain",
 }
+
+
+def _load_runtime_config() -> dict:
+    try:
+        return load_config("config.json")
+    except Exception:
+        try:
+            cfg_path = Path("app/config/config.json")
+            with open(cfg_path, "r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except Exception:
+            return {}
+
+
+_RUNTIME_CONFIG = _load_runtime_config()
+_SOURCE_CLASSIFICATION = _RUNTIME_CONFIG.get("source_classification", {})
+_EVENT_ID_MAP = _RUNTIME_CONFIG.get("event_id_map", {})
 
 # 🔄 COLUMN NAME RESOLVER
 COLUMN_ALIASES = {
@@ -64,41 +82,40 @@ def is_csv_upload(file: UploadFile) -> bool:
     content_type = (file.content_type or "").strip().lower()
     return content_type in ALLOWED_CSV_CONTENT_TYPES
 
-def analyze_log_context(event_id_int, msg_lower):
+def analyze_log_context(event_id_int: int, msg_lower: str):
+    """Return config-driven severity/source/compliance for uploaded logs."""
     severity = "INFO"
     source_type = "Syslog"
+    compliance_tag = None
 
-    if event_id_int > 0 or "event" in msg_lower or "logon" in msg_lower or "account" in msg_lower:
-        source_type = "Windows-Sec"
-        if event_id_int == 4625 or "failed" in msg_lower:
-            severity = "HIGH"
-        elif event_id_int == 1102 or "cleared" in msg_lower:
-            severity = "CRITICAL"
-        elif event_id_int in [4720, 4732, 4726]:
-            severity = "MEDIUM"
-    elif "get /" in msg_lower or "post /" in msg_lower or "http" in msg_lower or "union select" in msg_lower or "xss" in msg_lower:
-        source_type = "Web-WAF"
-        if "union select" in msg_lower or "drop table" in msg_lower or "xss" in msg_lower or "<script>" in msg_lower:
-            severity = "CRITICAL"
-        elif "admin" in msg_lower and "failed" in msg_lower:
-            severity = "HIGH"
-    elif "sudo" in msg_lower or "root" in msg_lower or "/etc/" in msg_lower or "sshd" in msg_lower or "invalid user" in msg_lower:
-        source_type = "Linux-Auth"
-        if "failed password" in msg_lower or "invalid user" in msg_lower:
-            severity = "HIGH"
-        elif "without permission" in msg_lower or "root access" in msg_lower:
-            severity = "CRITICAL"
-    elif "miner" in msg_lower or "xmrig" in msg_lower or "crypto" in msg_lower:
-        source_type = "Endpoint-EDR"
-        severity = "CRITICAL"
-    elif "port scan" in msg_lower or "syn packet" in msg_lower:
-        source_type = "Network-IDS"
-        severity = "MEDIUM"
-    elif "file encrypted" in msg_lower or "ransomware" in msg_lower:
-        source_type = "Endpoint-EDR"
-        severity = "CRITICAL"
+    event_id_cfg = _EVENT_ID_MAP.get(str(event_id_int), {})
+    if event_id_cfg:
+        severity = str(event_id_cfg.get("severity", severity)).upper()
+        compliance_tag = event_id_cfg.get("compliance_tag")
 
-    return severity, source_type
+    for src_name, src_cfg in _SOURCE_CLASSIFICATION.items():
+        trigger_keywords = [str(k).lower() for k in src_cfg.get("trigger_keywords", [])]
+        trigger_event_ids = {int(i) for i in src_cfg.get("trigger_event_ids", []) if str(i).isdigit()}
+
+        id_match = event_id_int > 0 and event_id_int in trigger_event_ids
+        keyword_match = any(k in msg_lower for k in trigger_keywords)
+        if not (id_match or keyword_match):
+            continue
+
+        source_type = src_name
+
+        severity_by_event_id = src_cfg.get("severity_by_event_id", {})
+        if str(event_id_int) in severity_by_event_id:
+            severity = str(severity_by_event_id[str(event_id_int)]).upper()
+            break
+
+        severity_by_keyword = src_cfg.get("severity_by_keyword", {})
+        for pattern, sev in severity_by_keyword.items():
+            if str(pattern).lower() in msg_lower:
+                severity = str(sev).upper()
+        break
+
+    return severity, source_type, compliance_tag
 
 @router.post("/analyze")
 @limiter.limit("5/minute")
@@ -175,7 +192,7 @@ async def analyze_log_file(request: Request, file: UploadFile = File(...), db=De
 
                 msg_lower = msg.lower()
                 csv_severity = get_field(row, resolved, "severity", "").strip()
-                smart_severity, smart_source = analyze_log_context(event_id_int, msg_lower)
+                smart_severity, smart_source, compliance_tag = analyze_log_context(event_id_int, msg_lower)
 
                 if csv_severity and csv_severity.upper() in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"):
                     smart_severity = csv_severity.upper()
@@ -201,18 +218,20 @@ async def analyze_log_file(request: Request, file: UploadFile = File(...), db=De
                     "source": "csv_upload",
                     "analysis_tag": analysis_tag
                 }
+                if compliance_tag:
+                    log_entry["compliance_tag"] = compliance_tag
 
                 logs_batch.append(log_entry)
                 parsed_rows += 1
 
-                # ✅ CTO FIX 3: Batch Insert to MongoDB to respect the 16MB document limit
+                # ✅ CTO FIX 3: Batch Insert to MongoDB (CSV to separate collection)
                 if len(logs_batch) >= batch_size:
-                    await db["logs"].insert_many(logs_batch)
+                    await db["csv_uploads"].insert_many(logs_batch)  # Separate from agent logs
                     logs_batch.clear()
 
             # Insert any remaining logs
             if logs_batch:
-                await db["logs"].insert_many(logs_batch)
+                await db["csv_uploads"].insert_many(logs_batch)
 
             if parsed_rows == 0:
                 raise HTTPException(status_code=400, detail="No valid log rows were found in the CSV.")

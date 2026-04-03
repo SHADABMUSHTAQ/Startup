@@ -16,6 +16,7 @@ class StatefulThreatEngine:
         self.config_path = Path(config_path)
         self.rules = {}
         self.event_id_map = {}
+        self.alert_title_map = {}
         self.redis = None
         self.key_prefix = "warsoc:stateful:"
         self._load_config()
@@ -28,9 +29,60 @@ class StatefulThreatEngine:
                 config = json.load(f)
                 self.rules = config.get('stateful_detection_rules', {})
                 self.event_id_map = config.get('event_id_map', {})
+                self.alert_title_map = config.get('alert_title_map', {})
                 self.key_prefix = config.get('redis', {}).get('key_prefix', 'warsoc:stateful:')
         except Exception as e:
             logger.error(f"Config Load Error: {e}")
+
+    def _infer_handler_type(self, rule_name: str, rule_config: Dict[str, Any]) -> str:
+        """Infer handler type for backward compatibility when handler_type is absent."""
+        configured = str(rule_config.get("handler_type", "")).strip().lower()
+        if configured:
+            return configured
+
+        inferred = {
+            "password_spraying": "password_spraying",
+            "concurrent_sessions": "concurrent_sessions",
+            "vertical_port_scan": "unique_field_counter",
+            "horizontal_port_scan": "unique_field_counter",
+            "phishing_kill_chain": "phishing_kill_chain",
+            "after_hours_activity": "after_hours",
+            "ransomware_extensions": "ransomware_extensions",
+            "rare_port_usage": "rare_port",
+            "dns_tunneling": "dns_tunneling",
+            "data_exfiltration_volume": "data_exfiltration_volume",
+            "sensitive_file_touch": "sensitive_file",
+            "impossible_travel": "requires_geoip",
+            "new_location_access": "requires_geoip",
+            "dormant_account_activation": "requires_history",
+            "long_duration_connection": "requires_session_tracking",
+            "beaconing_c2": "requires_session_tracking",
+            "log_clearing_sequence": "requires_sequence_tracking",
+        }
+        return inferred.get(rule_name, "counter")
+
+    async def _dispatch(self, handler_type: str, rule_name: str, rule_config: Dict[str, Any], normalized_log: Dict[str, Any], window: int):
+        dispatch_map = {
+            "counter": self._generic_counter,
+            "password_spraying": self._handle_password_spraying,
+            "concurrent_sessions": self._handle_concurrent_sessions,
+            "unique_field_counter": self._handle_unique_field_counter,
+            "phishing_kill_chain": self._handle_phishing_kill_chain,
+            "after_hours": self._handle_after_hours,
+            "ransomware_extensions": self._handle_ransomware_extensions,
+            "rare_port": self._handle_rare_port_usage,
+            "dns_tunneling": self._handle_dns_tunneling,
+            "data_exfiltration_volume": self._handle_data_exfiltration_volume,
+            "sensitive_file": self._handle_sensitive_file,
+        }
+        handler = dispatch_map.get(handler_type)
+        if handler is None:
+            logger.warning(f"Unknown handler_type '{handler_type}' for rule '{rule_name}'")
+            return None
+
+        if handler_type in {"after_hours", "ransomware_extensions", "rare_port"}:
+            return await handler(rule_name, rule_config, normalized_log)
+        return await handler(rule_name, rule_config, normalized_log, window)
 
     async def start(self, redis_url="redis://localhost:6379"):
         try:
@@ -337,36 +389,18 @@ class StatefulThreatEngine:
             if mapped:
                 event_type = str(mapped.get("event_type", "unknown")).lower()
 
-        # Rules that need specialized handlers
-        SPECIALIZED = {
-            "password_spraying": self._handle_password_spraying,
-            "concurrent_sessions": self._handle_concurrent_sessions,
-            "vertical_port_scan": self._handle_unique_field_counter,
-            "horizontal_port_scan": self._handle_unique_field_counter,
-            "phishing_kill_chain": self._handle_phishing_kill_chain,
-        }
-        # Rules with no threshold — pure condition check
-        CONDITION_ONLY = {
-            "after_hours_activity": self._handle_after_hours,
-            "ransomware_extensions": self._handle_ransomware_extensions,
-            "rare_port_usage": self._handle_rare_port_usage,
-        }
-        THRESHOLD_SPECIALIZED = {
-            "dns_tunneling": self._handle_dns_tunneling,
-            "data_exfiltration_volume": self._handle_data_exfiltration_volume,
-        }
-        # Rules that need keyword pre-filter before counting
-        KEYWORD_FILTER = {"sensitive_file_touch"}
-        # Rules that are conceptual/need external data — skip gracefully
-        SKIP_RULES = {"impossible_travel", "new_location_access", "dormant_account_activation",
-                      "long_duration_connection", "beaconing_c2", "log_clearing_sequence"}
-
         for category, category_rules in self.rules.items():
             for rule_name, rule_config in category_rules.items():
                 if not rule_config.get('enabled'):
                     continue
 
-                if rule_name in SKIP_RULES:
+                handler_type = self._infer_handler_type(rule_name, rule_config)
+                if handler_type in {
+                    "requires_geoip",
+                    "requires_history",
+                    "requires_session_tracking",
+                    "requires_sequence_tracking",
+                }:
                     continue
 
                 target_filter = str(rule_config.get('event_filter', 'all')).lower()
@@ -376,17 +410,7 @@ class StatefulThreatEngine:
                 window = rule_config.get('window_seconds', 60)
 
                 try:
-                    result = None
-                    if rule_name in SPECIALIZED:
-                        result = await SPECIALIZED[rule_name](rule_name, rule_config, normalized_log, window)
-                    elif rule_name in THRESHOLD_SPECIALIZED:
-                        result = await THRESHOLD_SPECIALIZED[rule_name](rule_name, rule_config, normalized_log, window)
-                    elif rule_name in CONDITION_ONLY:
-                        result = await CONDITION_ONLY[rule_name](rule_name, rule_config, normalized_log)
-                    elif rule_name in KEYWORD_FILTER:
-                        result = await self._handle_sensitive_file(rule_name, rule_config, normalized_log, window)
-                    else:
-                        result = await self._generic_counter(rule_name, rule_config, normalized_log, window)
+                    result = await self._dispatch(handler_type, rule_name, rule_config, normalized_log, window)
 
                     if result:
                         alerts.append(result)
@@ -399,23 +423,8 @@ class StatefulThreatEngine:
 
     def _friendly_stateful_title(self, title: str, rule_name: str) -> str:
         raw = (title or "").strip()
-        mapping = {
-            "High-velocity brute force attack detected": "Many failed login attempts were detected in a short time",
-            "Low-and-slow brute force attack detected": "Repeated failed login attempts were detected over time",
-            "Password spraying attack detected": "A password spraying pattern was detected",
-            "Impossible travel detected": "A login was detected from locations too far apart in a short time",
-            "Login from new geographic location": "A login from a new location was detected",
-            "Concurrent sessions from multiple IPs": "The same account is active from multiple IP addresses",
-            "After-hours suspicious activity": "Unusual activity was detected outside normal working hours",
-            "Mass account creation detected": "A large number of user accounts were created",
-            "Privilege escalation spike detected": "Multiple privilege escalation events were detected",
-            "Dormant account reactivated": "An inactive account became active again",
-            "Mass file modification - Ransomware indicator": "A large number of files were modified quickly",
-            "Mass file deletion detected": "A large number of files were deleted quickly",
-            "Correlated phishing kill-chain detected": "Multiple phishing-related stages were detected for the same user",
-        }
-        if raw in mapping:
-            return mapping[raw]
+        if raw in self.alert_title_map:
+            return self.alert_title_map[raw]
 
         if raw:
             return raw
@@ -433,7 +442,7 @@ class StatefulThreatEngine:
             "CRITICAL": 90,
         }
         base_title = rule_config.get('description', f'Behavior Anomaly: {rule_name}')
-        return {
+        alert = {
             'type': rule_name,
             'summary': self._friendly_stateful_title(base_title, rule_name),
             'ip': log.get('source_ip', 'unknown'),
@@ -445,3 +454,7 @@ class StatefulThreatEngine:
             'timestamp': log.get('timestamp', datetime.now(timezone.utc).isoformat()),
             'metadata': metadata,
         }
+        compliance_tag = rule_config.get("compliance_tag") or log.get("compliance_tag")
+        if compliance_tag:
+            alert["compliance_tag"] = compliance_tag
+        return alert

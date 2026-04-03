@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.venv
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+.git/
+.dockerignore
+docker-compose*.yml
+nginx/
+keys/
+scripts/
+tests/

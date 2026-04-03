@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # --- PRIVACY & ENCRYPTION ---
     encryption_key: str = os.getenv("ENCRYPTION_KEY", "")
 
+    # --- EXTERNAL INTEGRATIONS ---
+    vt_api_key: str = os.getenv("VT_API_KEY", "")
+
     class Config:
         env_file = ".env"
         extra = "ignore"  # Extra env vars won't crash the app

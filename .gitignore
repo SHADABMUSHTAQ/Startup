@@ -68,3 +68,6 @@ scripts/
 tests/
 trigger_alerts.py
 verify.py
+
+# Cryptographic Keys
+keys/

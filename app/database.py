@@ -16,8 +16,8 @@ class DatabaseManager:
         """Initializes the connection to MongoDB."""
         settings = get_settings()
         
-        # ✅ DB Name fixed for WarSOC
-        db_name = "WarSOC_DB"  
+        # ✅ DB Name dynamically pulled from settings (CTO FIX)
+        db_name = settings.mongodb_db_name  
         
         try:
             self.client = AsyncIOMotorClient(settings.mongodb_uri)
@@ -123,7 +123,7 @@ async def get_db_context():
         # Motor manages connection pooling. Do NOT close the client here —
         # repeatedly opening/closing the client from a worker will thrash connections.
         # Keep the client open for the process lifetime and rely on `init_db()` at startup.
-        return
+        pass
 
 # --- INITIALIZATION ---
 async def init_db():
@@ -139,7 +139,10 @@ async def init_db():
         ]
         for coll, idx in indexes:
             try:
-                await db_manager.db[coll].create_index(idx)
+                # Use a specific name to avoid collision with default generated names
+                idx_str = str(idx).replace(' ', '').replace('[', '').replace(']', '').replace('(', '').replace(')', '').replace(',', '_').replace("'", '')
+                index_name = f"idx_{coll}_{idx_str}"
+                await db_manager.db[coll].create_index(idx, name=index_name)
             except Exception as e:
-                print(f"⚠️ Could not create index {idx} on {coll}: {e}")
+                print(f"⚠️ Index setup for {coll}/{idx} (skipped or already exists): {e}")
         print("✅ MongoDB Indexes Ensured")

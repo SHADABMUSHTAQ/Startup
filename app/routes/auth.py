@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, status, Depends, Request
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
 from app.database import get_db
@@ -31,6 +32,9 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     full_name: str
+    plan_type: Optional[str] = "Free"
+    role: Optional[str] = "admin"
+    compliance_packs: Optional[list[str]] = []
 
 class PlanUpdate(BaseModel):
     plan_name: str
@@ -38,6 +42,13 @@ class PlanUpdate(BaseModel):
 class AgentLogin(BaseModel):
     agent_id: str
     agent_secret: str
+
+class UpgradePlan(BaseModel):
+    plan_type: str
+    compliance_packs: list[str]
+    endpoints: int
+    storage_gb: int
+    retention_months: int
 
 # --- HELPER FUNCTIONS ---
 def verify_password(plain_password, hashed_password):
@@ -123,6 +134,8 @@ async def verify_agent_token(request: Request, token: str = Depends(oauth2_schem
                 raise HTTPException(status_code=401, detail="Unknown agent tenant")
 
         return agent_id
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Agent token expired.")
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Unauthorized Agent")
     except HTTPException:
@@ -131,9 +144,11 @@ async def verify_agent_token(request: Request, token: str = Depends(oauth2_schem
         print(f"🔴 Agent verification error: {e}")
         raise HTTPException(status_code=503, detail="Agent verification service unavailable")
 
-# --- ROUTES ---
+from app.utils.audit import audit_log
+
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
+@audit_log("User Signup")
 async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
     existing_user = await db["users"].find_one({"$or": [{"email": user.email}, {"username": user.username}]})
     if existing_user:
@@ -142,18 +157,41 @@ async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
     hashed_password = get_password_hash(user.password)
     new_tenant_id = f"WARSOC_{str(uuid.uuid4())[:8].upper()}"
 
+    # ✅ MASTER BUILD: Auto-provision packs based on selected plan
+    packs = user.compliance_packs or []
+    if not packs:
+        if user.plan_type == "Professional": packs = ["peca_forensic"]
+        elif user.plan_type == "Enterprise": packs = ["peca_forensic", "fbr_pos"]
+
     new_user = {
         "username": user.username,
         "email": user.email,
         "full_name": user.full_name,
         "hashed_password": hashed_password,
         "tenant_id": new_tenant_id,
-        "plan_type": "Free",
-        "has_active_plan": True,
+        "plan_type": user.plan_type,
+        "role": user.role,
+        "compliance_packs": packs,
+        "has_active_plan": True if user.plan_type != "Free" else False,
         "created_at": datetime.now(timezone.utc)
     }
     await db["users"].insert_one(new_user)
-    return {"message": "User created successfully", "tenant_id": new_tenant_id}
+
+    new_tenant = {
+        "tenant_id": new_tenant_id,
+        "company_name": user.full_name,
+        "plan": user.plan_type,
+        "status": "active",
+        "created_at": datetime.now(timezone.utc)
+    }
+    await db["tenants"].insert_one(new_tenant)
+
+    # ✅ MASTER BUILD FIX: Immediate Cache Sync
+    redis = request.app.state.redis
+    if redis:
+        await redis.set(f"tenant_plan:{new_tenant_id}", user.plan_type)
+
+    return {"message": "User created successfully", "tenant_id": new_tenant_id, "plan": user.plan_type}
 
 class LoginSchema(BaseModel):
     username: str
@@ -171,13 +209,21 @@ async def login(request: Request, user_data: LoginSchema, db=Depends(get_db)):
         data={"sub": db_user["username"], "type": "user", "tenant_id": tenant_id}, 
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
+    # 🔒 Unified Permission Logic (Self-Healing Contract)
+    plan = db_user.get("plan_type", "Free")
+    packs = db_user.get("compliance_packs", [])
+    if not packs:
+        if plan == "Professional": packs = ["peca_forensic"]
+        elif plan == "Enterprise": packs = ["peca_forensic", "fbr_pos"]
+
     return {
         "access_token": access_token, 
         "token_type": "bearer",
         "username": db_user["username"],
         "tenant_id": tenant_id,
-        "plan_type": db_user.get("plan_type", "Free"),
-        "has_active_plan": db_user.get("has_active_plan", False)
+        "plan_type": plan,
+        "has_active_plan": db_user.get("has_active_plan", False),
+        "compliance_packs": packs
     }
 
 # ✅ CTO FIX 3: Secure Logout Route for Token Revocation
@@ -204,18 +250,49 @@ async def logout(request: Request, current_user=Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="Error processing logout.")
 
 @router.get("/me")
-async def get_user_me(current_user=Depends(get_current_user)):
-    return {
-        "username": current_user["username"],
-        "email": current_user["email"],
-        "full_name": current_user.get("full_name", ""),
-        "tenant_id": current_user.get("tenant_id"),
-        "plan_type": current_user.get("plan_type", "Free"),
-        "has_active_plan": current_user.get("has_active_plan", False)
-    }
+async def get_me(user: dict = Depends(get_current_user)):
+    resp = user.copy()
+    
+    # 🔒 Source of Truth for Packs
+    plan = resp.get("plan_type", "Free")
+    packs = resp.get("compliance_packs", [])
+    if not packs:
+        if plan == "Professional": packs = ["peca_forensic"]
+        elif plan == "Enterprise": packs = ["peca_forensic", "fbr_pos"]
+
+    # 🚀 MASTER BUILD FIX: Convert non-serializable MongoDB types to strings
+    if "_id" in resp:
+        resp["_id"] = str(resp["_id"])
+    
+    for key, value in resp.items():
+        if isinstance(value, datetime):
+            resp[key] = value.isoformat() # Convert datetimes to ISO strings
+            
+    return JSONResponse({
+        **resp, 
+        "has_active_plan": user.get("has_active_plan", False), 
+        "role": user.get("role", "admin"),
+        "tenant_id": user.get("tenant_id"),
+        "compliance_packs": packs
+    })
+
+@router.get("/my-packs")
+async def get_my_packs(user: dict = Depends(get_current_user)):
+    """Dynamically computes active packs based on plan_type source of truth."""
+    plan = user.get("plan_type", "Free")
+    packs = user.get("compliance_packs", [])
+    
+    # 🔒 Source of Truth Fallback: If array is missing, compute from plan name
+    if not packs:
+        if plan == "Professional": packs = ["peca_forensic"]
+        elif plan == "Enterprise": packs = ["peca_forensic", "fbr_pos"]
+
+    return JSONResponse({
+        "compliance_packs": packs
+    })
 
 @router.post("/agent-login")
-@limiter.limit("10/minute")
+# @limiter.limit("100/minute")
 async def agent_login(request: Request, data: AgentLogin, db=Depends(get_db)):
     try:
         agent_doc = None
@@ -262,28 +339,87 @@ async def agent_login(request: Request, data: AgentLogin, db=Depends(get_db)):
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/update-plan")
-async def update_plan(data: PlanUpdate, db=Depends(get_db), current_user=Depends(get_current_user)):
+@audit_log("Plan Update")
+async def update_plan(request: Request, data: PlanUpdate, db=Depends(get_db), current_user=Depends(get_current_user)):
+    secure_username = current_user["username"]
+
+    # ✅ MASTER BUILD FIX: Automatic Pack Provisioning
+    packs = []
+    if data.plan_name == "Professional": packs = ["peca_forensic"]
+    elif data.plan_name == "Enterprise": packs = ["peca_forensic", "fbr_pos"]
+
+    await db["users"].update_one(
+        {"username": secure_username},
+        {"$set": {
+            "plan_type": data.plan_name, 
+            "has_active_plan": True,
+            "compliance_packs": packs
+        }}
+    )
+    
+    # ✅ CTO FIX 5: Also update the plan in the tenants collection.
+    db_user = await db["users"].find_one({"username": secure_username})
+    tenant_id = db_user.get("tenant_id")
+    if tenant_id:
+        await db["tenants"].update_one(
+            {"tenant_id": tenant_id},
+            {"$set": {"plan": data.plan_name}},
+            upsert=True
+        )
+        # ✅ MASTER BUILD FIX: Immediate Cache Sync
+        redis = request.app.state.redis
+        if redis:
+            await redis.set(f"tenant_plan:{tenant_id}", data.plan_name)
+
+@router.post("/upgrade")
+@audit_log("Enterprise Upgrade")
+async def upgrade_plan(request: Request, data: UpgradePlan, db=Depends(get_db), current_user=Depends(get_current_user)):
     secure_username = current_user["username"]
     
     await db["users"].update_one(
         {"username": secure_username},
         {"$set": {
-            "plan_type": data.plan_name, 
-            "has_active_plan": True
+            "plan_type": data.plan_type, 
+            "has_active_plan": True,
+            "compliance_packs": data.compliance_packs,
+            "endpoints": data.endpoints,
+            "storage_gb": data.storage_gb,
+            "retention_months": data.retention_months
         }}
     )
     
+    # ✅ CTO FIX 6: Also update the plan in the tenants collection.
     db_user = await db["users"].find_one({"username": secure_username})
+    tenant_id = db_user.get("tenant_id")
+    if tenant_id:
+        await db["tenants"].update_one(
+            {"tenant_id": tenant_id},
+            {"$set": {"plan": data.plan_type}},
+            upsert=True
+        )
+        # ✅ MASTER BUILD FIX: Immediate Cache Sync
+        redis = request.app.state.redis
+        if redis:
+            await redis.set(f"tenant_plan:{tenant_id}", data.plan_type)
+
     tenant_id = db_user.get("tenant_id", "WARSOC_DEFAULT")
     access_token = create_access_token(
         data={"sub": db_user["username"], "type": "user", "tenant_id": tenant_id}, 
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
+    # 🔒 Final Identity Contract Verification
+    plan = db_user.get("plan_type", "Free")
+    packs = db_user.get("compliance_packs", data.compliance_packs)
+    if not packs:
+        if plan == "Professional": packs = ["peca_forensic"]
+        elif plan == "Enterprise": packs = ["peca_forensic", "fbr_pos"]
+
     return {
         "access_token": access_token, 
         "token_type": "bearer",
         "username": db_user["username"],
         "tenant_id": tenant_id,
-        "plan_type": db_user.get("plan_type", "Free"),
-        "has_active_plan": db_user.get("has_active_plan", False)
+        "plan_type": plan,
+        "has_active_plan": db_user.get("has_active_plan", False),
+        "compliance_packs": packs
     }

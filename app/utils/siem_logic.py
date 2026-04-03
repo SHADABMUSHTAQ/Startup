@@ -3,11 +3,12 @@ import uuid
 import time
 from urllib.parse import urlparse
 from datetime import datetime, timezone
+import redis.asyncio as aioredis
 
 class SIEMEngine:
     def __init__(self, config: dict = None):
         self.config = config if config else {}
-        
+
         self.whitelist_users = set(self.config.get("whitelist", {}).get("service_accounts", []))
         self.whitelist_ips = set(self.config.get("whitelist", {}).get("ips", []))
 
@@ -16,7 +17,7 @@ class SIEMEngine:
         self.max_alerts_per_log = int(fp_controls.get("max_alerts_per_log", 3))
         self.rule_cooldown_seconds = int(fp_controls.get("rule_cooldown_seconds", 20))
         self.global_suppress_tokens = [s.lower() for s in fp_controls.get("suppress_if_message_contains", [])]
-        self._last_rule_fires = {}
+        self.redis = None  # Will be set via set_redis_client()
 
         # ✅ ZERO HARDCODING: Prefer top-level `event_id_map`, fall back to legacy key
         self.event_id_rules = self.config.get("event_id_map", {}) or self.config.get("detection", {}).get("event_id_rules", {})
@@ -60,7 +61,11 @@ class SIEMEngine:
 
         print(f"✅ Config-Driven SIEM Loaded: {len(self.rules)} Regex Rules, {len(self.event_id_rules)} Event ID Rules.")
 
-    def analyze_single_log(self, log_entry: dict):
+    def set_redis_client(self, redis_client):
+        """Inject Redis client for persistent cooldown tracking across worker restarts."""
+        self.redis = redis_client
+
+    async def analyze_single_log(self, log_entry: dict):
         findings = []
         
         ip = log_entry.get("source_ip", log_entry.get("ip", "0.0.0.0"))
@@ -77,13 +82,13 @@ class SIEMEngine:
         # ---------------------------------------------------------
         # WINDOWS EVENT ID ENGINE
         # ---------------------------------------------------------
-        if event_id in self.event_id_rules:
+        if event_id and event_id in self.event_id_rules:
             rule = self.event_id_rules[event_id]
             findings.append(self._create_alert(
-                rule.get("type", "ANOMALY"), 
-                rule.get("severity", "MEDIUM"), 
-                rule.get("summary", f"Suspicious Event ID {event_id} detected"), 
-                log_entry, 
+                f"EVENT_ID_{event_id}_{rule.get('event_type', 'ANOMALY').upper()}",
+                rule.get("severity", "MEDIUM"),
+                f"{rule.get('event_type', 'suspicious event').replace('_', ' ').title()} detected",
+                log_entry,
                 rule.get("mitre", "N/A")
             ))
 
@@ -112,18 +117,36 @@ class SIEMEngine:
             if token_hints and not any(token in msg_lower for token in token_hints):
                 continue
 
-            now = time.time()
-            cooldown_key = f"{name}:{ip}:{event_type}"
-            last_fired = self._last_rule_fires.get(cooldown_key, 0.0)
-            if now - last_fired < rule.get("cooldown_seconds", self.rule_cooldown_seconds):
+            # 🚀 REDIS COOLDOWN: Persistent across worker restarts
+            cooldown_seconds = rule.get("cooldown_seconds", self.rule_cooldown_seconds)
+            cooldown_key = f"warsoc:siem_cooldown:{name}:{ip}:{event_type}"
+
+            # Check Redis for existing cooldown (non-blocking, graceful fallback)
+            is_on_cooldown = False
+            if self.redis:
+                try:
+                    last_fire_exists = await self.redis.get(cooldown_key)
+                    is_on_cooldown = last_fire_exists is not None
+                except Exception:
+                    # Redis unavailable, skip cooldown check (prevents cascading failures)
+                    pass
+
+            if is_on_cooldown:
                 continue
 
             if rule["pattern"].search(msg):
                 # ✅ ZERO HARDCODING: Uses config summary or an extremely dumb fallback
                 summary = rule["summary"] if rule["summary"] else self._fallback_summary(name)
                 findings.append(self._create_alert(name, rule["severity"], summary, log_entry, rule["mitre"]))
-                self._last_rule_fires[cooldown_key] = now
-        
+
+                # Set Redis cooldown key with expiration
+                if self.redis:
+                    try:
+                        await self.redis.setex(cooldown_key, cooldown_seconds, "1")
+                    except Exception:
+                        # Silently fail if Redis is down, alert still fires
+                        pass
+
         return findings
 
     def _detect_phishing(self, log_entry: dict, msg_lower: str, event_type: str):

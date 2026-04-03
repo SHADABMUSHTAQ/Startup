@@ -15,9 +15,10 @@ from app.routes import data
 # ==========================================
 # 1. ENTERPRISE IMPORTS
 # ==========================================
-from app.database import init_db, get_db
+from app.database import init_db, get_db, db_manager
 from app.config.config import get_settings
-from app.routes import auth, ingest_pulse, threat_intel, upload
+from app.routes import auth, ingest_pulse, threat_intel, upload, compliance, logs, ingestion
+from app.db.init_db import init_compliance_db
 from app.api.ws_manager import manager 
 
 settings = get_settings()
@@ -57,13 +58,37 @@ async def redis_to_websocket_listener(app: FastAPI):
             except Exception:
                 pass
 
+from app.utils.tenant_cache import sync_tenant_cache
+
 # ==========================================
 # 3. FASTAPI LIFESPAN
 # ==========================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🚀 Booting WarSOC Backend...")
-    await init_db()
+    # 1. MONGODB INITIALIZATION (WITH RETRIES)
+    max_db_retries = 10
+    db_backoff = 2
+    db_connected = False
+    
+    for attempt in range(1, max_db_retries + 1):
+        try:
+            print(f"🔄 MongoDB connection attempt {attempt}/{max_db_retries}...")
+            await init_db()
+            if db_manager.db is not None:
+                await init_compliance_db(db_manager.db)
+                db_connected = True
+                print("✅ MongoDB & Compliance Schema initialized successfully.")
+                break
+        except Exception as e:
+            print(f"⚠️ MongoDB attempt {attempt} failed: {e}")
+            if attempt < max_db_retries:
+                await asyncio.sleep(db_backoff)
+                # Cap the backoff at 10 seconds to avoid excessive wait
+                db_backoff = min(db_backoff * 1.5, 10)
+            else:
+                print("❌ FATAL: Could not establish MongoDB connection after retries.")
+                raise e
+    
     # Initialize global Redis connection pool with startup retries
     max_retries = 5
     backoff = 1
@@ -87,6 +112,11 @@ async def lifespan(app: FastAPI):
 
     # attach global pool (may be None if degraded)
     app.state.redis = redis_pool
+    
+    # 💳 SYNC TENANT CACHE (Enterprise SRO 288 Optimization)
+    if db_manager.db is not None and app.state.redis is not None:
+        await sync_tenant_cache(db_manager.db, app.state.redis)
+
     listener_task = asyncio.create_task(redis_to_websocket_listener(app))
     yield
     print("🛑 Shutting down WarSOC Backend...")
@@ -108,9 +138,9 @@ app = FastAPI(
 )
 
 # ==========================================
-# 4.1 RATE LIMITING
+# 4.1 RATE LIMITING (BULK PROTECTED)
 # ==========================================
-limiter = Limiter(key_func=get_remote_address, storage_uri=settings.redis_url)
+from app.utils.limiter import limiter
 app.state.limiter = limiter
 
 @app.exception_handler(RateLimitExceeded)
@@ -135,6 +165,11 @@ app.include_router(threat_intel.router, prefix="/api/v1", tags=["Security Ops"])
 app.include_router(ingest_pulse.router, prefix="/api/v1/ingest", tags=["Ingestion"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(upload.router, prefix="/api/v1/upload", tags=["Upload"])
+app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compliance"])
+app.include_router(logs.router, prefix="/api/v1/logs", tags=["Dashboard Logs"])
+
+# 🚨 CTO FIX: Remove ingestion.router to prevent prefix collision with ingest_pulse.router
+# app.include_router(ingestion.router, prefix="/api/v1/ingest", tags=["Compliance Ingestion"])
 
 # Legacy support
 app.include_router(threat_intel.router, prefix="/firewall", tags=["Legacy Mitigation"])
@@ -143,43 +178,8 @@ app.include_router(auth.router, prefix="/auth", tags=["Legacy Auth"])
 app.include_router(data.router, prefix="/api/v1/data", tags=["Data Engine"])
 
 # ==========================================
-# 5.5 DASHBOARD ROUTES (🔥 THE FIX FOR THE BLANK TABLE)
+# 5.5 DASHBOARD ROUTES (Moved to app/routes/logs.py)
 # ==========================================
-@app.get("/api/v1/logs", tags=["Dashboard"])
-async def fetch_live_logs(db = Depends(get_db), current_user = Depends(get_current_user), include_csv: bool = False):
-    """The Secure Bridge: Only fetches logs belonging to the logged-in user's Tenant ID"""
-    try:
-        # 🚨 DEFENSIVE FIX: Safely extract Tenant ID whether it's a dict or a Database Model
-        if isinstance(current_user, dict):
-            secure_tenant_id = current_user.get("tenant_id")
-        else:
-            secure_tenant_id = getattr(current_user, "tenant_id", None)
-            
-        print(f"🔍 [DASHBOARD TRACER] React is requesting logs for Tenant ID: '{secure_tenant_id}'")
-        
-        # 🚨 Fetching exactly from the collection the worker wrote to
-        # By default exclude CSV-uploaded logs so the live dashboard only shows agent/real-time data.
-        # Allow the caller to include CSV uploads by passing ?include_csv=true
-        log_query = {"tenant_id": secure_tenant_id}
-        if not include_csv:
-            log_query["source"] = {"$ne": "csv_upload"}
-        fresh_start_at = current_user.get("agent_issued_at") if isinstance(current_user, dict) else getattr(current_user, "agent_issued_at", None)
-        if fresh_start_at:
-            log_query["timestamp"] = {"$gte": fresh_start_at}
-
-        cursor = db.db["logs"].find(log_query).sort("timestamp", -1).limit(100)
-        
-        data = []
-        async for doc in cursor:
-            doc["_id"] = str(doc["_id"]) # Convert MongoDB ID to string for React
-            data.append(doc)
-            
-        print(f"✅ [DASHBOARD TRACER] Sending {len(data)} logs to the React Screen.")
-        return {"status": "success", "data": data}
-        
-    except Exception as e:
-        print(f"❌ [DASHBOARD ERROR]: {e}")
-        return {"status": "error", "message": "Failed to fetch logs. Please try again."}
 # ==========================================
 # 6. WEBSOCKET ENDPOINT (BULLETPROOF AUTH)
 # ==========================================
