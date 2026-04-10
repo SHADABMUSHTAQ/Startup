@@ -27,6 +27,17 @@ class BanRequest(BaseModel):
 WHITELIST_IPS = ["127.0.0.1", "localhost", "::1", "0.0.0.0"]
 
 
+def _is_valid_ip_or_cidr(value: str) -> bool:
+    try:
+        if "/" in value:
+            ipaddress.ip_network(value, strict=False)
+        else:
+            ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
 async def _redis_sadd_with_retry(redis_client, redis_key, target_ip, retries: int = 2, backoff: float = 0.2):
     for attempt in range(retries + 1):
         try:
@@ -58,10 +69,10 @@ async def _redis_srem_with_retry(redis_client, redis_key, target_ip, retries: in
 @router.post("/mitigate")
 async def execute_mitigation(payload: BanRequest, request: Request, db=Depends(get_db), current_user=Depends(get_current_user)):
     target_ip = payload.ip.strip()
-    try:
-        ipaddress.ip_address(target_ip)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid IP address format.")
+    
+    if target_ip == "N/A" or not target_ip or not _is_valid_ip_or_cidr(target_ip):
+        raise HTTPException(status_code=400, detail="Invalid IP address format: cannot ban.")
+        
     secure_tenant_id = current_user.get("tenant_id")
     
     if not secure_tenant_id:
@@ -90,11 +101,18 @@ async def execute_mitigation(payload: BanRequest, request: Request, db=Depends(g
     redis_key = f"warsoc:banned_ips:{secure_tenant_id}"
     try:
         if not redis_client:
-            temp_redis = await aioredis.from_url(settings.redis_url, decode_responses=True)
-            redis_client = temp_redis
-        ok = await _redis_sadd_with_retry(redis_client, redis_key, target_ip)
-        if not ok:
-            print(f"❌ Redis Sync Failed after retries for key {redis_key}")
+            try:
+                temp_redis = await aioredis.from_url(settings.redis_url, decode_responses=True)
+                await temp_redis.ping() # Check connection
+                redis_client = temp_redis
+            except Exception:
+                print("⚠️ Redis is unavailable, skipping Redis IP sync.")
+                redis_client = None
+                
+        if redis_client:
+            ok = await _redis_sadd_with_retry(redis_client, redis_key, target_ip)
+            if not ok:
+                print(f"❌ Redis Sync Failed after retries for key {redis_key}")
     except Exception as e:
         print(f"❌ Redis Sync Error: {e}")
     finally:
@@ -120,6 +138,9 @@ async def execute_mitigation(payload: BanRequest, request: Request, db=Depends(g
 @router.post("/revoke")
 async def revoke_mitigation(payload: BanRequest, request: Request, db=Depends(get_db), current_user=Depends(get_current_user)):
     target_ip = payload.ip.strip()
+    if target_ip == "N/A" or not target_ip or not _is_valid_ip_or_cidr(target_ip):
+        raise HTTPException(status_code=400, detail="Invalid IP address format: cannot revoke.")
+        
     secure_tenant_id = current_user.get("tenant_id")
 
     # 🚨 SURGICAL FIX: Added missing delete_one command and fixed db access
@@ -130,11 +151,18 @@ async def revoke_mitigation(payload: BanRequest, request: Request, db=Depends(ge
     redis_key = f"warsoc:banned_ips:{secure_tenant_id}"
     try:
         if not redis_client:
-            temp_redis = await aioredis.from_url(settings.redis_url, decode_responses=True)
-            redis_client = temp_redis
-        ok = await _redis_srem_with_retry(redis_client, redis_key, target_ip)
-        if not ok:
-            print(f"❌ Redis Revoke Failed after retries for key {redis_key}")
+            try:
+                temp_redis = await aioredis.from_url(settings.redis_url, decode_responses=True)
+                await temp_redis.ping()
+                redis_client = temp_redis
+            except Exception:
+                print("⚠️ Redis is unavailable, skipping Redis IP sync.")
+                redis_client = None
+                
+        if redis_client:
+            ok = await _redis_srem_with_retry(redis_client, redis_key, target_ip)
+            if not ok:
+                print(f"❌ Redis Revoke Failed after retries for key {redis_key}")
     except Exception as e:
         print(f"❌ Redis Revoke Error: {e}")
     finally:
@@ -161,10 +189,27 @@ async def agent_heartbeat(tenant_id: str, request: Request, current_agent: str =
             temp_redis = await aioredis.from_url(settings.redis_url, decode_responses=True)
             redis_client = temp_redis
         redis_key = f"warsoc:banned_ips:{tenant_id}"
-        banned_ips = await redis_client.smembers(redis_key)
+        raw_banned_ips = await redis_client.smembers(redis_key)
+        banned_ips = []
+        invalid_entries = []
+
+        for candidate in raw_banned_ips:
+            c = str(candidate).strip()
+            if _is_valid_ip_or_cidr(c):
+                banned_ips.append(c)
+            else:
+                invalid_entries.append(c)
+
+        # Self-heal Redis set so agents never receive hostnames/non-IP garbage.
+        if invalid_entries:
+            try:
+                await redis_client.srem(redis_key, *invalid_entries)
+            except Exception:
+                pass
+
         return {
             "status": "active",
-            "enforce_bans": list(banned_ips)
+            "enforce_bans": banned_ips
         }
     except Exception as e:
         return {"status": "error", "enforce_bans": []}
@@ -196,12 +241,15 @@ async def get_blocked_list(db=Depends(get_db), current_user=Depends(get_current_
 @router.post("/session/fresh-start")
 async def tenant_fresh_start(db=Depends(get_db), current_user=Depends(get_current_user)):
     secure_tenant_id = current_user.get("tenant_id")
+    username = current_user.get("username")
     if not secure_tenant_id:
         raise HTTPException(status_code=403, detail="Critical: User lacks tenant assignment.")
+    if not username:
+        raise HTTPException(status_code=403, detail="Critical: User identity unavailable.")
 
     fresh_start_at = datetime.now(timezone.utc).isoformat()
     await db["users"].update_one(
-        {"tenant_id": secure_tenant_id},
+        {"tenant_id": secure_tenant_id, "username": username},
         {"$set": {"agent_issued_at": fresh_start_at}},
     )
 
@@ -417,7 +465,7 @@ def web_hunter_thread():
                     "raw_data": line,
                     "agent_version": "4.0"
                 }
-                secure_request("POST", ingest_url, json=payload, timeout=10)
+                secure_request("POST", ingest_url, json=[payload], timeout=10)
 
 def log_hunter_thread():
     print("[SENSOR] Windows Event Log Hunter active")
@@ -458,12 +506,12 @@ def log_hunter_thread():
                             "user": resolve_user(event.Sid),
                             "event_id": event_id,
                             "message": f"Event {event_id}: {clean_msg}",
-                            "timestamp": event.TimeGenerated.isoformat(),
+                            "timestamp": event.TimeGenerated.replace(tzinfo=datetime.now().astimezone().tzinfo).astimezone(timezone.utc).isoformat() if event.TimeGenerated else datetime.now(timezone.utc).isoformat(),
                             "raw_data": clean_msg,
                             "agent_version": "4.0"
                         }
                         print(f"[EVENT] {event_id} captured")
-                        secure_request("POST", ingest_url, json=payload, timeout=10)
+                        secure_request("POST", ingest_url, json=[payload], timeout=10)
                 highest_record_seen = current_batch_highest
         except Exception:
             pass
@@ -542,10 +590,12 @@ async def download_agent(current_user=Depends(get_current_user), db=Depends(get_
     username = current_user.get("username", "user")
     if not tenant_id:
         raise HTTPException(status_code=403, detail="No tenant assigned")
+    if not username:
+        raise HTTPException(status_code=403, detail="No user identity available")
 
     # ✅ OPTION A: Keep agent secret across downloads (only generate once per tenant)
     # 1. Check if user already has an agent secret
-    existing_user = await db["users"].find_one({"tenant_id": tenant_id})
+    existing_user = await db["users"].find_one({"tenant_id": tenant_id, "username": username})
     stored_secret = existing_user.get("agent_secret") if existing_user else None
 
     # We will ensure the value stored in DB is a hashed secret, while the
@@ -559,7 +609,7 @@ async def download_agent(current_user=Depends(get_current_user), db=Depends(get_
             agent_secret_for_zip = _secrets.token_urlsafe(32)
             hashed_secret = get_password_hash(agent_secret_for_zip)
             await db["users"].update_one(
-                {"tenant_id": tenant_id},
+                {"tenant_id": tenant_id, "username": username},
                 {"$set": {"agent_secret": hashed_secret}},
             )
         else:
@@ -568,7 +618,7 @@ async def download_agent(current_user=Depends(get_current_user), db=Depends(get_
             agent_secret_for_zip = stored_secret
             hashed_secret = get_password_hash(agent_secret_for_zip)
             await db["users"].update_one(
-                {"tenant_id": tenant_id},
+                {"tenant_id": tenant_id, "username": username},
                 {"$set": {"agent_secret": hashed_secret}},
             )
     else:
@@ -576,7 +626,7 @@ async def download_agent(current_user=Depends(get_current_user), db=Depends(get_
         agent_secret_for_zip = _secrets.token_urlsafe(32)
         hashed_secret = get_password_hash(agent_secret_for_zip)
         await db["users"].update_one(
-            {"tenant_id": tenant_id},
+            {"tenant_id": tenant_id, "username": username},
             {"$set": {"agent_secret": hashed_secret}},
         )
 
@@ -584,7 +634,7 @@ async def download_agent(current_user=Depends(get_current_user), db=Depends(get_
     #    Data is not deleted; older records are simply hidden by default.
     fresh_start_at = datetime.now(timezone.utc).isoformat()
     await db["users"].update_one(
-        {"tenant_id": tenant_id},
+        {"tenant_id": tenant_id, "username": username},
         {"$set": {"agent_issued_at": fresh_start_at}},
     )
 
@@ -621,12 +671,13 @@ async def download_agent(current_user=Depends(get_current_user), db=Depends(get_
         web_log_paths = ["access.log"]
 
     agent_script_content = AGENT_SCRIPT
-    try:
-        agent_source_path = Path(__file__).resolve().parent.parent.parent / "agent" / "windows_agent.py"
-        if agent_source_path.exists():
+    agent_source_path = Path(__file__).resolve().parent.parent.parent / "agent" / "windows_agent.py"
+    if agent_source_path.exists():
+        try:
             agent_script_content = agent_source_path.read_text(encoding="utf-8")
-    except Exception:
-        agent_script_content = AGENT_SCRIPT
+        except Exception:
+            # Keep the in-file fallback to avoid breaking downloads when host file read fails.
+            agent_script_content = AGENT_SCRIPT
 
     tenant_policy = {
         "agent_settings": {
@@ -642,6 +693,8 @@ async def download_agent(current_user=Depends(get_current_user), db=Depends(get_
         },
     }
 
+    default_web_log_path = web_log_paths[0] if web_log_paths else "access.log"
+
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("warsoc-agent/warsoc_agent.py", agent_script_content)
@@ -655,7 +708,7 @@ async def download_agent(current_user=Depends(get_current_user), db=Depends(get_
             f"TENANT_ID={tenant_id}\n"
             f"BACKEND_URL={backend_url}\n"
             f"AGENT_MASTER_SECRET={agent_secret_for_zip or ''}\n"
-            f"WEB_LOG_PATH=access.log\n"
+            f"WEB_LOG_PATH={default_web_log_path}\n"
         ))
     buf.seek(0)
 

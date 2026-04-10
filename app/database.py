@@ -142,7 +142,32 @@ async def init_db():
                 # Use a specific name to avoid collision with default generated names
                 idx_str = str(idx).replace(' ', '').replace('[', '').replace(']', '').replace('(', '').replace(')', '').replace(',', '_').replace("'", '')
                 index_name = f"idx_{coll}_{idx_str}"
-                await db_manager.db[coll].create_index(idx, name=index_name)
+                try:
+                    await db_manager.db[coll].create_index(idx, name=index_name)
+                except Exception as e:
+                    # Handle IndexOptionsConflict (existing same-key index with different name/options)
+                    is_conflict = getattr(e, 'code', None) == 85 or 'IndexOptionsConflict' in str(e)
+                    if is_conflict:
+                        # Normalize expected key pattern
+                        if isinstance(idx, str):
+                            expected_key = [(idx, 1)]
+                        else:
+                            expected_key = list(idx)
+
+                        idxs = await db_manager.db[coll].index_information()
+                        dropped = False
+                        for name, info in idxs.items():
+                            if info.get('key') == expected_key:
+                                await db_manager.db[coll].drop_index(name)
+                                print(f"    - Dropped conflicting index {coll}.{name}")
+                                await db_manager.db[coll].create_index(idx, name=index_name)
+                                print(f"    - Recreated compound index {index_name}")
+                                dropped = True
+                                break
+                        if not dropped:
+                            print(f"⚠️ Index conflict for {coll}/{idx} but no matching key found: {e}")
+                    else:
+                        print(f"⚠️ Index setup for {coll}/{idx} failed: {e}")
             except Exception as e:
                 print(f"⚠️ Index setup for {coll}/{idx} (skipped or already exists): {e}")
         print("✅ MongoDB Indexes Ensured")

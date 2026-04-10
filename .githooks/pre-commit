@@ -1,0 +1,16 @@
+#!/bin/sh
+# Prevent accidental commits of keys or other sensitive files.
+STAGED=$(git diff --cached --name-only --relative)
+for f in $STAGED; do
+  case "$f" in
+    keys/*|keys)
+      echo "ERROR: Attempt to commit files under 'keys/'. Remove them or add to .gitignore before committing: $f"
+      exit 1
+      ;;
+    *.pem)
+      echo "ERROR: Attempt to commit a .pem file. Remove from staging and use secure key management: $f"
+      exit 1
+      ;;
+  esac
+done
+exit 0

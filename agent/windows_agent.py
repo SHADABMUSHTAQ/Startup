@@ -21,9 +21,14 @@ from dotenv import load_dotenv, find_dotenv
 # ==========================================
 # 1. ENTERPRISE CONFIG & STATE
 # ==========================================
-env_path = find_dotenv()
-print(f"[🛡️] ARCHITECT OVERRIDE: Loading .env from -> {env_path}")
-load_dotenv(env_path, override=True)
+# 🔐 HARDENED: Always load from absolute path — never trust find_dotenv()
+_AGENT_DIR = Path(__file__).resolve().parent
+_ENV_PATH = _AGENT_DIR.parent / ".env"  # Startup-backend/.env
+if _ENV_PATH.exists():
+    print(f"[🛡️] ARCHITECT OVERRIDE: Loading .env from -> {_ENV_PATH}")
+    load_dotenv(str(_ENV_PATH), override=True)
+else:
+    print(f"[⚠️] .env not found at {_ENV_PATH}, using system environment.")
 
 TENANT_ID = os.getenv("TENANT_ID")
 if not TENANT_ID:
@@ -31,7 +36,8 @@ if not TENANT_ID:
     sys.exit(1)
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-AGENT_SECRET = os.getenv("AGENT_MASTER_SECRET", "warsoc_enterprise_agent_key_2026")
+# 🔐 HARDENED: Fallback matches backend AGENT_MASTER_SECRET exactly
+AGENT_SECRET = os.getenv("AGENT_MASTER_SECRET", "W4rS0c_Ag3nt_M4st3r_2026!_k7Lp5nBwS1")
 
 # 🚀 NEW: Web Server Log File Path (You can change this to your Apache/Nginx path later)
 WEB_LOG_PATH = os.getenv("WEB_LOG_PATH", "access.log")
@@ -139,11 +145,23 @@ def load_web_log_paths():
         parsed = [WEB_LOG_PATH]
     return list(dict.fromkeys(parsed))
 
+def load_max_payload_bytes():
+    """Load max ingest payload bytes from config (fallback to 1MB)."""
+    security = _load_monitoring_document().get("agent_security", {})
+    try:
+        value = int(security.get("max_payload_bytes", 1048576))
+        return value if value > 0 else 1048576
+    except Exception:
+        return 1048576
+
 TARGET_EVENT_IDS = load_target_event_ids()
 CAPTURE_ALL_SECURITY_EVENTS = load_capture_all_security_events()
 CAPTURE_ALL_WINDOWS_CHANNELS = load_capture_all_windows_channels()
 WINDOWS_CHANNELS = load_windows_channels()
 WEB_LOG_PATHS = load_web_log_paths()
+MAX_PAYLOAD_BYTES = load_max_payload_bytes()
+# Keep a safety margin to avoid borderline payloads after HTTP serialization overhead.
+MAX_OUTBOUND_BYTES = int(MAX_PAYLOAD_BYTES * 0.90)
 
 def extract_source_ip_from_line(line: str):
     """Try to recover client IP from a web log line; return None when unavailable."""
@@ -157,12 +175,20 @@ def extract_source_ip_from_line(line: str):
             continue
     return None
 
+KNOWN_BAD_IPS = set()
+FAILED_BLOCK_IPS = set()
+
 def enforce_block(ip):
     if ip in WHITELIST_IPS:
         print(f"[⚠️] SAFETY OVERRIDE: {ip} is whitelisted. Ignored.")
         return
 
+    # Check if already seen (valid or invalid) to avoid spamming
+    if ip in KNOWN_BAD_IPS or ip in BANNED_IPS or ip in FAILED_BLOCK_IPS:
+        return
+
     if not _IP_PATTERN.match(ip):
+        KNOWN_BAD_IPS.add(ip)
         print(f"[!] INVALID IP rejected: {ip}")
         return
 
@@ -177,6 +203,7 @@ def enforce_block(ip):
             BANNED_IPS.add(ip)
             print(f"[🛡️] MITIGATION SUCCESS: Block applied to {ip}")
         except Exception as e:
+            FAILED_BLOCK_IPS.add(ip)
             print(f"[!] MITIGATION FAILED: {e}")
 
 # ==========================================
@@ -223,7 +250,7 @@ def secure_request(method, url, **kwargs):
                 resp = REQUEST_SESSION.request(method, url, **kwargs)
         
         elif resp.status_code != 200:
-            print(f"[❌] Backend rejected payload: {resp.status_code}")
+            print(f" Backend rejected payload {resp.status_code}: {resp.text}")
 
         return resp
     except Exception as e:
@@ -290,15 +317,28 @@ class DiskSpooler:
     def _read_file(self, file_path):
         """Helper to read jsonl into list of dicts."""
         logs = []
+        malformed_count = 0
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 for line in f:
-                    if line.strip():
-                        logs.append(json.loads(line))
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        parsed = json.loads(line)
+                        if isinstance(parsed, dict):
+                            logs.append(parsed)
+                        else:
+                            malformed_count += 1
+                    except json.JSONDecodeError:
+                        malformed_count += 1
+
+            if malformed_count:
+                print(f"[!] Spooler skipped {malformed_count} malformed JSONL records from {file_path}")
             return logs
         except Exception as e:
             print(f"[!] Spooler Read Error ({file_path}): {e}")
-            return None
+            return []
 
     def clear_batch(self, file_path):
         """Permanently deletes the processing artifact after 200 OK."""
@@ -353,43 +393,173 @@ def enqueue_payload(payload):
     """Legacy wrapper: now routes exactly to the DiskSpooler."""
     SPOOLER.append(payload)
 
+def _estimate_payload_bytes(batch):
+    """Estimate encoded request size in bytes for a JSON batch."""
+    try:
+        return len(json.dumps(batch, default=str).encode("utf-8"))
+    except Exception:
+        return MAX_PAYLOAD_BYTES + 1
+
+def _truncate_single_log_payload(single_log):
+    """Best-effort compliance-safe truncation for a single oversize log."""
+    marker = "[TRUNCATED_BY_AGENT_413_COMPLIANCE]"
+    log = dict(single_log)
+
+    if isinstance(log.get("raw_event_data"), str):
+        log["raw_event_data"] = log["raw_event_data"][:300000] + "\n\n" + marker
+
+    raw_data = log.get("raw_data")
+    if isinstance(raw_data, str):
+        log["raw_data"] = raw_data[:120000] + "\n\n" + marker
+    elif isinstance(raw_data, dict):
+        try:
+            serialized_raw = json.dumps(raw_data, default=str)
+            if len(serialized_raw.encode("utf-8")) > 200000:
+                log["raw_data"] = {
+                    "truncated": True,
+                    "reason": marker,
+                    "preview": serialized_raw[:120000],
+                }
+        except Exception:
+            log["raw_data"] = {"truncated": True, "reason": marker}
+
+    if isinstance(log.get("message"), str):
+        log["message"] = log["message"][:4000]
+
+    # Hard fallback if still too large after selective trimming.
+    if _estimate_payload_bytes([log]) > MAX_OUTBOUND_BYTES:
+        if "raw_event_data" in log:
+            log["raw_event_data"] = marker
+        log["raw_data"] = {"truncated": True, "reason": marker}
+        if isinstance(log.get("message"), str):
+            log["message"] = log["message"][:1000]
+
+    return log
+
 def ingest_sender_thread():
-    print(f"[*] Sender Online. Zero-Loss 'Rotate & Drain' Active.")
+    global OUTBOUND_BATCH_SIZE, REQUEST_SESSION
+    ORIGINAL_BATCH_SIZE = OUTBOUND_BATCH_SIZE # Store the baseline (e.g., 25)
+    
+    print(f"[*] Sender Online. Zero-Loss 'Rotate & Drain' Active. Batch Size: {OUTBOUND_BATCH_SIZE}")
     while True:
         try:
             # 🚀 THE DRAIN: Fetch atomic processing batch
             batch, filename = SPOOLER.consume_batch()
-            
-            if not batch:
+
+            if batch is None:
                 time.sleep(1) # Wait for new pending logs
                 continue
 
-            # 📡 TRANSMISSION
-            resp = secure_request("POST", INGEST_URL, json=batch, timeout=20)
+            if not batch:
+                # Clear empty/corrupt rotated artifact so it cannot deadlock sender loop.
+                if filename:
+                    SPOOLER.clear_batch(filename)
+                time.sleep(1)
+                continue
+
+            all_success = True
             
-            if resp and resp.status_code == 200:
-                # ✅ SUCCESS: Permanently delete the artifact
-                SPOOLER.clear_batch(filename)
+            # 🚀 CHUNK THE BATCH (dynamically uses updated OUTBOUND_BATCH_SIZE)
+            for i in range(0, len(batch), OUTBOUND_BATCH_SIZE):
+                chunk = batch[i:i + OUTBOUND_BATCH_SIZE]
+
+                # 🔒 Preflight split before network call to avoid 413/reset loops.
+                chunk_bytes = _estimate_payload_bytes(chunk)
+                if chunk_bytes > MAX_OUTBOUND_BYTES:
+                    if len(chunk) > 1:
+                        OUTBOUND_BATCH_SIZE = max(1, len(chunk) // 2)
+                        print(f"[✂️] Preflight split: {len(chunk)} logs ({chunk_bytes} bytes) -> batch size {OUTBOUND_BATCH_SIZE}")
+                        for log in chunk:
+                            SPOOLER.append(log)
+                    else:
+                        print(f"[⚠️] Preflight single-log trim: {chunk_bytes} bytes > {MAX_OUTBOUND_BYTES} bytes")
+                        SPOOLER.append(_truncate_single_log_payload(chunk[0]))
+
+                    for remaining_log in batch[i + len(chunk):]:
+                        SPOOLER.append(remaining_log)
+
+                    all_success = False
+                    break
+
+                # 📡 TRANSMISSION
+                resp = secure_request("POST", INGEST_URL, json=chunk, timeout=20)
+                
+                if resp and resp.status_code == 200:
+                    # ✅ SUCCESS: Reset batch size back to max if it was previously throttled
+                    if OUTBOUND_BATCH_SIZE < ORIGINAL_BATCH_SIZE:
+                        OUTBOUND_BATCH_SIZE = ORIGINAL_BATCH_SIZE
+                    time.sleep(OUTBOUND_BATCH_WAIT_SECONDS)
+                    continue 
+                
+                elif resp and resp.status_code == 422:
+                    # 🧪 POISON PILL RECOVERY: Isolate malformed log
+                    print(f"[⚠️] Batch chunk rejected (422). Isolating broken records...")
+                    for single_log in chunk:
+                        sr = secure_request("POST", INGEST_URL, json=[single_log], timeout=10)
+                        if not sr or sr.status_code != 200:
+                            print(f"[🛑] Dropping malformed forensic event: {single_log.get('event_id')}")
+                    continue
+                
+                else:
+                    # 📡 FAILURE RECOVERY STATE
+                    code = resp.status_code if resp else "timeout"
+                    
+                    if resp and resp.status_code == 413:
+                        print(f"[❌] Backend rejected payload: 413.")
+                        
+                        # 🧪 Fix the Uvicorn Keep-Alive Socket Poisoning
+                        # Uvicorn abruptly closes the socket on 413, poisoning our connection pool.
+                        # This clears the broken socket to prevent the subsequent "timeout" error.
+                        try:
+                            REQUEST_SESSION.close()
+                            REQUEST_SESSION = requests.Session()
+                        except: pass
+
+                        # -- STRATEGY 1: GLOBAL BATCH HALVING --
+                        if len(chunk) > 1:
+                            OUTBOUND_BATCH_SIZE = max(1, len(chunk) // 2)
+                            print(f"[✂️] Halving OUTBOUND_BATCH_SIZE to {OUTBOUND_BATCH_SIZE} to respect 1MB limit...")
+                            
+                            # Re-spool the chunk so it is processed in smaller pieces on the next loop
+                            for log in chunk:
+                                SPOOLER.append(log)
+                                
+                        # -- STRATEGY 2: SINGLE-LOG TRUNCATION --
+                        else:
+                            print(f"[⚠️] Single log exceeds 1MB! Truncating to maintain compliance...")
+                            SPOOLER.append(_truncate_single_log_payload(chunk[0]))
+                            # Blockage explicitly cleared via truncation, restore max speed
+                            OUTBOUND_BATCH_SIZE = ORIGINAL_BATCH_SIZE
+                            
+                        # Re-spool the rest of the original unattempted batch elements
+                        for remaining_log in batch[i + len(chunk):]:
+                            SPOOLER.append(remaining_log)
+                            
+                    else:
+                        if resp and resp.status_code == 429:
+                            print("[⚠️] Backend rate limited (429). Backing off for 10s...")
+                            for remaining_log in batch[i:]:
+                                SPOOLER.append(remaining_log)
+                            all_success = False
+                            time.sleep(10)
+                            break
+
+                        # STANDARD UNAVAILABLE / TIMEOUT ERROR
+                        print(f"[📡] Backend Unavailable ({code}). Retrying in 5s...")
+                        for remaining_log in batch[i:]:
+                            SPOOLER.append(remaining_log)
+                        
+                    all_success = False
+                    time.sleep(5)
+                    break
             
-            elif resp and resp.status_code == 422:
-                # 🧪 POISON PILL RECOVERY: Isolate malformed log
-                print(f"[⚠️] Batch rejected (422). Isolating broken records in {filename}...")
-                # We clear the batch to prevent infinite 422 loops, but re-spool the individual good ones
-                SPOOLER.clear_batch(filename)
-                for single_log in batch:
-                    sr = secure_request("POST", INGEST_URL, json=[single_log], timeout=10)
-                    if not sr or sr.status_code != 200:
-                        print(f"[🛑] Dropping malformed forensic event: {single_log.get('event_id')}")
-            
-            else:
-                # 📡 FAILURE: Leave the file on disk and backoff
-                code = resp.status_code if resp else "timeout"
-                print(f"[📡] Backend Unavailable ({code}). Retrying in 5s...")
-                time.sleep(5)
+            # Clean up the original spool file (since remaining items were re-spooled or success)
+            SPOOLER.clear_batch(filename)
         
         except Exception as e:
             print(f"[!] Bulk Sender Crash: {e}")
             time.sleep(2)
+
 
 def resolve_web_log_files():
     """Resolve configured web log files and glob patterns to concrete file paths."""
@@ -480,13 +650,16 @@ def log_hunter_thread():
     print(f"[*] Monitoring Channels: {WINDOWS_CHANNELS}")
     print(f"[*] Monitoring Event IDs: {sorted(TARGET_EVENT_IDS)}")
     highest_record_seen = {}
+    flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
 
     for log_type in WINDOWS_CHANNELS:
         try:
             temp_hand = win32evtlog.OpenEventLog(None, log_type)
-            total = win32evtlog.GetNumberOfEventLogRecords(temp_hand)
-            oldest = win32evtlog.GetOldestEventLogRecord(temp_hand)
-            highest_record_seen[log_type] = oldest + total - 1
+            events = win32evtlog.ReadEventLog(temp_hand, flags, 0)
+            if events:
+                highest_record_seen[log_type] = events[0].RecordNumber
+            else:
+                highest_record_seen[log_type] = 0
             win32evtlog.CloseEventLog(temp_hand)
             print(f"[*] Synced channel '{log_type}'. Watermark: {highest_record_seen[log_type]}")
         except Exception as e:
@@ -496,8 +669,6 @@ def log_hunter_thread():
     if not any(v >= 0 for v in highest_record_seen.values()):
         print("[!] No Windows Event channels available. Run agent as Administrator.")
         os._exit(1)
-
-    flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
 
     while True:
         for log_type in WINDOWS_CHANNELS:
@@ -516,25 +687,38 @@ def log_hunter_thread():
                         current_batch_highest = max(current_batch_highest, event.RecordNumber)
                         event_id = event.EventID & 0xFFFF
 
+                        # Ignore malformed/noise records that surface as Event ID 0.
+                        if event_id <= 0:
+                            continue
+
                         include_event = CAPTURE_ALL_WINDOWS_CHANNELS
                         if not include_event:
                             if log_type.lower() == "security" and CAPTURE_ALL_SECURITY_EVENTS:
                                 include_event = True
                             elif event_id in TARGET_EVENT_IDS:
                                 include_event = True
-                        
+
+                        if include_event:
+                            try:
+                                raw_msg = win32evtlogutil.SafeFormatMessage(event, log_type)
+                            except Exception:
+                                inserts = getattr(event, "StringInserts", None) or []
+                                raw_msg = " | ".join(str(x) for x in inserts) if inserts else f"Event {event_id}"
+
+                            clean_msg = " ".join(str(raw_msg).split())
+
                             # 🔬 DEEP EXTRACTION & RAW FALLBACK
-                            parsed_payload = parse_event_data(event_id, msg) # Using full raw msg
-                            
+                            parsed_payload = parse_event_data(event_id, raw_msg)
+
                             payload = {
                                 "agent_id": TENANT_ID,
                                 "source_ip": LOCAL_IP,
                                 "user": resolve_user(event.Sid),
                                 "event_id": event_id,
-                                "message": f"[{log_type}] Event {event_id}: {clean_msg}", # Legacy summary
-                                "timestamp": event.TimeGenerated.isoformat(),
-                                "processed_data": parsed_payload["processed_data"], # 👈 STRUCTURED FIELDS
-                                "raw_event_data": parsed_payload["raw_event_data"], # 👈 FORENSIC TRUTH
+                                "message": f"[{log_type}] Event {event_id}: {clean_msg}",
+                                "timestamp": event.TimeGenerated.replace(tzinfo=datetime.now().astimezone().tzinfo).astimezone(timezone.utc).isoformat() if event.TimeGenerated else datetime.now(timezone.utc).isoformat(),
+                                "processed_data": parsed_payload["processed_data"],
+                                "raw_event_data": parsed_payload["raw_event_data"],
                                 "agent_version": "4.1-Hardened"
                             }
                             print(f"[🛡️] Windows Event Spooled: {log_type}:{event_id}")

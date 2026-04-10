@@ -13,4 +13,6 @@ docker-compose*.yml
 nginx/
 keys/
 scripts/
+!scripts/entrypoint.sh
+!scripts/wait_for_redis.py
 tests/

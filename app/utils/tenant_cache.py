@@ -10,6 +10,32 @@ logger = logging.getLogger(__name__)
 
 TENANT_CACHE_PREFIX = "tenant_plan:"
 
+
+def normalize_tenant_plan(plan: str) -> str:
+    """
+    Normalizes plan aliases to canonical values used by workers.
+    """
+    if not plan:
+        return "FREE"
+
+    raw = str(plan).strip()
+    key = raw.lower()
+
+    aliases = {
+        "free": "FREE",
+        "trial": "FREE",
+        "basic": "BASIC",
+        "starter": "BASIC",
+        "pro": "Professional",
+        "professional": "Professional",
+        "ent": "Enterprise",
+        "enterprise": "Enterprise",
+        "fbr_plan": "FBR_PLAN",
+        "full_suite": "FULL_SUITE",
+        "fullsuite": "FULL_SUITE",
+    }
+    return aliases.get(key, raw)
+
 async def get_tenant_plan(redis: Redis, tenant_id: str) -> str:
     """
     Retrieves the subscription plan for a tenant from Redis cache.
@@ -17,7 +43,7 @@ async def get_tenant_plan(redis: Redis, tenant_id: str) -> str:
     """
     try:
         plan = await redis.get(f"{TENANT_CACHE_PREFIX}{tenant_id}")
-        return plan if plan else "FREE"
+        return normalize_tenant_plan(plan) if plan else "FREE"
     except Exception as e:
         logger.error(f"Error fetching tenant plan from cache: {e}")
         return "FREE"
@@ -36,7 +62,7 @@ async def sync_tenant_cache(db, redis: Redis):
             tenant_id = tenant.get("tenant_id")
             plan = tenant.get("plan", "FREE")
             if tenant_id:
-                await redis.set(f"{TENANT_CACHE_PREFIX}{tenant_id}", plan)
+                await redis.set(f"{TENANT_CACHE_PREFIX}{tenant_id}", normalize_tenant_plan(plan))
                 count += 1
         logger.info(f"✅ Tenant Plan Cache Synchronized ({count} tenants cached).")
     except Exception as e:

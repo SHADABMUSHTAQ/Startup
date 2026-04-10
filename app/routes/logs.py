@@ -19,10 +19,13 @@ def json_serializer(obj):
 
 from app.utils.audit import audit_log
 
+RAW_RETENTION_ANCHOR_FIELD = "_retention_ts"
+
 @router.get("/")
 @audit_log("View Logs")
 async def get_logs_master(
-    source: str = Query("siem", pattern="^(siem|compliance)$"),
+    source: str = Query("siem", pattern="^(siem|compliance|uploads)$"),
+    pack: str | None = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     db=Depends(get_db),
@@ -31,7 +34,7 @@ async def get_logs_master(
 ):
     """
     MASTER BUILD: Securely fetches paginated logs with strict Tenant Isolation.
-    Source Selection via ?source=siem|compliance
+    Source Selection via ?source=siem|compliance|uploads
     """
     tenant_id = current_user.get("tenant_id")
     if not tenant_id:
@@ -42,13 +45,20 @@ async def get_logs_master(
     query = {"tenant_id": tenant_id}
     
     # 🚀 LAZY LOADING: Exclude the heavy raw string for O(1) ingestion speed
-    projection = {"raw_event_data": 0}
+    projection = {"raw_event_data": 0, RAW_RETENTION_ANCHOR_FIELD: 0}
 
     # 📁 Collection Selection
     if source == "siem":
         collection = db["logs"]
+    elif source == "uploads":
+        collection = db["csv_uploads"]
+    elif source == "compliance":
+        if pack and "fbr" in pack.lower():
+            collection = db["fbr_pos_logs"]
+        else:
+            collection = db["peca_forensic_logs"]
     else:
-        collection = db["peca_forensic_logs"]
+        collection = db["logs"]
 
     # ✅ Count total documents
     total = await collection.count_documents(query)
@@ -107,13 +117,13 @@ async def get_management_audit(
     current_user: dict = Depends(get_current_user),
     request: Request = None
 ):
-    """
-    🏢 MANAGEMENT AUDIT GATEWAY: Internal Accountability.
-    Fetches the audit trail restricted to the current tenant.
-    """
+    
+    
     tenant_id = current_user.get("tenant_id")
-    # Auditor role can see global audit, others see only their tenant logs
-    query = {} if current_user.get("role") == "auditor" else {"tenant_id": tenant_id}
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="Unauthorized access to management audit.")
+
+    query = {"tenant_id": tenant_id}
     
     cursor = db.management_audit.find(query).sort("timestamp", -1).skip(skip).limit(limit)
     audit_raw = await cursor.to_list(length=limit)

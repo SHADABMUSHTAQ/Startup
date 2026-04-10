@@ -1,3 +1,4 @@
+import os
 import re
 import uuid
 import time
@@ -7,29 +8,44 @@ import redis.asyncio as aioredis
 
 class SIEMEngine:
     def __init__(self, config: dict = None):
-        self.config = config if config else {}
+        self.redis = None  # Will be set via set_redis_client()
+        self.refresh_config(config)
 
+    def refresh_config(self, config: dict):
+        """
+        🚀 RE-ENTRY MANDATE: Re-initializes all rules, patterns, and threat intel sets.
+        Fixes BUG-23 (Ghost Reloading) by ensuring regex is re-compiled on config change.
+        """
+        self.config = config if config else {}
+        self._initialize_from_config()
+        print(f"✅ SIEM Engine Hot-Reloaded: {len(self.rules)} Regex Rules, {len(self.event_id_rules)} Event ID Rules.")
+
+    def _initialize_from_config(self):
+        # 1. Basic Whitelists
         self.whitelist_users = set(self.config.get("whitelist", {}).get("service_accounts", []))
         self.whitelist_ips = set(self.config.get("whitelist", {}).get("ips", []))
 
+        # 2. Thresholds & FP Controls
         fp_controls = self.config.get("detection", {}).get("fp_controls", {})
         self.default_min_message_length = int(fp_controls.get("default_min_message_length", 12))
         self.max_alerts_per_log = int(fp_controls.get("max_alerts_per_log", 3))
         self.rule_cooldown_seconds = int(fp_controls.get("rule_cooldown_seconds", 20))
         self.global_suppress_tokens = [s.lower() for s in fp_controls.get("suppress_if_message_contains", [])]
-        self.redis = None  # Will be set via set_redis_client()
 
-        # ✅ ZERO HARDCODING: Prefer top-level `event_id_map`, fall back to legacy key
+        # 3. Threat Intelligence (Static + File Based)
+        ti_config = self.config.get("threat_intelligence", {})
+        self.blacklisted_ips = set(ti_config.get("ips", []))
+        self._load_ti_files(ti_config.get("files", []))
+
+        # 4. Event ID Mapping
         self.event_id_rules = self.config.get("event_id_map", {}) or self.config.get("detection", {}).get("event_id_rules", {})
 
+        # 5. Phishing Logic
         phishing_cfg = self.config.get("detection", {}).get("phishing_detection", {})
         self.phishing_enabled = bool(phishing_cfg.get("enabled", False))
         self.phishing_threshold = int(phishing_cfg.get("score_threshold", 60))
         self.phishing_min_signals = int(phishing_cfg.get("minimum_signals", 2))
-        
-        # ✅ ZERO HARDCODING: Phishing weights pulled strictly from Config
         self.phishing_weights = phishing_cfg.get("weights", {})
-        
         self.phishing_keywords = [k.lower() for k in phishing_cfg.get("credential_lure_keywords", [])]
         self.phishing_shorteners = set(k.lower() for k in phishing_cfg.get("url_shorteners", []))
         self.phishing_trusted_domains = set(k.lower() for k in phishing_cfg.get("trusted_domains", []))
@@ -41,7 +57,7 @@ class SIEMEngine:
         self._email_pattern = re.compile(r"\b[a-zA-Z0-9._%+-]+@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b")
         self._ip_url_pattern = re.compile(r"https?://(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(?:/|$)", flags=re.IGNORECASE)
         
-        # Load Regex Rules (Now relies on config for "summary")
+        # 6. Regex Detection Rules (Compiled for Performance)
         self.rules = {}
         rules_data = self.config.get("detection", {}).get("rules", {})
         for rule_name, rule_meta in rules_data.items():
@@ -50,7 +66,7 @@ class SIEMEngine:
                     "pattern": re.compile(rule_meta["regex"]),
                     "severity": rule_meta.get("sev", "MEDIUM"),
                     "mitre": rule_meta.get("mitre", "N/A"),
-                    "summary": rule_meta.get("summary", ""), # ✅ Added config-driven summary
+                    "summary": rule_meta.get("summary", ""),
                     "requires_context": set(rule_meta.get("requires_context", [])),
                     "must_include_any": [s.lower() for s in rule_meta.get("must_include_any", [])],
                     "min_message_length": int(rule_meta.get("min_message_length", self.default_min_message_length)),
@@ -59,7 +75,28 @@ class SIEMEngine:
             except Exception as e:
                 print(f"⚠️ Rule Error ({rule_name}): {e}")
 
-        print(f"✅ Config-Driven SIEM Loaded: {len(self.rules)} Regex Rules, {len(self.event_id_rules)} Event ID Rules.")
+    def _load_ti_files(self, file_paths):
+        """🕵️ BUG-21 FIX: Injects IP-based threat intelligence from disk files."""
+        # Path resolution relative to the app root
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        for rel_path in file_paths:
+            abs_path = os.path.join(base_dir, rel_path)
+            if not os.path.exists(abs_path):
+                print(f"[⚠️] Threat Intel file skipping: {abs_path} not found.")
+                continue
+                
+            try:
+                with open(abs_path, "r") as f:
+                    count = 0
+                    for line in f:
+                        ip = line.strip()
+                        if ip and not ip.startswith("#"):
+                            self.blacklisted_ips.add(ip)
+                            count += 1
+                print(f"✅ Threat Intel File Loaded: {rel_path} ({count} IPs)")
+            except Exception as e:
+                print(f"[!] Threat Intel Load Fail ({rel_path}): {e}")
 
     def set_redis_client(self, redis_client):
         """Inject Redis client for persistent cooldown tracking across worker restarts."""
@@ -221,11 +258,29 @@ class SIEMEngine:
         return f"Potential {readable} activity detected"
 
     def _create_alert(self, type_str, sev, summary, row, mitre):
+        event_id_value = row.get("event_id", 0)
+        event_id_str = str(event_id_value or "").strip()
+        normalized_event_id = int(event_id_str) if event_id_str.isdigit() else 0
+
+        mapped_meaning = ""
+        if event_id_str and event_id_str in self.event_id_rules:
+            mapped_type = self.event_id_rules[event_id_str].get("event_type")
+            if mapped_type:
+                mapped_meaning = str(mapped_type).replace("_", " ").strip().title()
+
+        provided_meaning = str(row.get("event_id_meaning") or "").strip()
+        event_id_meaning = provided_meaning or mapped_meaning
+        raw_message = str(row.get("raw_message") or row.get("message") or "Unknown Event")
+
         return {
             "id": uuid.uuid4().hex[:12],
             "type": type_str,
             "severity": sev,
             "summary": summary,
+            "event_id": normalized_event_id,
+            "event_id_meaning": event_id_meaning,
+            "message": raw_message,
+            "raw_message": raw_message,
             "ip": row.get("source_ip", row.get("ip", "N/A")),
             "user": row.get("user", "N/A"),
             "mitre": mitre,

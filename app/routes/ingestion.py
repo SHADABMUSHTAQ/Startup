@@ -8,6 +8,7 @@ from app.routes.auth import verify_agent_token
 
 router = APIRouter()
 RAW_LOGS_QUEUE = "raw_logs_queue"
+RAW_LOGS_QUEUE_MAXLEN = 100000
 
 @router.post("/ingest", status_code=status.HTTP_200_OK)
 async def ingest_log(
@@ -36,7 +37,13 @@ async def ingest_log(
         redis: Redis = request.app.state.redis
         
         # ⚡ XADD for asynchronous streaming architecture
-        await redis.xadd(RAW_LOGS_QUEUE, payload_to_stream)
+        # Approximate trimming (~) avoids extra CPU overhead during burst traffic.
+        await redis.xadd(
+            RAW_LOGS_QUEUE,
+            payload_to_stream,
+            maxlen=RAW_LOGS_QUEUE_MAXLEN,
+            approximate=True,
+        )
         
         return {"status": "ok"}
         

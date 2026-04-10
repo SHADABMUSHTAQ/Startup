@@ -8,5 +8,6 @@ settings = get_settings()
 # This decoupling prevents circular imports in the 7-tier architecture.
 limiter = Limiter(
     key_func=get_remote_address, 
-    storage_uri=settings.redis_url
+    storage_uri=settings.redis_url,
+    swallow_errors=True
 )

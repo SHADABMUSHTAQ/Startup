@@ -65,30 +65,6 @@ from app.utils.tenant_cache import sync_tenant_cache
 # ==========================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. MONGODB INITIALIZATION (WITH RETRIES)
-    max_db_retries = 10
-    db_backoff = 2
-    db_connected = False
-    
-    for attempt in range(1, max_db_retries + 1):
-        try:
-            print(f"🔄 MongoDB connection attempt {attempt}/{max_db_retries}...")
-            await init_db()
-            if db_manager.db is not None:
-                await init_compliance_db(db_manager.db)
-                db_connected = True
-                print("✅ MongoDB & Compliance Schema initialized successfully.")
-                break
-        except Exception as e:
-            print(f"⚠️ MongoDB attempt {attempt} failed: {e}")
-            if attempt < max_db_retries:
-                await asyncio.sleep(db_backoff)
-                # Cap the backoff at 10 seconds to avoid excessive wait
-                db_backoff = min(db_backoff * 1.5, 10)
-            else:
-                print("❌ FATAL: Could not establish MongoDB connection after retries.")
-                raise e
-    
     # Initialize global Redis connection pool with startup retries
     max_retries = 5
     backoff = 1
@@ -112,15 +88,86 @@ async def lifespan(app: FastAPI):
 
     # attach global pool (may be None if degraded)
     app.state.redis = redis_pool
+
+    # Start a background health monitor to keep `app.state.redis` connected when possible.
+    async def redis_health_monitor():
+        backoff = 1
+        while True:
+            try:
+                r = getattr(app.state, "redis", None)
+                if r is None:
+                    try:
+                        pool = await aioredis.from_url(settings.redis_url, decode_responses=True)
+                        await pool.ping()
+                        app.state.redis = pool
+                        print("🔁 Redis health monitor: connected.")
+                        backoff = 1
+                    except Exception as e:
+                        print(f"🔁 Redis health monitor: connect failed: {e}")
+                        await asyncio.sleep(backoff)
+                        backoff = min(backoff * 2, 30)
+                else:
+                    try:
+                        await r.ping()
+                    except Exception as e:
+                        print(f"🔁 Redis health monitor: ping failed: {e}")
+                        try:
+                            await r.close()
+                        except Exception:
+                            pass
+                        app.state.redis = None
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"🔁 Redis health monitor unexpected error: {e}")
+            await asyncio.sleep(5)
+
+    monitor_task = asyncio.create_task(redis_health_monitor())
+
+    # 1. MONGODB INITIALIZATION (WITH RETRIES)
+    max_db_retries = 10
+    db_backoff = 2
+    db_connected = False
+    
+    for attempt in range(1, max_db_retries + 1):
+        try:
+            print(f"🔄 MongoDB connection attempt {attempt}/{max_db_retries}...")
+            await init_db()
+            if db_manager.db is not None:
+                await init_compliance_db(db_manager.db)
+                db_connected = True
+                print("✅ MongoDB & Compliance Schema initialized successfully.")
+                break
+        except Exception as e:
+            print(f"⚠️ MongoDB attempt {attempt} failed: {e}")
+            if attempt < max_db_retries:
+                await asyncio.sleep(db_backoff)
+                # Cap the backoff at 10 seconds to avoid excessive wait
+                db_backoff = min(db_backoff * 1.5, 10)
+            else:
+                print("❌ FATAL: Could not establish MongoDB connection after retries.")
+                # Don't raise if MongoDB fails, just run degraded
+                break
     
     # 💳 SYNC TENANT CACHE (Enterprise SRO 288 Optimization)
     if db_manager.db is not None and app.state.redis is not None:
-        await sync_tenant_cache(db_manager.db, app.state.redis)
+        try:
+            await sync_tenant_cache(db_manager.db, app.state.redis)
+        except Exception as e:
+            print(f"⚠️ Tenant cache sync failed: {e}")
 
     listener_task = asyncio.create_task(redis_to_websocket_listener(app))
     yield
     print("🛑 Shutting down WarSOC Backend...")
-    listener_task.cancel()
+    # Cancel background tasks and close Redis gracefully
+    try:
+        monitor_task.cancel()
+    except Exception:
+        pass
+    try:
+        listener_task.cancel()
+    except Exception:
+        pass
     # Close global Redis connection pool
     try:
         if getattr(app.state, "redis", None) is not None:
@@ -197,11 +244,22 @@ async def websocket_endpoint(websocket: WebSocket):
         # 🚨 CTO FIX: Cryptographically verify the token
         payload = jwt.decode(token, settings.jwt_secret_key, algorithms=["HS256"])
         tenant_id = payload.get("tenant_id")
+        jti = payload.get("jti")
         
         if not tenant_id:
             print("❌ WebSocket Rejected: Token lacks tenant_id.")
             await websocket.close(code=4001, reason="Missing tenant_id")
             return
+
+        # 🚨 FIX BUG-13: Check if token is blacklisted in Redis
+        if jti:
+            redis_client = getattr(websocket.app.state, "redis", None)
+            if redis_client:
+                is_blacklisted = await redis_client.exists(f"warsoc:blacklist:{jti}")
+                if is_blacklisted:
+                    print(f"❌ WebSocket Rejected: Token {jti} is blacklisted.")
+                    await websocket.close(code=4001, reason="Token revoked")
+                    return
             
         # Handshake successful, pass to the private Tenant Room
         await manager.connect(websocket, tenant_id)
