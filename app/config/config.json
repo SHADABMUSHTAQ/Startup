@@ -302,7 +302,9 @@
         "4688": {
             "event_type": "process_creation",
             "severity": "INFO",
-            "compliance_tags": []
+            "compliance_tags": [
+                "peca"
+            ]
         },
         "1": {
             "event_type": "process_create_sysmon",
@@ -412,10 +414,7 @@
         "4798": {
             "event_type": "local_group_enumeration",
             "severity": "LOW",
-            "compliance_tags": [
-                "fbr",
-                "peca"
-            ]
+            "compliance_tags": []
         },
         "80": {
             "event_type": "secondary_logon_process",
@@ -634,6 +633,11 @@
                 "mitre": "T1059"
             }
         }
+    },
+    "bouncer": {
+        "event_ids": [8233],
+        "threshold": 10,
+        "window_seconds": 60
     },
     "stateful_detection_rules": {
         "auth_identity": {

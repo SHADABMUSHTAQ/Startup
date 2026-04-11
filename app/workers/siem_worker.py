@@ -244,6 +244,40 @@ async def siem_worker():
                         source_ip = processed.get("source_network_address") or log_data.get("source_ip")
                         raw_msg = str(payload.get("payload", "")).lower()
 
+                        # ---- BOUNCER (Alert Sieve) ----
+                        # Early suppression for known noisy event IDs (e.g., 8233).
+                        # Keeps raw logs but prevents alert generation when flood thresholds are exceeded.
+                        bouncer_cfg = config.get("bouncer", {})
+                        bouncer_event_ids = set(str(x) for x in bouncer_cfg.get("event_ids", [8233]))
+                        bouncer_threshold = int(bouncer_cfg.get("threshold", 10))
+                        bouncer_window = int(bouncer_cfg.get("window_seconds", 60))
+                        suppress_bouncer = False
+                        try:
+                            if event_id in bouncer_event_ids:
+                                bkey = f"warsoc:bouncer:{tenant_id}:{event_id}"
+                                cnt = await redis.incr(bkey)
+                                if cnt == 1:
+                                    await redis.expire(bkey, bouncer_window)
+                                if cnt > bouncer_threshold:
+                                    suppress_bouncer = True
+                                    logger.info(f"[BOUNCER] Suppressing alerts for event {event_id} tenant {tenant_id}; count={cnt}")
+                        except Exception as e:
+                            logger.warning(f"[BOUNCER] Redis error: {e}")
+
+                        if suppress_bouncer:
+                            # Store raw log for audit, but do NOT create/publish alerts.
+                            _normalize_document_timestamps(log_data)
+                            log_data[RAW_RETENTION_ANCHOR_FIELD] = _build_retention_anchor(
+                                log_data.get("timestamp") or log_data.get("ingested_at")
+                            )
+                            try:
+                                await db.logs.insert_one(log_data)
+                            except Exception as e:
+                                logger.error(f"[SIEM][DB] raw log insert failed for suppressed {message_id}: {e}")
+                            ack_ids.append(message_id)
+                            logger.info(f"[BOUNCER] Raw log stored; alert suppressed for {event_id} tenant {tenant_id}")
+                            continue
+
                         alert_triggered = False
                         alert_type = "GENERIC_SECURITY_EVENT"
                         severity = "INFO"
