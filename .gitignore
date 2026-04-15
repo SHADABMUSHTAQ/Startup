@@ -71,3 +71,7 @@ verify.py
 
 # Cryptographic Keys
 keys/
+/.archive/
+/tmp/
+/spool/
+package-lock.json
