@@ -1,0 +1,10 @@
+{
+  "pipeline_results_file": "tmp/attack_battery_results.json",
+  "http_results": { "total": 1000, "sent": 130, "elapsed": 61.06274771690369 },
+  "verifications_summary": {
+    "verify_duties": { "total_alerts": 46534, "latest_alert": "WIN_EVENT_4688_DETECTED", "latest_ts": "2026-04-14T19:03:16.879686+00:00" },
+    "verify_forensics": { "objectid": "69dd4702596f969f876818d1", "status": "OK" },
+    "verify_fbr_flow": { "status": "OK", "seal": "43148a0010cb27f7d2e4a5d540c39bd41197c77ec745edafa7bc9aae9700c537" },
+    "ttls": { "peca_forensic_logs": 31536000, "fbr_pos_logs": 2592000, "logs": 7776000 }
+  }
+}

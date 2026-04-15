@@ -11,6 +11,7 @@ import uuid
 import hmac
 from app.config.config import get_settings
 from app.utils.limiter import limiter
+from app.utils.rbac import RoleChecker
 
 settings = get_settings()
 router = APIRouter()
@@ -233,7 +234,7 @@ async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
         "hashed_password": hashed_password,
         "tenant_id": new_tenant_id,
         "plan_type": canonical_plan,
-        "role": user.role,
+        "role": user.role or "admin",
         "compliance_packs": packs,
         "has_active_plan": True if canonical_plan != "Free" else False,
         "created_at": datetime.now(timezone.utc)
@@ -270,7 +271,7 @@ async def login(request: Request, user_data: LoginSchema, db=Depends(get_db)):
 
     tenant_id = db_user.get("tenant_id", "WARSOC_DEFAULT")
     access_token = create_access_token(
-        data={"sub": db_user["username"], "type": "user", "tenant_id": tenant_id}, 
+        data={"sub": db_user["username"], "type": "user", "tenant_id": tenant_id, "role": db_user.get("role", "admin")}, 
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
     # 🔒 Unified Permission Logic (Self-Healing Contract)
@@ -405,7 +406,12 @@ async def agent_login(request: Request, data: AgentLogin, db=Depends(get_db)):
 
 @router.post("/update-plan")
 @audit_log("Plan Update")
-async def update_plan(request: Request, data: PlanUpdate, db=Depends(get_db), current_user=Depends(get_current_user)):
+async def update_plan(
+    data: PlanUpdate, 
+    db=Depends(get_db), 
+    current_user=Depends(get_current_user),
+    _: str = Depends(RoleChecker(["admin"]))
+):
     secure_username = current_user["username"]
     canonical_plan = normalize_plan_type(data.plan_name)
 
@@ -446,7 +452,12 @@ async def update_plan(request: Request, data: PlanUpdate, db=Depends(get_db), cu
 
 @router.post("/upgrade")
 @audit_log("Enterprise Upgrade")
-async def upgrade_plan(request: Request, data: UpgradePlan, db=Depends(get_db), current_user=Depends(get_current_user)):
+async def upgrade_plan(
+    data: UpgradePlan, 
+    db=Depends(get_db), 
+    current_user=Depends(get_current_user),
+    _: str = Depends(RoleChecker(["admin"]))
+):
     secure_username = current_user["username"]
     canonical_plan = normalize_plan_type(data.plan_type)
     resolved_packs = resolve_compliance_packs(canonical_plan, data.compliance_packs)
@@ -488,7 +499,7 @@ async def upgrade_plan(request: Request, data: UpgradePlan, db=Depends(get_db), 
 
     tenant_id = db_user.get("tenant_id", "WARSOC_DEFAULT")
     access_token = create_access_token(
-        data={"sub": db_user["username"], "type": "user", "tenant_id": tenant_id}, 
+        data={"sub": db_user["username"], "type": "user", "tenant_id": tenant_id, "role": db_user.get("role", "admin")}, 
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
     # 🔒 Final Identity Contract Verification

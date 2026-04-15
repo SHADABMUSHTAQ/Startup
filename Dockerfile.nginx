@@ -3,6 +3,7 @@ WORKDIR /app
 COPY ./Startup-main/package*.json ./
 RUN npm install
 COPY ./Startup-main ./
+ENV VITE_API_BASE_URL=/api/v1
 RUN npm run build
 
 FROM nginx:stable-alpine

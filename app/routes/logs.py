@@ -53,10 +53,49 @@ async def get_logs_master(
     elif source == "uploads":
         collection = db["csv_uploads"]
     elif source == "compliance":
+        # Enforce pack entitlement: users must be entitled to a compliance pack
+        packs_raw = current_user.get("compliance_packs", [])
+        if not isinstance(packs_raw, list):
+            packs_raw = []
+
+        aliases = {
+            "peca": "peca_forensic",
+            "peca_forensic": "peca_forensic",
+            "fbr": "fbr_pos",
+            "fbr_pos": "fbr_pos",
+        }
+
+        entitled = set()
+        for p in packs_raw:
+            key = (p or "").strip().lower()
+            if key in aliases:
+                entitled.add(aliases[key])
+
+        # If user has no entitled packs, return empty result to avoid leaking evidence
+        if not entitled:
+            return {
+                "status": "success",
+                "data": [],
+                "pagination": {"total": 0, "skip": skip, "limit": limit}
+            }
+
+        # If a specific pack was requested, ensure the user is entitled to it
         if pack and "fbr" in pack.lower():
+            if "fbr_pos" not in entitled:
+                raise HTTPException(status_code=403, detail="Not entitled to this compliance pack")
             collection = db["fbr_pos_logs"]
         else:
-            collection = db["peca_forensic_logs"]
+            # Default to PECA if user is entitled to it, otherwise fallback to FBR
+            if "peca_forensic" in entitled:
+                collection = db["peca_forensic_logs"]
+            elif "fbr_pos" in entitled:
+                collection = db["fbr_pos_logs"]
+            else:
+                return {
+                    "status": "success",
+                    "data": [],
+                    "pagination": {"total": 0, "skip": skip, "limit": limit}
+                }
     else:
         collection = db["logs"]
 

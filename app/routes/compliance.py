@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from app.database import get_db
 from app.routes.auth import get_current_user
+from app.utils.rbac import RoleChecker
 
 router = APIRouter()
 
@@ -369,7 +370,8 @@ async def get_compliance_evidence(
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None),
     db=Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    _: str = Depends(RoleChecker(["admin", "auditor"]))
 ):
     tenant_id = current_user.get("tenant_id")
     if not tenant_id:
@@ -488,7 +490,8 @@ async def get_compliance_evidence_by_pack(
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None),
     db=Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    _: str = Depends(RoleChecker(["admin", "auditor"]))
 ):
     normalized_pack = _normalize_pack_id(pack_id)
     tenant_id = current_user.get("tenant_id")

@@ -28,6 +28,7 @@ services:
       - MONGODB_URI=mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/${MONGODB_DB_NAME}?authSource=admin
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - DB_NAME=${MONGODB_DB_NAME}
+      - ALLOWED_ORIGINS=http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1,http://localhost
     networks:
       - warsoc-secure-net
     depends_on:
@@ -125,6 +126,7 @@ services:
       - mongodb
       - redis
 
+  # Frontend is served via the nginx gateway (production build)
 networks:
   warsoc-secure-net:
     driver: bridge

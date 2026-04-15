@@ -1,0 +1,312 @@
+
+=== COLLECTION: logs
+{
+  "_id_": {
+    "v": 2,
+    "key": [
+      [
+        "_id",
+        1
+      ]
+    ]
+  },
+  "tenant_id_1_timestamp_-1": {
+    "v": 2,
+    "key": [
+      [
+        "tenant_id",
+        1
+      ],
+      [
+        "timestamp",
+        -1
+      ]
+    ]
+  },
+  "source_ip_1": {
+    "v": 2,
+    "key": [
+      [
+        "source_ip",
+        1
+      ]
+    ]
+  },
+  "logs_ttl_90d": {
+    "v": 2,
+    "key": [
+      [
+        "timestamp",
+        1
+      ]
+    ],
+    "expireAfterSeconds": 7776000
+  },
+  "logs_anchor_ttl_90d": {
+    "v": 2,
+    "key": [
+      [
+        "_retention_ts",
+        1
+      ]
+    ],
+    "expireAfterSeconds": 7776000
+  },
+  "idx_logs_tenant_id": {
+    "v": 2,
+    "key": [
+      [
+        "tenant_id",
+        1
+      ]
+    ]
+  }
+}
+
+=== COLLECTION: security_alerts
+{
+  "_id_": {
+    "v": 2,
+    "key": [
+      [
+        "_id",
+        1
+      ]
+    ]
+  },
+  "timestamp_1": {
+    "v": 2,
+    "key": [
+      [
+        "timestamp",
+        1
+      ]
+    ],
+    "expireAfterSeconds": 7776000
+  },
+  "idx_security_alerts_tenant_id": {
+    "v": 2,
+    "key": [
+      [
+        "tenant_id",
+        1
+      ]
+    ]
+  }
+}
+
+=== COLLECTION: analysis_results
+{
+  "_id_": {
+    "v": 2,
+    "key": [
+      [
+        "_id",
+        1
+      ]
+    ]
+  },
+  "analysis_results_ttl_90d": {
+    "v": 2,
+    "key": [
+      [
+        "uploaded_at",
+        1
+      ]
+    ],
+    "expireAfterSeconds": 7776000
+  },
+  "idx_analysis_results_tenant_id": {
+    "v": 2,
+    "key": [
+      [
+        "tenant_id",
+        1
+      ]
+    ]
+  }
+}
+
+=== COLLECTION: firewall_rules
+{
+  "_id_": {
+    "v": 2,
+    "key": [
+      [
+        "_id",
+        1
+      ]
+    ]
+  },
+  "idx_firewall_rules_tenant_id_1_ip_1": {
+    "v": 2,
+    "key": [
+      [
+        "tenant_id",
+        1
+      ],
+      [
+        "ip",
+        1
+      ]
+    ]
+  }
+}
+
+=== COLLECTION: users
+{
+  "_id_": {
+    "v": 2,
+    "key": [
+      [
+        "_id",
+        1
+      ]
+    ]
+  },
+  "idx_users_tenant_id": {
+    "v": 2,
+    "key": [
+      [
+        "tenant_id",
+        1
+      ]
+    ]
+  }
+}
+
+=== COLLECTION: fbr_pos_logs
+{
+  "_id_": {
+    "v": 2,
+    "key": [
+      [
+        "_id",
+        1
+      ]
+    ]
+  },
+  "timestamp_1": {
+    "v": 2,
+    "key": [
+      [
+        "timestamp",
+        1
+      ]
+    ],
+    "expireAfterSeconds": 2592000
+  },
+  "fbr_invoice_id_1": {
+    "v": 2,
+    "key": [
+      [
+        "fbr_invoice_id",
+        1
+      ]
+    ]
+  },
+  "data.store_id_1_timestamp_-1": {
+    "v": 2,
+    "key": [
+      [
+        "data.store_id",
+        1
+      ],
+      [
+        "timestamp",
+        -1
+      ]
+    ]
+  },
+  "tenant_id_1_timestamp_-1": {
+    "v": 2,
+    "key": [
+      [
+        "tenant_id",
+        1
+      ],
+      [
+        "timestamp",
+        -1
+      ]
+    ]
+  },
+  "_retention_ts_1": {
+    "v": 2,
+    "key": [
+      [
+        "_retention_ts",
+        1
+      ]
+    ],
+    "background": true,
+    "expireAfterSeconds": 7776000
+  }
+}
+
+=== COLLECTION: peca_forensic_logs
+{
+  "_id_": {
+    "v": 2,
+    "key": [
+      [
+        "_id",
+        1
+      ]
+    ]
+  },
+  "timestamp_1": {
+    "v": 2,
+    "key": [
+      [
+        "timestamp",
+        1
+      ]
+    ],
+    "expireAfterSeconds": 31536000
+  },
+  "forensic_seal_1": {
+    "v": 2,
+    "key": [
+      [
+        "forensic_seal",
+        1
+      ]
+    ]
+  },
+  "event_id_1": {
+    "v": 2,
+    "key": [
+      [
+        "event_id",
+        1
+      ]
+    ]
+  },
+  "tenant_id_1_timestamp_-1": {
+    "v": 2,
+    "key": [
+      [
+        "tenant_id",
+        1
+      ],
+      [
+        "timestamp",
+        -1
+      ]
+    ]
+  },
+  "_retention_ts_1": {
+    "v": 2,
+    "key": [
+      [
+        "_retention_ts",
+        1
+      ]
+    ],
+    "background": true,
+    "expireAfterSeconds": 31536000
+  }
+}
+
+Done.

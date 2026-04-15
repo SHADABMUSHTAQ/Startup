@@ -21,14 +21,24 @@ from dotenv import load_dotenv, find_dotenv
 # ==========================================
 # 1. ENTERPRISE CONFIG & STATE
 # ==========================================
-# 🔐 HARDENED: Always load from absolute path — never trust find_dotenv()
+# 🔐 HARDENED ENV DISCOVERY: Searching for the Source of Truth
 _AGENT_DIR = Path(__file__).resolve().parent
-_ENV_PATH = _AGENT_DIR.parent / ".env"  # Startup-backend/.env
-if _ENV_PATH.exists():
-    print(f"[🛡️] ARCHITECT OVERRIDE: Loading .env from -> {_ENV_PATH}")
-    load_dotenv(str(_ENV_PATH), override=True)
-else:
-    print(f"[⚠️] .env not found at {_ENV_PATH}, using system environment.")
+_POSSIBLE_ENV_PATHS = [
+    _AGENT_DIR / ".env",                     # Local
+    _AGENT_DIR.parent / ".env",              # Parent (Root)
+    _AGENT_DIR.parent / "startup-backend" / ".env" # Sibling (Cross-Repo)
+]
+
+env_loaded = False
+for path in _POSSIBLE_ENV_PATHS:
+    if path.exists():
+        print(f"[🛡️] CONFIG FOUND: Loading secrets from -> {path}")
+        load_dotenv(str(path), override=True)
+        env_loaded = True
+        break
+
+if not env_loaded:
+    print(f"[⚠️] .env not found in any standard location. Using system environment variables.")
 
 TENANT_ID = os.getenv("TENANT_ID")
 if not TENANT_ID:

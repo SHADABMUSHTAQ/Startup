@@ -54,19 +54,21 @@ class DatabaseManager:
         result = await self.db.analysis_results.insert_one(data)
         return str(result.inserted_id)
 
-    async def get_analysis_result(self, analysis_id: str):
-        """Fetches a report by ID."""
+    async def get_analysis_result(self, analysis_id: str, tenant_id: str):
+        """Fetches a report by ID with tenant isolation."""
         if self.db is None: await self.connect()
         if not ObjectId.is_valid(analysis_id):
             return None
-        return await self.db.analysis_results.find_one({"_id": ObjectId(analysis_id)})
+        return await self.db.analysis_results.find_one({"_id": ObjectId(analysis_id), "tenant_id": tenant_id})
     
     # ✅ PIPE 1: Strictly for Manual File Uploads
-    async def get_all_analyses(self):
-        """Fetches manual uploads from the analysis_results collection."""
+    async def get_all_analyses(self, tenant_id: str):
+        """Fetches manual uploads with tenant isolation."""
         if self.db is None: await self.connect()
+        if not tenant_id:
+            raise ValueError("tenant_id is required for get_all_analyses.")
         
-        cursor = self.db.analysis_results.find().sort("uploaded_at", -1)
+        cursor = self.db.analysis_results.find({"tenant_id": tenant_id}).sort("uploaded_at", -1)
         results = await cursor.to_list(length=100)
         
         clean_results = []
@@ -78,11 +80,15 @@ class DatabaseManager:
         return clean_results
 
     # ✅ PIPE 2: Strictly for Live Windows Agent
-    async def get_all_logs(self):
-        """Fetches live agent streaming data from the logs collection."""
+    async def get_all_logs(self, tenant_id: str):
+        """Fetches live agent streaming data from the logs collection.
+        Tenant isolation enforcement: `tenant_id` is required.
+        """
         if self.db is None: await self.connect()
+        if not tenant_id:
+            raise ValueError("tenant_id is required for get_all_logs to enforce tenant isolation.")
         
-        cursor = self.db.logs.find().sort("timestamp", -1)
+        cursor = self.db.logs.find({"tenant_id": tenant_id}).sort("timestamp", -1)
         results = await cursor.to_list(length=100)
         
         clean_results = []
@@ -170,4 +176,30 @@ async def init_db():
                         print(f"⚠️ Index setup for {coll}/{idx} failed: {e}")
             except Exception as e:
                 print(f"⚠️ Index setup for {coll}/{idx} (skipped or already exists): {e}")
+        # Ensure TTL index for forensic retention (peca_forensic_logs)
+        try:
+            settings = get_settings()
+            retention_days = int(getattr(settings, "log_retention_days", 365))
+            retention_seconds = retention_days * 24 * 3600
+            coll = db_manager.db.get_collection("peca_forensic_logs")
+            idxs = await coll.index_information()
+            existing_ttl = None
+            for name, info in idxs.items():
+                if info.get("key") == [("_retention_ts", 1)]:
+                    existing_ttl = info.get("expireAfterSeconds")
+                    # if ttl differs, drop and recreate
+                    if existing_ttl != retention_seconds:
+                        await coll.drop_index(name)
+                        await coll.create_index([("_retention_ts", 1)], expireAfterSeconds=retention_seconds, name="idx_peca_retention_ts")
+                        print(f"    - Recreated TTL index idx_peca_retention_ts expireAfterSeconds={retention_seconds}")
+                    else:
+                        print(f"    - TTL index {name} present with {existing_ttl}s")
+                    break
+            else:
+                # not found — create it
+                await coll.create_index([("_retention_ts", 1)], expireAfterSeconds=retention_seconds, name="idx_peca_retention_ts")
+                print(f"    - Created TTL index idx_peca_retention_ts expireAfterSeconds={retention_seconds}")
+        except Exception as e:
+            print(f"⚠️ TTL index setup failed: {e}")
+
         print("✅ MongoDB Indexes Ensured")

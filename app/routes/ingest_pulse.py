@@ -165,15 +165,39 @@ async def ingest_pulse_logs(
     verified_tenant_id: str = Depends(verify_agent_token)
 ):
     try:
-        # Enforce API treaty: ingest accepts a list of logs only.
-        if isinstance(payloads, dict):
-            raise HTTPException(
-                status_code=400,
-                detail="Contract Violation: Wrap logs in a list [].",
-            )
+        # 🛡️ STRICT DATA HYGIENE: The SSOT Edge Filter
+        # Pre-process the list to silently drop items with garbage or boolean event_ids
+        # This prevents a single bad event (e.g., event_False) from failing the entire batch with a 422 ValidationError.
+        sanitized_payloads = []
+        for p in payloads:
+            if not isinstance(p, dict):
+                continue
+            
+            eid = p.get("event_id")
+            
+            # Explicitly reject booleans (since Python evaluates bools as ints e.g. True=1, False=0)
+            if isinstance(eid, bool):
+                continue
+                
+            # Must be capable of casting cleanly to an integer
+            try:
+                if eid is None or str(eid).strip() == "":
+                    continue
+                int(eid)
+                sanitized_payloads.append(p)
+            except (ValueError, TypeError):
+                continue
+
+        # If everything was garbage, exit early without spinning up pipeline tasks
+        if not sanitized_payloads:
+            return {
+                "status": "success",
+                "message": "All ingested payloads dropped due to invalid schema or non-integer event IDs.",
+                "action": "ALLOW"
+            }
 
         try:
-            payloads = parse_obj_as(List[WindowsAgentPayload], payloads)
+            payloads = parse_obj_as(List[WindowsAgentPayload], sanitized_payloads)
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=exc.errors()) from exc
 

@@ -16,6 +16,14 @@ class Settings(BaseSettings):
     mongodb_uri: str = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
     mongodb_db_name: str = os.getenv("MONGODB_DB_NAME", "WarSOC_DB")
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379")
+    # --- RETENTION / KEY MANAGEMENT ---
+    # Number of days to retain forensic logs (used to create TTL index)
+    log_retention_days: int = int(os.getenv("LOG_RETENTION_DAYS", 365))
+    # Optionally provide private key material via an environment variable
+    # (base64-encoded PEM). This is preferred for secure hosting environments.
+    private_key_b64: str = os.getenv("PRIVATE_KEY_B64", "")
+    # If the private key PEM is password-protected, provide the passphrase here.
+    private_key_password: str = os.getenv("PRIVATE_KEY_PASSWORD", "")
     
     # --- API SECURITY ---
     port: int = int(os.getenv("PORT", 8000))

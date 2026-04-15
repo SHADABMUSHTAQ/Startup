@@ -1,0 +1,2 @@
+C:\Users\Lenovo\Desktop\Startup-backend\scripts\load_pipeline.py:40: DeprecationWarning: Call to deprecated close. (Use aclose() instead) -- Deprecated since version 5.0.1.
+  await redis.close()

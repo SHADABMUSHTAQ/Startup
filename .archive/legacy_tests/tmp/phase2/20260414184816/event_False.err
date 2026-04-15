@@ -1,0 +1,4 @@
+usage: load_pipeline.py [-h] [--total TOTAL] [--concurrency CONCURRENCY]
+                        [--redis-url REDIS_URL] [--stream STREAM]
+                        [--tenant TENANT] [--event EVENT]
+load_pipeline.py: error: argument --event: invalid int value: 'False'

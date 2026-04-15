@@ -16,6 +16,13 @@ import hashlib
 import base64
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
+import copy
+
+try:
+    from canonicaljson import encode_canonical_json
+    CANONICALJSON_AVAILABLE = True
+except Exception:
+    CANONICALJSON_AVAILABLE = False
 
 # 🏗️ MASTER BUILD: FBR Compliance Worker (S.R.O. 288/I/2026 Optimized)
 # Strictly Decoupled, Hybrid Flush (100 logs or 3s), Redis-Cached Plan Check
@@ -66,7 +73,39 @@ def _normalize_document_timestamps(document: dict):
     document["timestamp"] = _normalize_timestamp_iso_utc(document.get("timestamp"))
     if "ingested_at" in document:
         document["ingested_at"] = _normalize_timestamp_iso_utc(document.get("ingested_at"))
+    # Keep _retention_ts as datetime for Mongo TTL indexes; canonicalization will convert a copy when signing.
     return document
+
+
+def _to_canonical_bytes(obj) -> bytes:
+    o = copy.deepcopy(obj)
+
+    def _convert(value):
+        if isinstance(value, dict):
+            for k, v in list(value.items()):
+                if isinstance(v, datetime):
+                    value[k] = v.astimezone(timezone.utc).isoformat()
+                else:
+                    _convert(v)
+        elif isinstance(value, list):
+            for i in range(len(value)):
+                v = value[i]
+                if isinstance(v, datetime):
+                    value[i] = v.astimezone(timezone.utc).isoformat()
+                else:
+                    _convert(v)
+
+    _convert(o)
+
+    if CANONICALJSON_AVAILABLE:
+        try:
+            return encode_canonical_json(o)
+        except Exception as e:
+            logger.error(f"FBR Canonical encoding failed: {e}")
+    
+    # Fallback to high-entropy deterministic JSON (Non-Compliant)
+    logger.warning("FBR Worker: Using fallback deterministic JSON (Non-Compliant)")
+    return json.dumps(o, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
 
 
 async def reclaim_stale_messages(redis_client: Redis):
@@ -134,17 +173,32 @@ async def fbr_worker():
     repo_root = os.path.dirname(base_dir)
     private_key_path = os.path.join(repo_root, "keys", "private_key.pem")
     
-    if not os.path.exists(private_key_path):
-        logger.critical(f"FBR non-compliant: signing key missing at {private_key_path}. Worker cannot start.")
-        sys.exit(1)
-
+    # Prefer environment-provided base64 PEM for secure hosting, fallback to disk
+    key_data = None
     try:
-        with open(private_key_path, "rb") as key_file:
-            private_key = serialization.load_pem_private_key(
-                key_file.read(),
-                password=None
-            )
-        logger.info(f"Loaded RSA Private Key for FBR Signing")
+        if getattr(settings, "private_key_b64", ""):
+            key_data = base64.b64decode(settings.private_key_b64)
+            logger.info("Loaded RSA Private Key for FBR from PRIVATE_KEY_B64 environment variable.")
+    except Exception as e:
+        logger.warning(f"Failed to decode PRIVATE_KEY_B64: {e}")
+
+    if key_data is None:
+        if not os.path.exists(private_key_path):
+            logger.critical(f"FBR non-compliant: signing key missing at {private_key_path}. Worker cannot start.")
+            sys.exit(1)
+        try:
+            with open(private_key_path, "rb") as key_file:
+                key_data = key_file.read()
+            logger.warning("Loaded RSA Private Key from disk (keys/private_key.pem). Consider moving to a secure keystore.")
+        except Exception as e:
+            logger.critical(f"FAILED TO LOAD SIGNING KEY FROM FILE: {e}. FBR Worker non-compliant.")
+            sys.exit(1)
+
+    # Load key supporting optional passphrase from settings
+    try:
+        password = settings.private_key_password.encode() if getattr(settings, "private_key_password", None) else None
+        private_key = serialization.load_pem_private_key(key_data, password=password)
+        logger.info("Loaded RSA Private Key for FBR Signing")
     except Exception as e:
         logger.critical(f"FAILED TO LOAD SIGNING KEY: {e}. FBR Worker non-compliant.")
         sys.exit(1)
@@ -276,16 +330,22 @@ async def fbr_worker():
                         log_data["signer_id"] = "WarSOC-FBR-v1"
                         _normalize_document_timestamps(log_data)
                         
-                        # Generate Forensic Hash and Digital Signature
-                        payload_for_signing = json.dumps(log_data, default=str, sort_keys=True)
-                        log_data["forensic_seal"] = hashlib.sha256(payload_for_signing.encode()).hexdigest()
-                        
+                        # Generate Forensic Hash and Digital Signature using canonical bytes
+                        signing_doc = copy.deepcopy(log_data)
+                        if isinstance(signing_doc.get("_retention_ts"), datetime):
+                            signing_doc["_retention_ts"] = signing_doc["_retention_ts"].astimezone(timezone.utc).isoformat()
+
+                        canonical_bytes = _to_canonical_bytes(signing_doc)
+                        log_data["forensic_seal"] = hashlib.sha256(canonical_bytes).hexdigest()
+
                         signature = private_key.sign(
-                            payload_for_signing.encode(),
+                            canonical_bytes,
                             padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
                             hashes.SHA256()
                         )
                         log_data["digital_signature"] = base64.b64encode(signature).decode("utf-8")
+                        log_data["signed_payload"] = base64.b64encode(canonical_bytes).decode("utf-8")
+                        log_data["canonicalization_version"] = "canonicaljson/v1"
                         
                         buffer.append(log_data)
                         buffer_ack_ids.append(message_id)

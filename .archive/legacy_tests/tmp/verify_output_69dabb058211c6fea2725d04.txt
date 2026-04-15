@@ -1,0 +1,3 @@
+Computed seal: 207ae36119182ff0661b8e327212a89aad960537401ae5cfef7e4943d14e87f0
+Stored   seal: f3545347e69040b3bcb4efa9ccafe543ef5abafec7daefac8dbb3c1626be5113
+ERROR: forensic_seal mismatch. Document may have been tampered with or normalization differs.
