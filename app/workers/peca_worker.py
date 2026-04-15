@@ -366,7 +366,7 @@ async def peca_worker():
                         if forensic_ack_ids:
                             async with redis.pipeline(transaction=True) as pipe:
                                 for mid in forensic_ack_ids:
-                                    await pipe.xack(RAW_LOGS_QUEUE, PECA_GROUP, mid)
+                                    pipe.xack(RAW_LOGS_QUEUE, PECA_GROUP, mid)
                                 await pipe.execute()
                         # Clear the buffer after successful persistence so we do not re-insert
                         buffer.clear()
@@ -375,7 +375,7 @@ async def peca_worker():
                 if immediate_ack_ids:
                     async with redis.pipeline(transaction=True) as pipe:
                         for mid in immediate_ack_ids:
-                            await pipe.xack(RAW_LOGS_QUEUE, PECA_GROUP, mid)
+                            pipe.xack(RAW_LOGS_QUEUE, PECA_GROUP, mid)
                         await pipe.execute()
 
         except Exception as e:
