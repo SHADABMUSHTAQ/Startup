@@ -1,23 +1,78 @@
 services:
-  # 🌐 WarSOC Unified Gateway (Sole Public Entry Point)
+  # ─────────────────────────────────────────────────────────────
+  # TIER 0: INFRASTRUCTURE
+  # ─────────────────────────────────────────────────────────────
+
+  # 🍃 MongoDB (PTA CTDISR-2025 Local Hosting Compliant)
+  mongodb:
+    image: mongo:latest
+    container_name: warsoc-mongodb
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_USER}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD}
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+    networks:
+      - warsoc-secure-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # 💨 Redis Stream Broker (Hardened)
+  redis:
+    image: redis:alpine
+    container_name: warsoc-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      warsoc-secure-net:
+        aliases:
+          - redis
+          - warsoc-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────────────────────
+  # TIER 1: GATEWAY
+  # ─────────────────────────────────────────────────────────────
+
+  # 🌐 Nginx Reverse Proxy (Sole Public Entry Point)
   nginx:
     build:
       context: ..
       dockerfile: Startup-backend/Dockerfile.nginx
     container_name: warsoc-gateway
-    restart: always
+    restart: unless-stopped
     ports:
       - "80:80"
     networks:
       - warsoc-secure-net
     depends_on:
-      - api
+      api:
+        condition: service_started
 
-  # 🚀 WarSOC API Gateway (Internal)
+  # ─────────────────────────────────────────────────────────────
+  # TIER 2: APPLICATION
+  # ─────────────────────────────────────────────────────────────
+
+  # 🚀 FastAPI Application Server
   api:
     build: .
     container_name: warsoc-api
-    restart: always
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     expose:
       - "8000"
     ports:
@@ -32,87 +87,20 @@ services:
     networks:
       - warsoc-secure-net
     depends_on:
-      - mongodb
-      - redis
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
-  # 🍃 Core Database (PTA CTDISR-2025 Local Hosting Compliant)
-  mongodb:
-    image: mongo:6.0
-    container_name: warsoc-mongodb
-    restart: always
-    environment:
-      - MONGO_INITDB_ROOT_USERNAME=warsoc_admin
-      - MONGO_INITDB_ROOT_PASSWORD=W4rS0c_M0ng0_S3cur3_2026!
-    volumes:
-      - ./data/mongo:/data/db
-    ports:
-      - "27017:27017"
-    networks:
-      - warsoc-secure-net
+  # ─────────────────────────────────────────────────────────────
+  # TIER 3: WORKERS (Fan-Out Architecture)
+  # ─────────────────────────────────────────────────────────────
 
-  # 💨 Stream Broker (Hardened)
-  redis:
-    image: redis:latest
-    container_name: warsoc-redis
-    command: redis-server --requirepass ${REDIS_PASSWORD}
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      warsoc-secure-net:
-        aliases:
-          - redis
-          - warsoc-redis
-
-  # 📑 FBR Compliance Engine (SRO 288/69)
-  worker-fbr:
-    build: .
-    container_name: warsoc-worker-fbr
-    restart: always
-    command: ["python", "-m", "app.workers.fbr_worker"]
-    env_file:
-      - .env
-    environment:
-      - MONGODB_URI=mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/${MONGODB_DB_NAME}?authSource=admin
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
-      - DB_NAME=${MONGODB_DB_NAME}
-    volumes:
-      - ./keys:/app/keys:ro
-    networks:
-      - warsoc-secure-net
-    depends_on:
-      - mongodb
-      - redis
-
-  # 🔐 PECA Forensic Engine (Section 32/46)
-  worker-peca:
-    build: .
-    container_name: warsoc-worker-peca
-    restart: always
-    command: ["python", "-m", "app.workers.peca_worker"]
-    env_file:
-      - .env
-    environment:
-      - MONGODB_URI=mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/${MONGODB_DB_NAME}?authSource=admin
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
-      - DB_NAME=${MONGODB_DB_NAME}
-    volumes:
-      - ./keys:/app/keys:ro
-    networks:
-      - warsoc-secure-net
-    depends_on:
-      - mongodb
-      - redis
-
-  # 🛡️ SIEM Security Engine
+  # 🛡️ SIEM Core Engine (Consumer Group: siem_group)
   worker-siem:
     build: .
     container_name: warsoc-worker-siem
-    restart: always
+    restart: unless-stopped
     command: ["python", "-m", "app.workers.siem_worker"]
     env_file:
       - .env
@@ -120,13 +108,95 @@ services:
       - MONGODB_URI=mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/${MONGODB_DB_NAME}?authSource=admin
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - DB_NAME=${MONGODB_DB_NAME}
+      - CONSUMER_NAME=siem_consumer_1
     networks:
       - warsoc-secure-net
     depends_on:
-      - mongodb
-      - redis
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
-  # Frontend is served via the nginx gateway (production build)
+  # 📑 FBR Compliance Archiver (Consumer Group: fbr_group)
+  worker-fbr:
+    build: .
+    container_name: warsoc-worker-fbr
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.fbr_worker"]
+    env_file:
+      - .env
+    environment:
+      - MONGODB_URI=mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/${MONGODB_DB_NAME}?authSource=admin
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - DB_NAME=${MONGODB_DB_NAME}
+      - CONSUMER_NAME=fbr_archiver_1
+    volumes:
+      - ./keys:/app/keys:ro
+    networks:
+      - warsoc-secure-net
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # 🔐 PECA Forensic Engine (Consumer Group: peca_group)
+  worker-peca:
+    build: .
+    container_name: warsoc-worker-peca
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.peca_worker"]
+    env_file:
+      - .env
+    environment:
+      - MONGODB_URI=mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/${MONGODB_DB_NAME}?authSource=admin
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - DB_NAME=${MONGODB_DB_NAME}
+      - CONSUMER_NAME=peca_consumer_1
+    volumes:
+      - ./keys:/app/keys:ro
+    networks:
+      - warsoc-secure-net
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # 🎯 Threat Hunter (Consumer Group: threat_hunters)
+  threat-hunter:
+    build: .
+    container_name: warsoc-threat-hunter
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.detection_worker"]
+    env_file:
+      - .env
+    environment:
+      - MONGODB_URI=mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/${MONGODB_DB_NAME}?authSource=admin
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - DB_NAME=${MONGODB_DB_NAME}
+      - CONSUMER_NAME=hunter_node_1
+      - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY}
+    networks:
+      - warsoc-secure-net
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+# ─────────────────────────────────────────────────────────────
+# NAMED VOLUMES (Data survives container restarts)
+# ─────────────────────────────────────────────────────────────
+volumes:
+  mongo_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# ─────────────────────────────────────────────────────────────
+# NETWORK (All services on a single isolated bridge)
+# ─────────────────────────────────────────────────────────────
 networks:
   warsoc-secure-net:
     driver: bridge

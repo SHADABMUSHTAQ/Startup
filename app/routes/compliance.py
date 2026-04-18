@@ -174,6 +174,7 @@ def _curate_evidence_record(doc: dict, evidence_source: str, data_origin: str) -
         "raw_data": _to_jsonable(doc.get("raw_data")),
         "digital_signature": signature,
         "forensic_seal": forensic_hash,
+        "signed_payload": doc.get("signed_payload"),
         "rsa_signature": signature,
         "cryptographic_hash": forensic_hash,
         "evidence_source": evidence_source,

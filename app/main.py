@@ -17,7 +17,7 @@ from app.routes import data
 # ==========================================
 from app.database import init_db, get_db, db_manager
 from app.config.config import get_settings
-from app.routes import auth, ingest_pulse, threat_intel, upload, compliance, logs, ingestion
+from app.routes import auth, ingest_pulse, threat_intel, upload, compliance, logs, ingestion, alerts
 from app.routes import metrics
 from app.db.init_db import init_compliance_db
 from app.api.ws_manager import manager 
@@ -214,6 +214,7 @@ app.include_router(ingest_pulse.router, prefix="/api/v1/ingest", tags=["Ingestio
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(upload.router, prefix="/api/v1/upload", tags=["Upload"])
 app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compliance"])
+app.include_router(alerts.router, prefix="/api/v1/alerts", tags=["Alert Management"])
 app.include_router(logs.router, prefix="/api/v1/logs", tags=["Dashboard Logs"])
 app.include_router(metrics.router, prefix="", tags=["Metrics"])
 
