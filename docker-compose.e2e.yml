@@ -7,10 +7,13 @@ services:
       - "27018:27017"
 
   redis:
-    image: redis:7
-    command: ["redis-server", "--save", "\"\"", "--appendonly", "no"]
+    image: redis:alpine
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6380:6379"
+    volumes:
+      - redis_e2e_data:/data
+
 
   test-runner:
     image: python:3.10-slim
@@ -26,3 +29,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - SKIP_INTEGRATION_TESTS=1
     command: bash -lc "pip install --upgrade pip && pip install -r requirements.txt && pytest -q --junitxml=/workspace/pytest-report.xml"
+
+volumes:
+  redis_e2e_data:
+

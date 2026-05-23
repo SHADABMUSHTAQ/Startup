@@ -439,12 +439,7 @@ async def download_agent(current_user=Depends(get_current_user), db=Depends(get_
 
 @router.get("/virustotal/ip/{ip}")
 async def check_virustotal_ip(ip: str, current_user=Depends(get_current_user)):
-    """Mock VirusTotal IP lookup endpoint for SOAR threat intelligence enrichment."""
-    return {
-        "status": "success",
-        "ip": ip,
-        "virustotal_positives": 0,
-        "virustotal_total": 70,
-        "reputation": "clean"
-    }
+    """VirusTotal IP lookup endpoint."""
+    raise HTTPException(status_code=501, detail="Threat intel enrichment pending VT integration")
+
 
