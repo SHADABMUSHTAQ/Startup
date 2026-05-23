@@ -1,0 +1,28 @@
+version: '3.8'
+services:
+  mongodb:
+    image: mongo:7
+    command: ["mongod", "--bind_ip_all"]
+    ports:
+      - "27018:27017"
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--save", "\"\"", "--appendonly", "no"]
+    ports:
+      - "6380:6379"
+
+  test-runner:
+    image: python:3.10-slim
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace:cached
+    depends_on:
+      - mongodb
+      - redis
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/WarSOC_DB
+      - MONGODB_DB_NAME=WarSOC_DB
+      - REDIS_URL=redis://redis:6379
+      - SKIP_INTEGRATION_TESTS=1
+    command: bash -lc "pip install --upgrade pip && pip install -r requirements.txt && pytest -q --junitxml=/workspace/pytest-report.xml"

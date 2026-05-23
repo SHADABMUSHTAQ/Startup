@@ -1,0 +1,887 @@
+import win32evtlog
+import win32evtlogutil
+import win32security
+import requests
+import time
+import socket
+import subprocess
+import os
+import sys
+import json
+import ipaddress
+import threading
+import queue
+import glob
+import hashlib
+import uuid
+from pathlib import Path
+from ecdsa import NIST256p, SigningKey
+from datetime import datetime, timezone # ADDED TIMEZONE
+
+# ENV COMPLIANCE
+from dotenv import load_dotenv, find_dotenv
+
+# ==========================================
+# 1. ENTERPRISE CONFIG & STATE
+# ==========================================
+def _get_runtime_dir():
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+# HARDENED ENV DISCOVERY: Searching for the Source of Truth
+_AGENT_DIR = _get_runtime_dir()
+_POSSIBLE_ENV_PATHS = [
+    _AGENT_DIR / ".env",                     # Local
+    _AGENT_DIR.parent / ".env",              # Parent (Root)
+    _AGENT_DIR.parent / "startup-backend" / ".env" # Sibling (Cross-Repo)
+]
+
+env_loaded = False
+for path in _POSSIBLE_ENV_PATHS:
+    if path.exists():
+        print(f"[INFO] CONFIG FOUND: Loading secrets from -> {path}")
+        load_dotenv(str(path), override=True)
+        env_loaded = True
+        break
+
+if not env_loaded:
+    print(f"[WARN] .env not found in any standard location. Using system environment variables.")
+
+TENANT_ID = os.getenv("TENANT_ID")
+if not TENANT_ID:
+    print("[ERROR] FATAL: TENANT_ID is still empty. Check your .env file!")
+    sys.exit(1)
+
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
+# ECDSA identity is now anchored to the issued agent id and enrollment token.
+AGENT_ID = os.getenv("AGENT_ID", TENANT_ID)
+ENROLLMENT_TOKEN = os.getenv("ENROLLMENT_TOKEN", "")
+PRIVATE_KEY_PATH = _AGENT_DIR / "agent_private_key.pem"
+
+# NEW: Web Server Log File Path (You can change this to your Apache/Nginx path later)
+WEB_LOG_PATH = os.getenv("WEB_LOG_PATH", "access.log")
+
+WHITELIST_IPS = set(["127.0.0.1", "localhost", "::1", "0.0.0.0"])
+POLL_INTERVAL = 0.25
+HEARTBEAT_INTERVAL = 300
+OUTBOUND_QUEUE_MAX = int(os.getenv("OUTBOUND_QUEUE_MAX", "5000"))
+OUTBOUND_BATCH_SIZE = int(os.getenv("OUTBOUND_BATCH_SIZE", "25"))
+OUTBOUND_BATCH_WAIT_SECONDS = float(os.getenv("OUTBOUND_BATCH_WAIT_SECONDS", "0.25"))
+INGEST_URL = f"{BACKEND_URL}/api/v1/ingest/pulse"
+LOCAL_IP = "127.0.0.1"
+WEB_LOG_PATHS = [WEB_LOG_PATH]
+WINDOWS_CHANNELS = ["Security"]
+
+JWT_TOKEN = None
+BANNED_IPS = set()
+BAN_LOCK = threading.Lock()
+REQUEST_SESSION = requests.Session()
+OUTBOUND_QUEUE = queue.Queue(maxsize=OUTBOUND_QUEUE_MAX)
+
+# ==========================================
+# 2. HELPER FUNCTIONS & MITIGATION
+# ==========================================
+def get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+def resolve_user(sid):
+    try:
+        if sid:
+            name, domain, _ = win32security.LookupAccountSid(None, sid)
+            return f"{domain}\\{name}"
+    except Exception:
+        pass
+    return "SYSTEM"
+
+LOCAL_IP = get_local_ip()
+
+
+def _load_or_create_signing_key():
+    try:
+        if PRIVATE_KEY_PATH.exists():
+            return SigningKey.from_pem(PRIVATE_KEY_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+
+    signing_key = SigningKey.generate(curve=NIST256p)
+    PRIVATE_KEY_PATH.write_text(signing_key.to_pem().decode("utf-8"), encoding="utf-8")
+    return signing_key
+
+
+def _canonical_json(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+
+
+def _build_event_payload_hash(payload):
+    signable_payload = {
+        "source_ip": payload.get("source_ip", ""),
+        "user": payload.get("user", ""),
+        "event_id": int(payload.get("event_id", 0)),
+        "message": payload.get("message", ""),
+        "processed_data": payload.get("processed_data") or {},
+        "raw_event_data": payload.get("raw_event_data") if payload.get("raw_event_data") is not None else payload.get("raw_data", {}),
+    }
+    canonical = _canonical_json(signable_payload)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _sign_agent_login(signing_key):
+    timestamp = datetime.now(timezone.utc).isoformat()
+    nonce = uuid.uuid4().hex
+    canonical = f"{AGENT_ID}|{timestamp}|{nonce}|login"
+    signature = signing_key.sign(canonical.encode("utf-8"), hashfunc=hashlib.sha256).hex()
+    return {"agent_id": AGENT_ID, "timestamp": timestamp, "nonce": nonce, "signature": signature}
+
+
+def _sign_event_payload(payload, signing_key):
+    payload_hash = _build_event_payload_hash(payload)
+    canonical = f"{payload['agent_id']}|{payload['timestamp']}|{payload['event_uid']}|{payload_hash}"
+    payload["agent_signature"] = signing_key.sign(canonical.encode("utf-8"), hashfunc=hashlib.sha256).hex()
+    payload.pop("agent_hmac_signature", None)
+    return payload
+
+
+def enroll_agent(signing_key):
+    if not ENROLLMENT_TOKEN:
+        print("[!] No ENROLLMENT_TOKEN present. Agent cannot enroll automatically.")
+        return False
+
+    public_key = signing_key.verifying_key.to_pem().decode("utf-8")
+    resp = REQUEST_SESSION.post(
+        f"{BACKEND_URL}/api/v1/auth/agents/enroll",
+        headers={"Authorization": f"Bearer {ENROLLMENT_TOKEN}"},
+        json={
+            "agent_id": AGENT_ID,
+            "public_key": public_key,
+            "hostname": socket.gethostname(),
+            "mac_address": "unknown",
+        },
+        timeout=10,
+    )
+    if resp.status_code in (200, 201):
+        print("[OK] Agent enrolled with ECDSA public key.")
+        return True
+    print(f"[FAIL] Agent enrollment failed: {resp.status_code} - {resp.text}")
+    return False
+
+import re as _re
+_IP_PATTERN = _re.compile(r'^[\d.:a-fA-F]+(/\d{1,3})?$')
+_IP_IN_TEXT_PATTERN = _re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+
+def _load_monitoring_document():
+    """Load monitoring document from tenant policy first, then app config."""
+    agent_dir = _get_runtime_dir()
+    policy_path = agent_dir / "tenant_policy.json"
+    config_json_path = agent_dir.parent / "app" / "config" / "config.json"
+
+    for cfg_path in [policy_path, config_json_path]:
+        try:
+            if not cfg_path.exists():
+                continue
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            continue
+    return {}
+
+def load_target_event_ids():
+    """Load monitorable Event IDs only from config sources (no hardcoded defaults)."""
+    def _parse_target_ids(raw):
+        try:
+            parsed = {int(eid) for eid in raw}
+            return parsed
+        except Exception:
+            return set()
+
+    monitoring = _load_monitoring_document().get("monitoring", {})
+    parsed = _parse_target_ids(monitoring.get("target_event_ids", []))
+    if parsed:
+        return parsed
+
+    print("[!] No monitorable Event IDs found in tenant_policy.json or config.json")
+    return set()
+
+def load_capture_all_security_events():
+    """Load whether to capture all security events from config sources."""
+    monitoring = _load_monitoring_document().get("monitoring", {})
+    return bool(monitoring.get("capture_all_security_events", False))
+
+def load_capture_all_windows_channels():
+    monitoring = _load_monitoring_document().get("monitoring", {})
+    return bool(monitoring.get("capture_all_windows_channels", False))
+
+def load_windows_channels():
+    monitoring = _load_monitoring_document().get("monitoring", {})
+    channels = monitoring.get("windows_channels", ["Security"])
+    parsed = [str(c).strip() for c in channels if str(c).strip()]
+    if not parsed:
+        parsed = ["Security"]
+    return list(dict.fromkeys(parsed))
+
+def load_web_log_paths():
+    monitoring = _load_monitoring_document().get("monitoring", {})
+    configured = monitoring.get("web_log_paths", [])
+    parsed = [str(p).strip() for p in configured if str(p).strip()]
+    if not parsed:
+        parsed = [WEB_LOG_PATH]
+    return list(dict.fromkeys(parsed))
+
+def load_heartbeat_interval():
+    """Load the agent heartbeat interval from config sources, with env override."""
+    env_value = os.getenv("HEARTBEAT_INTERVAL")
+    if env_value:
+        try:
+            value = int(env_value)
+            return value if value > 0 else 300
+        except Exception:
+            pass
+
+    agent_settings = _load_monitoring_document().get("agent_settings", {})
+    try:
+        value = int(agent_settings.get("heartbeat_interval_seconds", 300))
+        return value if value > 0 else 300
+    except Exception:
+        return 300
+
+def load_max_payload_bytes():
+    """Load max ingest payload bytes from config (fallback to 1MB)."""
+    security = _load_monitoring_document().get("agent_security", {})
+    try:
+        value = int(security.get("max_payload_bytes", 1048576))
+        return value if value > 0 else 1048576
+    except Exception:
+        return 1048576
+
+TARGET_EVENT_IDS = load_target_event_ids()
+CAPTURE_ALL_SECURITY_EVENTS = load_capture_all_security_events()
+CAPTURE_ALL_WINDOWS_CHANNELS = load_capture_all_windows_channels()
+WINDOWS_CHANNELS = load_windows_channels()
+WEB_LOG_PATHS = load_web_log_paths()
+HEARTBEAT_INTERVAL = load_heartbeat_interval()
+MAX_PAYLOAD_BYTES = load_max_payload_bytes()
+# Keep a safety margin to avoid borderline payloads after HTTP serialization overhead.
+MAX_OUTBOUND_BYTES = int(MAX_PAYLOAD_BYTES * 0.90)
+
+def extract_source_ip_from_line(line: str):
+    """Try to recover client IP from a web log line; return None when unavailable."""
+    for candidate in _IP_IN_TEXT_PATTERN.findall(line):
+        try:
+            ip_obj = ipaddress.ip_address(candidate)
+            if ip_obj.is_multicast or ip_obj.is_unspecified:
+                continue
+            return candidate
+        except ValueError:
+            continue
+    return None
+
+KNOWN_BAD_IPS = set()
+FAILED_BLOCK_IPS = set()
+
+def enforce_block(ip):
+    if ip in WHITELIST_IPS:
+        print(f"[WARN] SAFETY OVERRIDE: {ip} is whitelisted. Ignored.")
+        return
+
+    # Check if already seen (valid or invalid) to avoid spamming
+    if ip in KNOWN_BAD_IPS or ip in BANNED_IPS or ip in FAILED_BLOCK_IPS:
+        return
+
+    if not _IP_PATTERN.match(ip):
+        KNOWN_BAD_IPS.add(ip)
+        print(f"[!] INVALID IP rejected: {ip}")
+        return
+
+    with BAN_LOCK:
+        if ip in BANNED_IPS: return
+        try:
+            subprocess.run(
+                ["netsh", "advfirewall", "firewall", "add", "rule",
+                 f"name=WarSOC_Block_{ip}", "dir=in", "action=block", f"remoteip={ip}"],
+                check=True, capture_output=True, text=True
+            )
+            BANNED_IPS.add(ip)
+            print(f"[INFO] MITIGATION SUCCESS: Block applied to {ip}")
+        except Exception as e:
+            FAILED_BLOCK_IPS.add(ip)
+            print(f"[!] MITIGATION FAILED: {e}")
+
+# ==========================================
+# 3. ENTERPRISE AUTHENTICATION PIPELINE
+# ==========================================
+def authenticate_agent():
+    global JWT_TOKEN
+    signing_key = _load_or_create_signing_key()
+    print(f"[INFO] Authenticating Agent {AGENT_ID} with WarSOC Backbone...")
+    try:
+        login_payload = _sign_agent_login(signing_key)
+        resp = REQUEST_SESSION.post(
+            f"{BACKEND_URL}/api/v1/auth/agent-login",
+            json=login_payload,
+            timeout=5,
+        )
+        if resp.status_code == 401 and ENROLLMENT_TOKEN:
+            if enroll_agent(signing_key):
+                login_payload = _sign_agent_login(signing_key)
+                resp = REQUEST_SESSION.post(
+                    f"{BACKEND_URL}/api/v1/auth/agent-login",
+                    json=login_payload,
+                    timeout=5,
+                )
+        if resp.status_code == 200:
+            JWT_TOKEN = resp.json().get("access_token")
+            print("[OK] Connection Secured. Vault access granted.")
+            return True
+        else:
+            print(f"[FAIL] Access Denied: {resp.status_code} - {resp.text}")
+            return False
+    except Exception as e:
+        print(f"[!] Backbone Unreachable: {e}")
+        return False
+
+def secure_request(method, url, **kwargs):
+    global JWT_TOKEN
+    if not JWT_TOKEN:
+        if not authenticate_agent(): return None
+
+    headers = kwargs.get("headers", {})
+    headers["Authorization"] = f"Bearer {JWT_TOKEN}"
+    kwargs["headers"] = headers
+
+    try:
+        resp = REQUEST_SESSION.request(method, url, **kwargs)
+
+        if method == "POST" and "ingest" in url and resp.status_code == 200:
+             pass # Silently succeed to avoid console spam
+
+        if resp.status_code == 401:
+            print("[WARN] Token expired. Re-authenticating...")
+            if authenticate_agent():
+                headers["Authorization"] = f"Bearer {JWT_TOKEN}"
+                kwargs["headers"] = headers
+                resp = REQUEST_SESSION.request(method, url, **kwargs)
+
+        elif resp.status_code != 200:
+            print(f" Backend rejected payload {resp.status_code}: {resp.text}")
+
+        return resp
+    except Exception as e:
+        print(f"[WARN] Connection Error to {url}: {e}")
+        return None
+
+# ==========================================
+# 2.5 FORENSIC SPOOLER & PARSER (v3.1)
+# ==========================================
+import re as _re
+import shutil
+
+class DiskSpooler:
+    """
+    MASTER BUILD: Atomic 'Rotate & Drain' Spooler.
+    Ensures zero-loss resilience via OS-level renames (Renaming is atomic).
+    """
+    def __init__(self, spool_dir="spool"):
+        self.spool_dir = Path(spool_dir)
+        self.pending_file = self.spool_dir / "pending_logs.jsonl"
+        self.lock = threading.Lock()
+
+        # Ensure spool environment exists
+        self.spool_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[*] DiskSpooler Active: {self.pending_file}")
+
+    def append(self, log_dict):
+        """Thread-safe append-only write to the pending buffer."""
+        try:
+            line = json.dumps(log_dict, default=str) + "\n"
+            with self.lock:
+                with open(self.pending_file, "a", encoding="utf-8") as f:
+                    f.write(line)
+        except Exception as e:
+            print(f"[!] Spooler Append Error: {e}")
+
+    def consume_batch(self):
+        """
+        THE ROTATE: Atomically renames pending to processing.
+        Returns (logs_list, filename) if data exists, else (None, None).
+        """
+        # 1. Check for abandoned processing files from previous crashes
+        existing_processing = list(self.spool_dir.glob("processing_*.jsonl"))
+        if existing_processing:
+            target_file = sorted(existing_processing)[0] # Process oldest first
+            return self._read_file(target_file), str(target_file)
+
+        # 2. Rotate pending to a new processing artifact
+        with self.lock:
+            if not self.pending_file.exists() or os.path.getsize(self.pending_file) == 0:
+                return None, None
+
+            timestamp = int(time.time() * 1000)
+            processing_file = self.spool_dir / f"processing_{timestamp}.jsonl"
+
+            try:
+                os.rename(str(self.pending_file), str(processing_file))
+            except Exception as e:
+                print(f"[!] Spooler Rotation Error: {e}")
+                return None, None
+
+        return self._read_file(processing_file), str(processing_file)
+
+    def _read_file(self, file_path):
+        """Helper to read jsonl into list of dicts."""
+        logs = []
+        malformed_count = 0
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        parsed = json.loads(line)
+                        if isinstance(parsed, dict):
+                            logs.append(parsed)
+                        else:
+                            malformed_count += 1
+                    except json.JSONDecodeError:
+                        malformed_count += 1
+
+            if malformed_count:
+                print(f"[!] Spooler skipped {malformed_count} malformed JSONL records from {file_path}")
+            return logs
+        except Exception as e:
+            print(f"[!] Spooler Read Error ({file_path}): {e}")
+            return []
+
+    def clear_batch(self, file_path):
+        """Permanently deletes the processing artifact after 200 OK."""
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception as e:
+            print(f"[!] Spooler Cleanup Error: {e}")
+
+# Global Spooler Instance
+SPOOLER = DiskSpooler()
+
+# --- FORENSIC REGEX ENGINE ---
+# Targeted extraction for 4624 (Success) and 4625 (Failure)
+RE_TARGET_USER = _re.compile(r"Account Name:\s+(?!-)([\w\-\.\$]+)", _re.IGNORECASE)
+RE_SOURCE_IP = _re.compile(r"Source Network Address:\s+([\d\.:a-fA-F]+)", _re.IGNORECASE)
+RE_LOGON_TYPE = _re.compile(r"Logon Type:\s+(\d+)", _re.IGNORECASE)
+
+def parse_event_data(event_id, raw_msg):
+    """
+    MASTER BUILD: Deep Extraction with Raw Fallback.
+    Constructs the target payload contract for forensic searchability.
+    """
+    processed = None
+
+    try:
+        if event_id in [4624, 4625]:
+            users = RE_TARGET_USER.findall(raw_msg)
+            # 4624/4625 usually has two 'Account Name' entries.
+            # The first is the SUBJECT (system), the second is the TARGET (user).
+            target_user = users[1] if len(users) > 1 else (users[0] if users else "Unknown")
+
+            source_ip_match = RE_SOURCE_IP.search(raw_msg)
+            logon_type_match = RE_LOGON_TYPE.search(raw_msg)
+
+            processed = {
+                "target_user": target_user,
+                "source_network_address": source_ip_match.group(1) if source_ip_match else None,
+                "logon_type": int(logon_type_match.group(1)) if logon_type_match else None
+            }
+    except Exception as e:
+        print(f"[WARN] Regex Extraction Failed: {e}")
+        processed = None
+
+    # THE MANDATE: Construct the Forensic Payload Contract
+    return {
+        "processed_data": processed,
+        "raw_event_data": raw_msg # ORIGINAL UNTOUCHED RAW BLOCK
+    }
+
+def enqueue_payload(payload):
+    """Legacy wrapper: now routes exactly to the DiskSpooler."""
+    SPOOLER.append(payload)
+
+def _estimate_payload_bytes(batch):
+    """Estimate encoded request size in bytes for a JSON batch."""
+    try:
+        return len(json.dumps(batch, default=str).encode("utf-8"))
+    except Exception:
+        return MAX_PAYLOAD_BYTES + 1
+
+def _truncate_single_log_payload(single_log):
+    """Best-effort compliance-safe truncation for a single oversize log."""
+    marker = "[TRUNCATED_BY_AGENT_413_COMPLIANCE]"
+    log = dict(single_log)
+
+    if isinstance(log.get("raw_event_data"), str):
+        log["raw_event_data"] = log["raw_event_data"][:300000] + "\n\n" + marker
+
+    raw_data = log.get("raw_data")
+    if isinstance(raw_data, str):
+        log["raw_data"] = raw_data[:120000] + "\n\n" + marker
+    elif isinstance(raw_data, dict):
+        try:
+            serialized_raw = json.dumps(raw_data, default=str)
+            if len(serialized_raw.encode("utf-8")) > 200000:
+                log["raw_data"] = {
+                    "truncated": True,
+                    "reason": marker,
+                    "preview": serialized_raw[:120000],
+                }
+        except Exception:
+            log["raw_data"] = {"truncated": True, "reason": marker}
+
+    if isinstance(log.get("message"), str):
+        log["message"] = log["message"][:4000]
+
+    # Hard fallback if still too large after selective trimming.
+    if _estimate_payload_bytes([log]) > MAX_OUTBOUND_BYTES:
+        if "raw_event_data" in log:
+            log["raw_event_data"] = marker
+        log["raw_data"] = {"truncated": True, "reason": marker}
+        if isinstance(log.get("message"), str):
+            log["message"] = log["message"][:1000]
+
+    return log
+
+def ingest_sender_thread():
+    global OUTBOUND_BATCH_SIZE, REQUEST_SESSION
+    ORIGINAL_BATCH_SIZE = OUTBOUND_BATCH_SIZE # Store the baseline (e.g., 25)
+
+    print(f"[*] Sender Online. Zero-Loss 'Rotate & Drain' Active. Batch Size: {OUTBOUND_BATCH_SIZE}")
+    while True:
+        try:
+            # THE DRAIN: Fetch atomic processing batch
+            batch, filename = SPOOLER.consume_batch()
+
+            if batch is None:
+                time.sleep(1) # Wait for new pending logs
+                continue
+
+            if not batch:
+                # Clear empty/corrupt rotated artifact so it cannot deadlock sender loop.
+                if filename:
+                    SPOOLER.clear_batch(filename)
+                time.sleep(1)
+                continue
+
+            all_success = True
+
+            # CHUNK THE BATCH (dynamically uses updated OUTBOUND_BATCH_SIZE)
+            for i in range(0, len(batch), OUTBOUND_BATCH_SIZE):
+                chunk = batch[i:i + OUTBOUND_BATCH_SIZE]
+
+                # Preflight split before network call to avoid 413/reset loops.
+                chunk_bytes = _estimate_payload_bytes(chunk)
+                if chunk_bytes > MAX_OUTBOUND_BYTES:
+                    if len(chunk) > 1:
+                        OUTBOUND_BATCH_SIZE = max(1, len(chunk) // 2)
+                        print(f"[INFO] Preflight split: {len(chunk)} logs ({chunk_bytes} bytes) -> batch size {OUTBOUND_BATCH_SIZE}")
+                        for log in chunk:
+                            SPOOLER.append(log)
+                    else:
+                        print(f"[WARN] Preflight single-log trim: {chunk_bytes} bytes > {MAX_OUTBOUND_BYTES} bytes")
+                        SPOOLER.append(_truncate_single_log_payload(chunk[0]))
+
+                    for remaining_log in batch[i + len(chunk):]:
+                        SPOOLER.append(remaining_log)
+
+                    all_success = False
+                    break
+
+                # TRANSMISSION
+                resp = secure_request("POST", INGEST_URL, json=chunk, timeout=20)
+
+                if resp and resp.status_code == 200:
+                    # SUCCESS: Reset batch size back to max if it was previously throttled
+                    if OUTBOUND_BATCH_SIZE < ORIGINAL_BATCH_SIZE:
+                        OUTBOUND_BATCH_SIZE = ORIGINAL_BATCH_SIZE
+                    time.sleep(OUTBOUND_BATCH_WAIT_SECONDS)
+                    continue
+
+                elif resp and resp.status_code == 422:
+                    # POISON PILL RECOVERY: Isolate malformed log
+                    print(f"[WARN] Batch chunk rejected (422). Isolating broken records...")
+                    for single_log in chunk:
+                        sr = secure_request("POST", INGEST_URL, json=[single_log], timeout=10)
+                        if not sr or sr.status_code != 200:
+                            print(f"[DROP] Dropping malformed forensic event: {single_log.get('event_id')}")
+                    continue
+
+                else:
+                    # FAILURE RECOVERY STATE
+                    code = resp.status_code if resp else "timeout"
+
+                    if resp and resp.status_code == 413:
+                        print(f"[FAIL] Backend rejected payload: 413.")
+
+                        # Fix the Uvicorn Keep-Alive Socket Poisoning
+                        # Uvicorn abruptly closes the socket on 413, poisoning our connection pool.
+                        # This clears the broken socket to prevent the subsequent "timeout" error.
+                        try:
+                            REQUEST_SESSION.close()
+                            REQUEST_SESSION = requests.Session()
+                        except: pass
+
+                        # -- STRATEGY 1: GLOBAL BATCH HALVING --
+                        if len(chunk) > 1:
+                            OUTBOUND_BATCH_SIZE = max(1, len(chunk) // 2)
+                            print(f"[INFO] Halving OUTBOUND_BATCH_SIZE to {OUTBOUND_BATCH_SIZE} to respect 1MB limit...")
+
+                            # Re-spool the chunk so it is processed in smaller pieces on the next loop
+                            for log in chunk:
+                                SPOOLER.append(log)
+
+                        # -- STRATEGY 2: SINGLE-LOG TRUNCATION --
+                        else:
+                            print(f"[WARN] Single log exceeds 1MB! Truncating to maintain compliance...")
+                            SPOOLER.append(_truncate_single_log_payload(chunk[0]))
+                            # Blockage explicitly cleared via truncation, restore max speed
+                            OUTBOUND_BATCH_SIZE = ORIGINAL_BATCH_SIZE
+
+                        # Re-spool the rest of the original unattempted batch elements
+                        for remaining_log in batch[i + len(chunk):]:
+                            SPOOLER.append(remaining_log)
+
+                    else:
+                        if resp and resp.status_code == 429:
+                            print("[WARN] Backend rate limited (429). Backing off for 10s...")
+                            for remaining_log in batch[i:]:
+                                SPOOLER.append(remaining_log)
+                            all_success = False
+                            time.sleep(10)
+                            break
+
+                        # STANDARD UNAVAILABLE / TIMEOUT ERROR
+                        print(f"[WARN] Backend Unavailable ({code}). Retrying in 5s...")
+                        for remaining_log in batch[i:]:
+                            SPOOLER.append(remaining_log)
+
+                    all_success = False
+                    time.sleep(5)
+                    break
+
+            # Clean up the original spool file (since remaining items were re-spooled or success)
+            SPOOLER.clear_batch(filename)
+
+        except Exception as e:
+            print(f"[!] Bulk Sender Crash: {e}")
+            time.sleep(2)
+
+
+def resolve_web_log_files():
+    """Resolve configured web log files and glob patterns to concrete file paths."""
+    resolved = []
+    for path_pattern in WEB_LOG_PATHS:
+        matches = glob.glob(path_pattern)
+        if matches:
+            resolved.extend(matches)
+        elif os.path.exists(path_pattern):
+            resolved.append(path_pattern)
+    return sorted(set(resolved))
+
+# ==========================================
+# 4. THREADS
+# ==========================================
+def heartbeat_thread():
+    heartbeat_url = f"{BACKEND_URL}/api/v1/ingest/heartbeat"
+    while True:
+        resp = secure_request("POST", heartbeat_url, json={"agent_id": AGENT_ID}, timeout=10)
+        if resp and resp.status_code == 200:
+            data = resp.json()
+            for bad_ip in data.get("enforce_bans", []):
+                enforce_block(bad_ip)
+        time.sleep(HEARTBEAT_INTERVAL)
+
+# NEW: WEB LOG HUNTER (Monitors text files live)
+def web_hunter_thread():
+    print(f"[*] Web Hunter Online. Monitoring paths: {WEB_LOG_PATHS}")
+    file_positions = {}
+
+    while True:
+        log_files = resolve_web_log_files()
+
+        for file_path in log_files:
+            if not os.path.exists(file_path):
+                continue
+
+            if file_path not in file_positions:
+                try:
+                    file_positions[file_path] = os.path.getsize(file_path)
+                except Exception:
+                    file_positions[file_path] = 0
+
+            try:
+                current_size = os.path.getsize(file_path)
+                if current_size < file_positions[file_path]:
+                    # Log rotated/truncated, restart from beginning of new file.
+                    file_positions[file_path] = 0
+
+                with open(file_path, "r", encoding="utf-8", errors="replace") as file:
+                    file.seek(file_positions[file_path], 0)
+                    while True:
+                        line = file.readline()
+                        if not line:
+                            break
+
+                        line = line.strip()
+                        if not line:
+                            continue
+
+                        print(f"[INFO] Web Event Detected: {line[:50]}...")
+                        extracted_source_ip = extract_source_ip_from_line(line)
+                        payload = {
+                            "agent_id": AGENT_ID,
+                            "source_ip": extracted_source_ip or LOCAL_IP,
+                            "user": "Web-Visitor",
+                            "event_id": 80, # Custom ID for Web Logs
+                            "event_uid": uuid.uuid4().hex,
+                            "message": line,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "raw_data": {"raw": line, "web_log_file": file_path},
+                            "raw_event_data": {"raw": line, "web_log_file": file_path},
+                            "processed_data": {},
+                            "agent_version": "4.0-Omni"
+                        }
+                        _sign_event_payload(payload, _load_or_create_signing_key())
+                        enqueue_payload(payload)
+
+                    file_positions[file_path] = file.tell()
+            except Exception as e:
+                print(f"[!] Web log read error ({file_path}): {e}")
+
+        time.sleep(0.2)
+
+
+def log_hunter_thread():
+    print(f"[*] Windows Hunter Online. Streaming via Secure Tunnel...")
+    if CAPTURE_ALL_SECURITY_EVENTS:
+        print("[*] Monitoring Mode: capture_all_security_events=true (all Security log events)")
+    if CAPTURE_ALL_WINDOWS_CHANNELS:
+        print("[*] Monitoring Mode: capture_all_windows_channels=true")
+    print(f"[*] Monitoring Channels: {WINDOWS_CHANNELS}")
+    print(f"[*] Monitoring Event IDs: {sorted(TARGET_EVENT_IDS)}")
+    highest_record_seen = {}
+    flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
+
+    for log_type in WINDOWS_CHANNELS:
+        try:
+            temp_hand = win32evtlog.OpenEventLog(None, log_type)
+            events = win32evtlog.ReadEventLog(temp_hand, flags, 0)
+            if events:
+                highest_record_seen[log_type] = events[0].RecordNumber
+            else:
+                highest_record_seen[log_type] = 0
+            win32evtlog.CloseEventLog(temp_hand)
+            print(f"[*] Synced channel '{log_type}'. Watermark: {highest_record_seen[log_type]}")
+        except Exception as e:
+            print(f"[!] Channel open failed ({log_type}): {e}")
+            highest_record_seen[log_type] = 0
+
+    if not any(v >= 0 for v in highest_record_seen.values()):
+        print("[!] No Windows Event channels available. Run agent as Administrator.")
+        os._exit(1)
+
+    while True:
+        for log_type in WINDOWS_CHANNELS:
+            hand = None
+            try:
+                hand = win32evtlog.OpenEventLog(None, log_type)
+                events = win32evtlog.ReadEventLog(hand, flags, 0)
+
+                if events:
+                    channel_watermark = highest_record_seen.get(log_type, 0)
+                    current_batch_highest = channel_watermark
+                    for event in events:
+                        if event.RecordNumber <= channel_watermark:
+                            break
+
+                        current_batch_highest = max(current_batch_highest, event.RecordNumber)
+                        event_id = event.EventID & 0xFFFF
+
+                        # Ignore malformed/noise records that surface as Event ID 0.
+                        if event_id <= 0:
+                            continue
+
+                        include_event = CAPTURE_ALL_WINDOWS_CHANNELS
+                        if not include_event:
+                            if log_type.lower() == "security" and CAPTURE_ALL_SECURITY_EVENTS:
+                                include_event = True
+                            elif event_id in TARGET_EVENT_IDS:
+                                include_event = True
+
+                        if include_event:
+                            try:
+                                raw_msg = win32evtlogutil.SafeFormatMessage(event, log_type)
+                            except Exception:
+                                inserts = getattr(event, "StringInserts", None) or []
+                                raw_msg = " | ".join(str(x) for x in inserts) if inserts else f"Event {event_id}"
+
+                            clean_msg = " ".join(str(raw_msg).split())
+
+                            # DEEP EXTRACTION & RAW FALLBACK
+                            parsed_payload = parse_event_data(event_id, raw_msg)
+
+                            payload = {
+                                "agent_id": AGENT_ID,
+                                "source_ip": LOCAL_IP,
+                                "user": resolve_user(event.Sid),
+                                "event_id": event_id,
+                                "event_uid": f"{log_type}:{event.RecordNumber}",
+                                "message": f"[{log_type}] Event {event_id}: {clean_msg}",
+                                "timestamp": event.TimeGenerated.replace(tzinfo=datetime.now().astimezone().tzinfo).astimezone(timezone.utc).isoformat() if event.TimeGenerated else datetime.now(timezone.utc).isoformat(),
+                                "processed_data": parsed_payload["processed_data"],
+                                "raw_event_data": parsed_payload["raw_event_data"],
+                                "agent_version": "4.1-Hardened"
+                            }
+
+                            # PHASE 4: Client-Side Cryptographic Non-Repudiation
+                            _sign_event_payload(payload, _load_or_create_signing_key())
+
+                            print(f"[INFO] Windows Event Spooled: {log_type}:{event_id}")
+                            enqueue_payload(payload)
+
+                    highest_record_seen[log_type] = current_batch_highest
+
+            except Exception:
+                pass
+            finally:
+                if hand:
+                    win32evtlog.CloseEventLog(hand)
+
+        time.sleep(POLL_INTERVAL)
+
+if __name__ == "__main__":
+    print("==========================================")
+    print(f"   WarSOC OMNI AGENT v4.0 ")
+    print(f"   Tenant ID: {TENANT_ID}")
+    print("==========================================")
+
+    if not TARGET_EVENT_IDS and not CAPTURE_ALL_SECURITY_EVENTS:
+        print("[FAIL] FATAL: No Event IDs configured. Set monitoring.target_event_ids in tenant_policy.json or app/config/config.json")
+        sys.exit(1)
+
+    authenticate_agent()
+
+    # START ALL SENSORS
+    threading.Thread(target=heartbeat_thread, daemon=True).start()
+    threading.Thread(target=ingest_sender_thread, daemon=True).start()
+    threading.Thread(target=log_hunter_thread, daemon=True).start()
+    threading.Thread(target=web_hunter_thread, daemon=True).start() # The new Web Scanner!
+
+    try:
+        while True: time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n[INFO] Safe exit.")
+        sys.exit(0)

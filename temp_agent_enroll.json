@@ -1,0 +1,6 @@
+{
+  "agent_id": "WARSOC_C8265D33",
+  "public_key": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE0rVl35VwGr1q/rphbqV4pQ1z6DIZEsvAtDRqb/3U\nnvgCFUkACZXAN+7r2JzP76/Q1i7c3x1jTYiVntkBVOZTGg==\n-----END PUBLIC KEY-----",
+  "hostname": "dev-host",
+  "mac_address": "00:11:22:33:44:55"
+}

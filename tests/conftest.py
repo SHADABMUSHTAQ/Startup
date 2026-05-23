@@ -1,0 +1,294 @@
+"""
+Pytest configuration and fixtures for WarSOC test suite.
+All tests use async_client fixture and pytest-asyncio for async execution.
+Database is Motor (async MongoDB) in test DB; Redis is flushed per test.
+"""
+import os
+import sys
+from datetime import datetime, timezone
+
+import pytest
+import pytest_asyncio
+from ecdsa import SigningKey, NIST256p
+import hashlib
+
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+from app.config.config import get_settings
+from app.routes.auth import get_password_hash, resolve_tenant_retention_days
+from motor.motor_asyncio import AsyncIOMotorClient
+import redis.asyncio as aioredis
+from httpx import AsyncClient, ASGITransport
+
+from app.main import app as fastapi_app
+from app.database import get_db, db_manager
+
+
+# Disable MemoryLimitMiddleware for tests (host memory percent is non-deterministic)
+async def _noop_dispatch(self, request, call_next):
+    return await call_next(request)
+
+try:
+    from app.main import MemoryLimitMiddleware
+    MemoryLimitMiddleware.dispatch = _noop_dispatch
+except Exception:
+    pass
+
+
+@pytest.fixture(scope="session")
+def settings():
+    """Provide test settings (loaded once per session)."""
+    return get_settings()
+
+
+@pytest_asyncio.fixture(scope="function")
+async def mongo_client(settings):
+    """Function-scoped Motor client created on the active test event loop."""
+    client = AsyncIOMotorClient(settings.mongodb_uri)
+    yield client
+    client.close()
+
+
+@pytest_asyncio.fixture(scope="function", autouse=True)
+async def override_db_dependency(mongo_client, settings, redis_client):
+    """Override get_db() to return the test Motor db instance and set app.state.redis to None."""
+    test_db = mongo_client[settings.mongodb_db_name]
+    previous_db = db_manager.db
+    previous_client = db_manager.client
+
+    async def _get_test_db():
+        return test_db
+
+    fastapi_app.dependency_overrides[get_db] = _get_test_db
+    db_manager.client = mongo_client
+    db_manager.db = test_db
+
+    # Bind the active test Redis client so routes that check `if redis:` use it
+    fastapi_app.state.redis = redis_client
+
+    yield
+
+    fastapi_app.dependency_overrides.pop(get_db, None)
+    db_manager.client = previous_client
+    db_manager.db = previous_db
+    fastapi_app.state.redis = None
+
+
+@pytest_asyncio.fixture(scope="function", autouse=True)
+async def db(mongo_client, settings):
+    """Function-scoped fixture to provide clean db per test."""
+    db = mongo_client[settings.mongodb_db_name]
+    collections = [
+        "agents",
+        "analysis_results",
+        "billing",
+        "csv_uploads",
+        "dead_letter_logs",
+        "fbr_pos_logs",
+        "fbr_vault",
+        "firewall_rules",
+        "logs",
+        "management_audit",
+        "notifications",
+        "peca_forensic_logs",
+        "security_alerts",
+        "system_audit",
+        "tenants",
+        "used_provisioning_tokens",
+        "users",
+    ]
+    for c in collections:
+        try:
+            await db[c].delete_many({})
+        except Exception:
+            pass
+
+    yield db
+
+    for c in collections:
+        try:
+            await db[c].delete_many({})
+        except Exception:
+            pass
+
+
+@pytest_asyncio.fixture(scope="function")
+async def redis_client(settings):
+    """Function-scoped fixture for Redis (auto cleanup)."""
+    r = await aioredis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        await r.flushdb()
+    except Exception:
+        pass
+    yield r
+    try:
+        await r.flushdb()
+    except Exception:
+        pass
+    # Don't explicitly close - let the connection manager handle cleanup
+    # try:
+    #     await r.aclose()
+    # except Exception:
+    #     pass
+
+
+async def _provision_mock_tenant(db, redis, *, tenant_suffix: str, plan_type: str = "Enterprise") -> dict:
+    tenant_id = f"WARSOC_{tenant_suffix.upper()}"
+    agent_id = f"{tenant_id}_AGENT"
+    hostname = f"{tenant_suffix.lower()}-host"
+
+    signing_key = SigningKey.generate(curve=NIST256p, hashfunc=hashlib.sha256)
+    public_key = signing_key.get_verifying_key().to_pem().decode("utf-8")
+
+    tenant_doc = {
+        "tenant_id": tenant_id,
+        "company_name": f"{tenant_suffix} Holdings",
+        "plan": plan_type,
+        "plan_type": plan_type,
+        "retention_days": resolve_tenant_retention_days(plan_type),
+        "status": "active",
+        "created_at": datetime.now(timezone.utc),
+    }
+    user_doc = {
+        "username": f"{tenant_suffix.lower()}_admin",
+        "email": f"{tenant_suffix.lower()}_admin@example.com",
+        "full_name": f"{tenant_suffix} Admin",
+        "hashed_password": get_password_hash("Password123!"),
+        "tenant_id": tenant_id,
+        "plan_type": plan_type,
+        "role": "admin",
+        "compliance_packs": ["eto_forensic", "fbr_pos"] if plan_type.lower() != "free" else [],
+        "has_active_plan": True,
+        "created_at": datetime.now(timezone.utc),
+    }
+    agent_doc = {
+        "agent_id": agent_id,
+        "tenant_id": tenant_id,
+        "hostname": hostname,
+        "public_key": public_key,
+        "approved": True,
+        "status": "active",
+        "created_at": datetime.now(timezone.utc),
+    }
+
+    await db["tenants"].update_one({"tenant_id": tenant_id}, {"$set": tenant_doc}, upsert=True)
+    await db["users"].update_one({"username": user_doc["username"]}, {"$set": user_doc}, upsert=True)
+    await db["agents"].update_one({"agent_id": agent_id}, {"$set": agent_doc}, upsert=True)
+
+    if redis is not None:
+        await redis.set(f"tenant_plan:{tenant_id}", plan_type)
+        await redis.hset(
+            f"warsoc:agent_cache:{agent_id}",
+            mapping={"tenant_id": tenant_id, "public_key": public_key, "approved": "True"},
+        )
+        await redis.expire(f"warsoc:agent_cache:{agent_id}", 3600)
+
+    return {
+        "tenant_id": tenant_id,
+        "agent_id": agent_id,
+        "hostname": hostname,
+        "public_key": public_key,
+        "private_key_pem": signing_key.to_pem().decode("utf-8"),
+        "username": user_doc["username"],
+        "password": "Password123!",
+        "plan_type": plan_type,
+    }
+
+
+@pytest_asyncio.fixture(scope="function")
+async def mock_tenant_a(db, redis_client):
+    return await _provision_mock_tenant(db, redis_client, tenant_suffix="TENANT_A", plan_type="Enterprise")
+
+
+@pytest_asyncio.fixture(scope="function")
+async def mock_tenant_b(db, redis_client):
+    return await _provision_mock_tenant(db, redis_client, tenant_suffix="TENANT_B", plan_type="Enterprise")
+
+
+@pytest_asyncio.fixture(scope="function")
+async def clean_slate(db, redis_client):
+    collections = [
+        "agents",
+        "analysis_results",
+        "billing",
+        "csv_uploads",
+        "dead_letter_logs",
+        "fbr_pos_logs",
+        "fbr_vault",
+        "firewall_rules",
+        "logs",
+        "management_audit",
+        "notifications",
+        "peca_forensic_logs",
+        "security_alerts",
+        "system_audit",
+        "tenants",
+        "used_provisioning_tokens",
+        "users",
+    ]
+    for collection_name in collections:
+        try:
+            await db[collection_name].delete_many({})
+        except Exception:
+            pass
+
+    try:
+        await redis_client.flushdb()
+    except Exception:
+        pass
+
+    yield
+
+    for collection_name in collections:
+        try:
+            await db[collection_name].delete_many({})
+        except Exception:
+            pass
+
+    try:
+        await redis_client.flushdb()
+    except Exception:
+        pass
+
+
+@pytest_asyncio.fixture(scope="function")
+async def async_client(redis_client, db):
+    """Async HTTP client using ASGITransport for route testing."""
+    transport = ASGITransport(app=fastapi_app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        yield ac
+
+
+@pytest_asyncio.fixture(scope="function")
+async def auth_headers(async_client):
+    """Create test user and return auth headers."""
+    payload = {
+        "username": "test_integ_user",
+        "password": "Password123!",
+        "email": "test_integ@example.com",
+        "full_name": "Integration Tester",
+        "plan_type": "Free",
+    }
+    resp = await async_client.post("/api/v1/auth/signup", json=payload)
+    assert resp.status_code == 201
+
+    login = await async_client.post("/api/v1/auth/login", json={"username": payload["username"], "password": payload["password"]})
+    assert login.status_code == 200
+    assert "warsoc_token" in login.cookies
+    token = login.cookies.get("warsoc_token")
+    csrf_token = login.json().get("csrf_token", "")
+    async_client.cookies.set("warsoc_token", token)
+    async_client.cookies.set("csrf_token", csrf_token)
+    return {"x-csrf-token": csrf_token}
+
+
+@pytest_asyncio.fixture(scope="function")
+async def client(async_client):
+    """Alias for async_client for backward compatibility with existing tests."""
+    return async_client
+
+
+@pytest_asyncio.fixture(scope="function")
+async def authenticated_user(auth_headers):
+    """Alias for auth_headers for backward compatibility with existing tests."""
+    return auth_headers

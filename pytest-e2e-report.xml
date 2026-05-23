@@ -1,0 +1,561 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="5" failures="4" skipped="0" tests="101" time="155.589" timestamp="2026-05-19T11:11:54.029214+01:00" hostname="DESKTOP-U5K0V15"><testcase classname="scripts.fbr_stress_test" name="test_fbr_stress" time="43.388" /><testcase classname="test_chunk3_breach" name="test_csrf_bypass" time="0.203"><failure message="AssertionError: Login failed: {&quot;detail&quot;:&quot;Invalid credentials&quot;}&#10;assert 401 == 200&#10; +  where 401 = &lt;Response [401 Unauthorized]&gt;.status_code">@pytest.mark.asyncio
+    async def test_csrf_bypass():
+        print("\n--- Test 1: The CSRF Bypass ---")
+        async with httpx.AsyncClient(verify=False) as client:
+            # 1. Login to get cookies
+            login_resp = await client.post(
+                f"{BASE_URL}/api/v1/auth/login",
+                json={"username": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+            )
+&gt;           assert login_resp.status_code == 200, f"Login failed: {login_resp.text}"
+E           AssertionError: Login failed: {"detail":"Invalid credentials"}
+E           assert 401 == 200
+E            +  where 401 = &lt;Response [401 Unauthorized]&gt;.status_code
+
+test_chunk3_breach.py:24: AssertionError</failure></testcase><testcase classname="test_chunk3_breach" name="test_stale_session" time="0.043" /><testcase classname="test_chunk3_breach" name="test_tenant_bleed" time="0.080"><failure message="AssertionError: Login failed: {&quot;detail&quot;:&quot;Invalid credentials&quot;}&#10;assert 401 == 200&#10; +  where 401 = &lt;Response [401 Unauthorized]&gt;.status_code">@pytest.mark.asyncio
+    async def test_tenant_bleed():
+        print("\n--- Test 3: The Tenant Bleed (BOLA/IDOR) ---")
+        async with httpx.AsyncClient(verify=False) as client:
+            # Login normally
+            login_resp = await client.post(
+                f"{BASE_URL}/api/v1/auth/login",
+                json={"username": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+            )
+&gt;           assert login_resp.status_code == 200, f"Login failed: {login_resp.text}"
+E           AssertionError: Login failed: {"detail":"Invalid credentials"}
+E           assert 401 == 200
+E            +  where 401 = &lt;Response [401 Unauthorized]&gt;.status_code
+
+test_chunk3_breach.py:63: AssertionError</failure></testcase><testcase classname="test_chunk5_compliance" name="test_cold_storage_routing" time="0.001"><error message="failed on setup with &quot;file C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py, line 151&#10;  async def test_cold_storage_routing(http: httpx.AsyncClient):&#10;      &quot;&quot;&quot;&#10;      Injects a signed Event 4625 via /pulse and verifies the PECA worker&#10;      routes it to the peca_forensic_logs cold-storage collection.&#10;      Returns the raw mongosh output for the sealed doc.&#10;      &quot;&quot;&quot;&#10;      print(&quot;\n&quot; + &quot;=&quot;*66)&#10;      print(&quot;  TEST 1: Cold-Storage Routing Verification&quot;)&#10;      print(&quot;=&quot;*66)&#10;&#10;      event_uid = str(uuid.uuid4())&#10;      raw_payload = {&#10;          &quot;agent_id&quot;: AGENT_ID,&#10;          &quot;source_ip&quot;: &quot;10.99.0.1&quot;,&#10;          &quot;user&quot;: &quot;ComplianceTestUser&quot;,&#10;          &quot;event_id&quot;: 4625,&#10;          &quot;event_uid&quot;: event_uid,&#10;          &quot;message&quot;: f&quot;Chunk5 Compliance Routing Test {event_uid}&quot;,&#10;          &quot;timestamp&quot;: datetime.now(timezone.utc).isoformat(),&#10;          &quot;raw_data&quot;: {&quot;raw&quot;: &quot;Compliance Routing Nuclear Test&quot;},&#10;          &quot;agent_version&quot;: &quot;4.0-Omni&quot;,&#10;      }&#10;&#10;      # Strip empty processed_data to match agent behavior&#10;      raw_payload.pop(&quot;processed_data&quot;, None)&#10;&#10;      # Sign with the Agent's ECDSA key (exact agent pipeline)&#10;      from agent.windows_agent import _sign_event_payload, SigningKey, PRIVATE_KEY_PATH as AGENT_KEY_PATH&#10;      with open(AGENT_KEY_PATH, &quot;r&quot;) as f:&#10;          signing_key = SigningKey.from_pem(f.read(), hashfunc=hashlib.sha256)&#10;      _sign_event_payload(raw_payload, signing_key)&#10;&#10;      # Ensure hex signature&#10;      if not isinstance(raw_payload.get(&quot;agent_signature&quot;), str):&#10;          raw_payload[&quot;agent_signature&quot;] = raw_payload[&quot;agent_signature&quot;].hex()&#10;&#10;      # Fire the payload through the ingestion gateway&#10;      print(f&quot;[*] Injecting Event 4625 (event_uid={event_uid}) via /pulse...&quot;)&#10;      resp = await http.post(&#10;          f&quot;{API_BASE}/ingest/pulse&quot;,&#10;          headers={&quot;Authorization&quot;: f&quot;Bearer {AGENT_TOKEN}&quot;, &quot;Content-Type&quot;: &quot;application/json&quot;},&#10;          json=[raw_payload],&#10;      )&#10;      print(f&quot;[*] Ingestion Response: {resp.status_code}&quot;)&#10;      assert resp.status_code == 200, f&quot;FAIL: Ingestion rejected ({resp.status_code}): {resp.text}&quot;&#10;      print(&quot;[✓] Payload accepted by ingestion gateway.&quot;)&#10;&#10;      # Wait for the PECA/FBR workers to process the Redis stream entry&#10;      # Workers use hybrid flush: 100 logs OR 3-second timeout&#10;      print(&quot;[*] Waiting 6s for compliance workers to process &amp; flush...&quot;)&#10;      await asyncio.sleep(6)&#10;&#10;      # Direct MongoDB verification via docker exec&#10;      query_json = json.dumps({&quot;event_uid&quot;: event_uid})&#10;&#10;      print(f&quot;[*] Querying peca_forensic_logs for event_uid={event_uid}...&quot;)&#10;      peca_doc = mongo_query(&quot;peca_forensic_logs&quot;, query_json)&#10;&#10;      print(f&quot;[*] Querying fbr_pos_logs for event_uid={event_uid}...&quot;)&#10;      fbr_doc = mongo_query(&quot;fbr_pos_logs&quot;, query_json)&#10;&#10;      found_in_peca = peca_doc is not None and &quot;_raw_output&quot; not in peca_doc&#10;      found_in_fbr  = fbr_doc is not None and &quot;_raw_output&quot; not in fbr_doc&#10;&#10;      # If we got raw output, it means the doc exists but we couldn't parse it — that's still a pass&#10;      if peca_doc and &quot;_raw_output&quot; in peca_doc:&#10;          raw = peca_doc[&quot;_raw_output&quot;]&#10;          if &quot;forensic_seal&quot; in raw and event_uid in raw:&#10;              found_in_peca = True&#10;      if fbr_doc and &quot;_raw_output&quot; in fbr_doc:&#10;          raw = fbr_doc[&quot;_raw_output&quot;]&#10;          if &quot;forensic_seal&quot; in raw and event_uid in raw:&#10;              found_in_fbr = True&#10;&#10;      print(f&quot;[*] Found in peca_forensic_logs: {found_in_peca}&quot;)&#10;      print(f&quot;[*] Found in fbr_pos_logs:       {found_in_fbr}&quot;)&#10;&#10;      assert found_in_peca or found_in_fbr, (&#10;          f&quot;FAIL: event_uid {event_uid} not found in ANY cold-storage collection. &quot;&#10;          &quot;Workers may not be routing Event 4625.&quot;&#10;      )&#10;&#10;      collection_name = &quot;peca_forensic_logs&quot; if found_in_peca else &quot;fbr_pos_logs&quot;&#10;      print(f&quot;[✓] PASS: Event routed to cold-storage ({collection_name}).&quot;)&#10;&#10;      return event_uid, collection_name&#10;E       fixture 'http' not found&#10;&gt;       available fixtures: _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, extra, extras, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, include_metadata_in_junit_xml, metadata, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory&#10;&gt;       use 'pytest --fixtures [testpath]' for help on them.&#10;&#10;C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py:151&quot;">file C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py, line 151
+  async def test_cold_storage_routing(http: httpx.AsyncClient):
+      """
+      Injects a signed Event 4625 via /pulse and verifies the PECA worker
+      routes it to the peca_forensic_logs cold-storage collection.
+      Returns the raw mongosh output for the sealed doc.
+      """
+      print("\n" + "="*66)
+      print("  TEST 1: Cold-Storage Routing Verification")
+      print("="*66)
+
+      event_uid = str(uuid.uuid4())
+      raw_payload = {
+          "agent_id": AGENT_ID,
+          "source_ip": "10.99.0.1",
+          "user": "ComplianceTestUser",
+          "event_id": 4625,
+          "event_uid": event_uid,
+          "message": f"Chunk5 Compliance Routing Test {event_uid}",
+          "timestamp": datetime.now(timezone.utc).isoformat(),
+          "raw_data": {"raw": "Compliance Routing Nuclear Test"},
+          "agent_version": "4.0-Omni",
+      }
+
+      # Strip empty processed_data to match agent behavior
+      raw_payload.pop("processed_data", None)
+
+      # Sign with the Agent's ECDSA key (exact agent pipeline)
+      from agent.windows_agent import _sign_event_payload, SigningKey, PRIVATE_KEY_PATH as AGENT_KEY_PATH
+      with open(AGENT_KEY_PATH, "r") as f:
+          signing_key = SigningKey.from_pem(f.read(), hashfunc=hashlib.sha256)
+      _sign_event_payload(raw_payload, signing_key)
+
+      # Ensure hex signature
+      if not isinstance(raw_payload.get("agent_signature"), str):
+          raw_payload["agent_signature"] = raw_payload["agent_signature"].hex()
+
+      # Fire the payload through the ingestion gateway
+      print(f"[*] Injecting Event 4625 (event_uid={event_uid}) via /pulse...")
+      resp = await http.post(
+          f"{API_BASE}/ingest/pulse",
+          headers={"Authorization": f"Bearer {AGENT_TOKEN}", "Content-Type": "application/json"},
+          json=[raw_payload],
+      )
+      print(f"[*] Ingestion Response: {resp.status_code}")
+      assert resp.status_code == 200, f"FAIL: Ingestion rejected ({resp.status_code}): {resp.text}"
+      print("[✓] Payload accepted by ingestion gateway.")
+
+      # Wait for the PECA/FBR workers to process the Redis stream entry
+      # Workers use hybrid flush: 100 logs OR 3-second timeout
+      print("[*] Waiting 6s for compliance workers to process &amp; flush...")
+      await asyncio.sleep(6)
+
+      # Direct MongoDB verification via docker exec
+      query_json = json.dumps({"event_uid": event_uid})
+
+      print(f"[*] Querying peca_forensic_logs for event_uid={event_uid}...")
+      peca_doc = mongo_query("peca_forensic_logs", query_json)
+
+      print(f"[*] Querying fbr_pos_logs for event_uid={event_uid}...")
+      fbr_doc = mongo_query("fbr_pos_logs", query_json)
+
+      found_in_peca = peca_doc is not None and "_raw_output" not in peca_doc
+      found_in_fbr  = fbr_doc is not None and "_raw_output" not in fbr_doc
+
+      # If we got raw output, it means the doc exists but we couldn't parse it — that's still a pass
+      if peca_doc and "_raw_output" in peca_doc:
+          raw = peca_doc["_raw_output"]
+          if "forensic_seal" in raw and event_uid in raw:
+              found_in_peca = True
+      if fbr_doc and "_raw_output" in fbr_doc:
+          raw = fbr_doc["_raw_output"]
+          if "forensic_seal" in raw and event_uid in raw:
+              found_in_fbr = True
+
+      print(f"[*] Found in peca_forensic_logs: {found_in_peca}")
+      print(f"[*] Found in fbr_pos_logs:       {found_in_fbr}")
+
+      assert found_in_peca or found_in_fbr, (
+          f"FAIL: event_uid {event_uid} not found in ANY cold-storage collection. "
+          "Workers may not be routing Event 4625."
+      )
+
+      collection_name = "peca_forensic_logs" if found_in_peca else "fbr_pos_logs"
+      print(f"[✓] PASS: Event routed to cold-storage ({collection_name}).")
+
+      return event_uid, collection_name
+E       fixture 'http' not found
+&gt;       available fixtures: _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, extra, extras, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, include_metadata_in_junit_xml, metadata, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+&gt;       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py:151</error></testcase><testcase classname="test_chunk5_compliance" name="test_cryptographic_seal_via_api" time="0.001"><error message="failed on setup with &quot;file C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py, line 242&#10;  async def test_cryptographic_seal_via_api(http: httpx.AsyncClient, event_uid: str, collection_name: str):&#10;      &quot;&quot;&quot;&#10;      Fetches the sealed document from MongoDB, extracts the forensic_seal,&#10;      reconstructs the signable payload, and calls /compliance/verify to&#10;      have the server independently validate the RSA-PSS signature.&#10;      &quot;&quot;&quot;&#10;      print(&quot;\n&quot; + &quot;=&quot;*66)&#10;      print(&quot;  TEST 2: Cryptographic Seal Verification (via /verify API)&quot;)&#10;      print(&quot;=&quot;*66)&#10;&#10;      # Fetch the full sealed document from MongoDB&#10;      # We need the exact fields to reconstruct the signed payload&#10;      query_json = json.dumps({&quot;event_uid&quot;: event_uid})&#10;      js = f'printjson(db.{collection_name}.findOne({query_json}))'&#10;      result = subprocess.run(&#10;          [&quot;docker&quot;, &quot;exec&quot;, MONGO_CONTAINER, &quot;mongosh&quot;, MONGO_URI_DOCKER, &quot;--quiet&quot;, &quot;--eval&quot;, js],&#10;          capture_output=True, text=True, timeout=15,&#10;      )&#10;      raw_output = result.stdout.strip()&#10;      print(f&quot;[*] Raw document retrieved ({len(raw_output)} chars)&quot;)&#10;&#10;      # Extract the forensic_seal from the raw output&#10;      import re&#10;      seal_match = re.search(r&quot;forensic_seal:\s*'([^']+)'&quot;, raw_output)&#10;      if not seal_match:&#10;          seal_match = re.search(r'&quot;forensic_seal&quot;:\s*&quot;([^&quot;]+)&quot;', raw_output)&#10;&#10;      assert seal_match, &quot;FAIL: Could not extract forensic_seal from document.&quot;&#10;      forensic_seal = seal_match.group(1)&#10;      print(f&quot;[✓] Forensic seal extracted ({len(forensic_seal)} chars)&quot;)&#10;&#10;      # Verify the seal using the /compliance/verify endpoint&#10;      # The verify endpoint accepts either signed_payload (base64 canonical bytes)&#10;      # or raw_event dict. Since we can't perfectly reconstruct the dict from&#10;      # mongosh output, we'll use the signed_payload approach indirectly.&#10;      #&#10;      # Actually, the endpoint is public and rate-limited. Let's just pass the&#10;      # forensic_seal as the digital_signature and pass a dummy raw_event.&#10;      # The endpoint will try to verify — if it returns VALID, we're golden.&#10;      # If it returns TAMPERED, the seal itself is valid RSA but mismatches the payload.&#10;      #&#10;      # For a true verification, let's decode the seal and verify locally with the public key.&#10;&#10;      # Load the server's RSA public key&#10;      assert os.path.exists(PUBLIC_KEY_PATH), f&quot;FAIL: Public key not found at {PUBLIC_KEY_PATH}&quot;&#10;      with open(PUBLIC_KEY_PATH, &quot;rb&quot;) as f:&#10;          pub_key = serialization.load_pem_public_key(f.read())&#10;      print(&quot;[✓] RSA public key loaded.&quot;)&#10;&#10;      # Decode the base64 seal&#10;      signature_bytes = base64.b64decode(forensic_seal)&#10;      print(f&quot;[*] Seal decoded: {len(signature_bytes)} bytes&quot;)&#10;&#10;      # Verify we can decode it as valid RSA signature material&#10;      assert len(signature_bytes) &gt;= 128, f&quot;FAIL: Seal too short ({len(signature_bytes)} bytes) for RSA-2048&quot;&#10;      assert len(signature_bytes) &lt;= 512, f&quot;FAIL: Seal too long ({len(signature_bytes)} bytes)&quot;&#10;      print(f&quot;[✓] PASS: Forensic seal is valid RSA-2048 signature material ({len(signature_bytes)} bytes).&quot;)&#10;&#10;      # Note: Full mathematical verification requires reconstructing the EXACT canonical bytes&#10;      # that were signed. This requires parsing the full MongoDB document from the mongosh&#10;      # JSON output and stripping _id/forensic_seal/digital_signature. The verify endpoint&#10;      # handles this server-side. Let's test that endpoint next.&#10;&#10;      return forensic_seal&#10;E       fixture 'http' not found&#10;&gt;       available fixtures: _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, extra, extras, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, include_metadata_in_junit_xml, metadata, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory&#10;&gt;       use 'pytest --fixtures [testpath]' for help on them.&#10;&#10;C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py:242&quot;">file C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py, line 242
+  async def test_cryptographic_seal_via_api(http: httpx.AsyncClient, event_uid: str, collection_name: str):
+      """
+      Fetches the sealed document from MongoDB, extracts the forensic_seal,
+      reconstructs the signable payload, and calls /compliance/verify to
+      have the server independently validate the RSA-PSS signature.
+      """
+      print("\n" + "="*66)
+      print("  TEST 2: Cryptographic Seal Verification (via /verify API)")
+      print("="*66)
+
+      # Fetch the full sealed document from MongoDB
+      # We need the exact fields to reconstruct the signed payload
+      query_json = json.dumps({"event_uid": event_uid})
+      js = f'printjson(db.{collection_name}.findOne({query_json}))'
+      result = subprocess.run(
+          ["docker", "exec", MONGO_CONTAINER, "mongosh", MONGO_URI_DOCKER, "--quiet", "--eval", js],
+          capture_output=True, text=True, timeout=15,
+      )
+      raw_output = result.stdout.strip()
+      print(f"[*] Raw document retrieved ({len(raw_output)} chars)")
+
+      # Extract the forensic_seal from the raw output
+      import re
+      seal_match = re.search(r"forensic_seal:\s*'([^']+)'", raw_output)
+      if not seal_match:
+          seal_match = re.search(r'"forensic_seal":\s*"([^"]+)"', raw_output)
+
+      assert seal_match, "FAIL: Could not extract forensic_seal from document."
+      forensic_seal = seal_match.group(1)
+      print(f"[✓] Forensic seal extracted ({len(forensic_seal)} chars)")
+
+      # Verify the seal using the /compliance/verify endpoint
+      # The verify endpoint accepts either signed_payload (base64 canonical bytes)
+      # or raw_event dict. Since we can't perfectly reconstruct the dict from
+      # mongosh output, we'll use the signed_payload approach indirectly.
+      #
+      # Actually, the endpoint is public and rate-limited. Let's just pass the
+      # forensic_seal as the digital_signature and pass a dummy raw_event.
+      # The endpoint will try to verify — if it returns VALID, we're golden.
+      # If it returns TAMPERED, the seal itself is valid RSA but mismatches the payload.
+      #
+      # For a true verification, let's decode the seal and verify locally with the public key.
+
+      # Load the server's RSA public key
+      assert os.path.exists(PUBLIC_KEY_PATH), f"FAIL: Public key not found at {PUBLIC_KEY_PATH}"
+      with open(PUBLIC_KEY_PATH, "rb") as f:
+          pub_key = serialization.load_pem_public_key(f.read())
+      print("[✓] RSA public key loaded.")
+
+      # Decode the base64 seal
+      signature_bytes = base64.b64decode(forensic_seal)
+      print(f"[*] Seal decoded: {len(signature_bytes)} bytes")
+
+      # Verify we can decode it as valid RSA signature material
+      assert len(signature_bytes) &gt;= 128, f"FAIL: Seal too short ({len(signature_bytes)} bytes) for RSA-2048"
+      assert len(signature_bytes) &lt;= 512, f"FAIL: Seal too long ({len(signature_bytes)} bytes)"
+      print(f"[✓] PASS: Forensic seal is valid RSA-2048 signature material ({len(signature_bytes)} bytes).")
+
+      # Note: Full mathematical verification requires reconstructing the EXACT canonical bytes
+      # that were signed. This requires parsing the full MongoDB document from the mongosh
+      # JSON output and stripping _id/forensic_seal/digital_signature. The verify endpoint
+      # handles this server-side. Let's test that endpoint next.
+
+      return forensic_seal
+E       fixture 'http' not found
+&gt;       available fixtures: _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, extra, extras, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, include_metadata_in_junit_xml, metadata, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+&gt;       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py:242</error></testcase><testcase classname="test_chunk5_compliance" name="test_compliance_api_evidence" time="0.001"><error message="failed on setup with &quot;file C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py, line 311&#10;  async def test_compliance_api_evidence(http: httpx.AsyncClient, cookies: dict, csrf_token: str):&#10;      &quot;&quot;&quot;&#10;      Authenticates as an analyst and queries the compliance API to&#10;      verify sealed logs are accessible through the evidence endpoint.&#10;      &quot;&quot;&quot;&#10;      print(&quot;\n&quot; + &quot;=&quot;*66)&#10;      print(&quot;  TEST 3: Compliance API Evidence Retrieval&quot;)&#10;      print(&quot;=&quot;*66)&#10;&#10;      headers = {&quot;X-CSRF-Token&quot;: csrf_token}&#10;&#10;      # Query PECA evidence by pack&#10;      resp = await http.get(&#10;          f&quot;{API_BASE}/compliance/evidence/peca_forensic&quot;,&#10;          cookies=cookies,&#10;          headers=headers,&#10;      )&#10;      print(f&quot;[*] GET /compliance/evidence/peca_forensic -&gt; {resp.status_code}&quot;)&#10;&#10;      if resp.status_code == 200:&#10;          data = resp.json()&#10;          records = data.get(&quot;data&quot;, [])&#10;          total = data.get(&quot;pagination&quot;, {}).get(&quot;total&quot;, 0)&#10;          print(f&quot;[*] Total evidence records: {total} (returned {len(records)} in this page)&quot;)&#10;&#10;          sealed_count = sum(1 for r in records if r.get(&quot;forensic_seal&quot;))&#10;          print(f&quot;[*] Records with forensic seals: {sealed_count}/{len(records)}&quot;)&#10;&#10;          assert len(records) &gt; 0, &quot;FAIL: No evidence records returned.&quot;&#10;          assert sealed_count &gt; 0, &quot;FAIL: No forensic seals found in evidence records.&quot;&#10;          print(&quot;[✓] PASS: Compliance API returned forensically sealed evidence.&quot;)&#10;          return True&#10;      elif resp.status_code == 403:&#10;          detail = resp.json().get(&quot;detail&quot;, resp.text[:200])&#10;          print(f&quot;[⚠] 403 Forbidden — {detail}&quot;)&#10;          print(&quot;[⚠] This may indicate the user lacks compliance pack entitlement.&quot;)&#10;          return False&#10;      else:&#10;          print(f&quot;[✗] FAIL: Unexpected status {resp.status_code}: {resp.text[:200]}&quot;)&#10;          return False&#10;E       fixture 'http' not found&#10;&gt;       available fixtures: _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, extra, extras, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, include_metadata_in_junit_xml, metadata, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory&#10;&gt;       use 'pytest --fixtures [testpath]' for help on them.&#10;&#10;C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py:311&quot;">file C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py, line 311
+  async def test_compliance_api_evidence(http: httpx.AsyncClient, cookies: dict, csrf_token: str):
+      """
+      Authenticates as an analyst and queries the compliance API to
+      verify sealed logs are accessible through the evidence endpoint.
+      """
+      print("\n" + "="*66)
+      print("  TEST 3: Compliance API Evidence Retrieval")
+      print("="*66)
+
+      headers = {"X-CSRF-Token": csrf_token}
+
+      # Query PECA evidence by pack
+      resp = await http.get(
+          f"{API_BASE}/compliance/evidence/peca_forensic",
+          cookies=cookies,
+          headers=headers,
+      )
+      print(f"[*] GET /compliance/evidence/peca_forensic -&gt; {resp.status_code}")
+
+      if resp.status_code == 200:
+          data = resp.json()
+          records = data.get("data", [])
+          total = data.get("pagination", {}).get("total", 0)
+          print(f"[*] Total evidence records: {total} (returned {len(records)} in this page)")
+
+          sealed_count = sum(1 for r in records if r.get("forensic_seal"))
+          print(f"[*] Records with forensic seals: {sealed_count}/{len(records)}")
+
+          assert len(records) &gt; 0, "FAIL: No evidence records returned."
+          assert sealed_count &gt; 0, "FAIL: No forensic seals found in evidence records."
+          print("[✓] PASS: Compliance API returned forensically sealed evidence.")
+          return True
+      elif resp.status_code == 403:
+          detail = resp.json().get("detail", resp.text[:200])
+          print(f"[⚠] 403 Forbidden — {detail}")
+          print("[⚠] This may indicate the user lacks compliance pack entitlement.")
+          return False
+      else:
+          print(f"[✗] FAIL: Unexpected status {resp.status_code}: {resp.text[:200]}")
+          return False
+E       fixture 'http' not found
+&gt;       available fixtures: _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, extra, extras, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, include_metadata_in_junit_xml, metadata, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+&gt;       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py:311</error></testcase><testcase classname="test_chunk5_compliance" name="test_export_engine" time="0.001"><error message="failed on setup with &quot;file C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py, line 356&#10;  async def test_export_engine(http: httpx.AsyncClient, cookies: dict, csrf_token: str):&#10;      &quot;&quot;&quot;&#10;      Hits the CSV export endpoint and verifies that the server streams&#10;      back a file attachment with correct Content-Disposition headers.&#10;      &quot;&quot;&quot;&#10;      print(&quot;\n&quot; + &quot;=&quot;*66)&#10;      print(&quot;  TEST 4: CSV Export Engine Verification&quot;)&#10;      print(&quot;=&quot;*66)&#10;&#10;      headers = {&quot;X-CSRF-Token&quot;: csrf_token}&#10;&#10;      # Export compliance data as CSV&#10;      resp = await http.get(&#10;          f&quot;{API_BASE}/export/csv?data_type=compliance&quot;,&#10;          cookies=cookies,&#10;          headers=headers,&#10;      )&#10;      print(f&quot;[*] GET /export/csv?data_type=compliance -&gt; {resp.status_code}&quot;)&#10;&#10;      if resp.status_code == 200:&#10;          content_disposition = resp.headers.get(&quot;content-disposition&quot;, &quot;&quot;)&#10;          content_type = resp.headers.get(&quot;content-type&quot;, &quot;&quot;)&#10;          body_len = len(resp.content)&#10;&#10;          print(f&quot;[*] Content-Type: {content_type}&quot;)&#10;          print(f&quot;[*] Content-Disposition: {content_disposition}&quot;)&#10;          print(f&quot;[*] Body size: {body_len} bytes&quot;)&#10;&#10;          assert &quot;attachment&quot; in content_disposition, f&quot;FAIL: Missing 'attachment' in Content-Disposition&quot;&#10;          assert &quot;.csv&quot; in content_disposition, f&quot;FAIL: Missing '.csv' in Content-Disposition&quot;&#10;          assert body_len &gt; 0, &quot;FAIL: CSV body is empty.&quot;&#10;&#10;          # Verify CSV structure — check that we have header + data rows&#10;          lines = resp.content.decode(&quot;utf-8&quot;, errors=&quot;replace&quot;).strip().split(&quot;\n&quot;)&#10;          print(f&quot;[*] CSV rows: {len(lines)} (including header)&quot;)&#10;          assert len(lines) &gt;= 2, &quot;FAIL: CSV has no data rows (only header or empty).&quot;&#10;&#10;          print(&quot;[✓] PASS: CSV export engine returned valid file attachment.&quot;)&#10;          return True&#10;      elif resp.status_code == 404:&#10;          print(&quot;[⚠] 404 — No compliance data found for export.&quot;)&#10;          print(&quot;[*] Attempting fallback export with data_type=logs...&quot;)&#10;          resp2 = await http.get(&#10;              f&quot;{API_BASE}/export/csv?data_type=logs&quot;,&#10;              cookies=cookies,&#10;              headers=headers,&#10;          )&#10;          if resp2.status_code == 200:&#10;              cd = resp2.headers.get(&quot;content-disposition&quot;, &quot;&quot;)&#10;              assert &quot;attachment&quot; in cd, &quot;FAIL: Missing 'attachment' in Content-Disposition&quot;&#10;              print(f&quot;[✓] PASS: Fallback CSV export returned valid attachment ({len(resp2.content)} bytes).&quot;)&#10;              return True&#10;          print(f&quot;[✗] FAIL: Fallback export also failed: {resp2.status_code}&quot;)&#10;          return False&#10;      else:&#10;          print(f&quot;[✗] FAIL: Unexpected status {resp.status_code}: {resp.text[:200]}&quot;)&#10;          return False&#10;E       fixture 'http' not found&#10;&gt;       available fixtures: _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, extra, extras, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, include_metadata_in_junit_xml, metadata, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory&#10;&gt;       use 'pytest --fixtures [testpath]' for help on them.&#10;&#10;C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py:356&quot;">file C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py, line 356
+  async def test_export_engine(http: httpx.AsyncClient, cookies: dict, csrf_token: str):
+      """
+      Hits the CSV export endpoint and verifies that the server streams
+      back a file attachment with correct Content-Disposition headers.
+      """
+      print("\n" + "="*66)
+      print("  TEST 4: CSV Export Engine Verification")
+      print("="*66)
+
+      headers = {"X-CSRF-Token": csrf_token}
+
+      # Export compliance data as CSV
+      resp = await http.get(
+          f"{API_BASE}/export/csv?data_type=compliance",
+          cookies=cookies,
+          headers=headers,
+      )
+      print(f"[*] GET /export/csv?data_type=compliance -&gt; {resp.status_code}")
+
+      if resp.status_code == 200:
+          content_disposition = resp.headers.get("content-disposition", "")
+          content_type = resp.headers.get("content-type", "")
+          body_len = len(resp.content)
+
+          print(f"[*] Content-Type: {content_type}")
+          print(f"[*] Content-Disposition: {content_disposition}")
+          print(f"[*] Body size: {body_len} bytes")
+
+          assert "attachment" in content_disposition, f"FAIL: Missing 'attachment' in Content-Disposition"
+          assert ".csv" in content_disposition, f"FAIL: Missing '.csv' in Content-Disposition"
+          assert body_len &gt; 0, "FAIL: CSV body is empty."
+
+          # Verify CSV structure — check that we have header + data rows
+          lines = resp.content.decode("utf-8", errors="replace").strip().split("\n")
+          print(f"[*] CSV rows: {len(lines)} (including header)")
+          assert len(lines) &gt;= 2, "FAIL: CSV has no data rows (only header or empty)."
+
+          print("[✓] PASS: CSV export engine returned valid file attachment.")
+          return True
+      elif resp.status_code == 404:
+          print("[⚠] 404 — No compliance data found for export.")
+          print("[*] Attempting fallback export with data_type=logs...")
+          resp2 = await http.get(
+              f"{API_BASE}/export/csv?data_type=logs",
+              cookies=cookies,
+              headers=headers,
+          )
+          if resp2.status_code == 200:
+              cd = resp2.headers.get("content-disposition", "")
+              assert "attachment" in cd, "FAIL: Missing 'attachment' in Content-Disposition"
+              print(f"[✓] PASS: Fallback CSV export returned valid attachment ({len(resp2.content)} bytes).")
+              return True
+          print(f"[✗] FAIL: Fallback export also failed: {resp2.status_code}")
+          return False
+      else:
+          print(f"[✗] FAIL: Unexpected status {resp.status_code}: {resp.text[:200]}")
+          return False
+E       fixture 'http' not found
+&gt;       available fixtures: _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, extra, extras, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, include_metadata_in_junit_xml, metadata, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+&gt;       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py:356</error></testcase><testcase classname="test_chunk5_compliance" name="test_audit_report" time="0.001"><error message="failed on setup with &quot;file C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py, line 418&#10;  async def test_audit_report(http: httpx.AsyncClient, cookies: dict, csrf_token: str):&#10;      &quot;&quot;&quot;&#10;      Hits the audit-report PDF endpoint and verifies that the server&#10;      generates and streams back a PDF without timeout.&#10;      &quot;&quot;&quot;&#10;      print(&quot;\n&quot; + &quot;=&quot;*66)&#10;      print(&quot;  TEST 5: Audit Report PDF Export&quot;)&#10;      print(&quot;=&quot;*66)&#10;&#10;      headers = {&quot;X-CSRF-Token&quot;: csrf_token}&#10;&#10;      resp = await http.get(&#10;          f&quot;{API_BASE}/export/audit-report?pack_id=peca_forensic&quot;,&#10;          cookies=cookies,&#10;          headers=headers,&#10;      )&#10;      print(f&quot;[*] GET /export/audit-report?pack_id=peca_forensic -&gt; {resp.status_code}&quot;)&#10;&#10;      if resp.status_code == 200:&#10;          content_type = resp.headers.get(&quot;content-type&quot;, &quot;&quot;)&#10;          content_disposition = resp.headers.get(&quot;content-disposition&quot;, &quot;&quot;)&#10;          body_len = len(resp.content)&#10;&#10;          print(f&quot;[*] Content-Type: {content_type}&quot;)&#10;          print(f&quot;[*] Content-Disposition: {content_disposition}&quot;)&#10;          print(f&quot;[*] Body size: {body_len} bytes&quot;)&#10;&#10;          assert &quot;pdf&quot; in content_type.lower() or &quot;pdf&quot; in content_disposition.lower(), \&#10;              &quot;FAIL: Response is not a PDF.&quot;&#10;          assert body_len &gt; 100, &quot;FAIL: PDF body is suspiciously small.&quot;&#10;&#10;          # Check PDF magic bytes&#10;          assert resp.content[:4] == b&quot;%PDF&quot;, &quot;FAIL: Response does not start with PDF magic bytes.&quot;&#10;          print(&quot;[✓] PASS: Audit report PDF generated and streamed successfully.&quot;)&#10;          return True&#10;      else:&#10;          print(f&quot;[✗] FAIL: Unexpected status {resp.status_code}: {resp.text[:200]}&quot;)&#10;          return False&#10;E       fixture 'http' not found&#10;&gt;       available fixtures: _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, extra, extras, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, include_metadata_in_junit_xml, metadata, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory&#10;&gt;       use 'pytest --fixtures [testpath]' for help on them.&#10;&#10;C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py:418&quot;">file C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py, line 418
+  async def test_audit_report(http: httpx.AsyncClient, cookies: dict, csrf_token: str):
+      """
+      Hits the audit-report PDF endpoint and verifies that the server
+      generates and streams back a PDF without timeout.
+      """
+      print("\n" + "="*66)
+      print("  TEST 5: Audit Report PDF Export")
+      print("="*66)
+
+      headers = {"X-CSRF-Token": csrf_token}
+
+      resp = await http.get(
+          f"{API_BASE}/export/audit-report?pack_id=peca_forensic",
+          cookies=cookies,
+          headers=headers,
+      )
+      print(f"[*] GET /export/audit-report?pack_id=peca_forensic -&gt; {resp.status_code}")
+
+      if resp.status_code == 200:
+          content_type = resp.headers.get("content-type", "")
+          content_disposition = resp.headers.get("content-disposition", "")
+          body_len = len(resp.content)
+
+          print(f"[*] Content-Type: {content_type}")
+          print(f"[*] Content-Disposition: {content_disposition}")
+          print(f"[*] Body size: {body_len} bytes")
+
+          assert "pdf" in content_type.lower() or "pdf" in content_disposition.lower(), \
+              "FAIL: Response is not a PDF."
+          assert body_len &gt; 100, "FAIL: PDF body is suspiciously small."
+
+          # Check PDF magic bytes
+          assert resp.content[:4] == b"%PDF", "FAIL: Response does not start with PDF magic bytes."
+          print("[✓] PASS: Audit report PDF generated and streamed successfully.")
+          return True
+      else:
+          print(f"[✗] FAIL: Unexpected status {resp.status_code}: {resp.text[:200]}")
+          return False
+E       fixture 'http' not found
+&gt;       available fixtures: _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, event_loop_policy, extra, extras, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, include_metadata_in_junit_xml, metadata, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+&gt;       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\Lenovo\Desktop\Startup-backend\test_chunk5_compliance.py:418</error></testcase><testcase classname="test_chunk6_chaos_audit" name="test_chunk6_chaos_audit_end_to_end" time="26.040" /><testcase classname="tests.mega_suite.test_01_auth" name="test_signup_valid" time="0.286" /><testcase classname="tests.mega_suite.test_01_auth" name="test_signup_duplicate" time="0.229" /><testcase classname="tests.mega_suite.test_01_auth" name="test_login_valid_and_logout" time="0.377" /><testcase classname="tests.mega_suite.test_01_auth" name="test_login_wrong_password" time="0.289" /><testcase classname="tests.mega_suite.test_01_auth" name="test_login_nonexistent_user" time="0.143" /><testcase classname="tests.mega_suite.test_02_upload.TestCSVUpload" name="test_upload_valid_csv_10mb" time="1.641" /><testcase classname="tests.mega_suite.test_02_upload.TestCSVUpload" name="test_upload_csv_valid_structure" time="0.346" /><testcase classname="tests.mega_suite.test_02_upload.TestCSVUpload" name="test_upload_auto_detect_delimiter_comma" time="0.335" /><testcase classname="tests.mega_suite.test_02_upload.TestCSVUpload" name="test_upload_auto_detect_delimiter_tab" time="0.327" /><testcase classname="tests.mega_suite.test_02_upload.TestStreamingParser" name="test_parser_handles_valid_rows" time="0.349" /><testcase classname="tests.mega_suite.test_02_upload.TestStreamingParser" name="test_parser_malformed_rows_handled" time="0.460" /><testcase classname="tests.mega_suite.test_02_upload.TestStreamingParser" name="test_upload_empty_csv_rejected" time="0.538" /><testcase classname="tests.mega_suite.test_03_siem.TestEventIngestion" name="test_ingest_valid_event" time="0.331" /><testcase classname="tests.mega_suite.test_03_siem.TestEventIngestion" name="test_ingest_batch_events" time="0.308" /><testcase classname="tests.mega_suite.test_03_siem.TestEventIngestion" name="test_ingest_status_endpoint" time="0.277" /><testcase classname="tests.mega_suite.test_03_siem.TestAlertGeneration" name="test_get_alerts_history" time="0.269" /><testcase classname="tests.mega_suite.test_03_siem.TestAlertGeneration" name="test_logs_endpoint" time="0.296" /><testcase classname="tests.mega_suite.test_03_siem.TestAlertGeneration" name="test_search_events" time="0.304" /><testcase classname="tests.mega_suite.test_04_forensics.TestCompliancePacks" name="test_get_compliance_packs" time="0.280" /><testcase classname="tests.mega_suite.test_04_forensics.TestCompliancePacks" name="test_get_pack_details" time="0.285" /><testcase classname="tests.mega_suite.test_04_forensics.TestForensicEvidence" name="test_get_evidence_list" time="0.252" /><testcase classname="tests.mega_suite.test_04_forensics.TestForensicEvidence" name="test_verify_evidence_integrity" time="0.440" /><testcase classname="tests.mega_suite.test_04_forensics.TestForensicEvidence" name="test_audit_trail_logged" time="0.459" /><testcase classname="tests.mega_suite.test_05_retention.TestRetentionPolicies" name="test_tenant_retention_days_set" time="0.441" /><testcase classname="tests.mega_suite.test_05_retention.TestRetentionPolicies" name="test_log_ttl_index_exists" time="0.315" /><testcase classname="tests.mega_suite.test_05_retention.TestLogCleanup" name="test_expired_logs_flagged_for_cleanup" time="0.317" /><testcase classname="tests.mega_suite.test_05_retention.TestLogCleanup" name="test_recent_logs_not_deleted" time="0.282" /><testcase classname="tests.mega_suite.test_06_websocket.TestRealTimeAlerts" name="test_alerts_history_endpoint" time="0.283" /><testcase classname="tests.mega_suite.test_06_websocket.TestRealTimeAlerts" name="test_logs_streaming_endpoint" time="0.299" /><testcase classname="tests.mega_suite.test_06_websocket.TestRealTimeAlerts" name="test_user_notification_creation" time="0.274" /><testcase classname="tests.mega_suite.test_06_websocket.TestNotificationDelivery" name="test_user_receives_own_alerts" time="0.266" /><testcase classname="tests.mega_suite.test_06_websocket.TestNotificationDelivery" name="test_unauthorized_user_blocked" time="0.146" /><testcase classname="tests.mega_suite.test_07_frontend.TestDataExport" name="test_export_csv_endpoint" time="0.262" /><testcase classname="tests.mega_suite.test_07_frontend.TestDataExport" name="test_audit_report_generation" time="0.274" /><testcase classname="tests.mega_suite.test_07_frontend.TestDataExport" name="test_list_reports" time="0.258" /><testcase classname="tests.mega_suite.test_07_frontend.TestUserWorkflows" name="test_get_user_profile" time="0.265" /><testcase classname="tests.mega_suite.test_07_frontend.TestUserWorkflows" name="test_get_compliance_packs" time="0.250" /><testcase classname="tests.mega_suite.test_07_frontend.TestUserWorkflows" name="test_plan_upgrade_workflow" time="0.293" /><testcase classname="tests.mega_suite.test_07_frontend.TestUserWorkflows" name="test_data_search_endpoint" time="0.277" /><testcase classname="tests.mega_suite.test_07_frontend.TestUserWorkflows" name="test_data_status_endpoint" time="0.254" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_production_secret_gate_rejects_examples_and_localhost_values" time="0.129" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_signup_persists_hashed_user_tenant_and_plan_cache" time="0.187" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_auth_me_redacts_sensitive_fields" time="0.305" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_auth_fails_closed_when_redis_revocation_is_unavailable" time="0.459" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_websocket_ticket_is_short_lived_and_bound_to_session" time="0.424" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_user_token_cannot_ingest_agent_pulse" time="0.390" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_agent_token_queues_live_event_and_updates_status" time="0.505" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_agent_provisioning_token_is_single_use_and_ttls_are_short" time="0.416" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_agent_pulse_rejects_stale_signed_events" time="0.394" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_logs_endpoint_enforces_tenant_isolation" time="0.413" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_alert_history_enforces_tenant_isolation" time="0.430" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_data_search_does_not_leak_cross_tenant_logs" time="0.398" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches" time="0.830" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_upload_persists_rows_metadata_and_blocks_cross_tenant_result_access" time="0.463" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_upload_tab_delimited_csv_persists_rows" time="0.297" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_upload_rejects_non_csv_without_persisting_rows" time="0.268" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_management_audit_is_written_for_audited_routes" time="0.286" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_alerts_route_accepts_lowercase_admin_role" time="0.360" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_compliance_evidence_free_plan_is_denied" time="0.549" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_export_csv_requires_premium_and_removes_internal_fields" time="0.760" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_team_list_returns_current_tenant_members" time="0.372" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_agent_package_contains_customer_config_but_no_private_key_or_enrollment_token" time="0.331" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_metrics_endpoint_requires_allowlisted_ip_or_bearer_token" time="0.147" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_metrics_endpoint_exposes_worker_heartbeat_and_staleness" time="0.160" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_admin_tenant_listing_redacts_secret_fields" time="0.137" /><testcase classname="tests.mega_suite.test_08_backend_hardening" name="test_invite_accepts_temp_password_and_normalizes_legacy_packs" time="0.343" /><testcase classname="tests.mega_suite.test_08_chaos" name="test_siem_worker_mongo_blackout_acks_message" time="0.141" /><testcase classname="tests.mega_suite.test_08_chaos" name="test_siem_worker_split_brain_should_not_duplicate_inserts" time="0.117" /><testcase classname="tests.mega_suite.test_09_threat_intel_bootstrap" name="test_bootstrap_active_malicious_ips_loads_unique_ips_from_mongo" time="0.133" /><testcase classname="tests.mega_suite.test_09_threat_intel_bootstrap" name="test_threat_intel_manager_ignores_file_backed_intel_sources" time="0.128" /><testcase classname="tests.mega_suite.test_09_threat_intel_bootstrap" name="test_ensure_threat_intel_indexes_dedupes_and_enforces_uniqueness" time="0.123" /><testcase classname="tests.mega_suite.test_09_worker_chaos" name="test_peca_worker_mongo_blackout_does_not_ack" time="0.123" /><testcase classname="tests.mega_suite.test_09_worker_chaos" name="test_peca_worker_duplicate_delivery_is_idempotent" time="0.160" /><testcase classname="tests.mega_suite.test_09_worker_chaos" name="test_fbr_worker_mongo_blackout_does_not_ack" time="0.183" /><testcase classname="tests.mega_suite.test_09_worker_chaos" name="test_fbr_worker_duplicate_delivery_is_idempotent" time="0.125" /><testcase classname="tests.mega_suite.test_09_worker_heartbeat" name="test_redis_heartbeat_roundtrip" time="0.138" /><testcase classname="tests.mega_suite.test_10_siem_dynamic_rules" name="test_unique_field_rule_triggers_on_distinct_values" time="0.142" /><testcase classname="tests.mega_suite.test_10_siem_dynamic_rules" name="test_after_hours_rule_triggers_by_timestamp" time="0.132" /><testcase classname="tests.test_chunk7_fbr_stress" name="test_fbr_500_event_burst_no_bottleneck" time="0.156"><failure message="pymongo.errors.OperationFailure: Command delete requires authentication, full error: {'ok': 0.0, 'errmsg': 'Command delete requires authentication', 'code': 13, 'codeName': 'Unauthorized'}">@pytest.mark.asyncio
+    async def test_fbr_500_event_burst_no_bottleneck():
+        """
+        Simulate 500 concurrent Event 4697 (Service Install) logs flooding FBR queue.
+        Measure: CPU spike, queue drain time, encryption overhead, doc count verification.
+        """
+        from pymongo import MongoClient
+        from redis import Redis
+    
+        # Setup
+        mongo = MongoClient('mongodb://localhost:27017')
+        redis = Redis(host='localhost', port=6379, decode_responses=True)
+        db = mongo['warsoc_prod']
+    
+        # Clean slate
+&gt;       db.fbr_pos_logs.delete_many({})
+
+tests\test_chunk7_fbr_stress.py:33: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\pymongo\synchronous\collection.py:1711: in delete_many
+    self._delete_retryable(
+.venv\Lib\site-packages\pymongo\synchronous\collection.py:1587: in _delete_retryable
+    return self._database.client._retryable_write(
+.venv\Lib\site-packages\pymongo\synchronous\mongo_client.py:2083: in _retryable_write
+    return self._retry_with_session(retryable, func, s, bulk, operation, operation_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\pymongo\synchronous\mongo_client.py:1968: in _retry_with_session
+    return self._retry_internal(
+.venv\Lib\site-packages\pymongo\_csot.py:125: in csot_wrapper
+    return func(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\pymongo\synchronous\mongo_client.py:2014: in _retry_internal
+    ).run()
+      ^^^^^
+.venv\Lib\site-packages\pymongo\synchronous\mongo_client.py:2763: in run
+    return self._read() if self._is_read else self._write()
+                                              ^^^^^^^^^^^^^
+.venv\Lib\site-packages\pymongo\synchronous\mongo_client.py:2895: in _write
+    return self._func(self._session, conn, self._retryable)  # type: ignore
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\pymongo\synchronous\collection.py:1572: in _delete
+    return self._delete(
+.venv\Lib\site-packages\pymongo\synchronous\collection.py:1542: in _delete
+    result = conn.command(
+.venv\Lib\site-packages\pymongo\synchronous\helpers.py:47: in inner
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\pymongo\synchronous\pool.py:398: in command
+    return command(
+.venv\Lib\site-packages\pymongo\synchronous\network.py:212: in command
+    helpers_shared._check_command_response(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+response = {'code': 13, 'codeName': 'Unauthorized', 'errmsg': 'Command delete requires authentication', 'ok': 0.0}
+max_wire_version = 21, allowable_errors = None
+parse_write_concern_error = False, pool_opts = None
+
+    def _check_command_response(
+        response: _DocumentOut,
+        max_wire_version: Optional[int],
+        allowable_errors: Optional[Container[Union[int, str]]] = None,
+        parse_write_concern_error: bool = False,
+        pool_opts: Optional[PoolOptions] = None,
+    ) -&gt; None:
+        """Check the response to a command for errors."""
+        if "ok" not in response:
+            # Server didn't recognize our message as a command.
+            raise OperationFailure(
+                response.get("$err"),  # type: ignore[arg-type]
+                response.get("code"),
+                response,
+                max_wire_version,
+            )
+    
+        if parse_write_concern_error and "writeConcernError" in response:
+            _error = response["writeConcernError"]
+            _labels = response.get("errorLabels")
+            if _labels:
+                _error.update({"errorLabels": _labels})
+            _raise_write_concern_error(_error)
+    
+        if response["ok"]:
+            return
+    
+        details = response
+        # Mongos returns the error details in a 'raw' object
+        # for some errors.
+        if "raw" in response:
+            for shard in response["raw"].values():
+                # Grab the first non-empty raw error from a shard.
+                if shard.get("errmsg") and not shard.get("ok"):
+                    details = shard
+                    break
+    
+        errmsg = details["errmsg"]
+        code = details.get("code")
+    
+        # For allowable errors, only check for error messages when the code is not
+        # included.
+        if allowable_errors:
+            if code is not None:
+                if code in allowable_errors:
+                    return
+            elif errmsg in allowable_errors:
+                return
+    
+        # Server is "not primary" or "recovering"
+        if code is not None:
+            if code in _NOT_PRIMARY_CODES:
+                raise NotPrimaryError(errmsg, response)
+        elif HelloCompat.LEGACY_ERROR in errmsg or "node is recovering" in errmsg:
+            raise NotPrimaryError(errmsg, response)
+    
+        # Other errors
+        # findAndModify with upsert can raise duplicate key error
+        if code in (11000, 11001, 12582):
+            raise DuplicateKeyError(errmsg, code, response, max_wire_version)
+        elif code == 50:
+            # Append timeout details to MaxTimeMSExpired responses.
+            if pool_opts:
+                timeout_details = _get_timeout_details(pool_opts)
+                errmsg += format_timeout_details(timeout_details)
+            raise ExecutionTimeout(errmsg, code, response, max_wire_version)
+        elif code == 43:
+            raise CursorNotFound(errmsg, code, response, max_wire_version)
+    
+&gt;       raise OperationFailure(errmsg, code, response, max_wire_version)
+E       pymongo.errors.OperationFailure: Command delete requires authentication, full error: {'ok': 0.0, 'errmsg': 'Command delete requires authentication', 'code': 13, 'codeName': 'Unauthorized'}
+
+.venv\Lib\site-packages\pymongo\helpers_shared.py:284: OperationFailure</failure></testcase><testcase classname="tests.test_chunk7_fbr_stress" name="test_fbr_encryption_overhead_vs_peca" time="0.151" /><testcase classname="tests.test_chunk7_fbr_stress" name="test_fbr_4660_4689_event_range_routed_correctly" time="4.056"><failure message="redis.exceptions.AuthenticationError: Authentication required.">@pytest.mark.asyncio
+    async def test_fbr_4660_4689_event_range_routed_correctly():
+        """
+        Verify that all event IDs 4660-4689 are correctly routed to FBR, not PECA.
+        """
+        from pymongo import MongoClient
+        from redis import Redis
+    
+        redis = Redis(host='localhost', port=6379, decode_responses=True)
+        mongo = MongoClient('mongodb://localhost:27017')
+        db = mongo['warsoc_prod']
+    
+        # Clear queues
+&gt;       redis.delete('fbr_queue')
+
+tests\test_chunk7_fbr_stress.py:194: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\redis\commands\core.py:1841: in delete
+    return self.execute_command("DEL", *names)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\redis\client.py:716: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\redis\client.py:722: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\redis\utils.py:236: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\redis\connection.py:2960: in get_connection
+    connection.connect()
+.venv\Lib\site-packages\redis\connection.py:975: in connect
+    self.retry.call_with_retry(
+.venv\Lib\site-packages\redis\retry.py:132: in call_with_retry
+    raise error
+.venv\Lib\site-packages\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+.venv\Lib\site-packages\redis\connection.py:976: in &lt;lambda&gt;
+    lambda: self.connect_check_health(
+.venv\Lib\site-packages\redis\connection.py:1030: in connect_check_health
+    self.on_connect_check_health(check_health=check_health)
+.venv\Lib\site-packages\redis\connection.py:1155: in on_connect_check_health
+    self.read_response()
+.venv\Lib\site-packages\redis\connection.py:1341: in read_response
+    response = self._parser.read_response(disable_decoding=disable_decoding)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;redis._parsers.hiredis._HiredisParser object at 0x000001F7F919E780&gt;
+disable_decoding = False, push_request = False
+
+    def read_response(self, disable_decoding=False, push_request=False):
+        if not self._reader:
+            raise ConnectionError(SERVER_CLOSED_CONNECTION_ERROR)
+    
+        # _next_response might be cached from a can_read() call
+        if self._next_response is not NOT_ENOUGH_DATA:
+            response = self._next_response
+            self._next_response = NOT_ENOUGH_DATA
+            if self._hiredis_PushNotificationType is not None and isinstance(
+                response, self._hiredis_PushNotificationType
+            ):
+                response = self.handle_push_response(response)
+    
+                # if this is a push request return the push response
+                if push_request:
+                    return response
+    
+                return self.read_response(
+                    disable_decoding=disable_decoding,
+                    push_request=push_request,
+                )
+            return response
+    
+        if disable_decoding:
+            response = self._reader.gets(False)
+        else:
+            response = self._reader.gets()
+    
+        while response is NOT_ENOUGH_DATA:
+            self.read_from_socket()
+            if disable_decoding:
+                response = self._reader.gets(False)
+            else:
+                response = self._reader.gets()
+        # if the response is a ConnectionError or the response is a list and
+        # the first item is a ConnectionError, raise it as something bad
+        # happened
+        if isinstance(response, ConnectionError):
+&gt;           raise response
+E           redis.exceptions.AuthenticationError: Authentication required.
+
+.venv\Lib\site-packages\redis\_parsers\hiredis.py:173: AuthenticationError</failure></testcase><testcase classname="tests.test_compliance_evidence_gate" name="test_compliance_evidence_gate_phase1_export_integrity" time="6.934" /><testcase classname="tests.test_compliance_evidence_gate" name="test_compliance_evidence_gate_phase2_database_tamper" time="8.544" /><testcase classname="tests.test_compliance_evidence_gate" name="test_compliance_evidence_gate_phase3_dlq_survival" time="1.324" /><testcase classname="tests.test_compliance_evidence_gate" name="test_compliance_evidence_gate_summary" time="1.010" /><testcase classname="tests.test_grand_master_e2e" name="test_grand_master_e2e" time="35.351" /><testcase classname="tests.test_rate_limiter" name="test_incr_count_calls_incr_and_expire" time="0.250" /><testcase classname="tests.test_rate_limiter" name="test_set_and_get_flag" time="0.180" /><testcase classname="tests.test_syslog_receiver" name="test_udp_token_bucket_allows_and_records" time="0.178" /><testcase classname="tests.test_syslog_receiver" name="test_udp_token_bucket_drops_when_over_threshold" time="0.196" /><testcase classname="tests.test_syslog_receiver" name="test_udp_token_bucket_throttle" time="0.257" /></testsuite></testsuites>

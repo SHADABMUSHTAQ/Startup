@@ -1,0 +1,212 @@
+# ============================================================
+# docker-compose.sim.yml - LOCAL SIMULATION MODE
+# ============================================================
+# Mirrors the prod architecture EXACTLY with two key differences:
+#  1. Nginx runs HTTP-only (no SSL) - no real certs needed locally.
+#  2. Redis and MongoDB expose ports for the test scripts to reach
+#     them directly (ports are LOCKED DOWN in docker-compose.prod.yml).
+#
+# Usage:
+#   docker-compose -f docker-compose.sim.yml up --build
+# ============================================================
+
+services:
+  mongodb:
+    image: mongo:6.0
+    container_name: warsoc-mongo-sim
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-warsoc_admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?MONGO_PASSWORD required}
+    volumes:
+      - mongo_data_sim:/data/db
+    networks:
+      - warsoc-internal
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.0-alpine
+    container_name: warsoc-redis-sim
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required}
+    volumes:
+      - redis_data_sim:/data
+    networks:
+      - warsoc-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD required}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  warsoc-api:
+    build: .
+    container_name: warsoc-api-sim
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
+    env_file:
+      - ${WARSOC_ENV_FILE:-.env}
+    environment:
+      MONGODB_URI: mongodb://${MONGO_USER:-warsoc_admin}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:-WarSOC_DB}?authSource=admin
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      DB_NAME: ${MONGODB_DB_NAME:-WarSOC_DB}
+      ALLOWED_ORIGINS: "http://127.0.0.1,http://localhost"
+      DEAD_AIR_THRESHOLD: "30"
+    volumes:
+      - ./keys:/app/keys:ro
+      - ./app/config:/app/app/config
+      - ./app/data:/app/app/data
+      - ./app/routes:/app/app/routes
+      - ./app/utils:/app/app/utils
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - warsoc-internal
+    # No ports - all traffic via Nginx gateway below
+
+  worker-siem:
+    build: .
+    container_name: warsoc-siem-sim
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.siem_worker"]
+    env_file:
+      - ${WARSOC_ENV_FILE:-.env}
+    environment:
+      MONGODB_URI: mongodb://${MONGO_USER:-warsoc_admin}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:-WarSOC_DB}?authSource=admin
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      DB_NAME: ${MONGODB_DB_NAME:-WarSOC_DB}
+      CONSUMER_NAME: siem_consumer_sim
+    volumes:
+      - ./app/config:/app/app/config:ro
+      - ./app/workers:/app/app/workers
+      - ./app/utils:/app/app/utils
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - warsoc-internal
+
+  worker-fbr:
+    build: .
+    container_name: warsoc-fbr-sim
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.fbr_worker"]
+    env_file:
+      - ${WARSOC_ENV_FILE:-.env}
+    environment:
+      MONGODB_URI: mongodb://${MONGO_USER:-warsoc_admin}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:-WarSOC_DB}?authSource=admin
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      DB_NAME: ${MONGODB_DB_NAME:-WarSOC_DB}
+      CONSUMER_NAME: fbr_sim
+    volumes:
+      - ./keys:/app/keys:ro
+      - ./app/config:/app/app/config:ro
+      - ./app/workers:/app/app/workers
+      - ./app/utils:/app/app/utils
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - warsoc-internal
+
+  worker-peca:
+    build: .
+    container_name: warsoc-peca-sim
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.peca_worker"]
+    env_file:
+      - ${WARSOC_ENV_FILE:-.env}
+    environment:
+      MONGODB_URI: mongodb://${MONGO_USER:-warsoc_admin}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:-WarSOC_DB}?authSource=admin
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      DB_NAME: ${MONGODB_DB_NAME:-WarSOC_DB}
+      CONSUMER_NAME: peca_sim
+    volumes:
+      - ./keys:/app/keys:ro
+      - ./app/config:/app/app/config:ro
+      - ./app/workers:/app/app/workers
+      - ./app/utils:/app/app/utils
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - warsoc-internal
+
+  threat-hunter:
+    build: .
+    container_name: warsoc-threat-hunter-sim
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.detection_worker"]
+    env_file:
+      - ${WARSOC_ENV_FILE:-.env}
+    environment:
+      MONGODB_URI: mongodb://${MONGO_USER:-warsoc_admin}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:-WarSOC_DB}?authSource=admin
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      DB_NAME: ${MONGODB_DB_NAME:-WarSOC_DB}
+      CONSUMER_NAME: hunter_sim
+    volumes:
+      - ./app/config:/app/app/config:ro
+      - ./app/workers:/app/app/workers
+      - ./app/utils:/app/app/utils
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - warsoc-internal
+
+  compliance-cron:
+    build: .
+    container_name: warsoc-cron-sim
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.compliance_cron"]
+    env_file:
+      - ${WARSOC_ENV_FILE:-.env}
+    environment:
+      MONGODB_URI: mongodb://${MONGO_USER:-warsoc_admin}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:-WarSOC_DB}?authSource=admin
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      DB_NAME: ${MONGODB_DB_NAME:-WarSOC_DB}
+      # Simulation speed: 30s dead-air threshold instead of 15 min
+      DEAD_AIR_THRESHOLD: "30"
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - warsoc-internal
+
+  nginx:
+    image: nginx:alpine
+    container_name: warsoc-nginx-sim
+    restart: unless-stopped
+    ports:
+      - "80:80"           # HTTP only - no SSL for local sim
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - warsoc-internal
+    depends_on:
+      - warsoc-api
+
+volumes:
+  mongo_data_sim:
+  redis_data_sim:
+
+networks:
+  warsoc-internal:
+    driver: bridge

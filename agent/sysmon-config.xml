@@ -1,0 +1,115 @@
+<Sysmon schemaversion="4.81">
+  <!-- WarSOC-Config-Version: 2.0.0 -->
+  <!-- Capture hashes to track malicious files -->
+  <HashAlgorithms>MD5,SHA256,IMPHASH</HashAlgorithms>
+  <CheckRevocation/>
+  <EventFiltering>
+
+    <!-- Event ID 1: Process Creation -->
+    <RuleGroup name="" groupRelation="or">
+      <ProcessCreate onmatch="include">
+        <!-- Living off the Land Binaries (LOLBins) -->
+        <Image condition="end with">powershell.exe</Image>
+        <Image condition="end with">cmd.exe</Image>
+        <Image condition="end with">wscript.exe</Image>
+        <Image condition="end with">cscript.exe</Image>
+        <Image condition="end with">certutil.exe</Image>
+        <Image condition="end with">rundll32.exe</Image>
+        <Image condition="end with">mshta.exe</Image>
+        <Image condition="end with">regsvr32.exe</Image>
+        <!-- Catch execution from temp directories -->
+        <Image condition="contains">\Temp\</Image>
+        <Image condition="contains">\AppData\Local\Temp\</Image>
+      </ProcessCreate>
+    </RuleGroup>
+
+    <!-- Event ID 3: Network connections -->
+    <RuleGroup name="" groupRelation="or">
+      <NetworkConnect onmatch="include">
+        <!-- Track potential C2 traffic from scripts and interpreters -->
+        <Image condition="end with">powershell.exe</Image>
+        <Image condition="end with">cmd.exe</Image>
+        <Image condition="end with">wscript.exe</Image>
+        <Image condition="end with">cscript.exe</Image>
+        <Image condition="end with">python.exe</Image>
+        <!-- Track RDP connections -->
+        <DestinationPort condition="is">3389</DestinationPort>
+        <!-- Track SMB / Kerberos / LDAP pivoting -->
+        <DestinationPort condition="is">445</DestinationPort>
+        <DestinationPort condition="is">139</DestinationPort>
+        <DestinationPort condition="is">88</DestinationPort>
+        <DestinationPort condition="is">389</DestinationPort>
+      </NetworkConnect>
+    </RuleGroup>
+
+    <!-- Event ID 7: Image Load -->
+    <RuleGroup name="" groupRelation="or">
+      <ImageLoad onmatch="include">
+        <Image condition="contains">\Temp\</Image>
+        <Image condition="contains">\AppData\</Image>
+        <Image condition="end with">powershell.exe</Image>
+        <Image condition="end with">cmd.exe</Image>
+      </ImageLoad>
+    </RuleGroup>
+
+    <!-- Event ID 8: CreateRemoteThread -->
+    <RuleGroup name="" groupRelation="or">
+      <CreateRemoteThread onmatch="include">
+        <TargetImage condition="contains">\svchost.exe</TargetImage>
+        <TargetImage condition="contains">\lsass.exe</TargetImage>
+        <TargetImage condition="contains">\winlogon.exe</TargetImage>
+        <TargetImage condition="contains">\services.exe</TargetImage>
+        <TargetImage condition="contains">\explorer.exe</TargetImage>
+      </CreateRemoteThread>
+    </RuleGroup>
+
+    <!-- Event ID 9 / 10: Raw disk or privileged process access -->
+    <RuleGroup name="" groupRelation="or">
+      <RawAccessRead onmatch="include">
+        <Image condition="end with">.exe</Image>
+      </RawAccessRead>
+      <ProcessAccess onmatch="include">
+        <TargetImage condition="contains">\lsass.exe</TargetImage>
+        <TargetImage condition="contains">\services.exe</TargetImage>
+        <TargetImage condition="contains">\winlogon.exe</TargetImage>
+      </ProcessAccess>
+    </RuleGroup>
+
+    <!-- Event ID 13: Registry Set -->
+    <RuleGroup name="" groupRelation="or">
+      <RegistryEvent onmatch="include">
+        <TargetObject condition="contains">\Software\Microsoft\Windows\CurrentVersion\Run</TargetObject>
+        <TargetObject condition="contains">\Software\Microsoft\Windows\CurrentVersion\RunOnce</TargetObject>
+        <TargetObject condition="contains">\System\CurrentControlSet\Services</TargetObject>
+        <TargetObject condition="contains">Image File Execution Options</TargetObject>
+      </RegistryEvent>
+    </RuleGroup>
+
+    <!-- Event ID 17 / 18: Named pipe activity -->
+    <RuleGroup name="" groupRelation="or">
+      <PipeEvent onmatch="include">
+        <PipeName condition="contains">\lsass</PipeName>
+        <PipeName condition="contains">\svcctl</PipeName>
+        <PipeName condition="contains">\wkssvc</PipeName>
+      </PipeEvent>
+    </RuleGroup>
+
+    <!-- Event ID 11: File Create / File Integrity Monitoring (FIM) -->
+    <RuleGroup name="" groupRelation="or">
+      <FileCreate onmatch="include">
+        <!-- Monitor Startup Folder -->
+        <TargetFilename condition="contains">\Start Menu\Programs\Startup\</TargetFilename>
+        <!-- Monitor critical Web Root directories (if IIS/Apache is installed) -->
+        <TargetFilename condition="contains">\inetpub\wwwroot\</TargetFilename>
+        <!-- Monitor common drop zones for executables -->
+        <TargetFilename condition="end with">.exe</TargetFilename>
+        <TargetFilename condition="end with">.dll</TargetFilename>
+        <TargetFilename condition="end with">.sys</TargetFilename>
+        <TargetFilename condition="end with">.ps1</TargetFilename>
+        <TargetFilename condition="end with">.vbs</TargetFilename>
+        <TargetFilename condition="end with">.bat</TargetFilename>
+      </FileCreate>
+    </RuleGroup>
+
+  </EventFiltering>
+</Sysmon>

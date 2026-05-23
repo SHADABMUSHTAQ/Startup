@@ -1,0 +1,12 @@
+server:
+  # ✅ SAFE ROUTE (Windows ke liye alag rasta)
+  url: "http://127.0.0.1:8000/api/v1/ingest/windows"
+  timeout: 5
+
+agent:
+  name: "Client-PC-01"
+  id: "agent-uuid-001"  # Backend is ID se pehchanega
+  interval: 1           # Fast real-time scanning
+
+source:
+  log_type: "Security"

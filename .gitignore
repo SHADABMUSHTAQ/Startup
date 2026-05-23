@@ -1,0 +1,86 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Environment files (secrets)
+.env
+.env.*
+!.env.example
+!.env.pilot.example
+agent/.env
+
+# Logs
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+temp_uploads/
+.pytest_cache/
+
+# MongoDB
+data/
+mongodb-data/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# User uploads & test output
+uploaded_files/
+uploaded_logs/
+integration_*.json
+test_*_output.txt
+omni_audit_*.txt
+
+# Test scripts
+scripts/
+trigger_alerts.py
+verify.py
+
+# Cryptographic Keys
+keys/
+*.pem
+nginx/ssl/
+nginx/certs/
+/.archive/
+/tmp/
+/spool/
+package-lock.json
+*.pdf
