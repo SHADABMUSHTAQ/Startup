@@ -1,0 +1,11 @@
+{
+  "peca_config": {
+    "enabled": true,
+    "compliance_tag": "PECA_FORENSIC",
+    "retention_days": 365,
+    "legal_acts": ["PECA 2016", "S.R.O. 11/2021"],
+    "hashing_algorithm": "SHA-256",
+    "forensic_validation": true,
+    "monitored_events": [4624, 4625, 4688, 4720, 4732, 4698, 1102, 4719]
+  }
+}
