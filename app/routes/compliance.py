@@ -5,80 +5,61 @@ from typing import Any, Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
-import base64
-import copy
+from fastapi.responses import JSONResponse, StreamingResponse
 from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.exceptions import InvalidSignature
-try:
-    from canonicaljson import encode_canonical_json
-    CANONICALJSON_AVAILABLE = True
-except Exception:
-    CANONICALJSON_AVAILABLE = False
-
-from app.schemas.compliance import VerifyEvidenceRequest
 from app.utils.limiter import limiter
-from cryptography.fernet import Fernet
 from app.config.config import get_settings
 from app.database import get_db
 from app.routes.auth import get_current_user, require_premium_plan
 from app.utils.rbac import RoleChecker
 
 settings = get_settings()
-fernet = None
-encryption_key = getattr(settings, "encryption_key", "")
-if encryption_key:
-    try:
-        fernet = Fernet(encryption_key.encode())
-    except Exception as e:
-        print(f"Compliance Router: Failed to initialize Fernet (Check encryption key): {e}")
+try:
+    fernet = Fernet(settings.encryption_key.encode()) if settings.encryption_key else None
+except Exception:
+    fernet = None
 
 router = APIRouter()
 
-# 🔐 Load RSA Public Key for Verification
-repo_root = Path(__file__).resolve().parent.parent.parent
-public_key_path = repo_root / "keys" / "public_key.pem"
-public_key = None
-try:
-    if getattr(settings, "public_key_b64", ""):
-        key_data = base64.b64decode(settings.public_key_b64)
-    else:
-        with open(public_key_path, "rb") as key_file:
-            key_data = key_file.read()
-    public_key = serialization.load_pem_public_key(key_data)
-except Exception as e:
-    print(f"Compliance Router: Failed to load RSA Public Key: {e}. Verification will fail.")
+import csv
+import io
+import re
 
-def _to_canonical_bytes(obj) -> bytes:
-    """Exact 1:1 replica of worker canonicalization for mathematical validation."""
-    o = copy.deepcopy(obj)
+def _safe_path_segment(value: str) -> str:
+    segment = Path(str(value or "")).name.strip()
+    segment = re.sub(r"[^A-Za-z0-9_.-]", "_", segment)
+    return segment or "unknown"
 
-    def _convert(value):
-        if isinstance(value, dict):
-            for k, v in list(value.items()):
-                if isinstance(v, datetime):
-                    value[k] = v.astimezone(timezone.utc).isoformat()
-                else:
-                    _convert(v)
-        elif isinstance(value, list):
-            for i in range(len(value)):
-                v = value[i]
-                if isinstance(v, datetime):
-                    value[i] = v.astimezone(timezone.utc).isoformat()
-                else:
-                    _convert(v)
+def _parse_time(time_str: str) -> Optional[datetime]:
+    if not time_str:
+        return None
+    try:
+        parsed = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    except ValueError:
+        return None
 
-    _convert(o)
+async def csv_generator(cursor, fieldnames):
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    yield buffer.getvalue()
+    buffer.seek(0)
+    buffer.truncate(0)
 
-    if CANONICALJSON_AVAILABLE:
-        try:
-            return encode_canonical_json(o)
-        except Exception:
-            pass
-    return json.dumps(o, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
-
+    async for doc in cursor:
+        row = {}
+        for field in fieldnames:
+            value = doc.get(field, "")
+            if isinstance(value, (dict, list)):
+                value = str(value)
+            row[field] = value
+        writer.writerow(row)
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
 
 def _load_runtime_config() -> dict:
     config_path = Path(__file__).resolve().parent.parent / "config" / "config.json"
@@ -209,6 +190,7 @@ def _curate_evidence_record(doc: dict, evidence_source: str, data_origin: str) -
     curated = {
         "id": str(doc.get("_id")) if doc.get("_id") is not None else None,
         "tenant_id": doc.get("tenant_id"),
+        "event_uid": doc.get("event_uid"),
         "timestamp": _to_jsonable(doc.get("timestamp") or doc.get("ingested_at")),
         "event_id": doc.get("event_id"),
         "source_ip": doc.get("source_ip"),
@@ -264,12 +246,11 @@ def _paginate(items: list, skip: int, limit: int):
 
 def _normalize_pack_id(pack_id: str) -> str:
     key = (pack_id or "").strip().lower()
-    # 🚨 CRITICAL FIX: Must align with _get_entitled_packs() which normalizes
-    # all PECA/ETO variants to "eto_forensic". Previous mapping produced
-    # "peca_forensic" which never matched the entitled set, causing 403s.
+    # Keep legacy ETO labels readable, but expose PECA as the canonical pack.
     aliases = {
-        "peca": "peca_forensic",
         "peca_forensic": "peca_forensic",
+        "peca": "peca_forensic",
+        "peca_vault": "peca_forensic",
         "eto": "peca_forensic",
         "eto_forensic": "peca_forensic",
         "fbr": "fbr_pos",
@@ -285,15 +266,13 @@ def _get_entitled_packs(current_user: dict) -> set:
     if not isinstance(packs_raw, list):
         packs_raw = []
 
-    # 🚨 CRITICAL FIX: All PECA/ETO variants must normalize to "peca_forensic"
-    # to align with _normalize_pack_id(). Previously "eto_forensic" was used here
-    # but "peca_forensic" was used in _normalize_pack_id, causing 403 mismatches.
+    # Keep legacy ETO labels readable, but expose PECA as the canonical pack.
     aliases = {
-        "eto": "peca_forensic",
-        "eto_forensic": "peca_forensic",
         "peca": "peca_forensic",
         "peca_forensic": "peca_forensic",
         "peca_vault": "peca_forensic",
+        "eto": "peca_forensic",
+        "eto_forensic": "peca_forensic",
         "fbr": "fbr_pos",
         "fbr_pos": "fbr_pos",
         "fbr_pos_shield": "fbr_pos",
@@ -368,6 +347,8 @@ async def _get_fbr_page_with_fallback(
     return docs, total, "fbr_vault_legacy", True
 
 
+from app.utils.compliance_catalog import COMPLIANCE_CATALOG
+
 def _apply_pack_curation(docs: list, pack_id: str, origin: str):
     source = "peca_forensic" if pack_id == "peca_forensic" else "fbr_pos"
     return [_curate_evidence_record(doc, source, origin) for doc in docs]
@@ -376,7 +357,6 @@ def _apply_pack_curation(docs: list, pack_id: str, origin: str):
 @router.get("/packs", dependencies=[Depends(get_current_user)])
 async def list_compliance_packs():
     """Lists available compliance frameworks from the Master Config (SSOT)."""
-    frameworks = _RUNTIME_CONFIG.get("compliance_frameworks", {})
     return [
         {
             "pack_id": fid,
@@ -384,27 +364,21 @@ async def list_compliance_packs():
             "description": f["description"],
             "retention": f["retention"]
         }
-        for fid, f in frameworks.items()
+        for fid, f in COMPLIANCE_CATALOG.items()
     ]
 
 
 @router.get("/packs/{pack_id}", dependencies=[Depends(get_current_user)])
 async def get_pack_details(pack_id: str):
     """Returns granular controls and event monitoring rules for a specific framework (Config-Driven)."""
-    frameworks = _RUNTIME_CONFIG.get("compliance_frameworks", {})
-    
-    # 🛡️ NORMALIZATION: Support both legacy 'peca' and new 'eto_forensic' aliases
-    normalized_id = pack_id.lower()
-    if normalized_id in ["peca", "peca_forensic"]: normalized_id = "eto_forensic"
-    if normalized_id == "fbr": normalized_id = "fbr_pos"
-    
-    pack = frameworks.get(normalized_id)
+    normalized_id = _normalize_pack_id(pack_id)
+
+    pack = COMPLIANCE_CATALOG.get(normalized_id)
     if not pack:
         raise HTTPException(status_code=404, detail="Compliance framework not found")
-        
+
     rules = pack.get("rules", [])
-    print(f"DEBUG: Serving {len(rules)} rules for framework {normalized_id}")
-    
+
     return {
         "pack_id": normalized_id,
         "name": pack["name"],
@@ -415,7 +389,7 @@ async def get_pack_details(pack_id: str):
 
 @router.get("/evidence")
 async def get_compliance_evidence(
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, description="Deep pagination over 10000 will be auto-adjusted to prevent memory exhaustion"),
     limit: int = Query(50, ge=1, le=500),
     event_id: Optional[int] = Query(None),
     start_time: Optional[str] = Query(None),
@@ -427,6 +401,13 @@ async def get_compliance_evidence(
     tenant_id = current_user.get("tenant_id")
     if not tenant_id:
         raise HTTPException(status_code=403, detail="Unauthorized access to compliance evidence.")
+
+    info_message = None
+    if skip > 10000:
+        import logging
+        logging.warning(f"O(N) Mitigation Triggered: User {current_user.get('username')} requested skip={skip}. Auto-adjusting to 10000.")
+        skip = 10000
+        info_message = "Deep pagination is limited for performance. Showing results starting from item 10,000."
 
     entitled_packs = _get_entitled_packs(current_user)
     if not entitled_packs:
@@ -452,11 +433,11 @@ async def get_compliance_evidence(
     query = _base_query(tenant_id, event_id)
 
     # BUG-12 FIX: Unified Aggregation for Efficient Pagination
-    # We use $unionWith to merge PECA and FBR streams at the DB level, 
+    # We use $unionWith to merge PECA and FBR streams at the DB level,
     # then sort and page before returning only the required slice to the API.
-    
+
     pipeline = []
-    
+
     # Base Match (Tenant & Time)
     match_stage = {"$match": query}
     if start_dt or end_dt:
@@ -466,11 +447,11 @@ async def get_compliance_evidence(
         if end_dt:
             time_query["$lte"] = end_dt.isoformat()
         match_stage["$match"]["timestamp"] = time_query
-        
+
     # Re-writing the core logic to be truly aggregated:
     base_collection = None
     other_collections = []
-    
+
     if "peca_forensic" in entitled_packs:
         base_collection = db["peca_forensic_logs"]
         if "fbr_pos" in entitled_packs:
@@ -480,48 +461,90 @@ async def get_compliance_evidence(
     elif "fbr_pos" in entitled_packs:
         _, _, fbr_origin, _ = await _get_fbr_docs_with_fallback(db, query, start_dt, end_dt)
         base_collection = db[fbr_origin]
-        
+
     if base_collection is None:
         return {"status": "success", "data": [], "pagination": {"total": 0, "skip": skip, "limit": limit}}
 
-    # Build Pipeline
-    final_pipeline = [match_stage]
-    for coll_name in other_collections:
-        final_pipeline.append({
-            "$unionWith": {
-                "coll": coll_name,
-                "pipeline": [match_stage]
-            }
-        })
-    
-    # Sort and Page
-    final_pipeline.append({"$sort": {"timestamp": -1}})
-    
-    # 📊 Count Total First
-    count_pipeline = final_pipeline + [{"$count": "total"}]
-    count_result = await base_collection.aggregate(count_pipeline).to_list(1)
-    total = count_result[0]["total"] if count_result else 0
-    
-    # 📑 Limit/Skip
-    final_pipeline.extend([
-        {"$skip": skip},
-        {"$limit": limit}
-    ])
-    
-    docs = await base_collection.aggregate(final_pipeline).to_list(limit)
-    
-    # Apply Standard Forensic Curation (BUG-12 Polish)
-    # This restores aliases like 'cryptographic_hash' and 'rsa_signature' that the UI expects.
+    # Memory Exhaustion Fix: Multi-Cursor Merge Pagination
+    # Avoids $unionWith memory limits by fetching cursors separately and merging.
+
+    collections_to_query = []
+    if "peca_forensic" in entitled_packs:
+        collections_to_query.append("peca_forensic_logs")
+    if "fbr_pos" in entitled_packs:
+        _, _, fbr_origin, _ = await _get_fbr_docs_with_fallback(db, query, start_dt, end_dt)
+        collections_to_query.append(fbr_origin)
+
+    if not collections_to_query:
+        return {"status": "success", "data": [], "pagination": {"total": 0, "skip": skip, "limit": limit}}
+
+    scoped_query = _compose_query(query, start_dt, end_dt)
+
+    total = 0
+    for coll_name in collections_to_query:
+        total += await db[coll_name].count_documents(scoped_query)
+
+    cursors = []
+    for coll_name in collections_to_query:
+        cursor = db[coll_name].find(scoped_query).sort([
+            ("timestamp", -1),
+            ("ingested_at", -1),
+            ("_id", -1)
+        ])
+        cursors.append({"name": coll_name, "cursor": cursor, "current": None})
+
+    for c in cursors:
+        if await c["cursor"].fetch_next:
+            c["current"] = c["cursor"].next_object()
+
+    docs = []
+    skipped = 0
+
+    while len(docs) < limit:
+        best_c = None
+        for c in cursors:
+            if c["current"] is not None:
+                if best_c is None:
+                    best_c = c
+                else:
+                    ts_c = _coerce_dt(c["current"].get("timestamp") or c["current"].get("ingested_at"))
+                    ts_best = _coerce_dt(best_c["current"].get("timestamp") or best_c["current"].get("ingested_at"))
+
+                    if ts_c is None:
+                        ts_c = datetime.min.replace(tzinfo=timezone.utc)
+                    if ts_best is None:
+                        ts_best = datetime.min.replace(tzinfo=timezone.utc)
+
+                    if ts_c > ts_best:
+                        best_c = c
+
+        if best_c is None:
+            break
+
+        doc = best_c["current"]
+        doc["_source_collection"] = best_c["name"]
+
+        if await best_c["cursor"].fetch_next:
+            best_c["current"] = best_c["cursor"].next_object()
+        else:
+            best_c["current"] = None
+
+        if skipped < skip:
+            skipped += 1
+        else:
+            docs.append(doc)
+
+    for c in cursors:
+        c["cursor"].close()
+
     curated = []
     for doc in docs:
-        # Determine source for curation metadata
-        source = "peca_forensic" if "peca_forensic" in entitled_packs else "fbr_pos"
-        origin = "peca_forensic_logs" if "peca_forensic" in entitled_packs else (fbr_origin or "fbr_pos_logs")
-        
+        origin = doc.pop("_source_collection", "unknown")
+        source = "peca_forensic" if origin == "peca_forensic_logs" else "fbr_pos"
         curated_doc = _curate_evidence_record(doc, source, origin)
         curated.append(curated_doc)
 
-    return {
+    response = {
         "status": "success",
         "data": curated,
         "pagination": {
@@ -530,12 +553,15 @@ async def get_compliance_evidence(
             "limit": limit
         }
     }
+    if info_message:
+        response["info"] = info_message
+    return response
 
 
 @router.get("/evidence/{pack_id}")
 async def get_compliance_evidence_by_pack(
     pack_id: str,
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, description="Deep pagination over 10000 will be auto-adjusted to prevent memory exhaustion"),
     limit: int = Query(50, ge=1, le=500),
     event_id: Optional[int] = Query(None),
     start_time: Optional[str] = Query(None),
@@ -552,6 +578,13 @@ async def get_compliance_evidence_by_pack(
     plan_type = current_user.get("plan_type", "Free")
     if plan_type.lower() in ["free", "basic", "trial", "starter"]:
         raise HTTPException(status_code=403, detail="Compliance evidence vault access requires Professional or Enterprise tier. Please upgrade.")
+
+    info_message = None
+    if skip > 10000:
+        import logging
+        logging.warning(f"O(N) Mitigation Triggered: User {current_user.get('username')} requested skip={skip}. Auto-adjusting to 10000.")
+        skip = 10000
+        info_message = "Deep pagination is limited for performance. Showing results starting from item 10,000."
 
     entitled_packs = _get_entitled_packs(current_user)
     if normalized_pack not in entitled_packs:
@@ -587,7 +620,7 @@ async def get_compliance_evidence_by_pack(
 
     curated = _apply_pack_curation(docs, normalized_pack, origin)
 
-    return {
+    response = {
         "status": "success",
         "pack_id": normalized_pack,
         "data": curated,
@@ -601,51 +634,56 @@ async def get_compliance_evidence_by_pack(
             "active_collection": origin
         }
     }
+    if info_message:
+        response["info"] = info_message
+    return response
 
-@router.post("/verify")
-@limiter.limit("5/minute")
-async def verify_compliance_evidence(request: Request, payload: VerifyEvidenceRequest):
+@router.get("/export")
+async def export_compliance_evidence(
+    type: str = Query("fbr", description="Type of compliance data to export: 'fbr' or 'peca'"),
+    start_time: Optional[str] = Query(None),
+    end_time: Optional[str] = Query(None),
+    limit: int = Query(50000, ge=1),
+    db = Depends(get_db),
+    current_user: dict = Depends(require_premium_plan)
+):
     """
-    Independent cryptographic validation endpoint for auditors.
-    Does not require authentication. Re-hashes the raw payload and verifies against RSA-2048 public key.
+    Dedicated Compliance Export Engine (Uncapped).
+    Mandatory for FBR and PECA auditing.
     """
-    if not public_key:
-        raise HTTPException(status_code=500, detail="Public Key is not configured on the server.")
+    tenant_id = _safe_path_segment(current_user.get("tenant_id"))
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="Unauthorized")
 
-    try:
-        # If caller supplies the original signed payload (base64), prefer it.
-        if getattr(payload, "signed_payload", None):
-            try:
-                canonical_bytes = base64.b64decode(payload.signed_payload)
-            except Exception:
-                raise HTTPException(status_code=400, detail="Invalid signed_payload base64")
-        else:
-            # Convert the received raw event back to bytes exactly as signed
-            # The worker canonicalizes a dictionary payload.
-            canonical_bytes = _to_canonical_bytes(payload.raw_event)
+    if type == "fbr":
+        collection_name = "fbr_pos_logs"
+    else:
+        collection_name = "peca_forensic_logs"
 
-        # Decode the Base64 signature
-        signature_bytes = base64.b64decode(payload.digital_signature)
+    collection = db[collection_name]
+    query = {"tenant_id": tenant_id}
 
-        # Mathematically verify using the Public Key
-        public_key.verify(
-            signature_bytes,
-            canonical_bytes,
-            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
-            hashes.SHA256()
-        )
+    start_dt = _parse_time(start_time)
+    end_dt = _parse_time(end_time)
+    if start_dt or end_dt:
+        query["timestamp"] = {}
+        if start_dt: query["timestamp"]["$gte"] = start_dt
+        if end_dt: query["timestamp"]["$lte"] = end_dt
 
-        return JSONResponse(status_code=200, content={
-            "status": "VALID",
-            "message": "Cryptographic signature verified. Chain of custody is intact."
-        })
-    except InvalidSignature:
-        return JSONResponse(status_code=400, content={
-            "status": "TAMPERED",
-            "message": "Signature verification failed. Data has been altered."
-        })
-    except Exception as e:
-        return JSONResponse(status_code=400, content={
-            "status": "ERROR",
-            "message": f"Verification processing error: {str(e)}"
-        })
+    cursor = collection.find(query).sort("timestamp", -1).limit(limit)
+
+    doc = await collection.find_one(query)
+    if doc:
+        fieldnames = list(doc.keys())
+        if "_id" in fieldnames: fieldnames.remove("_id")
+        if "tenant_id" in fieldnames: fieldnames.remove("tenant_id")
+    else:
+        fieldnames = ["timestamp", "event_id", "severity", "message"]
+
+    filename = f"{type}_compliance_export_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
+
+    return StreamingResponse(
+        csv_generator(cursor, fieldnames),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )

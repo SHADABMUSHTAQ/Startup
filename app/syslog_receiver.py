@@ -3,7 +3,11 @@ import logging
 import ssl
 import os
 from redis.asyncio import Redis
+from motor.motor_asyncio import AsyncIOMotorClient
 from app.config.config import get_settings
+
+ip_tenant_cache = {}
+mongo_db = None
 
 logger = logging.getLogger("syslog-receiver")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [SYSLOG] %(message)s")
@@ -37,36 +41,68 @@ class UDPTokenBucketProtocol(asyncio.DatagramProtocol):
         except Exception as e:
             logger.debug(f"Redis unavailable for syslog throttle: {e}")
 
-        # Here, forward to Redis stream or local queue for processing
-        # For minimal implementation, push raw payload into Redis stream
+        # 0-Mercy Fix: Look up tenant_id based on src_ip to prevent Tenant Mixing
+        tenant_id = ip_tenant_cache.get(src_ip)
+        if not tenant_id and mongo_db is not None:
+            agent = await mongo_db['agents'].find_one({"last_ip": src_ip})
+            if agent:
+                tenant_id = agent.get("tenant_id")
+                ip_tenant_cache[src_ip] = tenant_id # Cache it to avoid DB hammer
+            else:
+                tenant_id = "WARSOC_NETWORK"
+                
         try:
             queue_name = getattr(settings, 'raw_logs_queue', 'raw_logs_queue')
             maxlen = int(getattr(settings, 'raw_logs_maxlen', 100000))
-            await self.redis.xadd(queue_name, {"payload": data.decode(errors="ignore")}, maxlen=maxlen)
+            await self.redis.xadd(queue_name, {
+                "payload": data.decode(errors="ignore"),
+                "tenant_id": tenant_id or "WARSOC_NETWORK"
+            }, maxlen=maxlen)
         except Exception as e:
             logger.error(f"Failed to push syslog payload to Redis: {e}")
 
 
+active_tcp_connections = set()
+MAX_TCP_CONNECTIONS = 1000
+
 async def handle_tcp_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, redis: Redis):
     addr = writer.get_extra_info('peername')
     src_ip = addr[0] if addr else 'unknown'
+    
+    if len(active_tcp_connections) >= MAX_TCP_CONNECTIONS:
+        logger.warning(f"TCP connection limit reached ({MAX_TCP_CONNECTIONS}). Dropping {src_ip}.")
+        writer.close()
+        await writer.wait_closed()
+        return
+
+    conn_id = id(writer)
+    active_tcp_connections.add(conn_id)
+    
     try:
         while True:
-            line = await reader.readline()
+            # Prevent OOM Slowloris by timing out reads
+            line = await asyncio.wait_for(reader.readline(), timeout=10.0)
             if not line:
                 break
             payload = line.decode(errors='ignore').strip()
             queue_name = getattr(settings, 'raw_logs_queue', 'raw_logs_queue')
             maxlen = int(getattr(settings, 'raw_logs_maxlen', 100000))
             await redis.xadd(queue_name, {"payload": payload}, maxlen=maxlen)
+    except asyncio.TimeoutError:
+        logger.warning(f"TCP connection from {src_ip} timed out (Slowloris protection).")
     except Exception as e:
         logger.error(f"TCP client handler error from {src_ip}: {e}")
     finally:
+        active_tcp_connections.discard(conn_id)
         writer.close()
         await writer.wait_closed()
 
 
 async def start_syslog_services():
+    global mongo_db
+    mongo_client = AsyncIOMotorClient(settings.mongodb_uri)
+    mongo_db = mongo_client[settings.mongodb_db_name]
+
     redis = await Redis.from_url(settings.redis_url, decode_responses=True)
 
     # UDP listener

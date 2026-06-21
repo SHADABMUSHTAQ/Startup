@@ -10,12 +10,25 @@ from reportlab.lib.units import inch
 from pathlib import Path
 import json
 
+from app.utils.compliance_catalog import COMPLIANCE_CATALOG
+
+DEFAULT_REPORTS_DIR = "/app/data/reports"
+
 
 def _safe_path_segment(value: str) -> str:
     """Reduce untrusted path input to a filesystem-safe segment."""
     segment = os.path.basename(str(value or "")).strip()
     segment = re.sub(r"[^A-Za-z0-9_.-]", "_", segment)
     return segment or "unknown"
+
+
+def get_reports_base_dir() -> Path:
+    configured = os.getenv("REPORTS_DIR")
+    if configured:
+        return Path(configured)
+    if Path("/app").exists():
+        return Path(DEFAULT_REPORTS_DIR)
+    return Path(__file__).resolve().parents[2] / "data" / "reports"
 
 class ComplianceReportGenerator:
     def __init__(self, tenant_id: str, db):
@@ -54,7 +67,7 @@ class ComplianceReportGenerator:
         
         # Build PDF
         safe_tenant_id = _safe_path_segment(self.tenant_id)
-        report_dir = Path("/app/app/data/reports") / safe_tenant_id
+        report_dir = get_reports_base_dir() / safe_tenant_id
         report_dir.mkdir(parents=True, exist_ok=True)
         filename = f"warsoc_{report_type}_{year}_{month:02d}.pdf"
         filepath = report_dir / filename
@@ -95,6 +108,42 @@ class ComplianceReportGenerator:
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
         elements.append(ledger_table)
+        elements.append(Spacer(1, 0.4 * inch))
+
+        # --- Section 2: Monitored Ruleset (SSOT) ---
+        elements.append(Paragraph("SECTION 2: MONITORED RULESET", self.header_style))
+        elements.append(Paragraph("The following compliance events are actively monitored and secured in this ledger as per the system's Single Source of Truth (SSOT).", self.body_style))
+        elements.append(Spacer(1, 0.1 * inch))
+
+        # Fetch the framework rules from the catalog
+        catalog_key = "peca_forensic" if report_type == "peca_forensic" else report_type
+        framework_data = COMPLIANCE_CATALOG.get(catalog_key, {})
+        rules = framework_data.get("rules", [])
+
+        rule_data = [["Rule ID", "Event ID", "Name", "Severity"]]
+        for rule in rules:
+            rule_data.append([
+                str(rule.get("id", "N/A")),
+                str(rule.get("event_id", "N/A")),
+                str(rule.get("name", "N/A")),
+                str(rule.get("severity", "N/A"))
+            ])
+
+        if len(rule_data) > 1:
+            rule_table = Table(rule_data, colWidths=[1.2*inch, 0.8*inch, 3.5*inch, 1.0*inch])
+            rule_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#f8fafc")),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor("#475569")),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+            elements.append(rule_table)
+        else:
+            elements.append(Paragraph("No rules defined for this framework.", self.body_style))
+
         elements.append(Spacer(1, 0.4 * inch))
 
         # --- Footer ---

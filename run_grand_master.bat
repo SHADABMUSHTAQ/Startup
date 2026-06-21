@@ -5,6 +5,7 @@ cd /d "%BASE_DIR%"
 
 :: Force current directory into Python Path as a fallback
 set PYTHONPATH=.
+set PYTHONIOENCODING=utf-8
 
 echo ========================================================
 echo        WarSOC Grand Master Automated Launcher (V3)

@@ -5,7 +5,7 @@ Endpoints for querying and managing security alerts.
 All queries are strictly tenant-isolated via JWT context.
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -14,8 +14,18 @@ from app.routes.auth import get_current_user
 from app.schemas.alerts import AlertResponse, AlertUpdate, AlertSeverity, AlertStatus
 from app.utils.limiter import limiter
 from app.utils.rbac import RoleChecker
+from bson import ObjectId
+import json
 
 router = APIRouter()
+
+
+def _json_serializer(obj):
+    if isinstance(obj, ObjectId):
+        return str(obj)
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return str(obj)
 
 
 def _serialize_alert(doc: dict) -> dict:
@@ -71,8 +81,9 @@ def _serialize_alert(doc: dict) -> dict:
 @limiter.limit("30/minute")
 async def get_alerts(
     request: Request,
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    next_cursor: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    event_uid: str | None = Query(None),
     severity: Optional[str] = Query(None, description="Filter by severity: LOW, MEDIUM, HIGH, CRITICAL"),
     status: Optional[str] = Query(None, description="Filter by status: NEW, ACKNOWLEDGED, CLOSED, FALSE_POSITIVE"),
     db=Depends(get_db),
@@ -89,7 +100,37 @@ async def get_alerts(
         raise HTTPException(status_code=403, detail="Critical: User lacks tenant assignment.")
 
     # Build strictly tenant-scoped query
-    query = {"tenant_id": tenant_id}
+    hot_window_start = datetime.now(timezone.utc) - timedelta(days=7)
+    query = {
+        "tenant_id": tenant_id,
+        "$and": [
+            {
+                "$or": [
+                    {"timestamp": {"$gte": hot_window_start}},
+                    {"timestamp": {"$gte": hot_window_start.isoformat()}},
+                    {"ingested_at": {"$gte": hot_window_start}},
+                    {"ingested_at": {"$gte": hot_window_start.isoformat()}},
+                ]
+            }
+        ],
+    }
+
+    if next_cursor:
+        from bson import ObjectId
+        from bson.errors import InvalidId
+        try:
+            query["_id"] = {"$lt": ObjectId(next_cursor)}
+        except (InvalidId, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid cursor format")
+
+    if event_uid:
+        query["$and"].append({
+            "$or": [
+                {"event_uid": event_uid},
+                {"raw_event_data.event_uid": event_uid},
+                {"raw_data.event_uid": event_uid},
+            ]
+        })
 
     # Optional filters
     if severity:
@@ -106,20 +147,20 @@ async def get_alerts(
     total = await db["security_alerts"].count_documents(query)
 
     # Fetch page
-    cursor = db["security_alerts"].find(query).sort("timestamp", -1).skip(skip).limit(limit)
+    cursor = db["security_alerts"].find(query).sort([("timestamp", -1), ("_id", -1)]).limit(limit)
     docs = await cursor.to_list(length=limit)
 
     # Serialize for frontend consumption
     alerts = [_serialize_alert(doc) for doc in docs]
+    alerts = json.loads(json.dumps(alerts, default=_json_serializer))
+    
+    new_cursor = alerts[-1].get("_id") if alerts else None
 
     return {
-        "status": "success",
         "data": alerts,
-        "pagination": {
-            "total": total,
-            "skip": skip,
-            "limit": limit,
-        },
+        "next_cursor": new_cursor,
+        "limit": limit,
+        "total": total,
     }
 
 

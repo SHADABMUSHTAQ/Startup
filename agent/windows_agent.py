@@ -15,7 +15,6 @@ import glob
 import hashlib
 import uuid
 from pathlib import Path
-from ecdsa import NIST256p, SigningKey
 from datetime import datetime, timezone # ADDED TIMEZONE
 
 # ENV COMPLIANCE
@@ -48,16 +47,18 @@ for path in _POSSIBLE_ENV_PATHS:
 if not env_loaded:
     print(f"[WARN] .env not found in any standard location. Using system environment variables.")
 
-TENANT_ID = os.getenv("TENANT_ID")
-if not TENANT_ID:
-    print("[ERROR] FATAL: TENANT_ID is still empty. Check your .env file!")
-    sys.exit(1)
-
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-# ECDSA identity is now anchored to the issued agent id and enrollment token.
-AGENT_ID = os.getenv("AGENT_ID", TENANT_ID)
-ENROLLMENT_TOKEN = os.getenv("ENROLLMENT_TOKEN", "")
+TENANT_ID = os.getenv("TENANT_ID", "provision").strip() or "provision"
+JWT_TOKEN_PATH = _AGENT_DIR / ".agent_jwt"
+AGENT_ID_PATH = _AGENT_DIR / ".agent_id"
 PRIVATE_KEY_PATH = _AGENT_DIR / "agent_private_key.pem"
+try:
+    _STORED_AGENT_ID = AGENT_ID_PATH.read_text(encoding="utf-8").strip() if AGENT_ID_PATH.exists() else ""
+except Exception:
+    _STORED_AGENT_ID = ""
+
+AGENT_ID = os.getenv("AGENT_ID", _STORED_AGENT_ID or TENANT_ID).strip() or TENANT_ID
+ACTIVATION_CODE = os.getenv("ACTIVATION_CODE", "").strip()
 
 # NEW: Web Server Log File Path (You can change this to your Apache/Nginx path later)
 WEB_LOG_PATH = os.getenv("WEB_LOG_PATH", "access.log")
@@ -70,10 +71,15 @@ OUTBOUND_BATCH_SIZE = int(os.getenv("OUTBOUND_BATCH_SIZE", "25"))
 OUTBOUND_BATCH_WAIT_SECONDS = float(os.getenv("OUTBOUND_BATCH_WAIT_SECONDS", "0.25"))
 INGEST_URL = f"{BACKEND_URL}/api/v1/ingest/pulse"
 LOCAL_IP = "127.0.0.1"
-WEB_LOG_PATHS = [WEB_LOG_PATH]
+WEB_LOG_PATHS = [WEB_LOG_PATH, "pos_audit.log", "firewall.log"]
 WINDOWS_CHANNELS = ["Security"]
 
-JWT_TOKEN = None
+try:
+    _STORED_JWT_TOKEN = JWT_TOKEN_PATH.read_text(encoding="utf-8").strip() if JWT_TOKEN_PATH.exists() else ""
+except Exception:
+    _STORED_JWT_TOKEN = ""
+
+JWT_TOKEN = os.getenv("JWT_TOKEN", "").strip() or _STORED_JWT_TOKEN or None
 BANNED_IPS = set()
 BAN_LOCK = threading.Lock()
 REQUEST_SESSION = requests.Session()
@@ -105,14 +111,22 @@ LOCAL_IP = get_local_ip()
 
 
 def _load_or_create_signing_key():
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    from cryptography.hazmat.primitives import serialization
     try:
         if PRIVATE_KEY_PATH.exists():
-            return SigningKey.from_pem(PRIVATE_KEY_PATH.read_text(encoding="utf-8"))
+            pem_data = PRIVATE_KEY_PATH.read_bytes()
+            return serialization.load_pem_private_key(pem_data, password=None)
     except Exception:
         pass
 
-    signing_key = SigningKey.generate(curve=NIST256p)
-    PRIVATE_KEY_PATH.write_text(signing_key.to_pem().decode("utf-8"), encoding="utf-8")
+    signing_key = ed25519.Ed25519PrivateKey.generate()
+    pem = signing_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption()
+    )
+    PRIVATE_KEY_PATH.write_bytes(pem)
     return signing_key
 
 
@@ -124,7 +138,7 @@ def _build_event_payload_hash(payload):
     signable_payload = {
         "source_ip": payload.get("source_ip", ""),
         "user": payload.get("user", ""),
-        "event_id": int(payload.get("event_id", 0)),
+        "event_id": str(payload.get("event_id", "")),
         "message": payload.get("message", ""),
         "processed_data": payload.get("processed_data") or {},
         "raw_event_data": payload.get("raw_event_data") if payload.get("raw_event_data") is not None else payload.get("raw_data", {}),
@@ -133,41 +147,67 @@ def _build_event_payload_hash(payload):
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _sign_agent_login(signing_key):
-    timestamp = datetime.now(timezone.utc).isoformat()
-    nonce = uuid.uuid4().hex
-    canonical = f"{AGENT_ID}|{timestamp}|{nonce}|login"
-    signature = signing_key.sign(canonical.encode("utf-8"), hashfunc=hashlib.sha256).hex()
-    return {"agent_id": AGENT_ID, "timestamp": timestamp, "nonce": nonce, "signature": signature}
+def _build_ingest_envelope(events):
+    return {
+        "nonce": uuid.uuid4().hex,
+        "timestamp": int(time.time()),
+        "payload": events,
+    }
 
 
-def _sign_event_payload(payload, signing_key):
-    payload_hash = _build_event_payload_hash(payload)
-    canonical = f"{payload['agent_id']}|{payload['timestamp']}|{payload['event_uid']}|{payload_hash}"
-    payload["agent_signature"] = signing_key.sign(canonical.encode("utf-8"), hashfunc=hashlib.sha256).hex()
-    payload.pop("agent_hmac_signature", None)
-    return payload
+def _signed_agent_post(path, payload, signing_key, timeout=10):
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    signature = signing_key.sign(body).hex()
+    headers = {
+        "Content-Type": "application/json",
+        "X-WarSOC-Signature": signature,
+    }
+    return REQUEST_SESSION.post(
+        f"{BACKEND_URL}{path}",
+        data=body,
+        headers=headers,
+        timeout=timeout,
+    )
 
 
-def enroll_agent(signing_key):
-    if not ENROLLMENT_TOKEN:
-        print("[!] No ENROLLMENT_TOKEN present. Agent cannot enroll automatically.")
+def register_agent(signing_key):
+    global JWT_TOKEN, AGENT_ID
+    from cryptography.hazmat.primitives import serialization
+    activation_code = ACTIVATION_CODE or os.getenv("ACTIVATION_CODE", "").strip()
+    if not activation_code:
+        print("[!] No ACTIVATION_CODE present. Agent cannot enroll automatically.")
         return False
 
-    public_key = signing_key.verifying_key.to_pem().decode("utf-8")
+    public_key = signing_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    ).decode("utf-8")
+
     resp = REQUEST_SESSION.post(
-        f"{BACKEND_URL}/api/v1/auth/agents/enroll",
-        headers={"Authorization": f"Bearer {ENROLLMENT_TOKEN}"},
+        f"{BACKEND_URL}/api/v1/agent/register",
         json={
-            "agent_id": AGENT_ID,
-            "public_key": public_key,
-            "hostname": socket.gethostname(),
-            "mac_address": "unknown",
+            "activation_code": activation_code,
+            "public_key": public_key
         },
         timeout=10,
     )
     if resp.status_code in (200, 201):
-        print("[OK] Agent enrolled with ECDSA public key.")
+        data = resp.json()
+        agent_jwt = data.get("agent_jwt")
+        agent_id = data.get("agent_id")
+        if not agent_jwt or not agent_id:
+            print(f"[FAIL] Agent registration response missing token or agent_id: {data}")
+            return False
+
+        JWT_TOKEN = agent_jwt
+        AGENT_ID = agent_id
+        try:
+            JWT_TOKEN_PATH.write_text(agent_jwt, encoding="utf-8")
+            AGENT_ID_PATH.write_text(agent_id, encoding="utf-8")
+        except Exception as exc:
+            print(f"[WARN] Could not persist agent identity: {exc}")
+
+        print("[OK] Agent registered with Ed25519 public key and JWT.")
         return True
     print(f"[FAIL] Agent enrollment failed: {resp.status_code} - {resp.text}")
     return False
@@ -196,7 +236,7 @@ def load_target_event_ids():
     """Load monitorable Event IDs only from config sources (no hardcoded defaults)."""
     def _parse_target_ids(raw):
         try:
-            parsed = {int(eid) for eid in raw}
+            parsed = {str(eid).strip() for eid in raw if str(eid).strip()}
             return parsed
         except Exception:
             return set()
@@ -318,30 +358,13 @@ def enforce_block(ip):
 # ==========================================
 def authenticate_agent():
     global JWT_TOKEN
+    if JWT_TOKEN:
+        return True
+
     signing_key = _load_or_create_signing_key()
-    print(f"[INFO] Authenticating Agent {AGENT_ID} with WarSOC Backbone...")
+    print("[INFO] Registering agent with WarSOC activation service...")
     try:
-        login_payload = _sign_agent_login(signing_key)
-        resp = REQUEST_SESSION.post(
-            f"{BACKEND_URL}/api/v1/auth/agent-login",
-            json=login_payload,
-            timeout=5,
-        )
-        if resp.status_code == 401 and ENROLLMENT_TOKEN:
-            if enroll_agent(signing_key):
-                login_payload = _sign_agent_login(signing_key)
-                resp = REQUEST_SESSION.post(
-                    f"{BACKEND_URL}/api/v1/auth/agent-login",
-                    json=login_payload,
-                    timeout=5,
-                )
-        if resp.status_code == 200:
-            JWT_TOKEN = resp.json().get("access_token")
-            print("[OK] Connection Secured. Vault access granted.")
-            return True
-        else:
-            print(f"[FAIL] Access Denied: {resp.status_code} - {resp.text}")
-            return False
+        return register_agent(signing_key)
     except Exception as e:
         print(f"[!] Backbone Unreachable: {e}")
         return False
@@ -358,17 +381,23 @@ def secure_request(method, url, **kwargs):
     try:
         resp = REQUEST_SESSION.request(method, url, **kwargs)
 
-        if method == "POST" and "ingest" in url and resp.status_code == 200:
+        if method == "POST" and "ingest" in url and resp.status_code in (200, 202):
              pass # Silently succeed to avoid console spam
 
         if resp.status_code == 401:
-            print("[WARN] Token expired. Re-authenticating...")
+            print("[WARN] Agent token rejected. Clearing cached token and retrying activation path...")
+            JWT_TOKEN = None
+            try:
+                if JWT_TOKEN_PATH.exists():
+                    JWT_TOKEN_PATH.unlink()
+            except Exception:
+                pass
             if authenticate_agent():
                 headers["Authorization"] = f"Bearer {JWT_TOKEN}"
                 kwargs["headers"] = headers
                 resp = REQUEST_SESSION.request(method, url, **kwargs)
 
-        elif resp.status_code != 200:
+        elif resp.status_code not in (200, 202):
             print(f" Backend rejected payload {resp.status_code}: {resp.text}")
 
         return resp
@@ -601,9 +630,9 @@ def ingest_sender_thread():
                     break
 
                 # TRANSMISSION
-                resp = secure_request("POST", INGEST_URL, json=chunk, timeout=20)
+                resp = secure_request("POST", INGEST_URL, json=_build_ingest_envelope(chunk), timeout=20)
 
-                if resp and resp.status_code == 200:
+                if resp and resp.status_code in (200, 202):
                     # SUCCESS: Reset batch size back to max if it was previously throttled
                     if OUTBOUND_BATCH_SIZE < ORIGINAL_BATCH_SIZE:
                         OUTBOUND_BATCH_SIZE = ORIGINAL_BATCH_SIZE
@@ -614,8 +643,8 @@ def ingest_sender_thread():
                     # POISON PILL RECOVERY: Isolate malformed log
                     print(f"[WARN] Batch chunk rejected (422). Isolating broken records...")
                     for single_log in chunk:
-                        sr = secure_request("POST", INGEST_URL, json=[single_log], timeout=10)
-                        if not sr or sr.status_code != 200:
+                        sr = secure_request("POST", INGEST_URL, json=_build_ingest_envelope([single_log]), timeout=10)
+                        if not sr or sr.status_code not in (200, 202):
                             print(f"[DROP] Dropping malformed forensic event: {single_log.get('event_id')}")
                     continue
 
@@ -695,9 +724,14 @@ def resolve_web_log_files():
 # 4. THREADS
 # ==========================================
 def heartbeat_thread():
-    heartbeat_url = f"{BACKEND_URL}/api/v1/ingest/heartbeat"
+    signing_key = _load_or_create_signing_key()
     while True:
-        resp = secure_request("POST", heartbeat_url, json={"agent_id": AGENT_ID}, timeout=10)
+        payload = {
+            "agent_id": AGENT_ID,
+            "current_version": "4.1-Hardened",
+            "timestamp": time.time(),
+        }
+        resp = _signed_agent_post("/api/v1/agent/heartbeat", payload, signing_key, timeout=10)
         if resp and resp.status_code == 200:
             data = resp.json()
             for bad_ip in data.get("enforce_bans", []):
@@ -741,11 +775,18 @@ def web_hunter_thread():
 
                         print(f"[INFO] Web Event Detected: {line[:50]}...")
                         extracted_source_ip = extract_source_ip_from_line(line)
+                        file_name = file_path.lower()
+                        event_id = "APP-LOG-GENERIC"
+                        if "pos_audit.log" in file_name:
+                            event_id = "FBR-INV-MOD"
+                        elif "firewall.log" in file_name:
+                            event_id = "WAF-BLOCK-01"
+
                         payload = {
                             "agent_id": AGENT_ID,
                             "source_ip": extracted_source_ip or LOCAL_IP,
-                            "user": "Web-Visitor",
-                            "event_id": 80, # Custom ID for Web Logs
+                            "user": "System",
+                            "event_id": event_id,
                             "event_uid": uuid.uuid4().hex,
                             "message": line,
                             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -754,7 +795,7 @@ def web_hunter_thread():
                             "processed_data": {},
                             "agent_version": "4.0-Omni"
                         }
-                        _sign_event_payload(payload, _load_or_create_signing_key())
+                        # Removed per-event ECDSA signing to save CPU
                         enqueue_payload(payload)
 
                     file_positions[file_path] = file.tell()
@@ -772,22 +813,34 @@ def log_hunter_thread():
         print("[*] Monitoring Mode: capture_all_windows_channels=true")
     print(f"[*] Monitoring Channels: {WINDOWS_CHANNELS}")
     print(f"[*] Monitoring Event IDs: {sorted(TARGET_EVENT_IDS)}")
+
+    # 💾 WATERMARK PERSISTENCE: Zero-loss after reboot/crash
+    watermark_file = Path(_AGENT_DIR) / "spool" / "watermarks.json"
     highest_record_seen = {}
+    try:
+        if watermark_file.exists():
+            with open(watermark_file, "r") as f:
+                highest_record_seen = json.load(f)
+            print(f"[*] Loaded persistent watermarks: {highest_record_seen}")
+    except Exception as e:
+        print(f"[!] Failed to load watermarks, starting fresh: {e}")
+
     flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
 
     for log_type in WINDOWS_CHANNELS:
-        try:
-            temp_hand = win32evtlog.OpenEventLog(None, log_type)
-            events = win32evtlog.ReadEventLog(temp_hand, flags, 0)
-            if events:
-                highest_record_seen[log_type] = events[0].RecordNumber
-            else:
+        if log_type not in highest_record_seen:
+            try:
+                temp_hand = win32evtlog.OpenEventLog(None, log_type)
+                events = win32evtlog.ReadEventLog(temp_hand, flags, 0)
+                if events:
+                    highest_record_seen[log_type] = events[0].RecordNumber
+                else:
+                    highest_record_seen[log_type] = 0
+                win32evtlog.CloseEventLog(temp_hand)
+                print(f"[*] Synced channel '{log_type}'. Watermark: {highest_record_seen[log_type]}")
+            except Exception as e:
+                print(f"[!] Channel open failed ({log_type}): {e}")
                 highest_record_seen[log_type] = 0
-            win32evtlog.CloseEventLog(temp_hand)
-            print(f"[*] Synced channel '{log_type}'. Watermark: {highest_record_seen[log_type]}")
-        except Exception as e:
-            print(f"[!] Channel open failed ({log_type}): {e}")
-            highest_record_seen[log_type] = 0
 
     if not any(v >= 0 for v in highest_record_seen.values()):
         print("[!] No Windows Event channels available. Run agent as Administrator.")
@@ -798,20 +851,27 @@ def log_hunter_thread():
             hand = None
             try:
                 hand = win32evtlog.OpenEventLog(None, log_type)
-                events = win32evtlog.ReadEventLog(hand, flags, 0)
 
-                if events:
-                    channel_watermark = highest_record_seen.get(log_type, 0)
-                    current_batch_highest = channel_watermark
+                channel_watermark = highest_record_seen.get(log_type, 0)
+                current_batch_highest = channel_watermark
+                reached_watermark = False
+
+                # Loop to read all chunks until we hit the watermark
+                while not reached_watermark:
+                    events = win32evtlog.ReadEventLog(hand, flags, 0)
+                    if not events:
+                        break # No more events to read
+
                     for event in events:
                         if event.RecordNumber <= channel_watermark:
+                            reached_watermark = True
                             break
 
                         current_batch_highest = max(current_batch_highest, event.RecordNumber)
-                        event_id = event.EventID & 0xFFFF
+                        event_id = str(event.EventID & 0xFFFF)
 
                         # Ignore malformed/noise records that surface as Event ID 0.
-                        if event_id <= 0:
+                        if not event_id or event_id == "0":
                             continue
 
                         include_event = CAPTURE_ALL_WINDOWS_CHANNELS
@@ -846,13 +906,19 @@ def log_hunter_thread():
                                 "agent_version": "4.1-Hardened"
                             }
 
-                            # PHASE 4: Client-Side Cryptographic Non-Repudiation
-                            _sign_event_payload(payload, _load_or_create_signing_key())
+                            # Removed per-event ECDSA signing to save CPU
 
                             print(f"[INFO] Windows Event Spooled: {log_type}:{event_id}")
                             enqueue_payload(payload)
 
+                if highest_record_seen[log_type] != current_batch_highest:
                     highest_record_seen[log_type] = current_batch_highest
+                    # Persist watermark immediately to avoid data loss on crash
+                    try:
+                        with open(watermark_file, "w") as f:
+                            json.dump(highest_record_seen, f)
+                    except Exception as e:
+                        pass
 
             except Exception:
                 pass

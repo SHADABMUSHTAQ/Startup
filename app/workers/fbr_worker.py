@@ -7,21 +7,21 @@ import sys
 import copy
 import traceback
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from motor.motor_asyncio import AsyncIOMotorClient
 from redis import exceptions as redis_exceptions
 from redis.asyncio import Redis
 from app.config.config import get_settings
 from app.utils.observability import increment_redis_counter
-from app.utils.crypto_executor import get_crypto_executor, shutdown_crypto_executor, _sign_canonical_bytes
+from app.utils.compliance_catalog import COMPLIANCE_CATALOG, get_rule_by_event_id
+from app.utils.siem_catalog import SIEM_RULES
 
-from app.utils.tenant_cache import get_tenant_plan
+from app.utils.tenant_cache import get_tenant_features
 from app.utils.rate_limiter import incr_count, set_flag, get_flag
+from app.actions.alerting import dispatch_alert_if_entitled, is_email_trigger_severity
+from app.utils.agent_crypto import timestamp_age_seconds
 
-import hashlib
-import base64
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
+
 from cryptography.fernet import Fernet
 import copy
 import socket
@@ -34,9 +34,8 @@ try:
 except Exception:
     CANONICALJSON_AVAILABLE = False
 
-# 🏗️ MASTER BUILD: FBR Compliance Worker (S.R.O. 288/I/2026 Optimized)
+# 🏗 MASTER BUILD: FBR Compliance Worker (S.R.O. 288/I/2026 Optimized)
 # Strictly Decoupled, Hybrid Flush (100 logs or 3s), Redis-Cached Plan Check
-# Hardened: Cryptographic Non-Repudiation (SHA-256 + RSA-2048)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [FBR] %(message)s")
 logger = logging.getLogger("FBR-Worker")
@@ -50,17 +49,104 @@ RECLAIM_BATCH_SIZE = 50
 DEFAULT_TENANT_ID = os.getenv("TENANT_ID", "WARSOC_DEFAULT")
 DLQ_QUEUE_PREFIX = "warsoc:dlq:"
 
+
+def _get_agent_security_config(config: dict) -> dict:
+    return config.get("agent_security", {}) if isinstance(config, dict) else {}
+
+def _clock_integrity_verdict(timestamp: str, security_config: dict) -> tuple[str, int | None]:
+    skew_warning_seconds = int(security_config.get("clock_skew_warning_seconds", 60))
+    hard_drop_seconds = int(security_config.get("max_log_age_seconds", 300))
+    if hard_drop_seconds <= skew_warning_seconds:
+        hard_drop_seconds = skew_warning_seconds + 1
+
+    age_seconds = timestamp_age_seconds(timestamp)
+    if age_seconds is None:
+        return "drop", None
+
+    abs_age = abs(age_seconds)
+    if abs_age >= hard_drop_seconds:
+        return "drop", age_seconds
+    if abs_age > skew_warning_seconds:
+        return "skew", age_seconds
+    return "allow", age_seconds
+
+
+async def _validate_stream_signature(redis: Redis, log_data: dict, security_config: dict) -> tuple[bool, str | None]:
+    # Basic non-cryptographic sanity checks: presence of identity fields and timestamp validation.
+    agent_id = str(log_data.get("agent_id") or "").strip()
+    tenant_id = str(log_data.get("tenant_id") or "").strip()
+    event_uid = str(log_data.get("event_uid") or "").strip()
+    timestamp = str(log_data.get("timestamp") or "").strip()
+
+    if not agent_id or not tenant_id or not event_uid:
+        return False, "missing identity fields"
+
+    verdict, age_seconds = _clock_integrity_verdict(timestamp, security_config)
+    if verdict == "drop":
+        return False, "timestamp outside allowed drift window"
+
+    # Non-cryptographic: no signature or HMAC handling performed here.
+    return True, None
+
+
+def _is_fbr_subscribed(plan_or_packages: str | None) -> bool:
+    if not plan_or_packages:
+        return False
+    tokens = {
+        token.strip().lower()
+        for token in str(plan_or_packages).replace(";", ",").replace("|", ",").split(",")
+        if token.strip()
+    }
+    return bool(
+        tokens
+        & {
+            "fbr_pos",
+            "fbr",
+            "fbr_pos_shield",
+            "fbr_plan",
+        }
+    )
+
+
+def _build_watch_ids(config: dict) -> set[str]:
+    watch_ids: set[str] = set()
+    frameworks = config.get("compliance_frameworks", {}) if isinstance(config, dict) else {}
+
+    for rule in frameworks.get("fbr_pos", {}).get("rules", []):
+        event_id = rule.get("event_id")
+        if event_id is not None:
+            watch_ids.add(str(event_id))
+
+    for rule in COMPLIANCE_CATALOG.get("fbr_pos", {}).get("rules", []):
+        event_id = rule.get("event_id")
+        if event_id is not None:
+            watch_ids.add(str(event_id))
+
+    # Shared control events can belong to multiple frameworks in config.json.
+    for event_id, meta in (config.get("event_id_map", {}) if isinstance(config, dict) else {}).items():
+        frameworks_list = meta.get("frameworks", []) if isinstance(meta, dict) else []
+        if "fbr_pos" in frameworks_list:
+            watch_ids.add(str(event_id))
+
+    return watch_ids
+
+
+def _apply_rule_metadata(log_data: dict, rule_pack: str | None, rule: dict | None):
+    if rule_pack:
+        log_data["compliance_pack"] = rule_pack
+    if rule:
+        log_data["matched_rule_id"] = rule.get("id")
+        log_data["matched_rule_name"] = rule.get("name")
+        log_data["matched_rule_severity"] = rule.get("severity")
+
 def load_dynamic_config():
-    """Loads config.json using absolute path resolution (CTO FIX)."""
-    # 🚨 FIX: Path resolved relative to the file's directory
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    config_path = os.path.join(base_dir, "config", "config.json")
-    try:
-        with open(config_path, "r") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"FAILED TO LOAD CONFIG AT {config_path}: {e}")
-        return {}
+    """Returns SSOT catalogs (CTO FIX)."""
+    config = {}
+    config.update(SIEM_RULES)
+    if "compliance_frameworks" not in config:
+        config["compliance_frameworks"] = {}
+    config["compliance_frameworks"].update(COMPLIANCE_CATALOG)
+    return config
 
 
 def _normalize_timestamp_iso_utc(value) -> datetime:
@@ -87,6 +173,86 @@ def _normalize_document_timestamps(document: dict):
         document["ingested_at"] = _normalize_timestamp_iso_utc(document.get("ingested_at"))
     # Keep _retention_ts as datetime for Mongo TTL indexes; canonicalization will convert a copy when signing.
     return document
+
+
+def _upsert_body(document: dict) -> dict:
+    body = dict(document)
+    body.pop("_id", None)
+    return body
+
+
+async def _upsert_fbr_vault_and_alerts(db, cold_docs: list[dict]) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    cold_ops = []
+    keys = []
+
+    for item in cold_docs:
+        _normalize_document_timestamps(item)
+        event_uid = item.get("event_uid") or str(uuid.uuid4())
+        item["event_uid"] = event_uid
+        key = {"tenant_id": item.get("tenant_id"), "event_uid": event_uid}
+        keys.append((item.get("tenant_id"), event_uid))
+        cold_ops.append(
+            UpdateOne(
+                key,
+                {
+                    "$set": _upsert_body(item),
+                    "$setOnInsert": {"created_at": now},
+                },
+                upsert=True,
+            )
+        )
+
+    if cold_ops:
+        await db.fbr_pos_logs.bulk_write(cold_ops, ordered=False)
+
+    cold_id_by_key = {}
+    unique_filters = [
+        {"tenant_id": tenant_id, "event_uid": event_uid}
+        for tenant_id, event_uid in sorted(set(keys))
+    ]
+    if unique_filters:
+        cursor = db.fbr_pos_logs.find(
+            {"$or": unique_filters},
+            {"_id": 1, "tenant_id": 1, "event_uid": 1},
+        )
+        async for doc in cursor:
+            cold_id_by_key[(doc.get("tenant_id"), doc.get("event_uid"))] = doc.get("_id")
+
+    meta_ops = []
+    for item in cold_docs:
+        tenant_id = item.get("tenant_id")
+        event_uid = item.get("event_uid")
+        alert_uid = f"fbr_pos:{tenant_id}:{event_uid}"
+        meta = {
+            "alert_uid": alert_uid,
+            "tenant_id": tenant_id,
+            "timestamp": _normalize_timestamp_iso_utc(item.get("ingested_at") or item.get("timestamp") or now),
+            "event_id": str(item.get("event_id") or ""),
+            "severity": item.get("matched_rule_severity") or "INFO",
+            "pack": "fbr_pos",
+            "compliance_pack": "fbr_pos",
+            "source_ip": item.get("source_ip"),
+            "summary": item.get("matched_rule_name") or item.get("message") or "",
+            "event_uid": event_uid,
+            "cold_id": cold_id_by_key.get((tenant_id, event_uid)),
+            "_retention_ts": now,
+        }
+        meta_ops.append(
+            UpdateOne(
+                {"tenant_id": tenant_id, "alert_uid": alert_uid},
+                {
+                    "$set": meta,
+                    "$setOnInsert": {"created_at": now},
+                },
+                upsert=True,
+            )
+        )
+
+    if meta_ops:
+        await db.security_alerts.bulk_write(meta_ops, ordered=False)
+
+    return cold_docs
 
 
 def _to_canonical_bytes(obj) -> bytes:
@@ -133,23 +299,8 @@ async def reclaim_stale_messages(redis_client: Redis):
         )
         if not pending_entries:
             return []
-
-        stale_ids = []
-        for entry in pending_entries:
-            if not entry:
-                continue
-            if isinstance(entry, dict):
-                message_id = entry.get("message_id")
-            else:
-                message_id = entry[0]
-            if isinstance(message_id, bytes):
-                message_id = message_id.decode()
-            if message_id:
-                stale_ids.append(message_id)
-
-        if not stale_ids:
-            return []
-
+            
+        stale_ids = [msg["message_id"] for msg in pending_entries]
         reclaimed = await redis_client.xclaim(
             RAW_LOGS_QUEUE,
             FBR_GROUP,
@@ -178,53 +329,16 @@ async def fbr_worker():
     """
     config = load_dynamic_config()
     
-    # 🛡️ THE SSOT: Load monitoring targets from FBR framework in Master Config
-    frameworks = config.get("compliance_frameworks", {})
-    fbr_config = frameworks.get("fbr_pos", {})
-    fbr_rules = fbr_config.get("rules", [])
-    # Normalize target event IDs to strings to avoid integer/string mismatches
-    fbr_targets = {str(rule.get("event_id")) for rule in fbr_rules if rule.get("event_id") is not None}
+    #  THE SSOT: Load monitoring targets from the compliance catalog and config map
+    fbr_targets = _build_watch_ids(config)
     
     client = AsyncIOMotorClient(settings.mongodb_uri)
     db = client[settings.mongodb_db_name]
     redis = await Redis.from_url(settings.redis_url, decode_responses=True)
 
-    # 🔐 Load RSA Private Key for Signing (MANDATORY for Non-Repudiation)
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    repo_root = os.path.dirname(base_dir)
-    private_key_path = os.path.join(repo_root, "keys", "private_key.pem")
-    
-    # Prefer environment-provided base64 PEM for secure hosting, fallback to disk
-    key_data = None
-    try:
-        if getattr(settings, "private_key_b64", ""):
-            key_data = base64.b64decode(settings.private_key_b64)
-            logger.info("Loaded RSA Private Key for FBR from PRIVATE_KEY_B64 environment variable.")
-    except Exception as e:
-        logger.warning(f"Failed to decode PRIVATE_KEY_B64: {e}")
+    # Signing removed per CTO directive. Worker will not perform server-side signatures.
 
-    if key_data is None:
-        if not os.path.exists(private_key_path):
-            logger.critical(f"FBR non-compliant: signing key missing at {private_key_path}. Worker cannot start.")
-            sys.exit(1)
-        try:
-            with open(private_key_path, "rb") as key_file:
-                key_data = key_file.read()
-            logger.warning("Loaded RSA Private Key from disk (keys/private_key.pem). Consider moving to a secure keystore.")
-        except Exception as e:
-            logger.critical(f"FAILED TO LOAD SIGNING KEY FROM FILE: {e}. FBR Worker non-compliant.")
-            sys.exit(1)
-
-    # Load key supporting optional passphrase from settings
-    try:
-        password = settings.private_key_password.encode() if getattr(settings, "private_key_password", None) else None
-        private_key = serialization.load_pem_private_key(key_data, password=password)
-        logger.info("Loaded RSA Private Key for FBR Signing")
-    except Exception as e:
-        logger.critical(f"FAILED TO LOAD SIGNING KEY: {e}. Worker non-compliant.")
-        sys.exit(1)
-
-    # 🚨 ROOT FIX: Dead-Letter Queue (DLQ) for Poison Pills
+    #  ROOT FIX: Dead-Letter Queue (DLQ) for Poison Pills
     def _dlq_key(tenant_id: str | None) -> str:
         return f"{DLQ_QUEUE_PREFIX}{tenant_id or DEFAULT_TENANT_ID}"
 
@@ -232,17 +346,26 @@ async def fbr_worker():
         """Ejects a poison pill message to the DLQ to prevent infinite crash loops."""
         dlq_queue = _dlq_key(tenant_id)
         logger.error(f"[DLQ EJECT] Message {message_id} ejected to {dlq_queue}. Reason: {reason}")
+        severity = "medium"
+        if "JSON_PARSE_FAILURE" in str(reason):
+            severity = "low"
+        elif "DB_INSERT_FAILURE" in str(reason) or "EXECUTOR_SIGNING_FAILURE" in str(reason):
+            severity = "critical"
+
         try:
             dlq_entry = {
                 "raw_payload": str(raw_payload),
-                "error_msg": reason,
+                "_ejection_reason": reason,
+                "severity": severity,
                 "original_id": message_id,
+                "source_worker": "fbr_worker",
                 "worker_id": FBR_CONSUMER,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "ejected_at": datetime.now(timezone.utc).isoformat(),
                 "failure_count": "1",
             }
-            if stack_trace:
-                dlq_entry["stack_trace"] = stack_trace
+            trace_text = stack_trace or traceback.format_exc()
+            if trace_text and not trace_text.strip().startswith("None"):
+                dlq_entry["stack_trace"] = trace_text
             await redis.xadd(dlq_queue, dlq_entry, maxlen=10000)
             await increment_redis_counter(redis, "warsoc_dlq_ejections_total")
             await redis.xack(RAW_LOGS_QUEUE, FBR_GROUP, message_id)
@@ -260,11 +383,11 @@ async def fbr_worker():
         logger.critical(f"FAILED TO INIT FERNET: {e}. Worker non-compliant.")
         sys.exit(1)
 
-    # 🛠️ Scale Mandate: Group Creation (Enterprise Lazy Init)
+    #  Scale Mandate: Group Creation (Enterprise Lazy Init)
     while True:
         try:
             await redis.xgroup_create(RAW_LOGS_QUEUE, FBR_GROUP, mkstream=True)
-            logger.info(f"✅ Created consumer group: {FBR_GROUP} on {RAW_LOGS_QUEUE}")
+            logger.info(f" Created consumer group: {FBR_GROUP} on {RAW_LOGS_QUEUE}")
             break
         except redis_exceptions.ResponseError as e:
             if "BUSYGROUP" in str(e):
@@ -280,26 +403,20 @@ async def fbr_worker():
             await asyncio.sleep(2)
 
     last_config_load = 0
-    fbr_targets = set()
+    # fbr_targets already loaded from config above; do NOT reset to empty set here
     buffer = []
     buffer_ack_ids = []
+    buffer_payload_by_mid = {}
     last_flush_time = time.time()
 
     logger.info("⚡ WarSOC FBR Worker: POS Compliance Active (SRO 288/69)...")
     
     while True:
         try:
-            # 🔄 HOT-RELOAD: Sync Compliance Policy every 60 seconds (BUG-24 FIX)
+            #  HOT-RELOAD: Sync Compliance Policy every 60 seconds (BUG-24 FIX)
             if time.time() - last_config_load > 60:
                 config = load_dynamic_config()
-                event_map = config.get("event_id_map", {})
-                
-                # 🚀 ROOT FIX: Derive targets directly from the Compliance Master Catalog (SSOT)
-                from app.utils.compliance_catalog import COMPLIANCE_CATALOG
-                # Normalize catalog targets to string form to match incoming log event_id types
-                new_targets = {str(rule.get("event_id")) for rule in COMPLIANCE_CATALOG["fbr_pos"]["rules"] if rule.get("event_id") is not None}
-                
-                fbr_targets = new_targets
+                fbr_targets = _build_watch_ids(config)
                 last_config_load = time.time()
                 logger.info(f"[*] FBR Policy Synced: Monitoring {len(fbr_targets)} Event IDs.")
 
@@ -320,19 +437,42 @@ async def fbr_worker():
                             item = _normalize_document_timestamps(item)
                             event_uid = item.get("event_uid") or str(uuid.uuid4())
                             item["event_uid"] = event_uid
-                            flush_batch.append(UpdateOne({"event_uid": event_uid}, {"$set": item}, upsert=True))
+
                         try:
-                            await db.fbr_pos_logs.bulk_write(flush_batch)
+                            cold_docs = await _upsert_fbr_vault_and_alerts(db, list(buffer))
+
+                            #  Phase 3 Action Engine Hook
+                            for item in cold_docs:
+                                if is_email_trigger_severity(item.get("matched_rule_severity")):
+                                    await dispatch_alert_if_entitled(
+                                        db, redis, item.get("tenant_id"), item, "fbr_pos"
+                                    )
+
                         except Exception as e:
                             logger.error(f"[!] FBR flush failed (timeout path): {e}")
+                            for mid in buffer_ack_ids:
+                                try:
+                                    await _eject_to_dlq(
+                                        mid,
+                                        buffer_payload_by_mid.get(mid, ""),
+                                        f"DB_INSERT_FAILURE: {str(e)}",
+                                        tenant_id=DEFAULT_TENANT_ID,
+                                        stack_trace=traceback.format_exc(),
+                                    )
+                                except Exception as dlq_err:
+                                    logger.error(f"Failed to eject pending FBR message {mid} after timeout DB failure: {dlq_err}")
+                            buffer = []
+                            buffer_ack_ids = []
+                            buffer_payload_by_mid = {}
                         else:
                             if buffer_ack_ids:
                                 async with redis.pipeline(transaction=True) as pipe:
                                     for mid in buffer_ack_ids:
-                                        await pipe.xack(RAW_LOGS_QUEUE, FBR_GROUP, mid)
+                                        pipe.xack(RAW_LOGS_QUEUE, FBR_GROUP, mid)
                                     await pipe.execute()
                             buffer = []
                             buffer_ack_ids = []
+                            buffer_payload_by_mid = {}
                             last_flush_time = current_time
                     continue
 
@@ -369,12 +509,28 @@ async def fbr_worker():
                                     stack_trace=traceback.format_exc()
                                 )
                                 continue
+
+                        is_valid_signature, signature_reason = await _validate_stream_signature(
+                            redis,
+                            log_data,
+                            _get_agent_security_config(locals().get("config") or {}),
+                        )
+                        if not is_valid_signature:
+                            print(f"DROP: Signature invalid: {signature_reason}")
+                            logger.warning(
+                                f"[SECURITY] Invalid agent signature detected, dropping payload: message_id={message_id} reason={signature_reason}"
+                            )
+                            immediate_ack_ids.append(message_id)
+                            continue
                         
                         tenant_id = log_data.get("tenant_id")
 
-                        # 🔍 1. Plan Verification
-                        plan = await get_tenant_plan(redis, tenant_id)
-                        if plan not in ["Professional", "Enterprise", "FBR_PLAN", "FULL_SUITE"]:
+                        # 1. Fetch live features
+                        features = await get_tenant_features(redis, tenant_id)
+                        
+                        # 2. Strict Zero-Trust Filter: If no fbr_pos pack, DROP IMMEDIATELY
+                        if not _is_fbr_subscribed(features):
+                            print(f"DROP: Not subscribed FBR: {features}")
                             immediate_ack_ids.append(message_id)
                             continue
 
@@ -383,8 +539,16 @@ async def fbr_worker():
                         raw_eid = log_data.get("event_id")
                         is_syslog = log_data.get("type") == "network_log"
                         event_id = str(raw_eid).strip() if raw_eid is not None else ""
+                        matched_pack = None
+                        matched_rule = None
+                        if event_id:
+                            rule_pack, rule = get_rule_by_event_id(event_id)
+                            if rule_pack == "fbr_pos":
+                                matched_pack = rule_pack
+                                matched_rule = rule
                         if not is_syslog:
                             if not event_id or event_id not in fbr_targets:
+                                print(f"DROP: Event ID not in fbr_targets: {event_id} {fbr_targets}")
                                 immediate_ack_ids.append(message_id)
                                 continue
 
@@ -407,7 +571,7 @@ async def fbr_worker():
 
                             if await get_flag(redis, throttle_flag_key):
                                 async with redis.pipeline(transaction=True) as pipe:
-                                    await pipe.xack(RAW_LOGS_QUEUE, FBR_GROUP, message_id)
+                                    pipe.xack(RAW_LOGS_QUEUE, FBR_GROUP, message_id)
                                     await pipe.execute()
                                 continue
 
@@ -428,7 +592,7 @@ async def fbr_worker():
                                     "event": "MASS_FILE_MODIFICATION_DETECTED",
                                     "timestamp": datetime.now(timezone.utc).isoformat(),
                                     "tags": "FBR_ROLLUP",
-                                    "retention_policy": "30_DAYS",
+                                    "retention_policy": "6_YEARS",
                                 }
                                 try:
                                     await db.fbr_pos_summaries.insert_one(summary)
@@ -439,7 +603,7 @@ async def fbr_worker():
                                     logger.error(f"Failed to persist FBR rollup summary: {e}")
 
                                 async with redis.pipeline(transaction=True) as pipe:
-                                    await pipe.xack(RAW_LOGS_QUEUE, FBR_GROUP, message_id)
+                                    pipe.xack(RAW_LOGS_QUEUE, FBR_GROUP, message_id)
                                     await pipe.execute()
                                 continue
                         except Exception as e:
@@ -453,65 +617,38 @@ async def fbr_worker():
                                 log_data["raw_event"] = json.dumps(log_data["raw_event"])
                             log_data["raw_event"] = fernet.encrypt(str(log_data["raw_event"]).encode()).decode()
 
-                        # 🏷️ 4. Tagging & Zero-Trust HMAC Sealing
+                        # 🏷 4. Tagging & Zero-Trust HMAC Sealing
                         log_data["tags"] = "FBR_POS"
-                        log_data["retention_policy"] = "30_DAYS"
+                        log_data["retention_policy"] = "6_YEARS"
+                        _apply_rule_metadata(log_data, matched_pack or "fbr_pos", matched_rule)
                         log_data["ingested_at"] = datetime.now(timezone.utc).isoformat()
-                        log_data["_retention_ts"] = datetime.now(timezone.utc)
+                        log_data["_expire_at"] = datetime.now(timezone.utc) + timedelta(days=365 * 6)
                         _normalize_document_timestamps(log_data)
                         
-                        # 🚀 PHASE 4: Server-Side Cryptographic Sealing (RSA-2048/PSS-SHA256)
-                        # 1. Take a snapshot of the exact data state before sealing
-                        signable_data = copy.deepcopy(log_data)
-                        
-                        # 2. Generate strict deterministic byte-stream
-                        canonical_bytes = _to_canonical_bytes(signable_data)
-                        
-                        # 3. Sign the bytes using FBR-compliant RSA-PSS via executor
-                        loop = asyncio.get_running_loop()
-                        # Allow tuning of crypto workers via settings (helps throttle CPU usage)
-                        crypto_workers = int(getattr(settings, "fbr_crypto_workers", 2))
-                        executor = get_crypto_executor(max_workers=crypto_workers)
-                        try:
-                            log_data["forensic_seal"] = await loop.run_in_executor(
-                                executor,
-                                _sign_canonical_bytes,
-                                canonical_bytes,
-                                key_data,
-                                None
-                            )
-                            # cooperative yield to the event loop to avoid tight CPU loops
-                            await asyncio.sleep(0)
-                        except ValueError as sign_err:
-                            logger.error(f"Executor signing failed for {message_id}: {sign_err}")
-                            await _eject_to_dlq(
-                                message_id,
-                                payload_by_mid.get(message_id, ""),
-                                f"EXECUTOR_SIGNING_FAILURE: {str(sign_err)}",
-                                tenant_id=log_data.get("tenant_id", DEFAULT_TENANT_ID),
-                                stack_trace=traceback.format_exc(),
-                            )
-                            continue
-                        
-                        # 4. Attach the immutable seal
-                        log_data["digital_signature"] = "RSA-2048-PSS-SHA256 (WarSOC Master)"
-                        
+                        # Signing removed: append the processed log to the buffer for dual-write.
                         buffer.append(log_data)
                         buffer_ack_ids.append(message_id)
+                        buffer_payload_by_mid[message_id] = raw_payload
                     
                     except Exception as e:
                         logger.error(f"Error processing FBR log: {e}")
-                        # Do not ack this message on processing failure.
+                        await _eject_to_dlq(
+                            message_id,
+                            payload_by_mid.get(message_id, payload.get("payload", "")),
+                            f"PROCESSING_ERROR: {str(e)}",
+                            tenant_id=log_data.get("tenant_id") if "log_data" in locals() and isinstance(log_data, dict) else DEFAULT_TENANT_ID,
+                            stack_trace=traceback.format_exc(),
+                        )
                         continue
                 
                 # Ack intentionally skipped/malformed records immediately.
                 if immediate_ack_ids:
                     async with redis.pipeline(transaction=True) as pipe:
                         for mid in immediate_ack_ids:
-                            await pipe.xack(RAW_LOGS_QUEUE, FBR_GROUP, mid)
+                            pipe.xack(RAW_LOGS_QUEUE, FBR_GROUP, mid)
                         await pipe.execute()
 
-            # 🚀 4. HYBRID FLUSH LOGIC
+            #  4. HYBRID FLUSH LOGIC
             current_time = time.time()
             if len(buffer) >= 100 or (len(buffer) > 0 and (current_time - last_flush_time) >= 3):
                 logger.info(f"[*] Batch Flush: {len(buffer)} FBR logs to fbr_pos_logs...")
@@ -520,19 +657,70 @@ async def fbr_worker():
                     item = _normalize_document_timestamps(item)
                     event_uid = item.get("event_uid") or str(uuid.uuid4())
                     item["event_uid"] = event_uid
-                    flush_batch.append(UpdateOne({"event_uid": event_uid}, {"$set": item}, upsert=True))
+
                 try:
-                    await db.fbr_pos_logs.bulk_write(flush_batch)
+                    cold_docs = await _upsert_fbr_vault_and_alerts(db, list(buffer))
+                    for d in cold_docs:
+                        _normalize_document_timestamps(d)
+                        if not d.get("event_uid"):
+                            d["event_uid"] = str(uuid.uuid4())
+
+                    inserted = []
+                    if False and cold_docs:
+                        res = None
+                        inserted = list(res.inserted_ids or [])
+
+                    meta_docs = []
+                    for idx, item in enumerate(cold_docs):
+                        meta = {
+                            "tenant_id": item.get("tenant_id"),
+                            "timestamp": _normalize_timestamp_iso_utc(item.get("ingested_at") or item.get("timestamp") or datetime.now(timezone.utc)),
+                            "event_id": str(item.get("event_id") or ""),
+                            "severity": item.get("matched_rule_severity") or "INFO",
+                            "pack": "fbr_pos",
+                            "source_ip": item.get("source_ip"),
+                            "summary": item.get("matched_rule_name") or item.get("message") or "",
+                            "event_uid": item.get("event_uid"),
+                            "cold_id": (inserted[idx] if idx < len(inserted) else None),
+                            "_retention_ts": datetime.now(timezone.utc),
+                        }
+                        meta_docs.append(meta)
+
+                    if False and meta_docs:
+                        pass
+
+                    #  Phase 3 Action Engine Hook
+                    for item in cold_docs:
+                        if is_email_trigger_severity(item.get("matched_rule_severity")):
+                            await dispatch_alert_if_entitled(
+                                db, redis, item.get("tenant_id"), item, "fbr_pos"
+                            )
+
                 except Exception as e:
                     logger.error(f"[!] FBR flush failed: {e}")
+                    for mid in buffer_ack_ids:
+                        try:
+                            await _eject_to_dlq(
+                                mid,
+                                buffer_payload_by_mid.get(mid, payload_by_mid.get(mid, "")),
+                                f"DB_INSERT_FAILURE: {str(e)}",
+                                tenant_id=DEFAULT_TENANT_ID,
+                                stack_trace=traceback.format_exc(),
+                            )
+                        except Exception as dlq_err:
+                            logger.error(f"Failed to eject pending FBR message {mid} after DB failure: {dlq_err}")
+                    buffer = []
+                    buffer_ack_ids = []
+                    buffer_payload_by_mid = {}
                 else:
                     if buffer_ack_ids:
                         async with redis.pipeline(transaction=True) as pipe:
                             for mid in buffer_ack_ids:
-                                await pipe.xack(RAW_LOGS_QUEUE, FBR_GROUP, mid)
+                                pipe.xack(RAW_LOGS_QUEUE, FBR_GROUP, mid)
                             await pipe.execute()
                     buffer = []
                     buffer_ack_ids = []
+                    buffer_payload_by_mid = {}
                     last_flush_time = current_time
 
         except Exception as e:
@@ -553,4 +741,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.info("WarSOC FBR Worker offline.")
     finally:
-        shutdown_crypto_executor()
+        pass

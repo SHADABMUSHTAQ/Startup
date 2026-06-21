@@ -1,12 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
+
+
+cryptography_hiddenimports = collect_submodules('cryptography')
+cryptography_datas = collect_data_files('cryptography')
+cryptography_binaries = collect_dynamic_libs('cryptography')
+
 
 a = Analysis(
     ['agent\\windows_agent.py'],
     pathex=[],
-    binaries=[],
-    datas=[],
-    hiddenimports=[],
+    binaries=cryptography_binaries,
+    datas=cryptography_datas,
+    hiddenimports=cryptography_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

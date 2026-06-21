@@ -49,7 +49,7 @@ async def force_migration():
         {"$set": {"status": "active"}}
     )
 
-    print("✅ Global Migration Complete. WarSOC Identity State is now Synchronized.")
+    print(" Global Migration Complete. WarSOC Identity State is now Synchronized.")
 
 if __name__ == "__main__":
     asyncio.run(force_migration())

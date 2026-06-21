@@ -33,7 +33,7 @@ def build_signable_event_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "source_ip": payload.get("source_ip", ""),
         "user": payload.get("user", ""),
-        "event_id": int(payload.get("event_id", 0)),
+        "event_id": "" if payload.get("event_id") is None else str(payload.get("event_id")).strip(),
         "message": payload.get("message", ""),
         "processed_data": payload.get("processed_data") or {},
         "raw_event_data": raw_event_data or {},
@@ -47,10 +47,6 @@ def build_event_signature_string(
     payload_hash: str,
 ) -> str:
     return f"{agent_id}|{timestamp}|{event_uid}|{payload_hash}"
-
-
-def build_login_signature_string(agent_id: str, timestamp: str, nonce: str) -> str:
-    return f"{agent_id}|{timestamp}|{nonce}|login"
 
 
 def parse_utc_timestamp(timestamp_str: str) -> Optional[datetime]:

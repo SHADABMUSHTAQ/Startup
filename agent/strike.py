@@ -22,20 +22,20 @@ def setup_and_fire():
         print("Failed to login")
         sys.exit(1)
     
-    cookie = session.cookies.get("warsoc_token")
-    headers = {"Authorization": f"Bearer {cookie}"} if cookie else {}
+    csrf_token = resp.json().get("csrf_token") or session.cookies.get("csrf_token")
+    headers = {"x-csrf-token": csrf_token} if csrf_token else {}
 
-    # 2. Get Provisioning Token
-    prov_resp = session.post(f"{BASE_URL}/auth/agents/generate-token", headers=headers, json={"agent_id": "VM-STRIKE-01"})
+    # 2. Get one-time activation code
+    prov_resp = session.post(f"{BASE_URL}/agent/generate-activation", headers=headers)
     if prov_resp.status_code != 200:
-        print("Failed to get token:", prov_resp.text)
+        print("Failed to get activation code:", prov_resp.text)
         sys.exit(1)
     
-    token = prov_resp.json()["provisioning_token"]
+    activation_code = prov_resp.json()["activation_code"]
 
     # 3. Configure Env
     with open(".env.strike", "w") as f:
-        f.write("TENANT_ID=WARSOC_DEFAULT\nAGENT_ID=VM-STRIKE-01\nBACKEND_URL=http://127.0.0.1:8000\n")
+        f.write("TENANT_ID=provision\nAGENT_ID=auto\nBACKEND_URL=http://127.0.0.1:8000\n")
 
     print("[*] Local simulation environment configured in .env.strike without embedding the enrollment token.")
 
@@ -43,8 +43,8 @@ def setup_and_fire():
     import threading
     import windows_agent
 
-    windows_agent.AGENT_ID = "VM-STRIKE-01"
-    windows_agent.ENROLLMENT_TOKEN = token
+    windows_agent.ACTIVATION_CODE = activation_code
+    windows_agent.JWT_TOKEN = None
 
     if not windows_agent.authenticate_agent():
         print("[-] Agent failed to authenticate")

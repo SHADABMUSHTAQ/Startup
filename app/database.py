@@ -16,7 +16,7 @@ class DatabaseManager:
         """Initializes the connection to MongoDB."""
         settings = get_settings()
         
-        # ✅ DB Name dynamically pulled from settings (CTO FIX)
+        #  DB Name dynamically pulled from settings (CTO FIX)
         db_name = settings.mongodb_db_name  
         
         try:
@@ -25,19 +25,19 @@ class DatabaseManager:
             
             # Ping verify
             await self.client.admin.command('ping')
-            print(f"✅ MongoDB Connected: {db_name}")
+            print(f" MongoDB Connected: {db_name}")
             
         except Exception as e:
-            print(f"❌ MongoDB Connection Failed: {e}")
+            print(f" MongoDB Connection Failed: {e}")
             raise e
 
     async def close(self):
         """Closes the connection."""
         if self.client:
             self.client.close()
-            print("🔌 MongoDB Connection Closed")
+            print(" MongoDB Connection Closed")
 
-    # 🔥🔥 MAGIC METHOD 🔥🔥
+    #  MAGIC METHOD 
     # Handles dynamic calls like 'db.users'
     def __getattr__(self, name):
         if self.db is not None:
@@ -45,7 +45,7 @@ class DatabaseManager:
         raise AttributeError(f"'DatabaseManager' not connected. Cannot access '{name}'")
 
     # ==========================================
-    # 🛡️ HELPER METHODS
+    #  HELPER METHODS
     # ==========================================
     
     async def insert_analysis_result(self, data: dict) -> str:
@@ -61,7 +61,7 @@ class DatabaseManager:
             return None
         return await self.db.analysis_results.find_one({"_id": ObjectId(analysis_id), "tenant_id": tenant_id})
     
-    # ✅ PIPE 1: Strictly for Manual File Uploads
+    #  PIPE 1: Strictly for Manual File Uploads
     async def get_all_analyses(self, tenant_id: str):
         """Fetches manual uploads with tenant isolation."""
         if self.db is None: await self.connect()
@@ -79,7 +79,7 @@ class DatabaseManager:
             
         return clean_results
 
-    # ✅ PIPE 2: Strictly for Live Windows Agent
+    #  PIPE 2: Strictly for Live Windows Agent
     async def get_all_logs(self, tenant_id: str):
         """Fetches live agent streaming data from the logs collection.
         Tenant isolation enforcement: `tenant_id` is required.
@@ -137,6 +137,11 @@ async def init_db():
     # Ensure tenant isolation indexes exist for performance and safety
     if db_manager.db is not None:
         indexes = [
+            ("logs", [("tenant_id", 1), ("timestamp", -1)]),
+            ("security_alerts", [("tenant_id", 1), ("timestamp", -1)]),
+            ("peca_forensic_logs", [("tenant_id", 1), ("timestamp", -1)]),
+            ("fbr_pos_logs", [("tenant_id", 1), ("timestamp", -1)]),
+            ("csv_uploads", [("tenant_id", 1), ("timestamp", -1)]),
             ("logs", "tenant_id"),
             ("security_alerts", "tenant_id"),
             ("analysis_results", "tenant_id"),
@@ -171,13 +176,13 @@ async def init_db():
                                 dropped = True
                                 break
                         if not dropped:
-                            print(f"⚠️ Index conflict for {coll}/{idx} but no matching key found: {e}")
+                            print(f" Index conflict for {coll}/{idx} but no matching key found: {e}")
                     else:
-                        print(f"⚠️ Index setup for {coll}/{idx} failed: {e}")
+                        print(f" Index setup for {coll}/{idx} failed: {e}")
             except Exception as e:
-                print(f"⚠️ Index setup for {coll}/{idx} (skipped or already exists): {e}")
+                print(f" Index setup for {coll}/{idx} (skipped or already exists): {e}")
 
-        # Team management requires multiple users per tenant; remove any legacy unique tenant index.
+        # Team management requires multiple users per tenant; remove any legacy unique tenant index or conflicting name.
         try:
             users_indexes = await db_manager.db["users"].index_information()
             for idx_name, idx_def in users_indexes.items():
@@ -185,28 +190,24 @@ async def init_db():
                     continue
                 if idx_def.get("key") != [("tenant_id", 1)]:
                     continue
-                if idx_def.get("unique"):
+                if idx_def.get("unique") or idx_name != "idx_users_tenant_id_1":
                     await db_manager.db["users"].drop_index(idx_name)
-                    print(f"    - Dropped legacy unique users.{idx_name} index")
-                    break
+                    print(f"    - Dropped legacy or conflicting users.{idx_name} index")
+                    # Don't break here, we want to drop all such indices
             await db_manager.db["users"].create_index([("tenant_id", 1)], name="idx_users_tenant_id_1", unique=False)
         except Exception as e:
-            print(f"⚠️ users.tenant_id index normalization failed: {e}")
+            print(f" users.tenant_id index normalization failed: {e}")
 
         await ensure_threat_intel_indexes(db_manager.db)
         await ensure_used_provisioning_token_indexes(db_manager.db)
         
-        # Ensure TTL index for forensic retention (peca_forensic_logs)
+        # Ensure TTL index for forensic retention
         try:
-            settings = get_settings()
-            retention_days = int(getattr(settings, "log_retention_days", 365))
-            retention_seconds_peca = retention_days * 24 * 3600
-            retention_seconds_standard = 30 * 24 * 3600
-            
             async def _ensure_ttl(coll_name: str, retention_seconds: int, field_name: str = "_retention_ts"):
                 coll = db_manager.db.get_collection(coll_name)
                 idxs = await coll.index_information()
-                existing_ttl = None
+                
+                # Check for existing TTL indexes and drop conflicting ones
                 for name, info in idxs.items():
                     if info.get("key") == [(field_name, 1)]:
                         existing_ttl = info.get("expireAfterSeconds")
@@ -221,13 +222,21 @@ async def init_db():
                     await coll.create_index([(field_name, 1)], expireAfterSeconds=retention_seconds, name=f"idx_{coll_name}_{field_name}")
                     print(f"    - Created TTL index on {coll_name} expireAfterSeconds={retention_seconds}")
 
-            await _ensure_ttl("peca_forensic_logs", retention_seconds_peca)
-            await _ensure_ttl("fbr_pos_logs", retention_seconds_standard)
-            await _ensure_ttl("logs", retention_seconds_standard)
+            # 7 days
+            await _ensure_ttl("security_alerts", 604800)
+            
+            # 1 year (Mandated by PECA)
+            await _ensure_ttl("peca_forensic_logs", 31536000)
+            
+            # 6 years (mandated for FBR compliance)
+            await _ensure_ttl("fbr_pos_logs", 189216000)
+            
+            # Hot Logs (7 days)
+            await _ensure_ttl("logs", 604800)
         except Exception as e:
-            print(f"⚠️ TTL index setup failed: {e}")
+            print(f" TTL index setup failed: {e}")
 
-        print("✅ MongoDB Indexes Ensured")
+        print(" MongoDB Indexes Ensured")
 
 
 async def _dedupe_field_before_unique(collection, collection_name: str, field_name: str):

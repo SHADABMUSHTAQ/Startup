@@ -95,7 +95,7 @@ async def log_audit_action(
     }
     await db["system_audit"].insert_one(tombstone)
 
-# 🔄 COLUMN NAME RESOLVER
+#  COLUMN NAME RESOLVER
 COLUMN_ALIASES = {
     "timestamp": ["timestamp", "timestamp (utc)", "time", "date", "datetime", "event_time", "log_time", "created_at", "occurred_at"],
     "source_ip": ["source_ip", "src_ip", "ip", "ip_address", "sourceip", "source", "sourcedevice", "source_device", "host", "hostname", "src", "client_ip", "remote_ip"],
@@ -281,7 +281,7 @@ async def analyze_log_file(request: Request, file: UploadFile = File(...), db=De
         safe_filename = f"WarSOC_{secure_tenant_id}_{file_id}_{secure_original_name}"
         file_path = os.path.join(UPLOAD_DIR, safe_filename)
         
-        # ✅ Async stream file to disk in chunks with hard size limit
+        #  Async stream file to disk in chunks with hard size limit
         total_bytes = 0
         try:
             async with aiofiles.open(file_path, "wb") as buffer:
@@ -304,7 +304,7 @@ async def analyze_log_file(request: Request, file: UploadFile = File(...), db=De
         analysis_tag = file_id
 
         try:
-            # ✅ STREAMING PARSE: inspect a bounded sample, then replay the on-disk file row-by-row
+            #  STREAMING PARSE: inspect a bounded sample, then replay the on-disk file row-by-row
             delimiter_used, fieldnames, sample_rows = _detect_csv_structure(file_path)
 
             if not fieldnames:
@@ -325,7 +325,7 @@ async def analyze_log_file(request: Request, file: UploadFile = File(...), db=De
             csv_reader = _build_csv_reader(file_path, delimiter=delimiter_used)
 
             for row in csv_reader:
-                # 🔄 Normalize row keys by stripping whitespace
+                #  Normalize row keys by stripping whitespace
                 row = {(k.strip() if k else k): v for k, v in row.items()}
                 
                 if not isinstance(row, dict) or not any((str(v).strip() if v is not None else "") for v in row.values()):
@@ -386,7 +386,7 @@ async def analyze_log_file(request: Request, file: UploadFile = File(...), db=De
                 logs_batch.append(log_entry)
                 parsed_rows += 1
 
-                # ✅ CTO FIX 3: Batch Insert to MongoDB (CSV to separate collection)
+                #  CTO FIX 3: Batch Insert to MongoDB (CSV to separate collection)
                 if len(logs_batch) >= batch_size:
                     result = await db["csv_uploads"].insert_many(logs_batch)
                     logger.debug("CSV upload batch inserted %s rows", len(result.inserted_ids))
@@ -408,7 +408,7 @@ async def analyze_log_file(request: Request, file: UploadFile = File(...), db=De
             logger.warning("CSV upload parse failed: %s", csv_err)
             raise HTTPException(status_code=400, detail="Unable to read this CSV file. Please check the format.")
         
-        # ✅ CTO FIX 4: Store METADATA ONLY in analysis_results (No embedded findings array)
+        #  CTO FIX 4: Store METADATA ONLY in analysis_results (No embedded findings array)
         analysis_doc = {
             "tenant_id": secure_tenant_id,
             "filename": secure_original_name,

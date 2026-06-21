@@ -1,28 +1,31 @@
-REM ====================================================
-REM WARSOC DASHBOARD STARTUP COMMANDS (Windows CMD)
-REM ====================================================
+@echo off
+setlocal
+echo ====================================================
+echo WARSOC COMPLETE STARTUP SCRIPT (Local Dev Mode)
+echo ====================================================
 
-REM 1. Start all backend services (MongoDB, Redis, API, Workers, Nginx)
-cd c:\Users\Lenovo\Desktop\Startup-backend
+cd /d "c:\Users\Lenovo\Desktop\Startup-backend"
+
+echo [1/5] Starting Infrastructure (MongoDB & Redis)...
 docker-compose up -d
+timeout /t 3 /nobreak >nul
 
-REM 2. Check if all services are running
-docker-compose ps
+echo [2/5] Starting Backend Grand Master (API & Core Workers)...
+start "WarSOC: Grand Master" cmd /c "run_grand_master.bat"
 
-REM 3. Check backend logs (API should be listening on port 8000)
-docker-compose logs app
+echo [3/5] Starting Email Daemon...
+start "WarSOC: Email Daemon" cmd /k "set PYTHONIOENCODING=utf-8 && call .venv\Scripts\activate && python -m app.workers.email_daemon"
 
-REM 4. Test API health
-curl http://localhost:8000/health
+echo [4/5] Starting Frontend (Vite)...
+cd /d "c:\Users\Lenovo\Desktop\Startup-main"
+start "WarSOC: Frontend" cmd /k "npm run dev"
 
-REM 5. Open dashboard in browser
-start http://localhost:3000
+echo [5/5] Opening Dashboard in Browser...
+timeout /t 5 /nobreak >nul
+start http://localhost:5173
 
-REM ====================================================
-REM Dashboard Access Points
-REM ====================================================
-REM Frontend Dashboard:  http://localhost:3000
-REM Backend API:         http://localhost:8000
-REM Nginx Proxy:         http://localhost
-REM MongoDB:             localhost:27017
-REM Redis CLI:           redis-cli -h localhost -p 6379
+echo ====================================================
+echo Startup sequence initiated! 
+echo Please verify all terminal windows are running.
+echo ====================================================
+pause

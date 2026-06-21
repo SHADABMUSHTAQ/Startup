@@ -88,10 +88,10 @@ class StatefulThreatEngine:
         try:
             self.redis = await aioredis.from_url(redis_url, decode_responses=True)
             await self.redis.ping()
-            print("✅ Stateful Engine: Redis Connected")
+            print(" Stateful Engine: Redis Connected")
         except Exception as e:
             self.redis = None
-            print(f"❌ Stateful Engine Redis Error: {e}")
+            print(f" Stateful Engine Redis Error: {e}")
 
     async def stop(self):
         if self.redis: 

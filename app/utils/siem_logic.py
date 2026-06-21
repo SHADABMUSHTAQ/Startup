@@ -1,6 +1,7 @@
 import math
 import logging
 import asyncio
+import hashlib
 import json
 import re
 import uuid
@@ -8,43 +9,26 @@ import time
 from urllib.parse import urlparse
 from datetime import datetime, timezone
 import redis.asyncio as aioredis
+from app.utils.siem_catalog import SIEM_RULES
 
 corr_logger = logging.getLogger("SIEM-Correlation")
 
-ACTIVE_MALICIOUS_IPS = set()
 
 
-async def bootstrap_active_malicious_ips(db) -> int:
-    """Hydrate the in-memory malicious IP cache from MongoDB at process boot."""
-    loaded_ips = set()
-
-    try:
-        cursor = db["threat_intel_learned_ips"].find({}, {"_id": 0, "ip": 1})
-        async for document in cursor:
-            ip = str(document.get("ip") or "").strip()
-            if ip:
-                loaded_ips.add(ip)
-    except Exception as exc:
-        corr_logger.warning(f"[THREAT-INTEL] Bootstrap from Mongo failed: {exc}")
-        return 0
-
-    ACTIVE_MALICIOUS_IPS.update(loaded_ips)
-    corr_logger.info(f"[THREAT-INTEL] Bootstrapped {len(loaded_ips)} learned malicious IPs from Mongo.")
-    return len(loaded_ips)
 
 class SIEMEngine:
     def __init__(self, config: dict = None):
         self.redis = None  # Will be set via set_redis_client()
         self.refresh_config(config)
 
-    def refresh_config(self, config: dict):
+    def refresh_config(self, config: dict = None):
         """
-        🚀 RE-ENTRY MANDATE: Re-initializes all rules, patterns, and threat intel sets.
+         RE-ENTRY MANDATE: Re-initializes all rules, patterns, and threat intel sets.
         Fixes BUG-23 (Ghost Reloading) by ensuring regex is re-compiled on config change.
         """
-        self.config = config if config else {}
+        self.config = config or SIEM_RULES
         self._initialize_from_config()
-        print(f"✅ SIEM Engine Hot-Reloaded: {len(self.rules)} Regex Rules, {len(self.event_id_rules)} Event ID Rules.")
+        print(f" SIEM Engine Hot-Reloaded: {len(self.rules)} Regex Rules, {len(self.event_id_rules)} Event ID Rules.")
 
     def _initialize_from_config(self):
         # 1. Basic Whitelists
@@ -60,13 +44,11 @@ class SIEMEngine:
 
         # 3. Threat Intelligence (Static + File Based)
         ti_config = self.config.get("threat_intelligence", {})
-        ACTIVE_MALICIOUS_IPS.update(
-            {str(ip).strip() for ip in ti_config.get("ips", []) if str(ip).strip()}
-        )
-        self.blacklisted_ips = ACTIVE_MALICIOUS_IPS
+        self.blacklisted_ips = set(ti_config.get("ips", []))
 
         # 4. Event ID Mapping
-        self.event_id_rules = self.config.get("event_id_map", {}) or self.config.get("detection", {}).get("event_id_rules", {})
+        raw_event_id_rules = self.config.get("event_id_map", {}) or self.config.get("detection", {}).get("event_id_rules", {})
+        self.event_id_rules = {str(key): value for key, value in raw_event_id_rules.items()}
 
         # 5. Phishing Logic
         phishing_cfg = self.config.get("detection", {}).get("phishing_detection", {})
@@ -101,11 +83,16 @@ class SIEMEngine:
                     "cooldown_seconds": int(rule_meta.get("cooldown_seconds", self.rule_cooldown_seconds)),
                 }
             except Exception as e:
-                print(f"⚠️ Rule Error ({rule_name}): {e}")
+                print(f" Rule Error ({rule_name}): {e}")
 
     def set_redis_client(self, redis_client):
         """Inject Redis client for persistent cooldown tracking across worker restarts."""
         self.redis = redis_client
+
+    @staticmethod
+    def _cooldown_fingerprint(message: str) -> str:
+        normalized = " ".join(str(message or "").lower().split())
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
 
     async def analyze_single_log(self, log_entry: dict):
         findings = []
@@ -130,6 +117,22 @@ class SIEMEngine:
 
         if user in self.whitelist_users or ip in self.whitelist_ips:
             return []
+
+        # THREAT INTEL: 30-Day TTL Stateful Check
+        if self.redis and ip and ip not in {"0.0.0.0", "127.0.0.1", "::1"}:
+            try:
+                is_malicious = await self.redis.exists(f"threat_intel:ip:{ip}")
+                if is_malicious:
+                    findings.append(self._create_alert(
+                        "KNOWN_MALICIOUS_IP",
+                        "CRITICAL",
+                        f"Communication with known malicious IP detected: {ip}",
+                        log_entry,
+                        "T1071" # Standard C2/Malicious connection
+                    ))
+                    # We don't return early; we want to capture other alerts for this IP too
+            except Exception as e:
+                corr_logger.error(f"Threat Intel redis check failed for {ip}: {e}")
 
         # ---------------------------------------------------------
         # WINDOWS EVENT ID ENGINE
@@ -168,9 +171,10 @@ class SIEMEngine:
             if token_hints and not any(token in msg_lower for token in token_hints):
                 continue
 
-            # 🚀 REDIS COOLDOWN: Persistent across worker restarts
+            #  REDIS COOLDOWN: Persistent across worker restarts
             cooldown_seconds = rule.get("cooldown_seconds", self.rule_cooldown_seconds)
-            cooldown_key = f"warsoc:siem_cooldown:{name}:{ip}:{event_type}"
+            message_fingerprint = self._cooldown_fingerprint(msg)
+            cooldown_key = f"warsoc:siem_cooldown:{name}:{ip}:{event_type}:{message_fingerprint}"
 
             # Check Redis for existing cooldown (non-blocking, graceful fallback)
             is_on_cooldown = False
@@ -186,7 +190,7 @@ class SIEMEngine:
                 continue
 
             if rule["pattern"].search(msg):
-                # ✅ ZERO HARDCODING: Uses config summary or an extremely dumb fallback
+                #  ZERO HARDCODING: Uses config summary or an extremely dumb fallback
                 summary = rule["summary"] if rule["summary"] else self._fallback_summary(name)
                 findings.append(self._create_alert(name, rule["severity"], summary, log_entry, rule["mitre"]))
 
@@ -239,7 +243,9 @@ class SIEMEngine:
                     signals.append("suspicious_domain")
                     score += int(self.phishing_weights.get("suspicious_domain", 20))
 
-        file_path = str(log_entry.get("file_path") or (log_entry.get("raw_data") or {}).get("file_path") or "").lower()
+        raw_data = log_entry.get("raw_data")
+        raw_dict = raw_data if isinstance(raw_data, dict) else {}
+        file_path = str(log_entry.get("file_path") or raw_dict.get("file_path") or "").lower()
         for ext in self.phishing_risky_attachments:
             if ext and (ext in file_path or ext in msg_lower):
                 signals.append("risky_attachment")
@@ -267,14 +273,14 @@ class SIEMEngine:
         return self._create_alert("PHISHING_PATTERN", sev, "Possible phishing activity detected", log_entry, "T1566")
 
     def _fallback_summary(self, rule_name: str) -> str:
-        # ✅ FIX: Dumb generic string format, no custom dict mapping
+        #  FIX: Dumb generic string format, no custom dict mapping
         readable = str(rule_name or "suspicious").replace("_", " ").strip().lower()
         return f"Potential {readable} activity detected"
 
     def _create_alert(self, type_str, sev, summary, row, mitre):
-        event_id_value = row.get("event_id", 0)
-        event_id_str = str(event_id_value or "").strip()
-        normalized_event_id = int(event_id_str) if event_id_str.isdigit() else 0
+        event_id_value = row.get("event_id", "")
+        event_id_str = "" if event_id_value is None else str(event_id_value).strip()
+        normalized_event_id = event_id_str
 
         mapped_meaning = ""
         if event_id_str and event_id_str in self.event_id_rules:
@@ -325,8 +331,8 @@ class CorrelationEngine:
         self.redis = redis_client
         self.refresh_config(config)
 
-    def refresh_config(self, config: dict | None):
-        self.config = config or {}
+    def refresh_config(self, config: dict | None = None):
+        self.config = SIEM_RULES if config is None else config
         self.stateful_rules = self.config.get("stateful_detection_rules", {})
         # Map of builtin handler tokens -> callables. Allows config to refer to
         # handlers using `handler` or `type` without relying on rule names.
@@ -345,8 +351,9 @@ class CorrelationEngine:
             "ransomware": self.check_ransomware_pattern,
             "process_injection": self.check_process_injection,
             "registry_persistence": self.check_registry_persistence,
-            "after_hours_activity": None,
-            "dormant_account_activation": None,
+            "phishing_kill_chain": self.check_phishing_kill_chain,
+            "after_hours_activity": self.check_after_hours_activity,
+            "dormant_account_activation": self.check_dormant_account_activation,
         }
 
     @staticmethod
@@ -364,39 +371,85 @@ class CorrelationEngine:
         if event_type_token and event_type_token == filter_token:
             return True
 
-        event_id_map = {
-            "failed_login": {"4625", "4776"},
-            "successful_login": {"4624"},
-            "account_created": {"4720"},
-            "account_deleted": {"4726"},
-            "privilege_escalation": {"4672", "4732"},
-            "file_modify": {"4663"},
-            "file_delete": {"4660"},
-            "file_write": {"4663"},
-            "file_access": {"4663"},
-            "process_create": {"4688"},
-            "network_connect": {"3", "5156"},
-            "network_connection": {"3", "5156"},
-            "registry_modified": {"4657"},
-            "permissions_changed": {"4670"},
-            "scheduled_task_created": {"4698"},
-            "service_installed": {"4697", "7045"},
-            "log_clear": {"1102"},
-            "explicit_credential_use": {"4648"},
-            "ntlm_authentication": {"4776"},
-            "kerberos_auth_ticket": {"4768"},
-            "kerberos_service_ticket": {"4769"},
-            "network_share_accessed": {"5140"},
-            "image_load": {"7"},
-            "create_remote_thread": {"8"},
-            "raw_access_read": {"9"},
-            "process_access": {"10"},
-            "registry_set": {"13"},
-            "named_pipe_created": {"17"},
-            "named_pipe_connected": {"18"},
+        # Use SSOT event_id_map to prevent logic drift
+        ssot_map = getattr(self, "config", {}).get("event_id_map", {})
+        if event_id in ssot_map:
+            mapped_type = self._normalize_token(ssot_map[event_id].get("event_type"))
+            if mapped_type == filter_token:
+                return True
+                
+        # Handle synonym groups commonly used in stateful rules
+        synonyms = {
+            "failed_login": {"failed_login", "ntlm_authentication"},
+            "file_modify": {"object_access", "file_modify", "file_write"},
+            "file_delete": {"object_deleted", "file_delete"},
+            "network_connect": {"network_connect", "network_connection", "firewall_block"},
         }
+        
+        for key, aliases in synonyms.items():
+            if filter_token in aliases:
+                if event_type_token in aliases:
+                    return True
+                if event_id in ssot_map and self._normalize_token(ssot_map[event_id].get("event_type")) in aliases:
+                    return True
 
-        return event_id in event_id_map.get(filter_token, set())
+        return False
+
+    @classmethod
+    def _builtin_handler_relevant(
+        cls,
+        handler_token: str,
+        event_id: str,
+        event_type: str,
+        log_entry: dict | None,
+    ) -> bool:
+        token = cls._normalize_token(handler_token)
+        event_id = str(event_id or "").strip()
+        event_type = cls._normalize_token(event_type)
+        message = str((log_entry or {}).get("message") or "").lower()
+
+        if token in ("password_spray", "password-spraying", "spray", "password-spray"):
+            return event_id in {"4625", "4776"} or event_type in {"failed_login", "ntlm_authentication"}
+
+        if token in ("impossible_travel", "after_hours_activity", "dormant_account_activation"):
+            return event_id == "4624" or event_type == "successful_login"
+
+        if token in ("ghost_admin_sequence", "ghost_admin"):
+            return event_id in {"4732", "1102"} or event_type in {"group_membership_change", "log_cleared"}
+
+        if token in ("smb_lateral_movement", "smb_lateral"):
+            return event_id in {"4648", "4776", "4768", "4769"}
+
+        if token in ("smb_enumeration", "smb-enumeration"):
+            return event_id == "5140" or event_type == "network_share_accessed"
+
+        if token in ("ransomware_raw_access", "ransomware"):
+            return event_id in {"9", "10", "4663", "4660", "4657"}
+
+        if token in ("process_injection",):
+            return event_id == "8" or event_type == "create_remote_thread"
+
+        if token in ("registry_persistence",):
+            return event_id == "13" or event_type == "registry_set"
+
+        if token in ("phishing_kill_chain",):
+            if not message:
+                return False
+            quick_tokens = (
+                "http://",
+                "https://",
+                "verify your account",
+                "invoice attached",
+                "urgent payment",
+                "cmd.exe",
+                "powershell.exe",
+                "wscript.exe",
+                "cscript.exe",
+                "mshta.exe",
+            )
+            return any(marker in message for marker in quick_tokens)
+
+        return True
 
     @staticmethod
     def _extract_field(log_entry: dict | None, field_name: str | None):
@@ -553,7 +606,7 @@ class CorrelationEngine:
                 tenant_id=tenant_id,
                 source_ip=source_ip,
                 user=target_user,
-                event_id=int(event_id),
+                event_id=int(event_id) if str(event_id).isdigit() else event_id,
                 mitre="T1110.003",
                 extra={"unique_targets": unique_count, "window_minutes": spray_window // 60},
             )
@@ -788,7 +841,7 @@ class CorrelationEngine:
             tenant_id=tenant_id,
             source_ip=source_ip,
             user=user,
-            event_id=int(event_id),
+            event_id=int(event_id) if str(event_id).isdigit() else event_id,
             mitre="T1021.002",
             extra={"unique_targets": unique_targets, "window_minutes": lateral_window // 60},
         )
@@ -908,7 +961,7 @@ class CorrelationEngine:
             tenant_id=tenant_id,
             source_ip=source_ip,
             user=user,
-            event_id=int(event_id),
+            event_id=int(event_id) if str(event_id).isdigit() else event_id,
             mitre="T1486",
             extra={
                 "raw_access_count": int(raw_count),
@@ -919,7 +972,104 @@ class CorrelationEngine:
         )
 
     # ==========================================================
-    # CORRELATION 7 — Process Injection
+    # CORRELATION 8 — After-Hours Activity
+    # ==========================================================
+    async def check_after_hours_activity(
+        self,
+        tenant_id: str,
+        source_ip: str,
+        user: str,
+        event_id: str,
+        timestamp_iso: str | None = None,
+        rule_name: str = "after_hours_activity",
+        rule: dict = None,
+    ) -> dict | None:
+        if not rule:
+            rule = {}
+        start_hour = int(rule.get("start_hour", 0))
+        end_hour = int(rule.get("end_hour", 0))
+        if self._is_after_hours(timestamp_iso, start_hour, end_hour):
+            alert_key = f"warsoc:dyn:alerted:{rule_name}:{tenant_id}:{user}"
+            window = int(rule.get("window_seconds") or 300)
+            try:
+                if await self.redis.set(alert_key, "1", nx=True, ex=max(window, 300)):
+                    return self._alert(
+                        alert_type=rule.get("description", rule_name),
+                        severity=rule.get("severity", "MEDIUM"),
+                        summary=f"{rule.get('description', 'Behavioral anomaly detected')}: {user} at {timestamp_iso or 'current time'}",
+                        tenant_id=tenant_id,
+                        source_ip=source_ip,
+                        user=user,
+                        event_id=int(event_id) if str(event_id).isdigit() else 0,
+                        mitre=rule.get("mitre_id", "N/A"),
+                        extra={"dynamic_rule": rule_name, "hour_window": [start_hour, end_hour]},
+                    )
+            except Exception as e:
+                corr_logger.warning(f"[CORR][AFTER-HOURS] Redis error: {e}")
+        return None
+
+    # ==========================================================
+    # CORRELATION 9 — Dormant Account Activation
+    # ==========================================================
+    async def check_dormant_account_activation(
+        self,
+        tenant_id: str,
+        source_ip: str,
+        user: str,
+        event_id: str,
+        timestamp_iso: str | None = None,
+        rule_name: str = "dormant_account_activation",
+        rule: dict = None,
+    ) -> dict | None:
+        if not rule:
+            rule = {}
+        dormant_days = int(rule.get("dormant_days", 30))
+        if event_id != "4624":
+            return None
+        
+        last_login_key = f"warsoc:dyn:last_login:{tenant_id}:{user}"
+        now_dt = datetime.fromisoformat((timestamp_iso or datetime.now(timezone.utc).isoformat()).replace("Z", "+00:00"))
+        if now_dt.tzinfo is None:
+            now_dt = now_dt.replace(tzinfo=timezone.utc)
+        prev_raw = None
+        try:
+            prev_raw = await self.redis.get(last_login_key)
+        except Exception:
+            prev_raw = None
+
+        if prev_raw:
+            try:
+                prev_dt = datetime.fromisoformat(prev_raw.replace("Z", "+00:00"))
+                if prev_dt.tzinfo is None:
+                    prev_dt = prev_dt.replace(tzinfo=timezone.utc)
+                if (now_dt - prev_dt).days >= dormant_days:
+                    alert_key = f"warsoc:dyn:alerted:{rule_name}:{tenant_id}:{user}"
+                    window = int(rule.get("window_seconds") or 300)
+                    if await self.redis.set(alert_key, "1", nx=True, ex=max(window, 300)):
+                        return self._alert(
+                            alert_type=rule.get("description", rule_name),
+                            severity=rule.get("severity", "MEDIUM"),
+                            summary=f"{rule.get('description', 'Behavioral anomaly detected')}: {user} logged in after {(now_dt - prev_dt).days} days",
+                            tenant_id=tenant_id,
+                            source_ip=source_ip,
+                            user=user,
+                            event_id=4624,
+                            mitre=rule.get("mitre_id", "N/A"),
+                            extra={"dynamic_rule": rule_name, "dormant_days_detected": (now_dt - prev_dt).days},
+                        )
+            except Exception:
+                pass
+
+        # Always update last login
+        try:
+            await self.redis.set(last_login_key, now_dt.isoformat())
+        except Exception:
+            pass
+
+        return None
+
+    # ==========================================================
+    # EVALUATE DYNAMIC RULES
     # ==========================================================
     async def check_process_injection(
         self,
@@ -1013,6 +1163,67 @@ class CorrelationEngine:
     # ==========================================================
     # MASTER RUNNER — Config-Driven Correlations
     # ==========================================================
+    # ==========================================================
+    # CORRELATION - Phishing Kill Chain (T1566)
+    # ==========================================================
+    async def check_phishing_kill_chain(
+        self,
+        tenant_id: str,
+        source_ip: str,
+        user: str,
+        event_id: str,
+        log_entry: dict,
+        window_seconds: int = 900
+    ) -> dict | None:
+        message = log_entry.get("message", "").lower()
+        if not message:
+            return None
+
+        # Check for execution phase keywords
+        execution_keywords = ["cmd.exe", "powershell.exe", "wscript.exe", "cscript.exe", "mshta.exe"]
+        is_execution = any(k in message for k in execution_keywords)
+
+        # Check for lure/click phase keywords
+        lure_keywords = ["verify your account", "invoice attached", "urgent payment", "http://", "https://"]
+        is_lure = any(k in message for k in lure_keywords)
+
+        if not (is_execution or is_lure):
+            return None
+
+        redis_key = f"warsoc:dyn:phish_kill_chain:{tenant_id}:{user}"
+        
+        try:
+            stage = "execution" if is_execution else "lure"
+            async with self.redis.pipeline(transaction=True) as pipe:
+                pipe.sadd(redis_key, stage)
+                pipe.expire(redis_key, window_seconds)
+                pipe.scard(redis_key)
+                res = await pipe.execute()
+                stages_count = int(res[2])
+        except Exception as e:
+            corr_logger.error(f"[CORR][PHISHING] Redis error: {e}")
+            return None
+
+        if stages_count >= 2:
+            alert_key = f"warsoc:dyn:alerted:phishing:{tenant_id}:{user}"
+            try:
+                if await self.redis.set(alert_key, "1", nx=True, ex=window_seconds):
+                    return self._alert(
+                        alert_type="Correlated phishing kill-chain detected",
+                        severity="CRITICAL",
+                        summary=f"Phishing kill-chain completed by {user}",
+                        tenant_id=tenant_id,
+                        source_ip=source_ip,
+                        user=user,
+                        event_id=int(event_id) if str(event_id).isdigit() else event_id,
+                        mitre="T1566",
+                        extra={"dynamic_rule": "phishing_kill_chain", "stages": stages_count}
+                    )
+            except Exception:
+                pass
+
+        return None
+
     async def run_all(
         self,
         tenant_id: str,
@@ -1091,16 +1302,6 @@ class CorrelationEngine:
             if not self._event_filter_matches(event_filter, event_id, event_type):
                 continue
 
-            # 🛡️ WILDCARD THROTTLE GUARD
-            # Protect Redis from getting DOS'd by high-volume events tied to 'all' rules
-            if str(event_filter).strip().lower() == "all":
-                throttle_key = f"warsoc:throttle:siem:all:{tenant_id}:{source_ip}:{rule_name}"
-                current_rate = await self.redis.incr(throttle_key)
-                if current_rate == 1:
-                    await self.redis.expire(throttle_key, 60)
-                if current_rate > 100:
-                    continue
-
             threshold = rule.get("threshold")
             threshold_users = rule.get("threshold_users")
             unique_field = rule.get("unique_field")
@@ -1111,10 +1312,26 @@ class CorrelationEngine:
             # `handler` or `type`. Fallback to the rule name if not provided.
             handler_token = str(rule.get("handler") or rule.get("type") or rule_name).strip().lower()
 
+            if handler_token in self.builtin_handlers and not self._builtin_handler_relevant(
+                handler_token,
+                event_id,
+                event_type,
+                log_entry,
+            ):
+                continue
+
             # Builtin handlers: invoke with the right shaped parameters when
             # requested by config. This removes hardcoding of rule-name checks
             # and lets config drive behavior.
             if handler_token in self.builtin_handlers:
+                # Only throttle wildcard handlers after a cheap relevance check.
+                if str(event_filter).strip().lower() == "all":
+                    throttle_key = f"warsoc:throttle:siem:all:{tenant_id}:{source_ip}:{rule_name}"
+                    current_rate = await self.redis.incr(throttle_key)
+                    if current_rate == 1:
+                        await self.redis.expire(throttle_key, 60)
+                    if current_rate > 100:
+                        continue
                 try:
                     if handler_token in ("impossible_travel", "builtin:impossible_travel"):
                         alert = await self.check_impossible_travel(
@@ -1225,73 +1442,53 @@ class CorrelationEngine:
                         if alert:
                             triggered.append(alert)
                         continue
+
+                    if handler_token in ("phishing_kill_chain", "builtin:phishing_kill_chain"):
+                        alert = await self.check_phishing_kill_chain(
+                            tenant_id,
+                            source_ip,
+                            user,
+                            event_id,
+                            log_entry=log_entry,
+                            window_seconds=int(window or 900),
+                        )
+                        if alert:
+                            triggered.append(alert)
+                        continue
+
+                    if handler_token in ("after_hours_activity", "builtin:after_hours_activity"):
+                        alert = await self.check_after_hours_activity(
+                            tenant_id,
+                            source_ip,
+                            user,
+                            event_id,
+                            timestamp_iso=timestamp_iso,
+                            rule_name=rule_name,
+                            rule=rule,
+                        )
+                        if alert:
+                            triggered.append(alert)
+                        continue
+
+                    if handler_token in ("dormant_account_activation", "builtin:dormant_account_activation"):
+                        alert = await self.check_dormant_account_activation(
+                            tenant_id,
+                            source_ip,
+                            user,
+                            event_id,
+                            timestamp_iso=timestamp_iso,
+                            rule_name=rule_name,
+                            rule=rule,
+                        )
+                        if alert:
+                            triggered.append(alert)
+                        continue
                 except Exception as e:
                     corr_logger.warning(f"[CORR] Builtin handler {handler_token} failed: {e}")
                     continue
 
             if not group_by:
                 group_by = "source_ip"
-
-            if handler_token in ("after_hours_activity", "builtin:after_hours_activity"):
-                start_hour = int(rule.get("start_hour", 0))
-                end_hour = int(rule.get("end_hour", 0))
-                if self._is_after_hours(timestamp_iso, start_hour, end_hour):
-                    alert_key = f"warsoc:dyn:alerted:{rule_name}:{tenant_id}:{user}"
-                    try:
-                        if await self.redis.set(alert_key, "1", nx=True, ex=max(window, 300)):
-                            triggered.append(self._alert(
-                                alert_type=rule.get("description", rule_name),
-                                severity=rule.get("severity", "MEDIUM"),
-                                summary=f"{rule.get('description', 'Behavioral anomaly detected')}: {user} at {timestamp_iso or 'current time'}",
-                                tenant_id=tenant_id,
-                                source_ip=source_ip,
-                                user=user,
-                                event_id=int(event_id) if event_id.isdigit() else 0,
-                                mitre=rule.get("mitre_id", "N/A"),
-                                extra={"dynamic_rule": rule_name, "hour_window": [start_hour, end_hour]},
-                            ))
-                    except Exception:
-                        pass
-                continue
-
-            if handler_token in ("dormant_account_activation", "builtin:dormant_account_activation"):
-                dormant_days = int(rule.get("dormant_days", 30))
-                if event_id == "4624":
-                    last_login_key = f"warsoc:dyn:last_login:{tenant_id}:{user}"
-                    now_dt = datetime.fromisoformat((timestamp_iso or datetime.now(timezone.utc).isoformat()).replace("Z", "+00:00"))
-                    if now_dt.tzinfo is None:
-                        now_dt = now_dt.replace(tzinfo=timezone.utc)
-                    prev_raw = None
-                    try:
-                        prev_raw = await self.redis.get(last_login_key)
-                    except Exception:
-                        prev_raw = None
-                    if prev_raw:
-                        try:
-                            prev_dt = datetime.fromisoformat(prev_raw.replace("Z", "+00:00"))
-                            if prev_dt.tzinfo is None:
-                                prev_dt = prev_dt.replace(tzinfo=timezone.utc)
-                            if (now_dt - prev_dt).days >= dormant_days:
-                                alert_key = f"warsoc:dyn:alerted:{rule_name}:{tenant_id}:{user}"
-                                if await self.redis.set(alert_key, "1", nx=True, ex=window):
-                                    triggered.append(self._alert(
-                                        alert_type=rule.get("description", rule_name),
-                                        severity=rule.get("severity", "MEDIUM"),
-                                        summary=f"{rule.get('description', 'Behavioral anomaly detected')}: {user} dormant for {dormant_days}+ days",
-                                        tenant_id=tenant_id,
-                                        source_ip=source_ip,
-                                        user=user,
-                                        event_id=4624,
-                                        mitre=rule.get("mitre_id", "N/A"),
-                                        extra={"dynamic_rule": rule_name, "dormant_days": dormant_days},
-                                    ))
-                        except Exception:
-                            pass
-                    try:
-                        await self.redis.set(last_login_key, now_dt.isoformat(), ex=dormant_days * 86400)
-                    except Exception:
-                        pass
-                continue
             
             if (threshold or threshold_users or unique_field) and window:
                 subject = tenant_id if group_by == "tenant" else (source_ip if group_by == "source_ip" else user)

@@ -41,7 +41,7 @@ async def inject_log(redis, payload):
     print(f"[+] Injected Event {payload.get('event_id')} from {payload.get('source_ip')}")
 
 async def run_audit():
-    print("🚀 Initializing WarSOC Omni-Audit Simulation...")
+    print(" Initializing WarSOC Omni-Audit Simulation...")
     redis = await aioredis.from_url(REDIS_URL, decode_responses=True)
     mongo = AsyncIOMotorClient(MONGO_URI)
     db = mongo[DB_NAME]
@@ -61,7 +61,7 @@ async def run_audit():
     # 💥 Trim the ingestion queue to 0 so workers process our simulation instantly (without destroying groups)
     await redis.xtrim("raw_logs_queue", maxlen=0, approximate=False)
     
-    # 🛡️ Elevate the test tenant to Enterprise tier so the PECA worker processes the logs
+    #  Elevate the test tenant to Enterprise tier so the PECA worker processes the logs
     await redis.set(f"tenant_plan:{TENANT_ID}", "Enterprise")
     print("   Clean room established.")
 
@@ -72,8 +72,8 @@ async def run_audit():
     await inject_log(redis, {"event_id": 1102, "source_ip": "10.0.0.50", "user": "admin_ceo", "message": "Audit log cleared"})
     await asyncio.sleep(2)
 
-    # ✈️ PHASE 3: IMPOSSIBLE TRAVEL
-    print("\n✈️ Phase 3: Impossible Travel Sequence (T1078)")
+    # ✈ PHASE 3: IMPOSSIBLE TRAVEL
+    print("\n✈ Phase 3: Impossible Travel Sequence (T1078)")
     await inject_log(redis, {
         "event_id": 4624, "source_ip": "203.0.113.10", "user": "finance_lead", 
         "geo_lat": 24.86, "geo_lon": 67.00, "message": "Successful Logon (Karachi)"
@@ -106,7 +106,7 @@ async def run_audit():
     
     assert "10.0.0.50" in banned_ips, "Ghost Admin IP not banned!"
     assert "185.10.20.30" in banned_ips, "Impossible Travel IP not banned!"
-    print("   ✅ SOAR Auto-Mitigation Verified: Malicious IPs atomically blacklisted.")
+    print("    SOAR Auto-Mitigation Verified: Malicious IPs atomically blacklisted.")
 
     print("\n   [Forensics] Checking RSA-PSS Seals...")
     logs = []
@@ -121,9 +121,9 @@ async def run_audit():
         for log in logs:
             sig_type = log.get("digital_signature", "MISSING")
             assert sig_type == "RSA-2048-PSS-SHA256 (WarSOC Master)", f"Forensic seal failed! Found: {sig_type}"
-        print("   ✅ Legal Forensics Verified: All logs cryptographically sealed via RSA-PSS.")
+        print("    Legal Forensics Verified: All logs cryptographically sealed via RSA-PSS.")
     else:
-        print("   ⚠️ No forensic logs found. (Ensure peca_worker is running).")
+        print("    No forensic logs found. (Ensure peca_worker is running).")
 
 if __name__ == "__main__":
     asyncio.run(run_audit())

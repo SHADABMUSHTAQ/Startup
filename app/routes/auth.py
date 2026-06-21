@@ -1,31 +1,23 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import OAuth2PasswordBearer
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 from app.database import get_db
 from passlib.context import CryptContext
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-import hashlib
 import jwt
 import logging
-import secrets
 import uuid
 
-from pymongo import ReturnDocument
 from app.config.config import get_settings
-from app.utils.agent_crypto import (
-    build_login_signature_string,
-    parse_utc_timestamp,
-    timestamp_age_seconds,
-)
 from app.utils.audit import audit_log
 from app.utils.limiter import limiter
 from app.utils.observability import record_auth_fail_closed
+from app.utils.pricing import calculate_package_price
 from app.utils.rbac import RoleChecker
-from ecdsa import BadSignatureError, VerifyingKey
 
 logger = logging.getLogger("auth")
 
@@ -35,9 +27,7 @@ router = APIRouter()
 SECRET_KEY = settings.jwt_secret_key
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.access_token_expire_minutes
 AGENT_TOKEN_EXPIRE_MINUTES = settings.agent_token_expire_minutes
-PROVISIONING_TOKEN_EXPIRE_MINUTES = settings.provisioning_token_expire_minutes
 ALGORITHM = "HS256"
-AGENT_SIGNATURE_WINDOW_SECONDS = 300
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
@@ -57,35 +47,12 @@ class PlanUpdate(BaseModel):
     plan_name: str
 
 
-class AgentLogin(BaseModel):
-    agent_id: str
-    timestamp: str
-    nonce: str
-    signature: str
-
-
-class AgentEnrollRequest(BaseModel):
-    agent_id: str
-    public_key: str
-    hostname: Optional[str] = "Unknown"
-    mac_address: Optional[str] = "Unknown"
-
-
-class EnrollmentPayload(BaseModel):
-    enrollment_token: str
-    public_key: str
-
-
-class ProvisioningTokenRequest(BaseModel):
-    agent_id: Optional[str] = None
-
-
 class UpgradePlan(BaseModel):
     plan_type: str
     compliance_packs: list[str]
-    endpoints: int
-    storage_gb: int
-    retention_months: int
+    endpoints: int = Field(ge=1, le=1000)
+    storage_gb: int = Field(ge=0)
+    retention_months: int = Field(ge=0)
     billing_cycle: Optional[str] = "monthly"  # Backend now calculates price based on cycle
 
 
@@ -98,7 +65,13 @@ class InviteUserRequest(BaseModel):
 
 # --- HELPER FUNCTIONS ---
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        if not hashed_password:
+            return False
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception as exc:
+        logger.warning("Password verification failed for stored hash: %s", exc)
+        return False
 
 def get_password_hash(password):
     try:
@@ -119,24 +92,14 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def _seconds_until_expiry(exp_value) -> int:
-    if isinstance(exp_value, (int, float)):
-        exp_dt = datetime.fromtimestamp(exp_value, tz=timezone.utc)
-    elif isinstance(exp_value, datetime):
-        exp_dt = exp_value.astimezone(timezone.utc)
-    else:
-        return 3600
-
-    remaining = int((exp_dt - datetime.now(timezone.utc)).total_seconds())
-    return max(60, remaining)
+def _redis_text(value):
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="ignore")
+    return value
 
 
-def _validate_public_key_pem(public_key: str) -> str:
-    try:
-        VerifyingKey.from_pem(public_key)
-        return public_key
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="Invalid agent public key") from exc
+def _redis_hash_value(mapping: dict, key: str):
+    return _redis_text(mapping.get(key) or mapping.get(key.encode("utf-8")))
 
 
 PLAN_ALIASES = {
@@ -154,8 +117,8 @@ PLAN_ALIASES = {
 }
 
 DEFAULT_PACKS_BY_PLAN = {
-    "Professional": ["eto_forensic"],
-    "Enterprise": ["eto_forensic", "fbr_pos"],
+    "Professional": ["peca_forensic"],
+    "Enterprise": ["peca_forensic", "fbr_pos"],
 }
 
 DEFAULT_TENANT_RETENTION_DAYS = 90
@@ -186,10 +149,11 @@ def resolve_compliance_packs(plan: Optional[str], packs: Optional[list[str]]) ->
     if provided:
         # ðŸ›¡ï¸ NORMALIZATION: Map legacy IDs to new SSOT standards
         aliases = {
-            "peca": "eto_forensic",
-            "peca_forensic": "eto_forensic",
-            "peca_vault": "eto_forensic",
-            "eto": "eto_forensic",
+            "peca": "peca_forensic",
+            "peca_forensic": "peca_forensic",
+            "peca_vault": "peca_forensic",
+            "eto": "peca_forensic",
+            "eto_forensic": "peca_forensic",
             "fbr": "fbr_pos",
             "fbr_pos_shield": "fbr_pos"
         }
@@ -328,6 +292,34 @@ async def verify_agent_token(request: Request, token: str = Depends(oauth2_schem
 
         # ✅ CTO FIX 2: Removed rogue DB connections. Rely strictly on `db` dependency.
         # 🛡️ PERFORMANCE FIX: Added Redis Caching to prevent DB DDoS during Nuclear Stress Test
+        status_key = f"warsoc:agent_status:{agent_id}"
+        revoked_key = f"warsoc:agent_revoked:{agent_id}"
+        try:
+            if await redis.exists(revoked_key):
+                raise HTTPException(status_code=403, detail="Agent has been revoked")
+            live_status = _redis_text(await redis.get(status_key))
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Agent live status check failed: %s", e)
+            record_auth_fail_closed()
+            raise HTTPException(status_code=503, detail="Agent verification unavailable: live status check failed")
+
+        agent_doc = None
+        if live_status:
+            if str(live_status).strip().lower() != "active":
+                raise HTTPException(status_code=403, detail="Agent is inactive")
+        else:
+            agent_doc = await db["agents"].find_one({"agent_id": agent_id})
+            if not agent_doc:
+                raise HTTPException(status_code=401, detail="Unknown agent")
+            doc_status = str(agent_doc.get("status", "active")).strip().lower()
+            if not agent_doc.get("approved", True) or doc_status != "active":
+                await redis.set(status_key, doc_status or "inactive")
+                await redis.set(revoked_key, "1")
+                raise HTTPException(status_code=403, detail="Agent is inactive")
+            await redis.set(status_key, "active")
+
         mapped_tenant = None
         public_key = None
         agent_approved = True
@@ -335,25 +327,34 @@ async def verify_agent_token(request: Request, token: str = Depends(oauth2_schem
         if redis:
             cached_agent = await redis.hgetall(f"warsoc:agent_cache:{agent_id}")
             if cached_agent:
-                mapped_tenant = cached_agent.get("tenant_id")
-                public_key = cached_agent.get("public_key")
-                agent_approved = cached_agent.get("approved") == "True"
+                mapped_tenant = _redis_hash_value(cached_agent, "tenant_id")
+                public_key = _redis_hash_value(cached_agent, "public_key")
+                cached_status = _redis_hash_value(cached_agent, "status")
+                agent_approved = _redis_hash_value(cached_agent, "approved") == "True"
+                if cached_status and str(cached_status).strip().lower() != "active":
+                    raise HTTPException(status_code=403, detail="Agent is inactive")
 
         if not mapped_tenant:
-            agent_doc = await db["agents"].find_one({"agent_id": agent_id})
+            agent_doc = agent_doc or await db["agents"].find_one({"agent_id": agent_id})
             if not agent_doc:
                 raise HTTPException(status_code=401, detail="Unknown agent")
             if not agent_doc.get("approved", True):
                 raise HTTPException(status_code=403, detail="Agent not approved")
-            
+            doc_status = str(agent_doc.get("status", "active")).strip().lower()
+            if doc_status != "active":
+                await redis.set(status_key, doc_status or "inactive")
+                await redis.set(revoked_key, "1")
+                raise HTTPException(status_code=403, detail="Agent is inactive")
+
             mapped_tenant = agent_doc.get("tenant_id")
             public_key = agent_doc.get("public_key")
-            
+
             if redis and mapped_tenant and public_key:
                 await redis.hset(f"warsoc:agent_cache:{agent_id}", mapping={
                     "tenant_id": mapped_tenant,
                     "public_key": public_key,
-                    "approved": "True"
+                    "approved": "True",
+                    "status": "active"
                 })
                 await redis.expire(f"warsoc:agent_cache:{agent_id}", 3600)
         elif not agent_approved:
@@ -381,6 +382,12 @@ async def verify_agent_token(request: Request, token: str = Depends(oauth2_schem
 @limiter.limit("5/minute")
 @audit_log("User Signup")
 async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
+    if not settings.enable_self_signup:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Self-service signup is disabled. Contact WarSOC sales for onboarding.",
+        )
+
     existing_user = await db["users"].find_one({"$or": [{"email": user.email}, {"username": user.username}]})
     if existing_user:
         raise HTTPException(status_code=400, detail="Username or Email already registered")
@@ -475,6 +482,13 @@ async def login(request: Request, user_data: LoginSchema, db=Depends(get_db)):
         "compliance_packs": packs,
         "csrf_token": csrf_token
     })
+
+    from datetime import datetime, timezone
+    await db["users"].update_one(
+        {"_id": db_user["_id"]},
+        {"$set": {"last_login_at": datetime.now(timezone.utc)}}
+    )
+
     secure_cookie = request.url.scheme == "https"
     response.set_cookie(
         key="warsoc_token",
@@ -569,53 +583,6 @@ async def get_my_packs(user: dict = Depends(get_current_user)):
         "compliance_packs": packs
     })
 
-@router.post("/agent-login")
-@limiter.limit("100/minute")
-async def agent_login(request: Request, data: AgentLogin, db=Depends(get_db)):
-    try:
-        agent_doc = await db["agents"].find_one({"agent_id": data.agent_id})
-        if not agent_doc:
-            raise HTTPException(status_code=401, detail="Agent not enrolled")
-        if not agent_doc.get("approved", True):
-            raise HTTPException(status_code=403, detail="Agent not approved")
-        public_key = agent_doc.get("public_key")
-        tenant_id = agent_doc.get("tenant_id")
-        if not public_key or not tenant_id:
-            raise HTTPException(status_code=401, detail="Agent enrollment incomplete")
-        drift = timestamp_age_seconds(data.timestamp)
-        if drift is None or abs(drift) > AGENT_SIGNATURE_WINDOW_SECONDS:
-            raise HTTPException(status_code=401, detail="Agent login timestamp outside allowed drift window")
-        if not data.nonce or len(data.nonce) < 16:
-            raise HTTPException(status_code=400, detail="Agent login nonce is required")
-        redis = getattr(request.app.state, "redis", None)
-        if redis:
-            nonce_key = f"warsoc:agent_login_nonce:{data.agent_id}:{data.nonce}"
-            if await redis.exists(nonce_key):
-                raise HTTPException(status_code=401, detail="Replay detected for agent login")
-        canonical = build_login_signature_string(data.agent_id, data.timestamp, data.nonce)
-        verifying_key = VerifyingKey.from_pem(public_key)
-        try:
-            verifying_key.verify(bytes.fromhex(data.signature), canonical.encode("utf-8"), hashfunc=hashlib.sha256)
-        except (BadSignatureError, ValueError):
-            raise HTTPException(status_code=401, detail="Invalid agent signature")
-        if redis:
-            await redis.set(f"warsoc:agent_login_nonce:{data.agent_id}:{data.nonce}", "1", ex=AGENT_SIGNATURE_WINDOW_SECONDS)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Agent login error: %s", e)
-        raise HTTPException(status_code=503, detail="Agent verification service unavailable")
-
-    access_token = create_access_token(
-        data={"sub": data.agent_id, "type": "agent", "tenant_id": tenant_id},
-        expires_delta=timedelta(minutes=AGENT_TOKEN_EXPIRE_MINUTES)
-    )
-    return {"access_token": access_token, "token_type": "bearer", "expires_in_minutes": AGENT_TOKEN_EXPIRE_MINUTES}
-
-
-# Legacy Route 1 endpoints (generate_agent_token and enroll_agent) have been deprecated and removed.
-# All agent token generation and enrollment strictly go through Route 2 (JWT & MongoDB provisioning).
-
 @router.post("/update-plan")
 @audit_log("Plan Update")
 async def update_plan(
@@ -647,7 +614,7 @@ async def update_plan(
         await db["tenants"].update_one(
             {"tenant_id": tenant_id},
             {
-                "$set": {"plan": canonical_plan},
+                "$set": {"plan": canonical_plan, "plan_type": canonical_plan, "compliance_packs": packs},
                 "$setOnInsert": {
                     "retention_days": resolve_tenant_retention_days(canonical_plan)
                 },
@@ -662,6 +629,12 @@ async def update_plan(
         redis = request.app.state.redis
         if redis:
             await redis.set(f"tenant_plan:{tenant_id}", canonical_plan)
+            # Sync features so generate-activation gets it instantly
+            features = []
+            if "fbr_pos" in packs: features.append("FBR")
+            if "peca_forensic" in packs: features.append("PECA")
+            features_str = ",".join(features) if features else "SIEM"
+            await redis.set(f"tenant_features:{tenant_id}", features_str)
 
 @router.post("/upgrade")
 @audit_log("Enterprise Upgrade")
@@ -695,7 +668,16 @@ async def upgrade_plan(
         await db["tenants"].update_one(
             {"tenant_id": tenant_id},
             {
-                "$set": {"plan": canonical_plan},
+                "$set": {
+                    "plan": canonical_plan,
+                    "plan_type": canonical_plan,
+                    "compliance_packs": resolved_packs,
+                    "endpoints": data.endpoints,
+                    "agent_limit": data.endpoints,
+                    "max_agents": data.endpoints,
+                    "storage_gb": data.storage_gb,
+                    "retention_months": data.retention_months,
+                },
                 "$setOnInsert": {
                     "retention_days": resolve_tenant_retention_days(canonical_plan)
                 },
@@ -710,6 +692,13 @@ async def upgrade_plan(
         redis = request.app.state.redis
         if redis:
             await redis.set(f"tenant_plan:{tenant_id}", canonical_plan)
+            # Sync features so generate-activation gets it instantly
+            features = []
+            if "fbr_pos" in resolved_packs: features.append("FBR")
+            if "peca_forensic" in resolved_packs: features.append("PECA")
+            features_str = ",".join(features) if features else "SIEM"
+            await redis.set(f"tenant_features:{tenant_id}", features_str)
+            await redis.set(f"tenant_agent_limit:{tenant_id}", str(data.endpoints))
 
     tenant_id = db_user.get("tenant_id", "WARSOC_DEFAULT")
     access_token = create_access_token(
@@ -722,40 +711,27 @@ async def upgrade_plan(
 
     # ðŸ›ï¸ CTO SECURITY FIX: Backend Price Calculator (SSOT)
     # Never trust the frontend with price. We calculate it here.
-    ACTIVATION_FEE = 5000
-    PRICE_PER_ENDPOINT = 1500
-    PRICE_PER_GB = 200
-    FBR_PRICE = 3000
-    PECA_PRICE = 5000
-    RETENTION_PRICES = {0: 0, 3: 6000, 6: 10000, 12: 18000}
-
-    # Monthly Base Calculation
-    ep_cost = max(0, data.endpoints - 1) * PRICE_PER_ENDPOINT
-    st_cost = data.storage_gb * PRICE_PER_GB
-    rt_cost = RETENTION_PRICES.get(data.retention_months, 0)
-
-    # Pack Costs
-    pk_cost = 0
-    if "fbr_pos" in packs: pk_cost += FBR_PRICE
-    if "eto_forensic" in packs: pk_cost += PECA_PRICE
-
-    monthly_total = ep_cost + st_cost + rt_cost + pk_cost
-
-    # Cycle Adjustment (Yearly = 10 months price)
-    calculated_subtotal = monthly_total if data.billing_cycle == "monthly" else monthly_total * 10
-    final_calculated_total = calculated_subtotal + ACTIVATION_FEE
+    price = calculate_package_price(
+        endpoints=data.endpoints,
+        compliance_packs=packs,
+        billing_cycle=data.billing_cycle,
+    )
 
     # ðŸ’³ NAYA: Record Transaction in the Permanent Billing Ledger (Using CALCULATED amount)
     billing_record = {
         "tenant_id": tenant_id,
         "username": secure_username,
-        "amount": final_calculated_total,
+        "amount": price.initial_payment,
         "plan": plan,
         "endpoints": data.endpoints,
         "storage": data.storage_gb,
         "retention": data.retention_months,
-        "billing_cycle": data.billing_cycle,
+        "billing_cycle": price.billing_cycle,
         "packs": packs,
+        "pricing_version": price.pricing_version,
+        "monthly_total": price.monthly_total,
+        "activation_fee": price.activation_fee,
+        "price_breakdown": price.breakdown,
         "timestamp": datetime.now(timezone.utc)
     }
     await db["billing"].insert_one(billing_record)
@@ -766,10 +742,12 @@ async def upgrade_plan(
         "plan_type": plan,
         "has_active_plan": db_user.get("has_active_plan", False),
         "compliance_packs": packs,
-        "calculated_total": final_calculated_total,
+        "calculated_total": price.initial_payment,
+        "monthly_total": price.monthly_total,
+        "pricing_version": price.pricing_version,
         "transaction_recorded": True
     })
-    
+
     secure_cookie = request.url.scheme == "https"
     response.set_cookie(
         key="warsoc_token",
@@ -795,8 +773,8 @@ async def invite_user(
     if not invite_password:
         raise HTTPException(status_code=400, detail="Password is required")
 
-    if payload.role not in ["admin", "analyst", "auditor"]:
-        raise HTTPException(status_code=400, detail="Invalid role specified. Must be admin, analyst, or auditor.")
+    if payload.role not in ["admin", "manager", "analyst", "auditor"]:
+        raise HTTPException(status_code=400, detail="Invalid role specified. Must be admin, manager, analyst, or auditor.")
 
     existing_user = await db["users"].find_one({"email": payload.email})
     if existing_user:
@@ -881,163 +859,3 @@ async def remove_team_member(
 
     await db["users"].delete_one({"_id": obj_id})
     return {"message": "Team member access revoked successfully."}
-
-@router.post("/agents/generate-token")
-@audit_log("Generate Provisioning Token")
-async def generate_provisioning_token(
-    data: ProvisioningTokenRequest | None = None,
-    db=Depends(get_db),
-    current_user=Depends(require_premium_plan),
-    _: str = Depends(RoleChecker(["admin"]))
-):
-    """Generate a single-use, time-limited provisioning token for ECDSA agent enrollment."""
-    tenant_id = current_user.get("tenant_id")
-    if not tenant_id:
-        raise HTTPException(status_code=400, detail="No tenant context.")
-
-    expires = timedelta(minutes=PROVISIONING_TOKEN_EXPIRE_MINUTES)
-    token = create_access_token(
-        data={
-            "sub": f"prov_{tenant_id}",
-            "type": "provisioning",
-            "tenant_id": tenant_id,
-            "agent_id": (data.agent_id if data else None),
-        },
-        expires_delta=expires
-    )
-
-    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    await db["used_provisioning_tokens"].insert_one(
-        {
-            "jti": payload["jti"],
-            "tenant_id": tenant_id,
-            "agent_id": (data.agent_id if data else None),
-            "created_at": datetime.now(timezone.utc),
-            "expires_at": datetime.fromtimestamp(payload["exp"], tz=timezone.utc),
-        }
-    )
-    return {
-        "provisioning_token": token,
-        "expires_in_minutes": PROVISIONING_TOKEN_EXPIRE_MINUTES,
-    }
-
-@router.post("/agents/enroll", status_code=status.HTTP_201_CREATED)
-@limiter.limit("50/minute")
-@audit_log("Agent Enrollment")
-async def enroll_agent(
-    request: Request,
-    data: AgentEnrollRequest,
-    db=Depends(get_db),
-    token: str = Depends(oauth2_scheme)
-):
-    """Stateless Enrollment: Validates Provisioning Token, stores ECDSA Public Key in MongoDB, and pushes to Redis Cache."""
-    try:
-        # 1. Validate the Provisioning Token
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        if payload.get("type") != "provisioning":
-            raise HTTPException(status_code=403, detail="Invalid token type. Provisioning token required.")
-
-        tenant_id = payload.get("tenant_id")
-        if not tenant_id:
-            raise HTTPException(status_code=400, detail="Provisioning token missing tenant_id")
-
-        token_agent_id = payload.get("agent_id")
-        if token_agent_id and token_agent_id != data.agent_id:
-            raise HTTPException(status_code=403, detail="Provisioning token agent_id mismatch")
-
-        verified_public_key = _validate_public_key_pem(data.public_key)
-
-        # 2. Check Blacklist for Revoked Tokens
-        redis = getattr(request.app.state, "redis", None)
-        jti = payload.get("jti")
-        if redis and jti:
-            if await redis.exists(f"warsoc:blacklist:{jti}"):
-                raise HTTPException(status_code=401, detail="Provisioning token revoked.")
-
-        existing_agent = await db["agents"].find_one({"agent_id": data.agent_id})
-        if existing_agent:
-            existing_key = existing_agent.get("public_key")
-            existing_tenant_id = existing_agent.get("tenant_id")
-            if existing_tenant_id and existing_tenant_id != tenant_id:
-                raise HTTPException(status_code=403, detail="Agent already belongs to another tenant")
-            if existing_key and existing_key != verified_public_key:
-                raise HTTPException(status_code=409, detail="Agent already enrolled with a different key")
-
-        if jti:
-            consumed = await db["used_provisioning_tokens"].find_one_and_update(
-                {"jti": jti, "used_at": {"$exists": False}},
-                {
-                    "$set": {
-                        "tenant_id": tenant_id,
-                        "agent_id": data.agent_id,
-                        "used_at": datetime.now(timezone.utc),
-                    }
-                },
-                return_document=ReturnDocument.BEFORE,
-            )
-            if consumed is None:
-                raise HTTPException(status_code=401, detail="Provisioning token invalid or already used.")
-
-        # 3. Upsert to MongoDB (Idempotency)
-        agent_doc = {
-            "agent_id": data.agent_id,
-            "tenant_id": tenant_id,
-            "public_key": verified_public_key,
-            "hostname": data.hostname,
-            "mac_address": data.mac_address,
-            "status": "active",
-            "approved": True,
-            "enrolled_at": datetime.now(timezone.utc),
-            "bootstrap_disabled_at": datetime.now(timezone.utc),
-        }
-
-        await db["agents"].update_one(
-            {"agent_id": data.agent_id},
-            {"$set": agent_doc},
-            upsert=True
-        )
-
-        # 4. Push to Redis Cache for Lightning Fast ECDSA checks in ingestion stream
-        if redis:
-            try:
-                r1 = await redis.set(f"agent:pubkey:{data.agent_id}", verified_public_key)
-                r2 = True
-                if jti:
-                    r2 = await redis.set(
-                        f"warsoc:blacklist:{jti}",
-                        "1",
-                        ex=_seconds_until_expiry(payload.get("exp")),
-                    )
-                if not r1 or not r2:
-                    raise RuntimeError("Redis cache write returned failed status")
-            except Exception as e:
-                logger.error("FAIL-CLOSED: Redis caching or blacklisting failed: %s. Rolling back MongoDB changes.", e)
-                # Rollback agent record
-                await db["agents"].delete_one({"agent_id": data.agent_id})
-                # Rollback token consumption
-                if jti:
-                    await db["used_provisioning_tokens"].update_one(
-                        {"jti": jti},
-                        {"$unset": {"used_at": "", "agent_id": ""}}
-                    )
-                raise HTTPException(
-                    status_code=500,
-                    detail="Enrollment failed due to security cache synchronization failure"
-                )
-
-        return {
-            "message": "Agent enrolled successfully",
-            "agent_id": data.agent_id,
-            "status": "active",
-            "cryptography": "ECDSA SECP256R1 Enforced"
-        }
-
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Provisioning token expired.")
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Invalid Provisioning Token.")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Agent enrollment error: %s", e)
-        raise HTTPException(status_code=500, detail="Internal Enrollment Error")

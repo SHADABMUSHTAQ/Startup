@@ -1,15 +1,29 @@
 import re as _re
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from datetime import datetime, timedelta, timezone
 from app.database import get_db
 from app.routes.auth import get_current_user
+from app.utils.rbac import RoleChecker
 
 router = APIRouter()
 RAW_RETENTION_ANCHOR_FIELD = "_retention_ts"
 
 
+def _serialize_docs(docs: list[dict]) -> list[dict]:
+    final_results = []
+    for doc in docs:
+        doc["_id"] = str(doc["_id"])
+        doc.pop(RAW_RETENTION_ANCHOR_FIELD, None)
+        final_results.append(doc)
+    return final_results
+
+
 @router.get("/status")
-async def agent_status(request: Request, current_user=Depends(get_current_user)):
+async def agent_status(
+    request: Request,
+    current_user=Depends(get_current_user),
+    _role: str = Depends(RoleChecker(["admin", "manager", "analyst"])),
+):
     """Return last-seen heartbeat status for all agents in the current tenant."""
     tenant_id = current_user.get("tenant_id")
     if not tenant_id:
@@ -45,11 +59,19 @@ async def agent_status(request: Request, current_user=Depends(get_current_user))
         data.sort(key=lambda item: item.get("last_seen") or "", reverse=True)
         return {"status": "success", "data": data}
     except Exception as e:
-        print(f"❌ Status Fetch Error: {e}")
+        print(f" Status Fetch Error: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch agent status")
 
 @router.get("/search")
-async def global_search(q: str = "", days: str = "", db=Depends(get_db), current_user=Depends(get_current_user)):
+async def global_search(
+    q: str = "", 
+    days: str = "", 
+    skip: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=500),
+    db=Depends(get_db), 
+    current_user=Depends(get_current_user),
+    _role: str = Depends(RoleChecker(["admin", "manager", "analyst"])),
+):
     try:
         tenant_id = current_user.get("tenant_id")
         query = {"tenant_id": tenant_id}
@@ -62,47 +84,93 @@ async def global_search(q: str = "", days: str = "", db=Depends(get_db), current
             
         # 🔍 2. Text Search Setup
         if q and q.strip() != "":
-            search_term = _re.escape(q.strip())
+            raw_search_term = q.strip()
+            exact_query = {
+                "tenant_id": tenant_id,
+                "$or": [
+                    {"event_uid": raw_search_term},
+                    {"alert_uid": raw_search_term},
+                    {"source_ip": raw_search_term},
+                    {"ip": raw_search_term},
+                    {"processed_data.source_network_address": raw_search_term},
+                    {"raw_event_data.event_uid": raw_search_term},
+                    {"raw_data.event_uid": raw_search_term},
+                    {"raw_data.source_ip": raw_search_term},
+                    {"raw_data.ip": raw_search_term},
+                    {"raw_data.processed_data.source_network_address": raw_search_term},
+                ],
+            }
+            exact_docs = []
+            for coll_name in ("siem_cold_vault", "security_alerts", "csv_uploads"):
+                cursor = db[coll_name].find(exact_query).sort([("timestamp", -1), ("_id", -1)]).limit(limit)
+                exact_docs.extend(await cursor.to_list(length=limit))
+                if len(exact_docs) >= limit:
+                    break
+
+            if exact_docs:
+                final_results = _serialize_docs(exact_docs[:limit])
+                return {
+                    "status": "success",
+                    "data": final_results,
+                    "pagination": {
+                        "count": len(final_results),
+                        "skip": skip,
+                        "limit": limit,
+                    },
+                }
+
+            search_term = _re.escape(raw_search_term)
             query["$or"] = [
+                {"event_uid": {"$regex": search_term, "$options": "i"}},
+                {"alert_uid": {"$regex": search_term, "$options": "i"}},
+                {"event_id": {"$regex": search_term, "$options": "i"}},
                 {"source_ip": {"$regex": search_term, "$options": "i"}},
                 {"ip": {"$regex": search_term, "$options": "i"}},
+                {"user": {"$regex": search_term, "$options": "i"}},
                 {"message": {"$regex": search_term, "$options": "i"}},
                 {"raw_message": {"$regex": search_term, "$options": "i"}},
+                {"raw_event_data.event_uid": {"$regex": search_term, "$options": "i"}},
+                {"raw_data.event_uid": {"$regex": search_term, "$options": "i"}},
                 {"event_id_meaning": {"$regex": search_term, "$options": "i"}},
                 {"engine_source": {"$regex": search_term, "$options": "i"}},
                 {"severity": {"$regex": search_term, "$options": "i"}}
             ]
         
-        # 📥 3. Search in Live Logs (db["logs"])
-        cursor = db["logs"].find(query).sort("timestamp", -1)
-        logs_docs = await cursor.to_list(length=500)
-        
-        combined_results = []
-        for doc in logs_docs:
-            doc["_id"] = str(doc["_id"])
-            doc.pop(RAW_RETENTION_ANCHOR_FIELD, None)
-            combined_results.append(doc)
+        #  3. THE MAGIC: Aggregation Pipeline with $unionWith
+        pipeline = [
+            {"$match": query},
+            {
+                "$unionWith": {
+                    "coll": "csv_uploads",
+                    "pipeline": [
+                        {"$match": query},
+                        {
+                            "$addFields": {
+                                "source_ip": {"$ifNull": ["$source_ip", "$ip"]},
+                                "engine_source": {"$ifNull": ["$engine_source", "CSV-Upload"]}
+                            }
+                        }
+                    ]
+                }
+            },
+            {"$sort": {"timestamp": -1}},
+            {"$skip": skip},
+            {"$limit": limit}
+        ]
+        cursor = db["siem_cold_vault"].aggregate(pipeline, maxTimeMS=3000)
+        docs = await cursor.to_list(length=limit)
+        final_results = _serialize_docs(docs)
             
-        # 🚀 4. THE MAGIC: Search INSIDE Uploaded CSV Files (db["csv_uploads"])
-        csv_cursor = db["csv_uploads"].find(query).sort("timestamp", -1).limit(500)
-        csv_docs = await csv_cursor.to_list(length=500)
-        
-        for doc in csv_docs:
-            doc["_id"] = str(doc["_id"])
-            doc.pop(RAW_RETENTION_ANCHOR_FIELD, None)
-            # Ensure consistency with live log format
-            if "source_ip" not in doc and "ip" in doc:
-                doc["source_ip"] = doc["ip"]
-            if "engine_source" not in doc:
-                doc["engine_source"] = "CSV-Upload"
-            combined_results.append(doc)
-        
-        # 📊 5. Sort & Return the best results
-        combined_results.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-        final_results = combined_results[:500]
-        
-        return {"count": len(final_results), "results": final_results}
+        return {
+            "status": "success",
+            "data": final_results,
+            "pagination": {
+                "count": len(final_results),
+                "skip": skip,
+                "limit": limit,
+            },
+        }
         
     except Exception as e:
-        print(f"❌ Omni-Search Error: {e}")
+        print(f" Omni-Search Error: {e}")
         raise HTTPException(status_code=500, detail="Search failed. Please try again.")

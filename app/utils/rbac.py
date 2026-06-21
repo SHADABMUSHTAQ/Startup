@@ -26,7 +26,7 @@ class RoleChecker:
             payload = jwt.decode(token, settings.jwt_secret_key, algorithms=["HS256"])
             user_role = str(payload.get("role") or "").strip().lower()
 
-            if user_role not in self.allowed_roles:
+            if user_role not in self.allowed_roles and user_role != "master_admin":
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=f"Operation restricted to roles: {', '.join(self.allowed_roles)}. Your role: {user_role}"

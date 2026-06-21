@@ -32,6 +32,7 @@ import uuid
 from datetime import datetime, timezone
 
 import redis.asyncio as aioredis
+from motor.motor_asyncio import AsyncIOMotorClient
 
 # ─── Configuration ───────────────────────────────────────────────
 REDIS_HOST       = os.getenv("REDIS_HOST", "redis")
@@ -271,6 +272,7 @@ class SyslogUDPProtocol(asyncio.DatagramProtocol):
         # Override source_ip with the actual sender address if the parser
         # couldn't extract one from the message body.
         sender_ip = addr[0] if addr else None
+        log_dict["network_source_ip"] = sender_ip
         if sender_ip and log_dict.get("source_ip") in ("0.0.0.0", "-", ""):
             log_dict["source_ip"] = sender_ip
 
@@ -296,7 +298,7 @@ class SyslogUDPProtocol(asyncio.DatagramProtocol):
 # ═══════════════════════════════════════════════════════════════════
 #  REDIS DRAINER (CONSUMER)
 # ═══════════════════════════════════════════════════════════════════
-async def drain_to_redis(queue: asyncio.Queue, pool: aioredis.ConnectionPool):
+async def drain_to_redis(queue: asyncio.Queue, pool: aioredis.ConnectionPool, db):
     """
     Continuously pulls from the in-memory buffer queue and pushes
     batches into the raw_logs_queue Redis Stream via pipeline.
@@ -304,6 +306,7 @@ async def drain_to_redis(queue: asyncio.Queue, pool: aioredis.ConnectionPool):
     """
     redis = aioredis.Redis(connection_pool=pool)
     drained_total = 0
+    ip_tenant_cache = {}
 
     logger.info(
         f"Drainer online (batch={DRAIN_BATCH_SIZE}, interval={DRAIN_INTERVAL*1000:.0f}ms)"
@@ -327,6 +330,17 @@ async def drain_to_redis(queue: asyncio.Queue, pool: aioredis.ConnectionPool):
             # Pipeline push to Redis Stream
             async with redis.pipeline(transaction=False) as pipe:
                 for log_dict in batch:
+                    src_ip = log_dict.get("network_source_ip") or log_dict.get("source_ip")
+                    tenant_id = ip_tenant_cache.get(src_ip)
+                    if not tenant_id:
+                        agent = await db['agents'].find_one({"last_ip": src_ip})
+                        if agent and agent.get("tenant_id"):
+                            tenant_id = agent.get("tenant_id")
+                        else:
+                            tenant_id = TENANT_ID
+                        ip_tenant_cache[src_ip] = tenant_id
+                    
+                    log_dict["tenant_id"] = tenant_id
                     stream_payload = {"payload": json.dumps(log_dict, default=str)}
                     await pipe.xadd(
                         RAW_LOGS_QUEUE,
@@ -367,6 +381,9 @@ async def drain_to_redis(queue: asyncio.Queue, pool: aioredis.ConnectionPool):
                 try:
                     async with redis.pipeline(transaction=False) as pipe:
                         for log_dict in batch:
+                            src_ip = log_dict.get("network_source_ip") or log_dict.get("source_ip")
+                            tenant_id = ip_tenant_cache.get(src_ip, TENANT_ID)
+                            log_dict["tenant_id"] = tenant_id
                             await pipe.xadd(
                                 RAW_LOGS_QUEUE,
                                 {"payload": json.dumps(log_dict, default=str)},
@@ -441,6 +458,15 @@ async def main():
     finally:
         await test_redis.close()
 
+    # ─── MongoDB Connection ───
+    mongo_uri = os.getenv("MONGODB_URI")
+    if not mongo_uri:
+        logger.critical("MONGODB_URI is required for syslog receiver persistence.")
+        sys.exit(1)
+    mongo_db_name = os.getenv("DB_NAME", "WarSOC_DB")
+    mongo_client = AsyncIOMotorClient(mongo_uri)
+    db = mongo_client[mongo_db_name]
+
     # ─── Buffer Queue ───
     queue = asyncio.Queue(maxsize=BUFFER_MAX)
 
@@ -454,7 +480,7 @@ async def main():
     logger.info(f"🛰️  UDP syslog listener active on 0.0.0.0:{SYSLOG_PORT}")
 
     # ─── Background Tasks ───
-    drain_task = asyncio.create_task(drain_to_redis(queue, pool))
+    drain_task = asyncio.create_task(drain_to_redis(queue, pool, db))
     stats_task = asyncio.create_task(stats_reporter(queue, protocol_ref))
 
     # ─── Graceful Shutdown ───

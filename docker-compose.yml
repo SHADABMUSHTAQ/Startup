@@ -8,6 +8,7 @@ services:
     restart: unless-stopped
     ports:
       - "27017:27017"
+    command: ["--wiredTigerCacheSizeGB", "0.25"]
     environment:
       - MONGO_INITDB_ROOT_USERNAME=${MONGO_USER}
       - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD}
@@ -16,10 +17,21 @@ services:
     networks:
       - warsoc-secure-net
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/27017'"]
       interval: 15s
-      timeout: 5s
-      retries: 5
+      timeout: 15s
+      retries: 8
+      start_period: 30s
+    memswap_limit: 256M
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # Redis Stream Broker
   redis:
@@ -34,8 +46,10 @@ services:
       - ${REDIS_PASSWORD}
       - --appendonly
       - yes
+      - --appendfsync
+      - everysec
       - --maxmemory
-      - 2gb
+      - 100mb
       - --maxmemory-policy
       - noeviction
     volumes:
@@ -50,30 +64,16 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    memswap_limit: 128M
     deploy:
       resources:
         limits:
-          memory: 2.5G
-    mem_limit: 2.5g
-
-  # TIER 1: GATEWAY
-
-  # Nginx Reverse Proxy
-  nginx:
-    image: nginx:alpine
-    container_name: warsoc-gateway
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-    networks:
-      - warsoc-secure-net
-    depends_on:
-      api:
-        condition: service_started
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # TIER 2: APPLICATION
 
@@ -82,7 +82,7 @@ services:
     build: .
     container_name: warsoc-api
     restart: unless-stopped
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*", "--workers", "1"]
     ports:
       - "8000:8000"
     env_file:
@@ -93,19 +93,34 @@ services:
       - DB_NAME=${MONGODB_DB_NAME}
       - ALLOWED_ORIGINS=http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174,http://127.0.0.1,http://localhost
     volumes:
-      - ./keys/public_key.pem:/app/keys/public_key.pem:ro
-      - ./app/config:/app/app/config
-      - ./app/routes:/app/app/routes
-      - ./app/utils:/app/app/utils
+      - ./keys:/app/keys:ro
     networks:
       - warsoc-secure-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
     depends_on:
       mongodb:
         condition: service_healthy
       redis:
         condition: service_healthy
+    memswap_limit: 256M
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-  # UDP Syslog Receiver
+  # TIER 3: UNIFIED WORKER & SYSLOG
+  
+  # UDP Syslog Receiver (For legacy firewall logs)
   syslog-receiver:
     build: .
     container_name: warsoc-syslog-receiver
@@ -120,8 +135,10 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - NETWORK_TENANT_ID=WARSOC_NETWORK
       - SYSLOG_PORT=5140
+      - MONGODB_URI=mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/${MONGODB_DB_NAME}?authSource=admin
+      - DB_NAME=${MONGODB_DB_NAME}
     ports:
-      - "5140:5140/udp"
+      - "127.0.0.1:5140:5140/udp"
     networks:
       - warsoc-secure-net
     depends_on:
@@ -129,53 +146,32 @@ services:
         condition: service_healthy
       mongodb:
         condition: service_healthy
+    memswap_limit: 100M
+    deploy:
+      resources:
+        limits:
+          memory: 100M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-  # TIER 3: WORKERS (Fan-Out Architecture)
-
-  # SIEM Core Engine
-  worker-siem:
+  # Combines SIEM, FBR, and PECA streams into a single async event loop to save memory.
+  unified-worker:
     build: .
-    container_name: warsoc-worker-siem
+    container_name: warsoc-unified-worker
     restart: unless-stopped
-    command: ["python", "-m", "app.workers.siem_worker"]
+    command: ["python", "-m", "app.workers.unified_worker"]
     env_file:
       - ${WARSOC_ENV_FILE:-.env}
     environment:
       - MONGODB_URI=mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/${MONGODB_DB_NAME}?authSource=admin
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - DB_NAME=${MONGODB_DB_NAME}
-      - CONSUMER_NAME=siem_consumer_1
-    volumes:
-      - ./app/config:/app/app/config:ro
-      - ./app/workers:/app/app/workers
-      - ./app/utils:/app/app/utils
-      - ./app/data:/app/app/data:ro
-    networks:
-      - warsoc-secure-net
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  # FBR Compliance Archiver
-  worker-fbr:
-    build: .
-    container_name: warsoc-worker-fbr
-    restart: unless-stopped
-    command: ["python", "-m", "app.workers.fbr_worker"]
-    env_file:
-      - ${WARSOC_ENV_FILE:-.env}
-    environment:
-      - MONGODB_URI=mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/${MONGODB_DB_NAME}?authSource=admin
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
-      - DB_NAME=${MONGODB_DB_NAME}
-      - CONSUMER_NAME=fbr_archiver_1
+      - CONSUMER_NAME=unified_worker_1
     volumes:
       - ./keys:/app/keys:ro
-      - ./app/config:/app/app/config:ro
-      - ./app/workers:/app/app/workers
-      - ./app/utils:/app/app/utils
     networks:
       - warsoc-secure-net
     depends_on:
@@ -183,107 +179,23 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    memswap_limit: 300M
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-  # PECA Forensic Engine
-  worker-peca:
-    build: .
-    container_name: warsoc-worker-peca
-    restart: unless-stopped
-    command: ["python", "-m", "app.workers.peca_worker"]
-    env_file:
-      - ${WARSOC_ENV_FILE:-.env}
-    environment:
-      - MONGODB_URI=mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/${MONGODB_DB_NAME}?authSource=admin
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
-      - DB_NAME=${MONGODB_DB_NAME}
-      - CONSUMER_NAME=peca_consumer_1
-    volumes:
-      - ./keys:/app/keys:ro
-      - ./app/config:/app/app/config:ro
-      - ./app/workers:/app/app/workers
-      - ./app/utils:/app/app/utils
-    networks:
-      - warsoc-secure-net
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
 
-  # Threat Hunter
-  threat-hunter:
-    build: .
-    container_name: warsoc-threat-hunter
-    restart: unless-stopped
-    command: ["python", "-m", "app.workers.detection_worker"]
-    env_file:
-      - ${WARSOC_ENV_FILE:-.env}
-    environment:
-      - MONGODB_URI=mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/${MONGODB_DB_NAME}?authSource=admin
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
-      - DB_NAME=${MONGODB_DB_NAME}
-      - CONSUMER_NAME=hunter_node_1
-      - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
-    networks:
-      - warsoc-secure-net
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  # Compliance Cron: Daily Integrity Hash Chain
-  compliance-cron:
-    build: .
-    container_name: warsoc-compliance-cron
-    restart: unless-stopped
-    command: ["python", "-m", "app.workers.compliance_cron"]
-    env_file:
-      - ${WARSOC_ENV_FILE:-.env}
-    environment:
-      - MONGODB_URI=mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/${MONGODB_DB_NAME}?authSource=admin
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
-      - DB_NAME=${MONGODB_DB_NAME}
-    networks:
-      - warsoc-secure-net
-    depends_on:
-      mongodb:
-        condition: service_healthy
-
-  # Transactional Email Worker
-  worker-mail:
-    build: .
-    container_name: warsoc-worker-mail
-    restart: unless-stopped
-    command: ["python", "-m", "app.workers.mail_worker"]
-    env_file:
-      - ${WARSOC_ENV_FILE:-.env}
-    environment:
-      - MONGODB_URI=mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/${MONGODB_DB_NAME}?authSource=admin
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
-      - DB_NAME=${MONGODB_DB_NAME}
-    volumes:
-      - ./app/config:/app/app/config:ro
-      - ./app/workers:/app/app/workers
-      - ./app/utils:/app/app/utils
-    networks:
-      - warsoc-secure-net
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-# NAMED VOLUMES (Data survives container restarts)
-
-volumes:
-  mongo_data:
-    driver: local
-  redis_data:
-    driver: local
-
-# NETWORK (All services on a single isolated bridge
 
 networks:
   warsoc-secure-net:
     driver: bridge
+
+volumes:
+  mongo_data:
+  redis_data:

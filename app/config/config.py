@@ -31,8 +31,9 @@ class Settings(BaseSettings):
     secret_key: str = os.getenv("SECRET_KEY", "")
     algorithm: str = "HS256"
     access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
-    agent_token_expire_minutes: int = int(os.getenv("AGENT_TOKEN_EXPIRE_MINUTES", 15))
+    agent_token_expire_minutes: int = int(os.getenv("AGENT_TOKEN_EXPIRE_MINUTES", 525600))
     provisioning_token_expire_minutes: int = int(os.getenv("PROVISIONING_TOKEN_EXPIRE_MINUTES", 60))
+    enable_self_signup: bool = os.getenv("ENABLE_SELF_SIGNUP", "false").strip().lower() in {"1", "true", "yes"}
 
     # --- SERVER ---
     environment: str = os.getenv("APP_ENV", "development")
@@ -189,10 +190,10 @@ def load_config(config_file: str = "config.json") -> dict:
                         default_config[section].update(settings)
                     else:
                         default_config[section] = settings
-            print(f"✅ [WarSOC Config] Loaded custom rules from {config_path}")
+            print(f" [WarSOC Config] Loaded custom rules from {config_path}")
         except Exception as e:
-            print(f"⚠️ Config Load Error: {e} - Using Defaults")
+            print(f" Config Load Error: {e} - Using Defaults")
     else:
-        print(f"ℹ️ Config file not found at {config_path}, running in SAFE MODE.")
+        print(f" Config file not found at {config_path}, running in SAFE MODE.")
 
     return default_config

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from app.database import get_db
 from app.routes.auth import require_premium_plan
+from app.utils.compliance_catalog import COMPLIANCE_CATALOG
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -14,6 +15,7 @@ from reportlab.lib.units import inch
 import json
 import re
 from pathlib import Path
+from app.utils.report_engine import get_reports_base_dir
 
 def _load_runtime_config() -> dict:
     config_path = Path(__file__).resolve().parent.parent / "config" / "config.json"
@@ -30,6 +32,58 @@ from pydantic import BaseModel
 from typing import List
 
 router = APIRouter()
+
+
+_PACK_ALIASES = {
+    "peca": "peca_forensic",
+    "peca_forensic": "peca_forensic",
+    "peca_vault": "peca_forensic",
+    "eto": "peca_forensic",
+    "eto_forensic": "peca_forensic",
+    "fbr": "fbr_pos",
+    "fbr_pos": "fbr_pos",
+    "fbr_pos_shield": "fbr_pos",
+}
+
+
+def _normalize_pack_id(pack_id: str | None) -> str:
+    key = str(pack_id or "").strip().lower()
+    if key not in _PACK_ALIASES:
+        raise HTTPException(status_code=404, detail="Compliance pack not found")
+    return _PACK_ALIASES[key]
+
+
+def _get_entitled_packs(current_user: dict) -> set[str]:
+    packs_raw = current_user.get("compliance_packs", [])
+    if not isinstance(packs_raw, list):
+        return set()
+
+    entitled = set()
+    for pack in packs_raw:
+        key = str(pack or "").strip().lower()
+        if key in _PACK_ALIASES:
+            entitled.add(_PACK_ALIASES[key])
+    return entitled
+
+
+def _resolve_requested_pack(pack_id: str | None, entitled_packs: set[str]) -> str:
+    if pack_id:
+        normalized = _normalize_pack_id(pack_id)
+        if normalized not in entitled_packs:
+            raise HTTPException(status_code=403, detail="Not entitled to this compliance pack")
+        return normalized
+
+    if len(entitled_packs) == 1:
+        return next(iter(entitled_packs))
+    if "peca_forensic" in entitled_packs:
+        return "peca_forensic"
+    if "fbr_pos" in entitled_packs:
+        return "fbr_pos"
+    raise HTTPException(status_code=403, detail="No active compliance pack entitlement")
+
+
+def _collection_for_pack(pack_id: str) -> str:
+    return "fbr_pos_logs" if pack_id == "fbr_pos" else "peca_forensic_logs"
 
 
 def _safe_path_segment(value: str) -> str:
@@ -72,6 +126,7 @@ async def csv_generator(cursor, fieldnames):
 @router.get("/csv")
 async def export_csv(
     data_type: str = Query(..., description="Type of data to export: 'alerts', 'logs', or 'compliance'"),
+    pack_id: Optional[str] = Query(None, description="Optional compliance pack for data_type=compliance"),
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None),
     limit: int = Query(5000, le=50000),
@@ -90,9 +145,11 @@ async def export_csv(
     if data_type == "alerts":
         collection_name = "security_alerts"
     elif data_type == "compliance":
-        collection_name = "peca_forensic_logs"
+        entitled_packs = _get_entitled_packs(current_user)
+        selected_pack = _resolve_requested_pack(pack_id, entitled_packs)
+        collection_name = _collection_for_pack(selected_pack)
     else:
-        collection_name = "logs"
+        collection_name = "siem_cold_vault"
 
     collection = db[collection_name]
     query = {"tenant_id": tenant_id}
@@ -160,19 +217,16 @@ async def export_audit_report(
     if not tenant_id:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
-    # 🛡️ SSOT: Load from Master Config
-    frameworks = _RUNTIME_CONFIG.get("compliance_frameworks", {})
-    
-    # Normalization for legacy keys
-    normalized_id = pack_id.lower()
-    if normalized_id in ["peca", "peca_forensic"]: normalized_id = "eto_forensic"
-    if normalized_id == "fbr": normalized_id = "fbr_pos"
-    
-    pack = frameworks.get(normalized_id)
+    normalized_id = _normalize_pack_id(pack_id)
+    entitled_packs = _get_entitled_packs(current_user)
+    if normalized_id not in entitled_packs:
+        raise HTTPException(status_code=403, detail="Not entitled to this compliance pack")
+
+    pack = COMPLIANCE_CATALOG.get(normalized_id)
     if not pack:
         raise HTTPException(status_code=404, detail="Compliance pack not found")
 
-    collection_name = "peca_forensic_logs" if normalized_id == "eto_forensic" else "fbr_pos_logs"
+    collection_name = _collection_for_pack(normalized_id)
     collection = db[collection_name]
     alerts_coll = db["security_alerts"]
     
@@ -191,7 +245,15 @@ async def export_audit_report(
     forensic_logs = await logs_cursor.to_list(length=500)
 
     # Pull Alert Summary (Scorecard)
-    alerts_query = {"tenant_id": tenant_id, "pack_id": pack_id}
+    alerts_query = {
+        "tenant_id": tenant_id,
+        "$or": [
+            {"pack_id": normalized_id},
+            {"pack": normalized_id},
+            {"compliance_pack": normalized_id},
+            {"required_pack": normalized_id},
+        ],
+    }
     if start_dt or end_dt:
         alerts_query["timestamp"] = query["timestamp"]
     
@@ -250,7 +312,7 @@ async def export_audit_report(
 
     # --- Section 2: Forensic Ledger ---
     elements.append(Paragraph("SECTION 2: FORENSIC EVIDENCE LEDGER", header_style))
-    elements.append(Paragraph("The following logs have been cryptographically sealed and verified using ECDSA signatures.", body_style))
+    elements.append(Paragraph("The following records were retrieved from the tenant-isolated compliance vault for audit review.", body_style))
     elements.append(Spacer(1, 0.1 * inch))
 
     ledger_data = [["Timestamp", "Event", "Source IP", "Forensic Seal (Partial)"]]
@@ -311,7 +373,7 @@ async def list_reports(current_user: dict = Depends(require_premium_plan)):
     Returns a list of all available monthly PDFs for the tenant.
     """
     tenant_id = current_user.get("tenant_id")
-    report_dir = Path(f"/app/app/data/reports/{tenant_id}")
+    report_dir = get_reports_base_dir() / _safe_path_segment(tenant_id)
     
     reports = []
     if report_dir.exists():
@@ -347,7 +409,7 @@ async def download_report(report_id: str, current_user: dict = Depends(require_p
     if "/" in report_id or "\\" in report_id or ".." in report_id:
         raise HTTPException(status_code=400, detail="Invalid report_id")
         
-    report_path = Path("/app/app/data/reports") / tenant_id / report_id
+    report_path = get_reports_base_dir() / _safe_path_segment(tenant_id) / report_id
     
     if not report_path.exists() or not report_path.is_file():
         raise HTTPException(status_code=404, detail="Report not found")

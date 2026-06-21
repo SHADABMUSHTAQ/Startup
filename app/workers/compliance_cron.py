@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -10,11 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from app.config.config import get_settings
 from app.utils.report_engine import ComplianceReportGenerator
 
-# 🏗️ COMPLIANCE CRON: Daily Forensic Integrity Hash Chain
-# Produces a SHA-256 root hash per tenant per day, chained to the previous day's
-# root hash.  Deletion of any single log breaks the chain from that day forward,
-# providing mathematical proof of tampering for ETO 2002 / PECA auditors.
-#
+# 🏗 COMPLIANCE CRON: Daily compliance maintenance worker
 # Architecture: Standalone asyncio worker.  Does NOT share the FastAPI event loop.
 # Runs once per day at 00:05 UTC (5-minute grace period for late-arriving logs).
 
@@ -58,19 +53,13 @@ DEAD_AIR_THRESHOLD = load_dead_air_threshold()
 
 async def _compute_daily_root(db, tenant_id: str, date_str: str, start_dt: datetime, end_dt: datetime, previous_root: str) -> dict:
     """
-    Computes the SHA-256 root hash for a single tenant's forensic logs on a given day.
+    Builds a lightweight daily ledger entry for a tenant.
 
-    Algorithm:
-    1. Query all forensic logs for tenant_id where timestamp falls within [start_dt, end_dt).
-    2. Sort strictly by _id (MongoDB's natural insertion order — monotonic and tamper-evident).
-    3. Concatenate every `forensic_seal` value in order.
-    4. Append the previous day's root hash to the concatenated string.
-    5. SHA-256 the entire block to produce the daily root hash.
-
-    If no logs exist for the day, produce a "GENESIS" or "EMPTY" marker chained to previous_root
-    so the chain never has a gap.
+    The cryptographic seal chain has been removed by policy. The cron job now
+    records a deterministic operational summary from source collections.
     """
-    all_seals = []
+    log_count = 0
+    seen_event_ids = []
 
     for collection_name in SOURCE_COLLECTIONS:
         collection = db[collection_name]
@@ -79,29 +68,21 @@ async def _compute_daily_root(db, tenant_id: str, date_str: str, start_dt: datet
         query = {
             "tenant_id": tenant_id,
             "$or": [
-                # Handle BSON Date timestamps
+                # Handle BSON Date timestamps (primary, used by workers after normalization)
                 {"_retention_ts": {"$gte": start_dt, "$lt": end_dt}},
-                # Handle ISO string timestamps
-                {"timestamp": {"$gte": start_dt.isoformat(), "$lt": end_dt.isoformat()}},
+                # Fallback: timestamp field (also normalized to BSON Date by workers)
+                {"timestamp": {"$gte": start_dt, "$lt": end_dt}},
             ]
         }
         cursor = collection.find(query).sort("_id", 1)
 
         async for doc in cursor:
-            seal = doc.get("forensic_seal")
-            if seal:
-                all_seals.append(str(seal))
+            log_count += 1
+            event_id = doc.get("event_id")
+            if event_id is not None:
+                seen_event_ids.append(str(event_id))
 
-    # Build the chain block
-    log_count = len(all_seals)
-    if log_count == 0:
-        chain_input = f"EMPTY_DAY:{tenant_id}:{date_str}:{previous_root}"
-    else:
-        concatenated_seals = "".join(all_seals)
-        chain_input = f"{concatenated_seals}{previous_root}"
-
-    # Compute the daily root hash
-    daily_root = hashlib.sha256(chain_input.encode("utf-8")).hexdigest()
+    daily_root = f"sealed-disabled:{tenant_id}:{date_str}"
 
     ledger_entry = {
         "tenant_id": tenant_id,
@@ -109,6 +90,7 @@ async def _compute_daily_root(db, tenant_id: str, date_str: str, start_dt: datet
         "daily_root_hash": daily_root,
         "previous_root_hash": previous_root,
         "log_count": log_count,
+        "event_id_sample": seen_event_ids[:25],
         "source_collections": SOURCE_COLLECTIONS,
         "computed_at": datetime.now(timezone.utc).isoformat(),
         "worker_id": f"cron_{socket.gethostname()}",
@@ -118,10 +100,7 @@ async def _compute_daily_root(db, tenant_id: str, date_str: str, start_dt: datet
 
 
 async def run_daily_chain(db):
-    """
-    Executes the daily hash chain computation for ALL active tenants.
-    Targets the previous calendar day (UTC).
-    """
+    """Executes the daily maintenance run for all active tenants."""
     # Target: yesterday (full 24-hour window)
     now_utc = datetime.now(timezone.utc)
     yesterday = (now_utc - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -130,14 +109,14 @@ async def run_daily_chain(db):
 
     logger.info(f"=== Daily Integrity Chain: Processing {date_str} ===")
 
-    # 1. Discover all active tenants from forensic logs
+    # 1. Discover all active tenants from source collections
     all_tenants = set()
     for coll_name in SOURCE_COLLECTIONS:
         tenants = await db[coll_name].distinct("tenant_id")
         all_tenants.update(t for t in tenants if t)
 
     if not all_tenants:
-        logger.warning("No active tenants found in forensic collections. Skipping.")
+        logger.warning("No active tenants found in source collections. Skipping.")
         return
 
     logger.info(f"Active tenants discovered: {len(all_tenants)}")
@@ -151,30 +130,26 @@ async def run_daily_chain(db):
             logger.info(f"[{tenant_id}] {date_str} already chained. Skipping.")
             continue
 
-        # Fetch the previous day's root hash (the chain link)
+        # Fetch the previous day's root marker
         prev_date_str = (yesterday - timedelta(days=1)).strftime("%Y-%m-%d")
         prev_entry = await ledger_coll.find_one({"tenant_id": tenant_id, "date": prev_date_str})
 
         if prev_entry:
             previous_root = prev_entry["daily_root_hash"]
         else:
-            # Genesis block: no previous day exists
-            previous_root = hashlib.sha256(f"GENESIS:{tenant_id}".encode("utf-8")).hexdigest()
-            logger.info(f"[{tenant_id}] No previous chain found. Using GENESIS block.")
+            previous_root = f"genesis:{tenant_id}"
+            logger.info(f"[{tenant_id}] No previous ledger found. Using genesis marker.")
 
-        # Compute the daily root
+        # Compute the daily maintenance entry
         ledger_entry = await _compute_daily_root(
             db, tenant_id, date_str, yesterday, end_of_yesterday, previous_root
         )
 
         # Persist to MongoDB
         await ledger_coll.insert_one(ledger_entry)
-        logger.info(
-            f"[{tenant_id}] ✅ Chained {date_str}: "
-            f"{ledger_entry['log_count']} logs → root={ledger_entry['daily_root_hash'][:16]}..."
-        )
+        logger.info(f"[{tenant_id}]  Recorded {date_str}: {ledger_entry['log_count']} logs.")
 
-    logger.info(f"=== Daily Integrity Chain Complete for {date_str} ===")
+    logger.info(f"=== Daily Maintenance Complete for {date_str} ===")
 
 async def run_monthly_reports(db):
     """
@@ -207,7 +182,7 @@ async def run_monthly_reports(db):
             logger.info(f"[{tenant_id}] Generated FBR report: {fbr_path}")
             
             # Generate PECA Report
-            peca_path = await generator.generate_monthly_report(target_year, target_month, "eto_forensic")
+            peca_path = await generator.generate_monthly_report(target_year, target_month, "peca_forensic")
             logger.info(f"[{tenant_id}] Generated PECA report: {peca_path}")
         except Exception as e:
             logger.error(f"[{tenant_id}] Monthly report generation failed: {e}")
@@ -221,11 +196,11 @@ async def check_heartbeats(app_redis, db):
     it flags the tenant's agent status as offline in MongoDB.
     """
     try:
-        tenants = await db["tenants"].find({"active": True}).to_list(length=1000)
+        tenants = await db["tenants"].find({"status": "active"}).to_list(length=1000)
         for tenant in tenants:
             tenant_id = tenant["tenant_id"]
             # Look for any heartbeat key for this tenant
-            keys = await app_redis.keys(f"LAST_HEARTBEAT:{tenant_id}:*")
+            keys = await app_redis.keys(f"status:{tenant_id}:*")
             if not keys:
                 # Agent is offline
                 await db["agents"].update_many(
