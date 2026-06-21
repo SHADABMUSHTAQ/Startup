@@ -4,16 +4,17 @@ services:
     container_name: warsoc-api-prod
     restart: always
     env_file:
-      - ${WARSOC_ENV_FILE:-.env}
+      - ${WARSOC_ENV_FILE:-.env.prod}
     environment:
       APP_ENV: production
-      ALLOWED_ORIGINS: https://warsoc.tech
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS required}
       MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
       TRUSTED_PROXY_HOSTS: 172.28.0.10,127.0.0.1,::1,localhost
+      REPORTS_DIR: /app/data/reports
+      AGENT_CDN_URL: ${AGENT_CDN_URL:?AGENT_CDN_URL required for production agent downloads}
     volumes:
-      - ./keys/public_key.pem:/app/keys/public_key.pem:ro
-      - reports_data_prod:/app/app/data/reports:ro
+      - reports_data_prod:/app/data/reports
       - uploads_data_prod:/app/uploaded_files
     read_only: true
     tmpfs:
@@ -28,6 +29,12 @@ services:
     networks:
       warsoc-internal:
         ipv4_address: 172.28.0.11
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
     # Notice: NO PORTS EXPOSED. Traffic must route through Nginx.
     deploy:
       resources:
@@ -38,16 +45,19 @@ services:
           cpus: '0.5'
           memory: 512M
 
-  warsoc-worker:
+  unified-worker:
     build: .
-    container_name: warsoc-worker-prod
-    command: python -m app.workers.peca_worker
+    container_name: warsoc-unified-worker-prod
+    command: python -m app.workers.unified_worker
     restart: always
     env_file:
-      - ${WARSOC_ENV_FILE:-.env}
+      - ${WARSOC_ENV_FILE:-.env.prod}
     environment:
+      APP_ENV: production
       MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      DB_NAME: ${MONGODB_DB_NAME:?MONGODB_DB_NAME required}
+      CONSUMER_NAME: unified_worker_prod_1
     volumes:
       - ./keys:/app/keys:ro
     read_only: true
@@ -64,72 +74,18 @@ services:
       resources:
         limits:
           cpus: '0.5'
-          memory: 256M
-
-  worker-siem:
-    build: .
-    container_name: warsoc-worker-siem-prod
-    command: python -m app.workers.siem_worker
-    restart: always
-    env_file:
-      - ${WARSOC_ENV_FILE:-.env}
-    environment:
-      MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
-      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
-    volumes:
-      - ./keys:/app/keys:ro
-    read_only: true
-    tmpfs:
-      - /tmp
-    depends_on:
-      redis:
-        condition: service_healthy
-      mongodb:
-        condition: service_healthy
-    networks:
-      - warsoc-internal
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-
-  worker-fbr:
-    build: .
-    container_name: warsoc-worker-fbr-prod
-    command: python -m app.workers.fbr_worker
-    restart: always
-    env_file:
-      - ${WARSOC_ENV_FILE:-.env}
-    environment:
-      MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
-      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
-    volumes:
-      - ./keys:/app/keys:ro
-    read_only: true
-    tmpfs:
-      - /tmp
-    depends_on:
-      redis:
-        condition: service_healthy
-      mongodb:
-        condition: service_healthy
-    networks:
-      - warsoc-internal
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
+          memory: 300M
 
   threat-hunter:
     build: .
     container_name: warsoc-threat-hunter-prod
+    profiles: ["legacy-detection"]
     command: python -m app.workers.detection_worker
     restart: always
     env_file:
-      - ${WARSOC_ENV_FILE:-.env}
+      - ${WARSOC_ENV_FILE:-.env.prod}
     environment:
+      APP_ENV: production
       MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
     read_only: true
@@ -154,15 +110,17 @@ services:
     command: python -m app.workers.compliance_cron
     restart: always
     env_file:
-      - ${WARSOC_ENV_FILE:-.env}
+      - ${WARSOC_ENV_FILE:-.env.prod}
     environment:
+      APP_ENV: production
       MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      REPORTS_DIR: /app/data/reports
     read_only: true
     tmpfs:
       - /tmp
     volumes:
-      - reports_data_prod:/app/app/data/reports
+      - reports_data_prod:/app/data/reports
     depends_on:
       mongodb:
         condition: service_healthy
@@ -174,22 +132,25 @@ services:
           cpus: '0.5'
           memory: 256M
 
-  worker-mail:
+  storage-archiver:
     build: .
-    container_name: warsoc-worker-mail-prod
-    command: python -m app.workers.mail_worker
-    restart: always
+    container_name: warsoc-storage-archiver-prod
+    profiles: ["maintenance"]
+    command: python -m app.workers.storage_archiver
+    restart: "no"
     env_file:
-      - ${WARSOC_ENV_FILE:-.env}
+      - ${WARSOC_ENV_FILE:-.env.prod}
     environment:
+      APP_ENV: production
       MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
-      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      AZURE_STORAGE_CONNECTION_STRING: ${AZURE_STORAGE_CONNECTION_STRING:-}
+      AZURE_STORAGE_CONTAINER: ${AZURE_STORAGE_CONTAINER:-warsoc-cold-storage}
+      ARCHIVE_BATCH_SIZE: ${ARCHIVE_BATCH_SIZE:-5000}
+      ARCHIVE_LEAD_DAYS: ${ARCHIVE_LEAD_DAYS:-1}
     read_only: true
     tmpfs:
       - /tmp
     depends_on:
-      redis:
-        condition: service_healthy
       mongodb:
         condition: service_healthy
     networks:
@@ -198,7 +159,7 @@ services:
       resources:
         limits:
           cpus: '0.5'
-          memory: 256M
+          memory: 512M
 
   mongodb:
     image: mongo:6.0
@@ -217,16 +178,25 @@ services:
           cpus: '1.0'
           memory: 1G
     healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --host 127.0.0.1 --port 27017
+          -u "${MONGO_USER:?MONGO_USER required}"
+          -p "${MONGO_PASSWORD:?MONGO_PASSWORD required}"
+          --authenticationDatabase admin
+          --quiet
+          --eval 'db.adminCommand({ ping: 1 }).ok'
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 15s
+      retries: 8
+      start_period: 30s
 
   redis:
     image: redis:7.0-alpine
     container_name: warsoc-redis-prod
     restart: always
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required}
+    command: redis-server --appendonly yes --appendfsync everysec --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required}
     volumes:
       - redis_data_prod:/data
     networks:
@@ -241,6 +211,41 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  syslog-receiver:
+    build: .
+    container_name: warsoc-syslog-receiver-prod
+    command: python /app/syslog_receiver.py
+    restart: always
+    env_file:
+      - ${WARSOC_ENV_FILE:-.env.prod}
+    environment:
+      APP_ENV: production
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD required}
+      NETWORK_TENANT_ID: ${NETWORK_TENANT_ID:-WARSOC_NETWORK}
+      SYSLOG_PORT: 5140
+      MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
+      DB_NAME: ${MONGODB_DB_NAME:?MONGODB_DB_NAME required}
+    ports:
+      - "${SYSLOG_BIND:-0.0.0.0}:5140:5140/udp"
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - warsoc-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
 
   nginx:
     image: nginx:alpine
@@ -260,7 +265,7 @@ services:
         ipv4_address: 172.28.0.10
     depends_on:
       warsoc-api:
-        condition: service_started
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -279,4 +284,3 @@ networks:
     ipam:
       config:
         - subnet: 172.28.0.0/16
-

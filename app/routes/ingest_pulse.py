@@ -1,39 +1,93 @@
 import asyncio
 import uuid
+import orjson
 from fastapi import APIRouter, HTTPException, Depends, Request, Query
-from pydantic import BaseModel, Field, ValidationError, parse_obj_as, validator, ConfigDict
-from typing import Union, Optional, List
+from fastapi.responses import ORJSONResponse
+from pydantic import BaseModel, Field, validator, ConfigDict
+from typing import Union, Optional
 from datetime import datetime, timezone
 import json
-import hashlib
-from ecdsa import VerifyingKey, BadSignatureError
 import logging
+import os
 import redis.asyncio as aioredis
 from ipaddress import ip_address, ip_network
 from app.config.config import get_settings, load_config
+from app.utils.siem_catalog import SIEM_RULES
 
 from app.database import get_db
-# 🚨 Secures the Dashboard endpoints below
+#  Secures the Dashboard endpoints below
 from app.routes.auth import get_current_user, verify_agent_token
-from app.utils.agent_crypto import (
-    build_event_signature_string,
-    build_payload_hash,
-    build_signable_event_payload,
-    parse_utc_timestamp,
-    timestamp_age_seconds,
-)
+from app.utils.agent_crypto import parse_utc_timestamp, timestamp_age_seconds
 
 router = APIRouter()
 settings = get_settings()
 logger = logging.getLogger("ingest_pulse")
 RAW_LOGS_QUEUE = "raw_logs_queue"
+SIEM_HOT_QUEUE = "siem_hot_queue"
 RAW_LOGS_QUEUE_MAXLEN = 100000
+SIEM_HOT_QUEUE_MAXLEN = 100000
 RAW_RETENTION_ANCHOR_FIELD = "_retention_ts"
 STATUS_KEY_PREFIX = "status"
 STATUS_TTL_SECONDS = 86400
 MAX_INGEST_BODY_BYTES = 5 * 1024 * 1024
 
-# 🛡️ Load security configuration once
+_GENERIC_HIGH_SIGNAL_KEYWORDS = {
+    "../",
+    "..\\",
+    "<script",
+    "authentication failure",
+    "certutil",
+    "clear-eventlog",
+    "cobalt strike",
+    "drop table",
+    "failed password",
+    "hashcat",
+    "javascript:",
+    "login failed",
+    "meterpreter",
+    "mimikatz",
+    "powershell",
+    "rubeus",
+    "union select",
+    "vssadmin",
+    "wevtutil",
+    "xp_cmdshell",
+}
+
+
+def _siem_hot_event_ids() -> set[str]:
+    event_ids = {str(event_id) for event_id in (SIEM_RULES.get("event_id_map", {}) or {}).keys()}
+    for source_cfg in (SIEM_RULES.get("source_classification", {}) or {}).values():
+        event_ids.update(str(event_id) for event_id in source_cfg.get("trigger_event_ids", []))
+    return event_ids
+
+
+def _siem_interest_keywords() -> set[str]:
+    keywords = set(_GENERIC_HIGH_SIGNAL_KEYWORDS)
+    for source_cfg in (SIEM_RULES.get("source_classification", {}) or {}).values():
+        for keyword in (source_cfg.get("severity_by_keyword", {}) or {}).keys():
+            text = str(keyword or "").strip().lower()
+            if len(text) >= 3:
+                keywords.add(text)
+    return keywords
+
+
+SIEM_HOT_EVENT_IDS = _siem_hot_event_ids()
+SIEM_INTEREST_KEYWORDS = _siem_interest_keywords()
+
+
+def _is_siem_hot_event(log_data: dict) -> bool:
+    event_id = str(log_data.get("event_id") or "").strip()
+    if event_id in SIEM_HOT_EVENT_IDS:
+        return True
+
+    message = str(log_data.get("message") or "").lower()
+    if not message:
+        return False
+
+    return any(keyword in message for keyword in SIEM_INTEREST_KEYWORDS)
+
+#  Load security configuration once
 _security_config = None
 
 def _get_security_config():
@@ -68,6 +122,17 @@ def _is_ip_whitelisted(client_ip: str, allowed_ips: list) -> bool:
     except (ValueError, TypeError):
         # If client_ip is invalid, reject it
         return False
+
+
+def _agent_ingress_whitelist_enabled(security_config: dict) -> bool:
+    """
+    Agent auth, signed heartbeats, replay protection, and rate limits are the
+    default production controls. IP allow-listing is opt-in for closed pilots.
+    """
+    override = os.getenv("AGENT_ENFORCE_IP_WHITELIST")
+    if override is not None and override.strip():
+        return override.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(security_config.get("enforce_ip_whitelist", False))
 
 def _parse_timestamp_utc(timestamp_str: str) -> Optional[datetime]:
     """Parse ISO timestamp and normalize to UTC."""
@@ -165,134 +230,80 @@ def _classify_clock_integrity(
     return "allow", delta_seconds
 
 
-class WindowsAgentPayload(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    agent_id: str
-    source_ip: str
-    user: str
-    event_id: int
-    event_uid: str
-    message: str
-    timestamp: str
-    raw_data: Union[dict, str] = Field(default_factory=dict)
-    processed_data: Optional[dict] = None
-    raw_event_data: Optional[Union[dict, str]] = None
-    agent_signature: Optional[str] = None
-    agent_hmac_signature: Optional[str] = None
-    agent_version: str
-    geo_lat: Optional[float] = None
-    geo_lon: Optional[float] = None
-
-    @validator("raw_data", pre=True)
-    def coerce_raw_data(cls, v):
-        if isinstance(v, str):
-            return {"raw": v}
-        return v
-
-
-async def _validate_signed_payload_batch(
-    payload_items: list[tuple[WindowsAgentPayload, Optional[dict]]],
-    request: Request,
-    agent_context: dict,
-    skew_warning_seconds: int,
-    hard_drop_seconds: int,
-) -> list[tuple[WindowsAgentPayload, Optional[dict]]]:
-    redis_client = getattr(request.app.state, "redis", None)
-    if not redis_client:
-        raise HTTPException(status_code=503, detail="Redis unavailable for signature verification")
-
-    verified_agent_id = agent_context["agent_id"]
-    verified_tenant_id = agent_context["tenant_id"]
+def _normalize_stream_payloads(raw_payload, agent_context: dict) -> list[dict]:
+    tenant_id = agent_context["tenant_id"]
+    agent_id = agent_context["agent_id"]
     public_key = agent_context.get("public_key")
-    if not public_key:
-        raise HTTPException(status_code=401, detail="Agent public key unavailable")
+    normalized_payloads: list[dict] = []
 
-    verifying_key = VerifyingKey.from_pem(public_key)
-    valid_payloads: list[tuple[WindowsAgentPayload, Optional[dict]]] = []
+    if isinstance(raw_payload, dict):
+        payloads = [raw_payload]
+    elif isinstance(raw_payload, list):
+        payloads = raw_payload
+    else:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
-    for payload, _ in payload_items:
-        if payload.agent_id != verified_agent_id:
-            raise HTTPException(status_code=403, detail="Agent payload identity mismatch")
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
 
-        # 🛡️ REPLAY GUARD: Read-only check to reject intercepted/duplicated payloads
-        replay_key = f"warsoc:event_sig:{verified_tenant_id}:{verified_agent_id}:{payload.event_uid}"
-        if await redis_client.exists(replay_key):
-            raise HTTPException(status_code=401, detail="Replay detected for event_uid")
+        if "metrics" in payload and isinstance(payload["metrics"], list):
+            metric_source = payload["metrics"]
+        else:
+            metric_source = [payload]
 
-        signature = payload.agent_signature or payload.agent_hmac_signature
-        if not signature:
-            raise HTTPException(status_code=401, detail="Signed payload required")
+        for metric in metric_source:
+            if not isinstance(metric, dict):
+                continue
 
-        # Compatibility bridge: prefer ECDSA (`agent_signature`). Optionally reject
-        # legacy HMAC-only payloads when configured via agent_security.reject_legacy_hmac.
-        sec_cfg = _get_security_config()
-        if payload.agent_hmac_signature and not payload.agent_signature:
-            if sec_cfg.get("reject_legacy_hmac", False):
-                raise HTTPException(status_code=401, detail="Legacy HMAC signatures are rejected; enroll agent with ECDSA")
-            else:
-                logger.warning(
-                    "Legacy HMAC signature accepted for agent %s; consider enrolling ECDSA public key",
-                    payload.agent_id,
-                )
-        if not payload.event_uid:
-            raise HTTPException(status_code=401, detail="event_uid is required for signed ingest")
-
-        timestamp = payload.timestamp or datetime.now(timezone.utc).isoformat()
-        verdict, delta_seconds = _classify_clock_integrity(
-            timestamp,
-            skew_warning_seconds=skew_warning_seconds,
-            hard_drop_seconds=hard_drop_seconds,
-        )
-        if verdict == "drop":
-            raise HTTPException(status_code=401, detail="Signed payload timestamp outside allowed drift window")
-
-        time_integrity = None
-        if verdict == "skew":
-            time_integrity = {
-                "skewed": True,
-                "skew_seconds": delta_seconds,
-                "reason": "clock_drift",
+            fields = metric.get("fields") if isinstance(metric.get("fields"), dict) else metric
+            tags = metric.get("tags") if isinstance(metric.get("tags"), dict) else {}
+            raw_event_id = fields.get("event_id", payload.get("event_id"))
+            candidate = {
+                "agent_id": tags.get("agent_id") or tags.get("tenant_id") or fields.get("agent_id") or agent_id,
+                "source_ip": fields.get("src_ip") or tags.get("src_ip") or payload.get("source_ip") or "0.0.0.0",
+                "user": fields.get("user") or tags.get("user") or payload.get("user") or "SYSTEM",
+                "event_id": "" if raw_event_id is None else str(raw_event_id).strip(),
+                "event_uid": str(fields.get("event_uid") or payload.get("event_uid") or uuid.uuid4().hex),
+                "message": fields.get("message", payload.get("message", "Unknown Event")),
+                "timestamp": fields.get("timestamp") or tags.get("timestamp") or payload.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+                "raw_data": payload.get("raw_data") or fields,
+                "raw_event_data": payload.get("raw_event_data") or fields,
+                "processed_data": payload.get("processed_data") or {},
+                # Signatures removed from worker ingest per CTO directive; strip any provided values.
+                "agent_signature": None,
+                "agent_version": payload.get("agent_version") or "telegraf_polyglot",
+                "tenant_id": tenant_id,
+                "public_key": payload.get("public_key") or public_key,
             }
 
-        signable_payload = build_signable_event_payload(payload.dict())
-        payload_hash = build_payload_hash(signable_payload)
-        canonical = build_event_signature_string(
-            payload.agent_id,
-            payload.timestamp,
-            payload.event_uid,
-            payload_hash,
-        )
+            if not candidate["event_id"]:
+                continue
 
-        try:
-            verifying_key.verify(
-                bytes.fromhex(signature),
-                canonical.encode("utf-8"),
-                hashfunc=hashlib.sha256,
-            )
-        except (BadSignatureError, ValueError):
-            raise HTTPException(status_code=401, detail="Invalid signed payload")
+            normalized_payloads.append(candidate)
 
-        valid_payloads.append((payload, time_integrity))
+    return normalized_payloads
 
-    return valid_payloads
 
 from app.utils.limiter import limiter
 
+from app.utils.rate_limiter import redis_ingest_rate_limit
+
 # ---------------------------------------------------------
 # 📥 1. INGEST WINDOWS AGENT LOGS (BULK REDIS PIPELINE)
-@router.post("/pulse")
+@router.post("/pulse", status_code=202, response_class=ORJSONResponse)
 @limiter.limit("300/second")
 async def ingest_pulse_logs(
     request: Request,
-    agent_context: dict = Depends(verify_agent_token)
+    agent_context: dict = Depends(verify_agent_token),
+    _rate_limit=Depends(redis_ingest_rate_limit)
 ):
     try:
         verified_tenant_id = agent_context["tenant_id"]
         verified_agent_id = agent_context["agent_id"]
         client_ip = request.client.host if request.client else "0.0.0.0"
 
-        # 🛡️ BANNED IP CHECK AT API PERIMETER: Block malicious IPs before JSON parsing
+        #  BANNED IP CHECK AT API PERIMETER: Block malicious IPs before JSON parsing
         # Fast Redis EXISTS check prevents banned traffic from touching the queue
         redis_client = getattr(request.app.state, "redis", None)
         if redis_client:
@@ -305,113 +316,60 @@ async def ingest_pulse_logs(
                     detail=f"IP {client_ip} has been banned by tenant security policy"
                 )
 
-        # 🛡️ THE INGESTION THROTTLE: Strict Redis-backed Rate Limiter BEFORE JSON Parsing
-        # This prevents FastAPI workers from getting DDoS'd by bad actors spoofing agent payloads (JSON memory exhaustion)
-        redis_client = getattr(request.app.state, "redis", None)
-        if redis_client:
-            throttle_key = f"warsoc:throttle:tenant:{verified_tenant_id}"
-            # Track requests per minute per tenant
-            current_requests = await redis_client.incr(throttle_key)
-            if current_requests == 1:
-                await redis_client.expire(throttle_key, 60)
-            
-            # If a tenant blasts more than 5000 requests per minute, drop connection instantly
-            if current_requests > 5000:
-                raise HTTPException(
-                    status_code=429,
-                    detail=f"Tenant Rate Limit Exceeded: {verified_tenant_id} is sending too many requests (>5000/min)."
-                )
+        #  THE INGESTION THROTTLE: Handled by Depends(redis_ingest_rate_limit) middleware
 
         raw_payload = await _read_json_body_with_limit(request)
 
-        if isinstance(raw_payload, dict):
-            payloads = [raw_payload]
-        elif isinstance(raw_payload, list):
-            payloads = raw_payload
-        else:
-            raise HTTPException(status_code=400, detail="Invalid JSON payload")
-
-        unpacked_payloads = []
-        for payload in payloads:
-            if "metrics" in payload and isinstance(payload["metrics"], list):
-                for metric in payload["metrics"]:
-                    fields = metric.get("fields", {})
-                    tags = metric.get("tags", {})
-                    unpacked_payloads.append({
-                        "agent_id": tags.get("agent_id") or tags.get("tenant_id") or fields.get("agent_id") or fields.get("tenant_id", "UNKNOWN"),
-                        "source_ip": fields.get("src_ip") or tags.get("src_ip", "0.0.0.0"),
-                        "user": fields.get("user") or tags.get("user", "SYSTEM"),
-                        "event_id": fields.get("event_id", 0),
-                        "event_uid": str(fields.get("event_uid") or uuid.uuid4().hex),
-                        "message": fields.get("message", "Unknown Event"),
-                        "timestamp": fields.get("timestamp") or tags.get("timestamp") or datetime.now(timezone.utc).isoformat(),
-                        "raw_data": fields,
-                        "raw_event_data": fields,
-                        "processed_data": {},
-                        "agent_signature": fields.get("agent_signature") or fields.get("agent_hmac_signature"),
-                        "agent_version": "telegraf_polyglot",
-                    })
-            elif "fields" in payload:
-                fields = payload.get("fields", {})
-                tags = payload.get("tags", {})
-                unpacked_payloads.append({
-                    "agent_id": tags.get("agent_id") or tags.get("tenant_id") or fields.get("agent_id") or fields.get("tenant_id", "UNKNOWN"),
-                    "source_ip": fields.get("src_ip") or tags.get("src_ip", "0.0.0.0"),
-                    "user": fields.get("user") or tags.get("user", "SYSTEM"),
-                    "event_id": fields.get("event_id", 0),
-                    "event_uid": str(fields.get("event_uid") or uuid.uuid4().hex),
-                    "message": fields.get("message", "Unknown Event"),
-                    "timestamp": fields.get("timestamp") or tags.get("timestamp") or datetime.now(timezone.utc).isoformat(),
-                    "raw_data": fields,
-                    "raw_event_data": fields,
-                    "processed_data": {},
-                    "agent_signature": fields.get("agent_signature") or fields.get("agent_hmac_signature"),
-                    "agent_version": "telegraf_polyglot",
-                })
-            else:
-                candidate = dict(payload)
-                candidate.setdefault("event_uid", uuid.uuid4().hex)
-                unpacked_payloads.append(candidate)
-
-        sanitized_payloads = []
-        for payload in unpacked_payloads:
-            if not isinstance(payload, dict):
-                continue
-            event_id = payload.get("event_id")
-            if isinstance(event_id, bool):
-                continue
+        # --- REPLAY ATTACK BLOCKADE (Phase Execution) ---
+        if isinstance(raw_payload, dict) and "nonce" in raw_payload and "timestamp" in raw_payload:
+            nonce = raw_payload.get("nonce")
             try:
-                if event_id is None or str(event_id).strip() == "":
-                    continue
-                payload["event_id"] = int(event_id)
-                sanitized_payloads.append(payload)
-            except (TypeError, ValueError):
-                continue
+                # Agent sends epoch timestamp (e.g. 1718116530)
+                agent_ts = int(raw_payload.get("timestamp"))
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail="Invalid timestamp format in wrapper")
+
+            # 1. The Time Gate (5-Minute Window)
+            now_ts = int(datetime.now(timezone.utc).timestamp())
+            if (now_ts - agent_ts) > 300 or (agent_ts - now_ts) > 300:
+                logger.warning(f"[SECURITY] Timestamp {agent_ts} out of 5-minute window for agent {verified_agent_id}")
+                raise HTTPException(status_code=400, detail="Payload timestamp out of acceptable 5-minute window")
+
+            # 2. The Nonce Cache (Redis)
+            redis_client = getattr(request.app.state, "redis", None)
+            if redis_client:
+                nonce_key = f"warsoc:nonce:{verified_agent_id}:{nonce}"
+                exists = await redis_client.exists(nonce_key)
+                if exists:
+                    logger.warning(f"[SECURITY] Replay attack blocked for agent {verified_agent_id}, nonce {nonce}")
+                    raise HTTPException(status_code=409, detail="Conflict: Replay attack detected (Nonce already consumed)")
+
+                # Set nonce with 300s TTL (5 minutes)
+                await redis_client.setex(nonce_key, 300, "consumed")
+
+            # Extract the actual logs to feed into the normal pipeline
+            events_data = raw_payload.get("payload", [])
+            raw_events = [events_data] if isinstance(events_data, dict) else events_data
+
+            # For size checking fallback
+            original_raw_payload = raw_payload
+        else:
+            # Legacy dummy agent fallback
+            raw_events = raw_payload
+            original_raw_payload = raw_payload
+
+        sanitized_payloads = _normalize_stream_payloads(raw_events, agent_context)
 
         if not sanitized_payloads:
             raise HTTPException(status_code=400, detail="No valid events found in payload")
 
-        try:
-            parsed_payloads = parse_obj_as(List[WindowsAgentPayload], sanitized_payloads)
-        except ValidationError as exc:
-            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+        payload_items = sanitized_payloads
 
-        payload_items = [(payload, None) for payload in parsed_payloads]
+
+
         security_config = _get_security_config()
-        redis_client = getattr(request.app.state, "redis", None)
 
-        if redis_client:
-            rate_key = f"warsoc:ratelimit:tenant:{verified_tenant_id}"
-            current_usage = await redis_client.incrby(rate_key, len(payload_items))
-            if current_usage == len(payload_items):
-                await redis_client.expire(rate_key, 60)
-            if current_usage > 5000:
-                raise HTTPException(
-                    status_code=429,
-                    detail=f"Tenant Rate Limit Exceeded: {verified_tenant_id} is sending too many logs (>5000/min).",
-                )
-
-        if security_config.get("enforce_ip_whitelist", True):
+        if _agent_ingress_whitelist_enabled(security_config):
             client_ip = request.client.host if request.client else "0.0.0.0"
             allowed_ips = security_config.get("allowed_ips", ["127.0.0.1", "localhost"])
             if not _is_ip_whitelisted(client_ip, allowed_ips):
@@ -419,21 +377,8 @@ async def ingest_pulse_logs(
 
         if security_config.get("enforce_payload_size", True):
             max_payload_bytes = security_config.get("max_payload_bytes", MAX_INGEST_BODY_BYTES)
-            if len(json.dumps(raw_payload, default=str).encode("utf-8")) > max_payload_bytes:
+            if len(orjson.dumps(original_raw_payload)) > max_payload_bytes:
                 raise HTTPException(status_code=413, detail=f"Payload too large: {max_payload_bytes} bytes max")
-
-        skew_warning_seconds = int(security_config.get("clock_skew_warning_seconds", 60))
-        hard_drop_seconds = int(security_config.get("max_log_age_seconds", 300))
-        if hard_drop_seconds <= skew_warning_seconds:
-            hard_drop_seconds = skew_warning_seconds + 1
-
-        payload_items = await _validate_signed_payload_batch(
-            payload_items,
-            request,
-            agent_context,
-            skew_warning_seconds=skew_warning_seconds,
-            hard_drop_seconds=hard_drop_seconds,
-        )
 
         redis = request.app.state.redis
         if not redis:
@@ -441,49 +386,53 @@ async def ingest_pulse_logs(
 
         status_updates = []
         async with redis.pipeline(transaction=True) as pipe:
-            for payload, time_integrity in payload_items:
-                log_data = payload.dict()
-                if not log_data.get("timestamp"):
-                    log_data["timestamp"] = datetime.now(timezone.utc).isoformat()
+            for log_data in payload_items:
+                log_data.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
 
+                # Ensure tenant/agent identity; strip any signature fields for workers.
                 log_data["tenant_id"] = verified_tenant_id
                 log_data["agent_id"] = verified_agent_id
-                log_data["agent_signature"] = payload.agent_signature or payload.agent_hmac_signature
                 log_data.pop("agent_hmac_signature", None)
+                # Do not forward agent signatures into the stream (removed by policy)
+                log_data["agent_signature"] = None
+                siem_hot_event = _is_siem_hot_event(log_data)
+                if siem_hot_event:
+                    log_data["siem_hot_enqueued"] = True
 
-                if time_integrity is not None:
-                    log_data["time_integrity"] = time_integrity
+                payload_to_stream = {"payload": orjson.dumps(log_data).decode("utf-8")}
 
-                payload_to_stream = {"payload": json.dumps(log_data, default=str)}
-                replay_key = f"warsoc:event_sig:{verified_tenant_id}:{verified_agent_id}:{payload.event_uid}"
                 await pipe.xadd(
                     RAW_LOGS_QUEUE,
                     payload_to_stream,
                     maxlen=RAW_LOGS_QUEUE_MAXLEN,
                     approximate=True,
                 )
-                await pipe.set(replay_key, "1", ex=hard_drop_seconds, nx=True)
+                if siem_hot_event:
+                    await pipe.xadd(
+                        SIEM_HOT_QUEUE,
+                        payload_to_stream,
+                        maxlen=SIEM_HOT_QUEUE_MAXLEN,
+                        approximate=True,
+                    )
                 status_updates.append((verified_tenant_id, verified_agent_id))
 
             await pipe.execute()
 
         current_utc_timestamp = datetime.now(timezone.utc).isoformat()
         for tenant_id, agent_id in set(status_updates):
-            asyncio.create_task(
-                redis.set(
-                    f"{STATUS_KEY_PREFIX}:{tenant_id}:{agent_id}",
-                    current_utc_timestamp,
-                    ex=STATUS_TTL_SECONDS,
-                )
+            await redis.set(
+                f"{STATUS_KEY_PREFIX}:{tenant_id}:{agent_id}",
+                current_utc_timestamp,
+                ex=STATUS_TTL_SECONDS,
             )
 
-        return {
+        return ORJSONResponse({
             "status": "success",
             "queued": len(payload_items),
             "rejected": 0,
-            "message": f"Successfully queued {len(payload_items)} signed logs in Redis Stream.",
+            "message": f"Successfully queued {len(payload_items)} logs in Redis Stream.",
             "action": "ALLOW",
-        }
+        })
     except HTTPException:
         raise
     except Exception as exc:
@@ -493,27 +442,6 @@ async def ingest_pulse_logs(
 # ---------------------------------------------------------
 # 💓 1.5 AGENT HEARTBEAT (DEAD AIR DETECTION)
 # ---------------------------------------------------------
-@router.post("/heartbeat")
-@limiter.limit("5/minute")
-async def ingest_heartbeat(
-    request: Request,
-    agent_context: dict = Depends(verify_agent_token)
-):
-    """
-    Lightweight endpoint for Windows Agent to declare it is alive.
-    Maintains a 10-minute TTL in Redis.
-    """
-    redis_client = getattr(request.app.state, "redis", None)
-    if not redis_client:
-        return {"status": "degraded", "message": "Heartbeat received but Redis is down"}
-
-    verified_tenant_id = agent_context["tenant_id"]
-    verified_agent_id = agent_context["agent_id"]
-    key = f"LAST_HEARTBEAT:{verified_tenant_id}:{verified_agent_id}"
-    await redis_client.set(key, datetime.now(timezone.utc).isoformat(), ex=600)
-
-    return {"status": "success", "message": "Heartbeat recorded"}
-
 # ---------------------------------------------------------
 # 📜 2. FETCH MITIGATED ALERTS HISTORY
 # ---------------------------------------------------------
@@ -540,7 +468,7 @@ async def get_alert_history(
         return []
 
 # ---------------------------------------------------------
-# 📊 3. FETCH LIVE AGENT LOGS FOR DASHBOARD 
+# 📊 3. FETCH LIVE AGENT LOGS FOR DASHBOARD
 # ---------------------------------------------------------
 @router.get("/logs")
 async def fetch_agent_logs(
@@ -554,7 +482,7 @@ async def fetch_agent_logs(
         raise HTTPException(status_code=403, detail="Critical: User lacks tenant assignment.")
 
     try:
-        cursor = db["logs"].find({"tenant_id": secure_tenant_id}).sort("timestamp", -1).limit(limit)
+        cursor = db["siem_cold_vault"].find({"tenant_id": secure_tenant_id}).sort("timestamp", -1).limit(limit)
         logs = await cursor.to_list(length=limit)
         for doc in logs:
             doc["_id"] = str(doc["_id"])

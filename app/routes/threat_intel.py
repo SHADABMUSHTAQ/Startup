@@ -8,7 +8,6 @@ import json
 import logging
 import zipfile
 from pathlib import Path
-import redis.asyncio as aioredis
 
 from app.database import get_db
 from app.api.ws_manager import manager
@@ -25,6 +24,7 @@ logger = logging.getLogger("threat_intel")
 class BanRequest(BaseModel):
     ip: str
     reason: str = "Manual Admin Intervention"
+    force: bool = False
 
 WHITELIST_IPS = ["127.0.0.1", "localhost", "::1", "0.0.0.0"]
 
@@ -38,6 +38,47 @@ def _is_valid_ip_or_cidr(value: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _target_contains_ip(target: str, candidate_ip: str | None) -> bool:
+    if not candidate_ip:
+        return False
+    try:
+        candidate = ipaddress.ip_address(str(candidate_ip).strip())
+        if "/" in target:
+            return candidate in ipaddress.ip_network(target, strict=False)
+        return candidate == ipaddress.ip_address(target)
+    except ValueError:
+        return False
+
+
+async def _find_active_agent_ip_conflict(db, tenant_id: str, target_ip: str):
+    active_status_filter = {
+        "$or": [
+            {"status": {"$exists": False}},
+            {"status": "active"},
+        ]
+    }
+
+    if "/" not in target_ip:
+        return await db["agents"].find_one({
+            "tenant_id": tenant_id,
+            "last_ip": target_ip,
+            **active_status_filter,
+        })
+
+    cursor = db["agents"].find(
+        {
+            "tenant_id": tenant_id,
+            "last_ip": {"$exists": True, "$ne": None},
+            **active_status_filter,
+        },
+        {"agent_id": 1, "last_ip": 1},
+    )
+    async for agent in cursor:
+        if _target_contains_ip(target_ip, agent.get("last_ip")):
+            return agent
+    return None
 
 
 async def _redis_sadd_with_retry(redis_client, redis_key, target_ip, retries: int = 2, backoff: float = 0.2):
@@ -86,8 +127,25 @@ async def execute_mitigation(
     if not secure_tenant_id:
         raise HTTPException(status_code=403, detail="Critical: User lacks tenant assignment.")
 
-    if target_ip in WHITELIST_IPS:
+    if target_ip in WHITELIST_IPS or any(_target_contains_ip(target_ip, ip) for ip in WHITELIST_IPS if ip != "localhost"):
         raise HTTPException(status_code=400, detail="Safety Lock: Cannot ban system IP.")
+
+    requester_ip = request.client.host if request.client else None
+    if not payload.force and _target_contains_ip(target_ip, requester_ip):
+        raise HTTPException(
+            status_code=409,
+            detail="Safety Lock: target includes your current API client IP. Re-run with force=true only after confirming alternate access.",
+        )
+
+    conflicting_agent = await _find_active_agent_ip_conflict(db, secure_tenant_id, target_ip)
+    if conflicting_agent and not payload.force:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Safety Lock: target includes an active WarSOC agent reporting IP "
+                f"({conflicting_agent.get('agent_id')}). Re-run with force=true only if you intend to cut off that endpoint."
+            ),
+        )
 
     # ðŸš¨ SURGICAL FIX: Consistent .db access
     existing = await db["firewall_rules"].find_one({"ip": target_ip, "tenant_id": secure_tenant_id})
@@ -115,32 +173,17 @@ async def execute_mitigation(
 
         await db["firewall_rules"].insert_one(ban_entry)
 
-    # Try to use the global Redis pool; if missing, create a temporary client
     redis_client = getattr(request.app.state, 'redis', None)
-    temp_redis = None
     redis_key = f"warsoc:banned_ips:{secure_tenant_id}"
     try:
-        if not redis_client:
-            try:
-                temp_redis = await aioredis.from_url(settings.redis_url, decode_responses=True)
-                await temp_redis.ping() # Check connection
-                redis_client = temp_redis
-            except Exception:
-                print("âš ï¸ Redis is unavailable, skipping Redis IP sync.")
-                redis_client = None
-
         if redis_client:
             ok = await _redis_sadd_with_retry(redis_client, redis_key, target_ip)
             if not ok:
-                print(f"âŒ Redis Sync Failed after retries for key {redis_key}")
+                logger.warning("Redis ban sync failed after retries for key %s", redis_key)
+        else:
+            logger.warning("Redis unavailable; firewall rule saved but live agent ban sync skipped for %s", target_ip)
     except Exception as e:
-        print(f"âŒ Redis Sync Error: {e}")
-    finally:
-        if temp_redis:
-            try:
-                await temp_redis.close()
-            except Exception:
-                pass
+        logger.warning("Redis ban sync error for %s: %s", target_ip, e)
 
     await manager.broadcast_to_tenant(secure_tenant_id, {
         "type": "MITIGATION_SUCCESS",
@@ -173,30 +216,16 @@ async def revoke_mitigation(
     await db["firewall_rules"].delete_one({"ip": target_ip, "tenant_id": secure_tenant_id})
 
     redis_client = getattr(request.app.state, 'redis', None)
-    temp_redis = None
     redis_key = f"warsoc:banned_ips:{secure_tenant_id}"
     try:
-        if not redis_client:
-            try:
-                temp_redis = await aioredis.from_url(settings.redis_url, decode_responses=True)
-                await temp_redis.ping()
-                redis_client = temp_redis
-            except Exception:
-                print("âš ï¸ Redis is unavailable, skipping Redis IP sync.")
-                redis_client = None
-
         if redis_client:
             ok = await _redis_srem_with_retry(redis_client, redis_key, target_ip)
             if not ok:
-                print(f"âŒ Redis Revoke Failed after retries for key {redis_key}")
+                logger.warning("Redis revoke failed after retries for key %s", redis_key)
+        else:
+            logger.warning("Redis unavailable; firewall rule removed but live agent revoke sync skipped for %s", target_ip)
     except Exception as e:
-        print(f"âŒ Redis Revoke Error: {e}")
-    finally:
-        if temp_redis:
-            try:
-                await temp_redis.close()
-            except Exception:
-                pass
+        logger.warning("Redis revoke sync error for %s: %s", target_ip, e)
 
     return {"status": "success", "message": "Access restored"}
 
@@ -209,11 +238,10 @@ async def agent_heartbeat(tenant_id: str, request: Request, current_agent: dict 
         raise HTTPException(status_code=403, detail="Tenant ID mismatch blocked.")
 
     redis_client = getattr(request.app.state, 'redis', None)
-    temp_redis = None
+    if not redis_client:
+        return {"status": "degraded", "enforce_bans": []}
+
     try:
-        if not redis_client:
-            temp_redis = await aioredis.from_url(settings.redis_url, decode_responses=True)
-            redis_client = temp_redis
         redis_key = f"warsoc:banned_ips:{tenant_id}"
         raw_banned_ips = await redis_client.smembers(redis_key)
         banned_ips = []
@@ -237,14 +265,8 @@ async def agent_heartbeat(tenant_id: str, request: Request, current_agent: dict 
             "status": "active",
             "enforce_bans": banned_ips
         }
-    except Exception as e:
+    except Exception:
         return {"status": "error", "enforce_bans": []}
-    finally:
-        if temp_redis:
-            try:
-                await temp_redis.close()
-            except Exception:
-                pass
 
 # ---------------------------------------------------------
 # 4. DASHBOARD LIST

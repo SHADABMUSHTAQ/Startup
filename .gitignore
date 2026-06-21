@@ -25,6 +25,7 @@ MANIFEST
 venv/
 env/
 ENV/
+node_modules/
 
 # Environment files (secrets)
 .env
@@ -70,9 +71,24 @@ test_*_output.txt
 omni_audit_*.txt
 
 # Test scripts
-scripts/
+scripts/*
+!scripts/entrypoint.sh
+!scripts/wait_for_redis.py
+!scripts/launch_readiness_validator.py
 trigger_alerts.py
 verify.py
+
+# Local one-off debugging/repair scripts. Keep these out of production commits,
+# especially when they contain local database URLs or temporary credentials.
+debug_*.py
+check_*.py
+fix_*.py
+patch_*.py
+restore_cto.py
+surgical_audit.py
+scratch/
+scratch_*.py
+Output/
 
 # Cryptographic Keys
 keys/

@@ -30,7 +30,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY ./app ./app
 COPY ./agent ./agent
 COPY ./syslog_receiver.py ./syslog_receiver.py
+COPY ./*.py ./
 COPY ./scripts /app/scripts
+RUN mkdir -p /app/Output
 RUN chmod +x /app/scripts/entrypoint.sh
 
 # 6. Security Hardening
@@ -48,4 +50,4 @@ EXPOSE 5140/udp
 # Wait-for-redis entrypoint will run before the command and then exec the command
 ENTRYPOINT ["/app/scripts/entrypoint.sh"]
 # Default command (overridden in docker-compose.yml for workers)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
