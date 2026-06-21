@@ -82,8 +82,15 @@ class FakeRedis:
         bucket.add(str(value))
         return 1 if len(bucket) > before else 0
 
+    async def scard(self, key):
+        return len(self.sets.get(key, set()))
+
     async def expire(self, key, ttl):
         return True
+
+    async def incr(self, key):
+        self.counters[key] = self.counters.get(key, 0) + 1
+        return self.counters[key]
 
     async def publish(self, channel, message):
         self.published.append((channel, message))

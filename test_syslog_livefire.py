@@ -22,10 +22,10 @@ import sys
 import time
 
 SYSLOG_PORT = 5140
-REDIS_PASSWORD = "W4rS0c_R3d1s_S3cur3_v3_9k8R4tMz5lW2nX"
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
 REDIS_CONTAINER = "warsoc-redis"
 MONGO_CONTAINER = "warsoc-mongodb"
-MONGO_URI = "mongodb://warsoc_admin:W4rS0c_M0ng0_S3cur3_2026!@localhost:27017/WarSOC_DB?authSource=admin"
+MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/WarSOC_DB")
 
 TEST_PACKET = '<34>Oct 11 22:14:15 firewall admin: \'login failed\' from 192.168.1.50'
 

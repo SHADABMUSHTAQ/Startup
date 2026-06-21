@@ -1,22 +1,10 @@
 import pytest
 
 from app.database import ensure_threat_intel_indexes
-from app.utils.siem_logic import ACTIVE_MALICIOUS_IPS, bootstrap_active_malicious_ips
+from app.main import bootstrap_threat_intel_to_redis
 from app.utils.threat_intel import ThreatIntelligenceManager
 
-
 pytestmark = [pytest.mark.asyncio, pytest.mark.backend, pytest.mark.hardening]
-
-
-@pytest.fixture(autouse=True)
-def _restore_active_malicious_ips():
-    snapshot = set(ACTIVE_MALICIOUS_IPS)
-    ACTIVE_MALICIOUS_IPS.clear()
-    try:
-        yield
-    finally:
-        ACTIVE_MALICIOUS_IPS.clear()
-        ACTIVE_MALICIOUS_IPS.update(snapshot)
 
 
 class _FakeCursor:
@@ -95,7 +83,21 @@ class _FakeMongoDB:
         return self._collections[name]
 
 
-async def test_bootstrap_active_malicious_ips_loads_unique_ips_from_mongo():
+class _FakeRedisPipeline:
+    def __init__(self):
+        self.commands = []
+    def setex(self, key, ttl, value):
+        self.commands.append((key, ttl, value))
+    async def execute(self):
+        pass
+
+class _FakeRedisClient:
+    def __init__(self):
+        self.pipeline_instance = _FakeRedisPipeline()
+    def pipeline(self):
+        return self.pipeline_instance
+
+async def test_bootstrap_threat_intel_to_redis_loads_unique_ips_from_mongo():
     db = _FakeMongoDB(
         [
             {"ip": "1.1.1.1"},
@@ -106,10 +108,14 @@ async def test_bootstrap_active_malicious_ips_loads_unique_ips_from_mongo():
         ]
     )
 
-    loaded = await bootstrap_active_malicious_ips(db)
+    redis_client = _FakeRedisClient()
+    loaded = await bootstrap_threat_intel_to_redis(db, redis_client)
 
-    assert loaded == 2
-    assert ACTIVE_MALICIOUS_IPS == {"1.1.1.1", "2.2.2.2"}
+    assert loaded == 3 # 1.1.1.1 twice, 2.2.2.2 once. Redis SADD/SET handles duplicates implicitly.
+    assert len(redis_client.pipeline_instance.commands) == 3
+    keys = [cmd[0] for cmd in redis_client.pipeline_instance.commands]
+    assert "threat_intel:ip:1.1.1.1" in keys
+    assert "threat_intel:ip:2.2.2.2" in keys
 
 
 async def test_threat_intel_manager_ignores_file_backed_intel_sources():

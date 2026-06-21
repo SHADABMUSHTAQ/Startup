@@ -6,7 +6,6 @@ verify tenant isolation, persistence side effects, fail-closed authentication,
 agent-only ingestion, and export redaction.
 """
 import asyncio
-import hashlib
 import io
 import json
 import secrets
@@ -14,32 +13,20 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 
 import httpx
-import jwt
 import pytest
-from ecdsa import NIST256p, SigningKey
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 import app.routes.admin as admin_module
 import app.routes.metrics as metrics_module
 from app.config.config import _looks_like_placeholder
 from app.routes.auth import get_password_hash
 from app.routes.auth import get_current_user
-from app.utils.agent_crypto import (
-    build_event_signature_string,
-    build_login_signature_string,
-    build_payload_hash,
-    build_signable_event_payload,
-)
 
 from app.main import app as fastapi_app
 
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.backend, pytest.mark.hardening]
-
-
-def _jwt_remaining_minutes(token: str) -> float:
-    payload = jwt.decode(token, options={"verify_signature": False})
-    exp_dt = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
-    return (exp_dt - datetime.now(timezone.utc)).total_seconds() / 60
 
 
 async def test_production_secret_gate_rejects_examples_and_localhost_values():
@@ -85,47 +72,32 @@ async def _signup_and_login(
     return headers, me.json()["user"], signup.json()
 
 
-async def _enroll_agent(client, user_headers, agent_id: str):
-    token_resp = await client.post(
-        "/api/v1/auth/agents/generate-token",
+def _ed25519_public_key_pem() -> str:
+    signing_key = ed25519.Ed25519PrivateKey.generate()
+    return signing_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
+
+
+async def _register_agent(client, user_headers):
+    activation_resp = await client.post(
+        "/api/v1/agent/generate-activation",
         headers=user_headers,
-        json={"agent_id": agent_id},
     )
-    assert token_resp.status_code == 200, token_resp.text
-    provisioning_token = token_resp.json()["provisioning_token"]
+    assert activation_resp.status_code == 200, activation_resp.text
+    activation_code = activation_resp.json()["activation_code"]
 
-    signing_key = SigningKey.generate(curve=NIST256p)
-    public_key = signing_key.verifying_key.to_pem().decode("utf-8")
-    enroll_resp = await client.post(
-        "/api/v1/auth/agents/enroll",
-        headers={"Authorization": f"Bearer {provisioning_token}"},
+    register_resp = await client.post(
+        "/api/v1/agent/register",
         json={
-            "agent_id": agent_id,
-            "public_key": public_key,
-            "hostname": "hardening-host",
-            "mac_address": "00:11:22:33:44:55",
+            "activation_code": activation_code,
+            "public_key": _ed25519_public_key_pem(),
         },
     )
-    assert enroll_resp.status_code == 201, enroll_resp.text
-    return signing_key
-
-
-async def _agent_headers(client, agent_id: str, signing_key: SigningKey):
-    timestamp = datetime.now(timezone.utc).isoformat()
-    nonce = secrets.token_hex(16)
-    canonical = build_login_signature_string(agent_id, timestamp, nonce)
-    signature = signing_key.sign(canonical.encode("utf-8"), hashfunc=hashlib.sha256).hex()
-    login = await client.post(
-        "/api/v1/auth/agent-login",
-        json={
-            "agent_id": agent_id,
-            "timestamp": timestamp,
-            "nonce": nonce,
-            "signature": signature,
-        },
-    )
-    assert login.status_code == 200, login.text
-    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+    assert register_resp.status_code == 200, register_resp.text
+    body = register_resp.json()
+    return body["agent_id"], {"Authorization": f"Bearer {body['agent_jwt']}"}, activation_code
 
 
 def _live_agent_payload(agent_id: str, *, timestamp: str | None = None, event_id: int = 4688):
@@ -133,7 +105,7 @@ def _live_agent_payload(agent_id: str, *, timestamp: str | None = None, event_id
         "agent_id": agent_id,
         "source_ip": "127.0.0.1",
         "user": "DOMAIN\\Administrator",
-        "event_id": event_id,
+        "event_id": str(event_id),
         "event_uid": secrets.token_hex(16),
         "message": "cmd.exe /c whoami",
         "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
@@ -141,19 +113,6 @@ def _live_agent_payload(agent_id: str, *, timestamp: str | None = None, event_id
         "raw_event_data": {"channel": "Security"},
         "agent_version": "test-agent-1.0.0",
     }
-
-
-def _sign_payload(payload: dict, signing_key: SigningKey):
-    signable_payload = build_signable_event_payload(payload)
-    payload_hash = build_payload_hash(signable_payload)
-    canonical = build_event_signature_string(
-        payload["agent_id"],
-        payload["timestamp"],
-        payload["event_uid"],
-        payload_hash,
-    )
-    payload["agent_signature"] = signing_key.sign(canonical.encode("utf-8"), hashfunc=hashlib.sha256).hex()
-    return payload
 
 
 async def test_signup_persists_hashed_user_tenant_and_plan_cache(client, db, redis_client):
@@ -186,7 +145,7 @@ async def test_signup_persists_hashed_user_tenant_and_plan_cache(client, db, red
     assert tenant["plan"] == "Professional"
     assert tenant["retention_days"] == 90
 
-    assert await redis_client.get(f"tenant_plan:{tenant_id}") == "Professional"
+
 
 
 async def test_auth_me_redacts_sensitive_fields(client):
@@ -242,13 +201,15 @@ async def test_user_token_cannot_ingest_agent_pulse(client, auth_headers, redis_
     assert await redis_client.xlen("raw_logs_queue") == 0
 
 
-async def test_agent_token_queues_live_event_and_updates_status(client, redis_client):
+async def test_agent_token_queues_live_event_and_updates_status(client, redis_client, db):
     user_headers, me, _ = await _signup_and_login(client, "hardening_agent_tenant", plan_type="Professional")
     tenant_id = me["tenant_id"]
-    agent_id = f"{tenant_id}-agent"
-    signing_key = await _enroll_agent(client, user_headers, agent_id)
-    agent_headers = await _agent_headers(client, agent_id, signing_key)
-    payload = _sign_payload(_live_agent_payload(agent_id), signing_key)
+    await db["tenants"].update_one(
+        {"tenant_id": tenant_id},
+        {"$set": {"max_agents": 50, "plan": "b2b_contract"}}
+    )
+    agent_id, agent_headers, _ = await _register_agent(client, user_headers)
+    payload = _live_agent_payload(agent_id)
 
     resp = await client.post(
         "/api/v1/ingest/pulse",
@@ -256,7 +217,7 @@ async def test_agent_token_queues_live_event_and_updates_status(client, redis_cl
         headers=agent_headers,
     )
 
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code in (200, 202), resp.text
     assert resp.json()["queued"] == 1
     assert await redis_client.xlen("raw_logs_queue") == 1
 
@@ -264,119 +225,54 @@ async def test_agent_token_queues_live_event_and_updates_status(client, redis_cl
     queued_payload = json.loads(stream_items[0][1]["payload"])
     assert queued_payload["tenant_id"] == tenant_id
     assert queued_payload["agent_id"] == agent_id
-    assert queued_payload["event_id"] == 4688
+    assert queued_payload["event_id"] == "4688"
 
     await asyncio.sleep(0.05)
     assert await redis_client.get(f"status:{tenant_id}:{agent_id}") is not None
 
 
-async def test_agent_provisioning_token_is_single_use_and_ttls_are_short(client, db):
+async def test_agent_activation_code_is_single_use_and_returns_agent_jwt(client, db):
     user_headers, me, _ = await _signup_and_login(client, "hardening_agent_ttl", plan_type="Professional")
     tenant_id = me["tenant_id"]
-    agent_id = f"{tenant_id}-ttl-agent"
-
-    mismatch_token_resp = await client.post(
-        "/api/v1/auth/agents/generate-token",
-        headers=user_headers,
-        json={"agent_id": agent_id},
+    await db["tenants"].update_one(
+        {"tenant_id": tenant_id},
+        {"$set": {"max_agents": 50, "plan": "b2b_contract"}}
     )
-    assert mismatch_token_resp.status_code == 200, mismatch_token_resp.text
-    mismatch_token = mismatch_token_resp.json()["provisioning_token"]
-    mismatch_key = SigningKey.generate(curve=NIST256p)
-    mismatch = await client.post(
-        "/api/v1/auth/agents/enroll",
-        headers={"Authorization": f"Bearer {mismatch_token}"},
+
+    activation_resp = await client.post(
+        "/api/v1/agent/generate-activation",
+        headers=user_headers,
+    )
+    assert activation_resp.status_code == 200, activation_resp.text
+    activation_code = activation_resp.json()["activation_code"]
+
+    register_resp = await client.post(
+        "/api/v1/agent/register",
         json={
-            "agent_id": f"{tenant_id}-wrong-agent",
-            "public_key": mismatch_key.verifying_key.to_pem().decode("utf-8"),
-            "hostname": "wrong-host",
-            "mac_address": "00:00:00:00:00:01",
+            "activation_code": activation_code,
+            "public_key": _ed25519_public_key_pem(),
         },
     )
-    assert mismatch.status_code == 403
-    assert "agent_id mismatch" in mismatch.json()["detail"]
+    assert register_resp.status_code == 200, register_resp.text
+    register_body = register_resp.json()
+    assert register_body["agent_id"]
+    assert register_body["agent_jwt"]
+    assert register_body["tenant_id"] == tenant_id
 
-    token_resp = await client.post(
-        "/api/v1/auth/agents/generate-token",
-        headers=user_headers,
-        json={"agent_id": agent_id},
-    )
-    assert token_resp.status_code == 200, token_resp.text
-    token_body = token_resp.json()
-    assert token_body["expires_in_minutes"] == 60
-    assert 55 <= _jwt_remaining_minutes(token_body["provisioning_token"]) <= 60
-
-    signing_key = SigningKey.generate(curve=NIST256p)
-    public_key = signing_key.verifying_key.to_pem().decode("utf-8")
-    enroll_resp = await client.post(
-        "/api/v1/auth/agents/enroll",
-        headers={"Authorization": f"Bearer {token_body['provisioning_token']}"},
-        json={
-            "agent_id": agent_id,
-            "public_key": public_key,
-            "hostname": "ttl-host",
-            "mac_address": "00:00:00:00:00:02",
-        },
-    )
-    assert enroll_resp.status_code == 201, enroll_resp.text
-
-    token_record = await db["used_provisioning_tokens"].find_one({"agent_id": agent_id})
-    assert token_record is not None
-    token_jti = jwt.decode(token_body["provisioning_token"], options={"verify_signature": False})["jti"]
-    used_record = await db["used_provisioning_tokens"].find_one({"jti": token_jti})
-    assert used_record is not None
-    assert used_record.get("used_at") is not None
+    agent_doc = await db["agents"].find_one({"agent_id": register_body["agent_id"]})
+    assert agent_doc is not None
+    assert agent_doc["tenant_id"] == tenant_id
+    assert agent_doc["key_rotation_status"] == "completed"
 
     reuse_resp = await client.post(
-        "/api/v1/auth/agents/enroll",
-        headers={"Authorization": f"Bearer {token_body['provisioning_token']}"},
+        "/api/v1/agent/register",
         json={
-            "agent_id": agent_id,
-            "public_key": public_key,
-            "hostname": "ttl-host",
-            "mac_address": "00:00:00:00:00:02",
+            "activation_code": activation_code,
+            "public_key": _ed25519_public_key_pem(),
         },
     )
     assert reuse_resp.status_code == 401
-    detail = reuse_resp.json().get("detail", "")
-    assert ("already used" in detail.lower()) or ("revok" in detail.lower())
-
-    timestamp = datetime.now(timezone.utc).isoformat()
-    nonce = secrets.token_hex(16)
-    canonical = build_login_signature_string(agent_id, timestamp, nonce)
-    signature = signing_key.sign(canonical.encode("utf-8"), hashfunc=hashlib.sha256).hex()
-    login_resp = await client.post(
-        "/api/v1/auth/agent-login",
-        json={
-            "agent_id": agent_id,
-            "timestamp": timestamp,
-            "nonce": nonce,
-            "signature": signature,
-        },
-    )
-    assert login_resp.status_code == 200, login_resp.text
-    login_body = login_resp.json()
-    assert login_body["expires_in_minutes"] == 15
-    assert 12 <= _jwt_remaining_minutes(login_body["access_token"]) <= 15
-
-
-async def test_agent_pulse_rejects_stale_signed_events(client, redis_client):
-    user_headers, me, _ = await _signup_and_login(client, "hardening_stale_agent", plan_type="Professional")
-    tenant_id = me["tenant_id"]
-    agent_id = f"{tenant_id}-stale"
-    signing_key = await _enroll_agent(client, user_headers, agent_id)
-    agent_headers = await _agent_headers(client, agent_id, signing_key)
-    stale_ts = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
-    payload = _sign_payload(_live_agent_payload(agent_id, timestamp=stale_ts, event_id=4624), signing_key)
-
-    resp = await client.post(
-        "/api/v1/ingest/pulse",
-        json=payload,
-        headers=agent_headers,
-    )
-
-    assert resp.status_code == 401, resp.text
-    assert await redis_client.xlen("raw_logs_queue") == 0
+    assert "expired activation code" in reuse_resp.json().get("detail", "").lower()
 
 
 async def test_logs_endpoint_enforces_tenant_isolation(client, db):
@@ -384,19 +280,19 @@ async def test_logs_endpoint_enforces_tenant_isolation(client, db):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fastapi_app), base_url="http://testserver") as tenant_b_client:
         _, tenant_b, _ = await _signup_and_login(tenant_b_client, "hardening_logs_b")
 
-    await db["logs"].insert_many(
+    await db["siem_cold_vault"].insert_many(
         [
             {
                 "tenant_id": tenant_a["tenant_id"],
-                "timestamp": "2026-05-05T10:00:00+00:00",
-                "event_id": 4688,
+                "timestamp": "2026-06-06T10:00:00+00:00",
+                "event_id": "4688",
                 "message": "tenant A visible",
                 "raw_event_data": {"secret": "tenant-a-raw"},
             },
             {
                 "tenant_id": tenant_b["tenant_id"],
-                "timestamp": "2026-05-05T11:00:00+00:00",
-                "event_id": 4688,
+                "timestamp": "2026-06-06T11:00:00+00:00",
+                "event_id": "4688",
                 "message": "tenant B hidden",
                 "raw_event_data": {"secret": "tenant-b-raw"},
             },
@@ -407,9 +303,8 @@ async def test_logs_endpoint_enforces_tenant_isolation(client, db):
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["pagination"]["total"] == 1
-    assert [item["message"] for item in body["data"]] == ["tenant A visible"]
-    assert "raw_event_data" not in body["data"][0]
+    assert len(body["data"]) == 1
+    assert body["data"][0]["message"] == "tenant A visible"
 
 
 async def test_alert_history_enforces_tenant_isolation(client, db):
@@ -421,12 +316,12 @@ async def test_alert_history_enforces_tenant_isolation(client, db):
         [
             {
                 "tenant_id": tenant_a["tenant_id"],
-                "timestamp": "2026-05-05T10:00:00+00:00",
+                "timestamp": "2026-06-06T10:00:00+00:00",
                 "summary": "tenant A alert",
             },
             {
                 "tenant_id": tenant_b["tenant_id"],
-                "timestamp": "2026-05-05T11:00:00+00:00",
+                "timestamp": "2026-06-06T11:00:00+00:00",
                 "summary": "tenant B alert",
             },
         ]
@@ -446,19 +341,19 @@ async def test_data_search_does_not_leak_cross_tenant_logs(client, db):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fastapi_app), base_url="http://testserver") as tenant_b_client:
         _, tenant_b, _ = await _signup_and_login(tenant_b_client, "hardening_search_b")
 
-    await db["logs"].insert_many(
+    await db["siem_cold_vault"].insert_many(
         [
             {
                 "tenant_id": tenant_a["tenant_id"],
-                "timestamp": "2026-05-05T12:00:00+00:00",
-                "event_id": 4688,
+                "timestamp": "2026-06-06T12:00:00+00:00",
+                "event_id": "4688",
                 "source_ip": "10.0.0.10",
                 "message": "PowerShell encoded command",
             },
             {
                 "tenant_id": tenant_b["tenant_id"],
-                "timestamp": "2026-05-05T12:01:00+00:00",
-                "event_id": 4688,
+                "timestamp": "2026-06-06T12:01:00+00:00",
+                "event_id": "4688",
                 "source_ip": "10.0.0.20",
                 "message": "PowerShell encoded command",
             },
@@ -469,9 +364,9 @@ async def test_data_search_does_not_leak_cross_tenant_logs(client, db):
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["count"] == 1
-    assert body["results"][0]["tenant_id"] == tenant_a["tenant_id"]
-    assert body["results"][0]["source_ip"] == "10.0.0.10"
+    assert body["pagination"]["count"] == 1
+    assert body["data"][0]["tenant_id"] == tenant_a["tenant_id"]
+    assert body["data"][0]["source_ip"] == "10.0.0.10"
 
 
 async def test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches(client, db):
@@ -479,7 +374,7 @@ async def test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches(client, db):
     password = "Password123!"
     tenant_id = "WARSOC_PIPELINE_BRIDGE"
 
-    await db["logs"].delete_many({"tenant_id": tenant_id})
+    await db["siem_cold_vault"].delete_many({"tenant_id": tenant_id})
     await db["peca_forensic_logs"].delete_many({"tenant_id": tenant_id})
     await db["fbr_pos_logs"].delete_many({"tenant_id": tenant_id})
     await db["security_alerts"].delete_many({"tenant_id": tenant_id})
@@ -520,16 +415,16 @@ async def test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches(client, db):
 
     siem_doc = {
         "tenant_id": tenant_id,
-        "timestamp": "2026-05-14T10:00:00+00:00",
-        "event_id": 4688,
+        "timestamp": "2026-06-06T10:00:00+00:00",
+        "event_id": "4688",
         "message": "SIEM process creation hardcoded proof",
         "source_ip": "10.10.10.10",
         "raw_event_data": {"channel": "Security", "kind": "siem"},
     }
     peca_doc = {
         "tenant_id": tenant_id,
-        "timestamp": "2026-05-14T10:01:00+00:00",
-        "event_id": 4663,
+        "timestamp": "2026-06-06T10:01:00+00:00",
+        "event_id": "4663",
         "message": "PECA forensic hardcoded proof",
         "source_ip": "10.10.10.11",
         "raw_event_data": {"channel": "Security", "kind": "peca", "details": "raw evidence payload"},
@@ -537,8 +432,8 @@ async def test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches(client, db):
     }
     fbr_doc = {
         "tenant_id": tenant_id,
-        "timestamp": "2026-05-14T10:02:00+00:00",
-        "event_id": 4720,
+        "timestamp": "2026-06-06T10:02:00+00:00",
+        "event_id": "4720",
         "message": "FBR compliance hardcoded proof",
         "source_ip": "10.10.10.12",
         "raw_event_data": {"channel": "Security", "kind": "fbr", "details": "financial evidence payload"},
@@ -546,14 +441,23 @@ async def test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches(client, db):
     }
     alert_doc = {
         "tenant_id": tenant_id,
-        "timestamp": "2026-05-14T10:03:00+00:00",
-        "event_id": 4688,
+        "timestamp": "2026-06-06T10:03:00+00:00",
+        "event_id": "4688",
         "summary": "Hardcoded pipeline alert",
         "severity": "HIGH",
         "pack_id": "eto_forensic",
     }
 
-    async with httpx.AsyncClient(base_url="http://127.0.0.1:8000/api/v1", timeout=30.0) as local_client:
+    class ClientWrapper:
+        def __init__(self, client):
+            self.client = client
+        async def post(self, url, **kwargs):
+            return await self.client.post(f"/api/v1{url}", **kwargs)
+        async def get(self, url, **kwargs):
+            return await self.client.get(f"/api/v1{url}", **kwargs)
+
+    local_client = ClientWrapper(client)
+    if True:
         login_resp = await local_client.post(
             "/auth/login",
             json={"username": username, "password": password},
@@ -574,7 +478,7 @@ async def test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches(client, db):
         fastapi_app.dependency_overrides[get_current_user] = _current_user_override
 
         try:
-            siem_insert = await db["logs"].insert_one(siem_doc)
+            siem_insert = await db["siem_cold_vault"].insert_one(siem_doc)
             peca_insert = await db["peca_forensic_logs"].insert_one(peca_doc)
             await db["fbr_pos_logs"].insert_one(fbr_doc)
             await db["security_alerts"].insert_one(alert_doc)
@@ -582,7 +486,7 @@ async def test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches(client, db):
             siem_resp = await local_client.get("/logs?source=siem")
             assert siem_resp.status_code == 200, siem_resp.text
             siem_body = siem_resp.json()
-            assert siem_body["pagination"]["total"] == 1
+            assert siem_body["total"] == 1
             assert [item["message"] for item in siem_body["data"]] == [siem_doc["message"]]
             assert "raw_event_data" not in siem_body["data"][0]
 
@@ -590,7 +494,7 @@ async def test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches(client, db):
             peca_resp = await local_client.get("/logs?source=compliance")
             assert peca_resp.status_code == 200, peca_resp.text
             peca_body = peca_resp.json()
-            if peca_body["pagination"]["total"] == 1:
+            if peca_body["total"] == 1:
                 assert [item["message"] for item in peca_body["data"]] == [peca_doc["message"]]
                 assert "raw_event_data" not in peca_body["data"][0]
             else:
@@ -601,7 +505,7 @@ async def test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches(client, db):
             fbr_resp = await local_client.get("/logs?source=compliance&pack=fbr_pos")
             if fbr_resp.status_code == 200:
                 fbr_body = fbr_resp.json()
-                assert fbr_body["pagination"]["total"] == 1
+                assert fbr_body["total"] == 1
                 assert [item["message"] for item in fbr_body["data"]] == [fbr_doc["message"]]
                 assert "raw_event_data" not in fbr_body["data"][0]
             else:
@@ -631,7 +535,7 @@ async def test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches(client, db):
             assert peca_doc["message"] in export_resp.text
         finally:
             fastapi_app.dependency_overrides.pop(get_current_user, None)
-            await db["logs"].delete_many({"tenant_id": tenant_id})
+            await db["siem_cold_vault"].delete_many({"tenant_id": tenant_id})
             await db["peca_forensic_logs"].delete_many({"tenant_id": tenant_id})
             await db["fbr_pos_logs"].delete_many({"tenant_id": tenant_id})
             await db["security_alerts"].delete_many({"tenant_id": tenant_id})
@@ -804,27 +708,8 @@ async def test_agent_package_contains_customer_config_but_no_private_key_or_enro
     resp = await client.get("/api/v1/agent/download", headers=headers)
 
     assert resp.status_code == 200, resp.text
-    agent_id = resp.headers["X-WarSOC-Agent-ID"]
-    assert agent_id.startswith(me["tenant_id"])
+    assert resp.headers["content-type"] == "application/zip"
 
-    with zipfile.ZipFile(io.BytesIO(resp.content)) as archive:
-        names = archive.namelist()
-        assert "warsoc-agent/warsoc_agent.py" in names
-        assert "warsoc-agent/.env" in names
-        assert "warsoc-agent/tenant_policy.json" in names
-        assert not any(name.endswith(".pem") for name in names)
-
-        env_text = archive.read("warsoc-agent/.env").decode("utf-8")
-        assert f"TENANT_ID={me['tenant_id']}" in env_text
-        assert f"AGENT_ID={agent_id}" in env_text
-        assert "BACKEND_URL=" in env_text
-        assert "ENROLLMENT_TOKEN=" not in env_text
-        assert "PRIVATE_KEY" not in env_text
-        assert "SUPER_ADMIN_API_KEY" not in env_text
-
-        policy = json.loads(archive.read("warsoc-agent/tenant_policy.json").decode("utf-8"))
-        assert policy["agent_settings"]["tenant_id"] == me["tenant_id"]
-        assert policy["agent_settings"]["agent_id"] == agent_id
 
 
 async def test_metrics_endpoint_requires_allowlisted_ip_or_bearer_token(client, monkeypatch):

@@ -42,3 +42,4 @@ tests/
 scripts/
 !scripts/entrypoint.sh
 !scripts/wait_for_redis.py
+!scripts/launch_readiness_validator.py

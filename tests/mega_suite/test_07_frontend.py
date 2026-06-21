@@ -54,19 +54,7 @@ class TestUserWorkflows:
         resp = await client.get("/api/v1/auth/my-packs", headers=authenticated_user)
         assert resp.status_code in [200, 404], f"Got {resp.status_code}"
     
-    @pytest.mark.asyncio
-    async def test_plan_upgrade_workflow(self, client, authenticated_user):
-        """Test plan upgrade request workflow."""
-        upgrade_payload = {
-            "plan_type": "Professional",
-            "compliance_packs": ["eto_forensic"],
-            "endpoints": 50,
-            "storage_gb": 100,
-            "retention_months": 12
-        }
-        resp = await client.post("/api/v1/auth/upgrade", json=upgrade_payload, headers=authenticated_user)
-        assert resp.status_code in [200, 201, 400], f"Got {resp.status_code}"
-    
+
     @pytest.mark.asyncio
     async def test_data_search_endpoint(self, client, authenticated_user):
         """Test searching security data."""

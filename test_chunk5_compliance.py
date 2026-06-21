@@ -26,12 +26,20 @@ import copy
 import hashlib
 import json
 import os
+import platform
 import subprocess
 import sys
 import time
 import uuid
 
+import pytest
 import httpx
+
+if platform.system() != "Windows":
+    pytest.skip(
+        "test_chunk5_compliance.py is Windows-only because it imports windows_agent and win32evtlog.",
+        allow_module_level=True,
+    )
 
 # ─── Resolve Agent Module ───
 agent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "agent"))
@@ -77,7 +85,11 @@ PUBLIC_KEY_PATH = os.path.join(os.path.dirname(__file__), "keys", "public_key.pe
 
 # MongoDB query helper — runs inside Docker container
 MONGO_CONTAINER = "warsoc-mongodb"
-MONGO_URI_DOCKER = "mongodb://warsoc_admin:W4rS0c_M0ng0_S3cur3_2026!@localhost:27017/WarSOC_DB?authSource=admin"
+MONGO_URI_DOCKER = (
+    os.getenv("MONGO_URI_DOCKER")
+    or os.getenv("MONGODB_URI")
+    or "mongodb://localhost:27017/WarSOC_DB"
+)
 
 def mongo_query(collection: str, query_json: str) -> dict | None:
     """Execute a findOne query inside the MongoDB Docker container and return the parsed document."""

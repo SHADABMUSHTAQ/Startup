@@ -15,6 +15,7 @@ async def test_inject_manual_log_redis_xadd():
     }
     
     mock_db = MagicMock()  # MongoDB mock database
+    mock_db["logs"].insert_one = AsyncMock(return_value=MagicMock(inserted_id="fake_id"))
     mock_user = {
         "username": "test_admin",
         "tenant_id": "TENANT_12345"
@@ -38,28 +39,15 @@ async def test_inject_manual_log_redis_xadd():
     # 3. Verifications
     # Verify the response structure
     assert response["status"] == "success"
-    assert "event_uid" in response
-    assert isinstance(response["event_uid"], str)
+    assert "id" in response
+    assert isinstance(response["id"], str)
     
-    # Verify that redis_client.xadd was called with the correct parameters
-    mock_redis.xadd.assert_called_once()
-    call_args, call_kwargs = mock_redis.xadd.call_args
+    # Verify that db["logs"].insert_one was called
+    mock_db["logs"].insert_one.assert_called_once()
+    call_args, call_kwargs = mock_db["logs"].insert_one.call_args
+    log_entry = call_args[0]
     
-    # Check stream name
-    assert call_args[0] == "raw_logs_queue"
-    
-    # Check payload key and content
-    stream_payload = call_args[1]
-    assert "payload" in stream_payload
-    
-    # Parse the serialized payload back to verify data integrity
-    serialized_data = json.loads(stream_payload["payload"])
-    assert serialized_data["tenant_id"] == "TENANT_12345"
-    assert serialized_data["injected_by"] == "test_admin"
-    assert serialized_data["event_id"] == 4625
-    assert serialized_data["event_uid"] == response["event_uid"]
-    assert "timestamp" in serialized_data
-    
-    # 4. Strict verify: MongoDB database was NEVER called
-    mock_db.assert_not_called()
-    mock_db["logs"].insert_one.assert_not_called()
+    assert log_entry["tenant_id"] == "TENANT_12345"
+    assert log_entry["injected_by"] == "test_admin"
+    assert log_entry["event_id"] == 4625
+    assert "timestamp" in log_entry

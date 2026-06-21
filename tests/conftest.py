@@ -5,7 +5,7 @@ Database is Motor (async MongoDB) in test DB; Redis is flushed per test.
 """
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -15,7 +15,7 @@ import hashlib
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from app.config.config import get_settings
-from app.routes.auth import get_password_hash, resolve_tenant_retention_days
+from app.routes.auth import AGENT_TOKEN_EXPIRE_MINUTES, create_access_token, get_password_hash, resolve_tenant_retention_days
 from motor.motor_asyncio import AsyncIOMotorClient
 import redis.asyncio as aioredis
 from httpx import AsyncClient, ASGITransport
@@ -174,9 +174,14 @@ async def _provision_mock_tenant(db, redis, *, tenant_suffix: str, plan_type: st
     await db["tenants"].update_one({"tenant_id": tenant_id}, {"$set": tenant_doc}, upsert=True)
     await db["users"].update_one({"username": user_doc["username"]}, {"$set": user_doc}, upsert=True)
     await db["agents"].update_one({"agent_id": agent_id}, {"$set": agent_doc}, upsert=True)
+    agent_jwt = create_access_token(
+        data={"sub": agent_id, "type": "agent", "tenant_id": tenant_id},
+        expires_delta=timedelta(minutes=AGENT_TOKEN_EXPIRE_MINUTES),
+    )
 
     if redis is not None:
         await redis.set(f"tenant_plan:{tenant_id}", plan_type)
+        await redis.set(f"tenant_features:{tenant_id}", "SIEM,fbr_pos,peca_forensic")
         await redis.hset(
             f"warsoc:agent_cache:{agent_id}",
             mapping={"tenant_id": tenant_id, "public_key": public_key, "approved": "True"},
@@ -189,6 +194,7 @@ async def _provision_mock_tenant(db, redis, *, tenant_suffix: str, plan_type: st
         "hostname": hostname,
         "public_key": public_key,
         "private_key_pem": signing_key.to_pem().decode("utf-8"),
+        "agent_jwt": agent_jwt,
         "username": user_doc["username"],
         "password": "Password123!",
         "plan_type": plan_type,

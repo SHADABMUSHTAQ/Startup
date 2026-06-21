@@ -13,7 +13,6 @@ from ecdsa import SigningKey
 
 from app.utils.agent_crypto import (
     build_event_signature_string,
-    build_login_signature_string,
     build_payload_hash,
     build_signable_event_payload,
 )
@@ -23,6 +22,14 @@ API_BASE_URL = os.getenv("E2E_API_BASE_URL", "http://127.0.0.1:8000/api/v1")
 SYSLOG_HOST = os.getenv("E2E_SYSLOG_HOST", "127.0.0.1")
 SYSLOG_PORT = int(os.getenv("E2E_SYSLOG_PORT", "5140"))
 DEFAULT_TIMEOUT = float(os.getenv("E2E_HTTP_TIMEOUT", "30"))
+RETRYABLE_HTTP_STATUSES = {502, 503}
+RETRYABLE_HTTP_EXCEPTIONS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadError,
+    httpx.ReadTimeout,
+    httpx.RemoteProtocolError,
+)
 
 
 def _e2e_enabled() -> bool:
@@ -71,25 +78,8 @@ def _http_event(
     return event
 
 
-async def _login_agent(client: httpx.AsyncClient, agent_id: str, private_key_pem: str, tenant_id: str) -> str:
-    timestamp = _now_iso()
-    nonce = os.urandom(16).hex()
-    canonical = build_login_signature_string(agent_id, timestamp, nonce)
-    signature = SigningKey.from_pem(private_key_pem).sign_deterministic(
-        canonical.encode("utf-8"),
-        hashfunc=hashlib.sha256,
-    ).hex()
-
-    response = await client.post(
-        "/auth/agent-login",
-        json={"agent_id": agent_id, "timestamp": timestamp, "nonce": nonce, "signature": signature},
-        timeout=DEFAULT_TIMEOUT,
-    )
-    response.raise_for_status()
-    token = response.json()["access_token"]
-    client.cookies.set("warsoc_token", token)
-    client.cookies.set("csrf_token", os.urandom(16).hex())
-    return token
+async def _authenticate_agent_client(client: httpx.AsyncClient, agent_jwt: str) -> None:
+    client.headers.update({"Authorization": f"Bearer {agent_jwt}"})
 
 
 async def _post_http_batch(
@@ -130,8 +120,38 @@ async def _post_http_batch(
             )
         )
 
-    response = await client.post("/ingest/pulse", json=events, timeout=DEFAULT_TIMEOUT)
-    response.raise_for_status()
+    last_exception: Exception | None = None
+    for attempt in range(1, 6):
+        try:
+            envelope = {
+                "nonce": os.urandom(16).hex(),
+                "timestamp": int(time.time()),
+                "payload": events,
+            }
+            response = await client.post("/ingest/pulse", json=envelope, timeout=DEFAULT_TIMEOUT)
+            if response.status_code in RETRYABLE_HTTP_STATUSES:
+                raise httpx.HTTPStatusError(
+                    f"Retryable upstream response: {response.status_code}",
+                    request=response.request,
+                    response=response,
+                )
+            response.raise_for_status()
+            return
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in RETRYABLE_HTTP_STATUSES:
+                print(f"DEBUG RESPONSE: {exc.response.text}")
+                raise
+            last_exception = exc
+        except RETRYABLE_HTTP_EXCEPTIONS as exc:
+            last_exception = exc
+
+        if attempt == 5:
+            assert last_exception is not None
+            raise last_exception
+
+        delay = 2 ** (attempt - 1)
+        print(f"[RETRY] /ingest/pulse attempt {attempt} failed; backing off {delay}s before retry.")
+        await asyncio.sleep(delay)
 
 
 async def _send_udp_message(message: str, repeat: int = 1) -> None:
@@ -188,7 +208,7 @@ async def test_grand_master_e2e(clean_slate, mock_tenant_a, mock_tenant_b, mongo
     settings_db = mongo_client[os.getenv("MONGO_DB_NAME", "WarSOC_DB")]
 
     async with httpx.AsyncClient(base_url=API_BASE_URL, follow_redirects=True, timeout=DEFAULT_TIMEOUT, cookies=httpx.Cookies()) as client:
-        await _login_agent(client, mock_tenant_a["agent_id"], mock_tenant_a["private_key_pem"], mock_tenant_a["tenant_id"])
+        await _authenticate_agent_client(client, mock_tenant_a["agent_jwt"])
 
         # Tenant B login is used later for isolation assertions.
         tenant_b_client = httpx.AsyncClient(base_url=API_BASE_URL, follow_redirects=True, timeout=DEFAULT_TIMEOUT, cookies=httpx.Cookies())
@@ -236,7 +256,7 @@ async def test_grand_master_e2e(clean_slate, mock_tenant_a, mock_tenant_b, mongo
 
             if restart_worker:
                 await asyncio.sleep(5)
-                subprocess.run(["docker", "restart", "warsoc-worker-siem"], check=True)
+                subprocess.run(["docker", "restart", "startup-backend-worker-siem-1"], check=True)
 
             await asyncio.gather(*http_tasks, *udp_tasks)
 
@@ -250,11 +270,11 @@ async def test_grand_master_e2e(clean_slate, mock_tenant_a, mock_tenant_b, mongo
         # Stage 2C: stress load with another restart
         await run_phase("stress", batch_size=250, total_events=500, restart_worker=True)
 
-        logs_total = await _wait_for_count(settings_db, "logs", {"tenant_id": mock_tenant_a["tenant_id"]}, expected=0, timeout=5)
+        logs_total = await _wait_for_count(settings_db, "siem_cold_vault", {"tenant_id": mock_tenant_a["tenant_id"]}, expected=0, timeout=5)
         assert logs_total >= 0
 
         # Backend integrity assertions.
-        string_ts = await settings_db["logs"].count_documents({"tenant_id": mock_tenant_a["tenant_id"], "timestamp": {"$type": "string"}})
+        string_ts = await settings_db["siem_cold_vault"].count_documents({"tenant_id": mock_tenant_a["tenant_id"], "timestamp": {"$type": "string"}})
         assert string_ts == 0
 
         fbr_string_ts = await settings_db["fbr_pos_logs"].count_documents({"tenant_id": mock_tenant_a["tenant_id"], "timestamp": {"$type": "string"}})
@@ -269,12 +289,29 @@ async def test_grand_master_e2e(clean_slate, mock_tenant_a, mock_tenant_b, mongo
                 {"alert_type": {"$regex": "ransomware", "$options": "i"}},
             ],
         }
-        ransomware_alerts = await settings_db["security_alerts"].count_documents(alert_query)
+
+        # Wait for SIEM worker to process and generate alert
+        deadline = time.monotonic() + 10.0
+        ransomware_alerts = 0
+        while time.monotonic() < deadline:
+            ransomware_alerts = await settings_db["security_alerts"].count_documents(alert_query)
+            if ransomware_alerts >= 1:
+                break
+            await asyncio.sleep(1)
+
         assert ransomware_alerts >= 1
 
-        total_logs = await settings_db["logs"].count_documents({"tenant_id": mock_tenant_a["tenant_id"]})
+        total_logs = await settings_db["siem_cold_vault"].count_documents({"tenant_id": mock_tenant_a["tenant_id"]})
         total_fbr = await settings_db["fbr_pos_logs"].count_documents({"tenant_id": mock_tenant_a["tenant_id"]})
         total_peca = await settings_db["peca_forensic_logs"].count_documents({"tenant_id": mock_tenant_a["tenant_id"]})
+
+        # Wait a bit for other workers to catch up if needed
+        if total_logs + total_fbr + total_peca < 100:
+            await asyncio.sleep(5)
+            total_logs = await settings_db["siem_cold_vault"].count_documents({"tenant_id": mock_tenant_a["tenant_id"]})
+            total_fbr = await settings_db["fbr_pos_logs"].count_documents({"tenant_id": mock_tenant_a["tenant_id"]})
+            total_peca = await settings_db["peca_forensic_logs"].count_documents({"tenant_id": mock_tenant_a["tenant_id"]})
+
         assert total_logs + total_fbr + total_peca >= 100
 
         # Tenant isolation check at the API boundary.
@@ -289,7 +326,7 @@ async def test_grand_master_e2e(clean_slate, mock_tenant_a, mock_tenant_b, mongo
             resp = await tenant_b_login.get("/logs?source=siem&limit=10", timeout=DEFAULT_TIMEOUT)
             resp.raise_for_status()
             payload = resp.json()
-            assert payload["pagination"]["total"] == 0 or all(item.get("tenant_id") == mock_tenant_b["tenant_id"] for item in payload.get("data", []))
+            assert len(payload.get("data", [])) == 0 or all(item.get("tenant_id") == mock_tenant_b["tenant_id"] for item in payload.get("data", []))
         finally:
             await tenant_b_login.aclose()
 
