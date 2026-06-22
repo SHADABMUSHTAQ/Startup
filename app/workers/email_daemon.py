@@ -243,7 +243,13 @@ async def run_email_daemon() -> None:
     if not redis_url:
         raise RuntimeError("REDIS_URL is required for the email daemon")
 
-    redis_client = await Redis.from_url(redis_url, decode_responses=True)
+    redis_client = await Redis.from_url(
+        redis_url,
+        decode_responses=True,
+        socket_timeout=QUEUE_TIMEOUT_SECONDS + 10,
+        socket_connect_timeout=5,
+        health_check_interval=30,
+    )
     logger.info("Email daemon online on host %s", socket.gethostname())
     
     semaphore = asyncio.Semaphore(10)
@@ -269,6 +275,8 @@ async def run_email_daemon() -> None:
                     logger.exception("Failed to queue email job: %s", exc)
             except asyncio.CancelledError:
                 raise
+            except TimeoutError:
+                continue
             except Exception as exc:
                 logger.warning("Email daemon loop error, retrying: %s", exc)
                 await asyncio.sleep(1)

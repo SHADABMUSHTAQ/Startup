@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends, Security, Request
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field, EmailStr
+import asyncio
+import logging
 import uuid
 import secrets
 from datetime import datetime, timezone
@@ -13,6 +15,7 @@ from app.utils.limiter import limiter
 from app.utils.tenant_cache import normalize_pack_id
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 # Strictly enforced environment-injected Super Admin Key (No hardcoded fallback)
 ADMIN_SECRET_KEY = os.getenv("SUPER_ADMIN_API_KEY")
 api_key_header = APIKeyHeader(name="X-Admin-Key", auto_error=True)
@@ -126,10 +129,22 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
     # 5. Sync plan to Redis cache for instant worker entitlement checks
     redis = getattr(request.app.state, "redis", None)
     if redis:
-        await redis.set(f"tenant_plan:{tenant_id}", req.plan_type)
-        await redis.set(f"tenant_features:{tenant_id}", ",".join(features))
-        await redis.set(f"tenant_agent_limit:{tenant_id}", str(req.max_agents))
-    
+        try:
+            async def _sync_cache():
+                pipe = redis.pipeline(transaction=False)
+                pipe.set(f"tenant_plan:{tenant_id}", req.plan_type)
+                pipe.set(f"tenant_features:{tenant_id}", ",".join(features))
+                pipe.set(f"tenant_agent_limit:{tenant_id}", str(req.max_agents))
+                await pipe.execute()
+
+            await asyncio.wait_for(_sync_cache(), timeout=3)
+        except Exception as exc:
+            logger.warning("Tenant %s provisioned but Redis entitlement cache sync failed: %s", tenant_id, exc)
+            try:
+                request.app.state.redis = None
+            except Exception:
+                pass
+     
     return ProvisionResponse(
         tenant_id=tenant_id,
         company_name=req.company_name,

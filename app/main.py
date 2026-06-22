@@ -82,16 +82,26 @@ async def redis_to_websocket_listener(app: FastAPI):
     print("📡 Redis-to-WebSocket Listener Active & Waiting...")
     while True:
         r = None
+        pubsub = None
         try:
             r = getattr(app.state, "redis", None)
             if r is None:
                 # fallback to temporary connection if global pool isn't attached yet
-                r = await aioredis.from_url(settings.redis_url, decode_responses=True)
+                r = await aioredis.from_url(
+                    settings.redis_url,
+                    decode_responses=True,
+                    socket_connect_timeout=5,
+                    health_check_interval=30,
+                )
 
             pubsub = r.pubsub()
             await pubsub.subscribe("security_alerts")
 
-            async for message in pubsub.listen():
+            while True:
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if not message:
+                    await asyncio.sleep(0.1)
+                    continue
                 if message["type"] == "message":
                     alert_data = json.loads(message["data"])
                     tenant_id = alert_data.get("tenant_id")
@@ -102,6 +112,11 @@ async def redis_to_websocket_listener(app: FastAPI):
             print(f" Redis Connection lost. Retrying... ({e})")
             await asyncio.sleep(2)
         finally:
+            try:
+                if pubsub is not None:
+                    await pubsub.close()
+            except Exception:
+                pass
             # only close temporary connections
             try:
                 if r is not None and getattr(app.state, "redis", None) is not r:
@@ -278,18 +293,35 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     print(f" Schema boot lock cleanup failed: {e}")
 
-    await _run_schema_boot_once()
+    schema_boot_timeout = int(os.getenv("SCHEMA_BOOT_TIMEOUT_SECONDS", "45"))
+    try:
+        await asyncio.wait_for(_run_schema_boot_once(), timeout=schema_boot_timeout)
+    except asyncio.TimeoutError:
+        print(f" Schema boot timed out after {schema_boot_timeout}s; connecting without schema migration.")
+        await _connect_mongo_with_retries(run_schema=False)
     
+    startup_cache_timeout = int(os.getenv("STARTUP_CACHE_TIMEOUT_SECONDS", "5"))
+
     #  SYNC TENANT CACHE (Enterprise SRO 288 Optimization)
     if db_manager.db is not None and app.state.redis is not None:
         try:
-            await sync_tenant_cache(db_manager.db, app.state.redis)
+            await asyncio.wait_for(
+                sync_tenant_cache(db_manager.db, app.state.redis),
+                timeout=startup_cache_timeout,
+            )
+        except asyncio.TimeoutError:
+            print(f" Tenant cache sync timed out after {startup_cache_timeout}s; continuing startup.")
         except Exception as e:
             print(f" Tenant cache sync failed: {e}")
 
     if db_manager.db is not None and app.state.redis is not None:
         try:
-            await bootstrap_threat_intel_to_redis(db_manager.db, app.state.redis)
+            await asyncio.wait_for(
+                bootstrap_threat_intel_to_redis(db_manager.db, app.state.redis),
+                timeout=startup_cache_timeout,
+            )
+        except asyncio.TimeoutError:
+            print(f" Threat intel bootstrap timed out after {startup_cache_timeout}s; continuing startup.")
         except Exception as e:
             print(f" Threat intel bootstrap failed: {e}")
 

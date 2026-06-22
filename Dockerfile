@@ -30,7 +30,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY ./app ./app
 COPY ./agent ./agent
 COPY ./syslog_receiver.py ./syslog_receiver.py
-COPY ./*.py ./
 COPY ./scripts /app/scripts
 RUN mkdir -p /app/Output
 RUN chmod +x /app/scripts/entrypoint.sh

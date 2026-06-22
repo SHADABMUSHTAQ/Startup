@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  email_daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: warsoc_email_daemon
+    command: ["python", "-u", "-m", "app.workers.email_daemon"]
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=${REDIS_URL}
+      - ZOHO_SMTP_HOST=${ZOHO_SMTP_HOST}
+      - ZOHO_SMTP_PORT=${ZOHO_SMTP_PORT}
+      - ZOHO_SMTP_USER=${ZOHO_SMTP_USER}
+      - ZOHO_SMTP_PASS=${ZOHO_SMTP_PASS}
+      - MAIL_FROM=${MAIL_FROM}
+    restart: unless-stopped
+    networks:
+      - warsoc_backend
+    depends_on:
+      - redis
+
+networks:
+  warsoc_backend:
+    external: true

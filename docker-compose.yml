@@ -8,7 +8,7 @@ services:
     restart: unless-stopped
     ports:
       - "27017:27017"
-    command: ["--wiredTigerCacheSizeGB", "0.25"]
+    command: ["--wiredTigerCacheSizeGB", "0.5"]
     environment:
       - MONGO_INITDB_ROOT_USERNAME=${MONGO_USER}
       - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD}
@@ -17,16 +17,24 @@ services:
     networks:
       - warsoc-secure-net
     healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/27017'"]
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --host 127.0.0.1 --port 27017
+          -u "$$MONGO_INITDB_ROOT_USERNAME"
+          -p "$$MONGO_INITDB_ROOT_PASSWORD"
+          --authenticationDatabase admin
+          --quiet
+          --eval 'db.adminCommand({ ping: 1 }).ok'
       interval: 15s
       timeout: 15s
       retries: 8
       start_period: 30s
-    memswap_limit: 256M
+    memswap_limit: 1G
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 1G
     logging:
       driver: "json-file"
       options:
@@ -49,7 +57,7 @@ services:
       - --appendfsync
       - everysec
       - --maxmemory
-      - 100mb
+      - 256mb
       - --maxmemory-policy
       - noeviction
     volumes:
@@ -64,11 +72,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    memswap_limit: 128M
+    memswap_limit: 512M
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: 512M
     logging:
       driver: "json-file"
       options:
@@ -107,11 +115,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    memswap_limit: 256M
+    memswap_limit: 768M
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 768M
     logging:
       driver: "json-file"
       options:
@@ -146,11 +154,11 @@ services:
         condition: service_healthy
       mongodb:
         condition: service_healthy
-    memswap_limit: 100M
+    memswap_limit: 256M
     deploy:
       resources:
         limits:
-          memory: 100M
+          memory: 256M
     logging:
       driver: "json-file"
       options:
@@ -179,11 +187,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    memswap_limit: 300M
+    memswap_limit: 1G
     deploy:
       resources:
         limits:
-          memory: 300M
+          memory: 1G
     logging:
       driver: "json-file"
       options:

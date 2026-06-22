@@ -1,0 +1,30 @@
+services:
+  api:
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*", "--workers", "1"]
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+      - ./create_admin.py:/app/create_admin.py
+      - ./syslog_receiver.py:/app/syslog_receiver.py
+      - ./keys:/app/keys:ro
+    memswap_limit: 1g
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    healthcheck:
+      start_period: 60s
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  unified-worker:
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+      - ./keys:/app/keys:ro
+    memswap_limit: 1g
+    deploy:
+      resources:
+        limits:
+          memory: 1g

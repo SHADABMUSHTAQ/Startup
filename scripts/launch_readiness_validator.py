@@ -87,6 +87,14 @@ class ApiClient:
             raw = exc.read()
             status = exc.code
             headers_obj = exc.headers
+        except urllib.error.URLError as exc:
+            raw = str(exc.reason).encode("utf-8", errors="replace")
+            status = 0
+            headers_obj = {}
+        except TimeoutError as exc:
+            raw = str(exc).encode("utf-8", errors="replace")
+            status = 0
+            headers_obj = {}
 
         body = raw
         content_type = (headers_obj.get("content-type") or "").lower()
@@ -151,7 +159,8 @@ class Validator:
         print(f"Base URL: {self.args.base_url}")
         print(f"Run ID: {self.run_id}")
 
-        self.basic_public_checks()
+        if not self.basic_public_checks():
+            return self.finish()
         tenant_id, admin_email, admin_password = self.provision_and_login()
         if not tenant_id:
             return self.finish()
@@ -167,8 +176,12 @@ class Validator:
         return self.finish()
 
     def basic_public_checks(self):
-        health = self.admin.request("GET", "/health", timeout=10)
-        self.record("Backend health", health.status == 200, str(health.body)[:160])
+        def health_ready():
+            health = self.admin.request("GET", "/health", timeout=10)
+            return health.status == 200, f"HTTP {health.status}; {str(health.body)[:160]}"
+
+        if not self.wait_for("Backend health", health_ready, self.args.wait_seconds):
+            return False
 
         signup_payload = {
             "username": f"rogue_{self.run_id}",
@@ -206,6 +219,7 @@ class Validator:
 
         safepay = self.admin.request("POST", "/api/v1/sales/safepay/webhook", {"event": "test"})
         self.record("Safepay fails closed", safepay.status == 501, f"HTTP {safepay.status}")
+        return True
 
     def provision_and_login(self):
         admin_email = self.unique_email("admin")
@@ -223,6 +237,7 @@ class Validator:
                 "admin_password": admin_password,
             },
             headers={"X-Admin-Key": self.args.admin_key},
+            timeout=self.args.provision_timeout,
         )
         tenant_id = provision.body.get("tenant_id") if isinstance(provision.body, dict) else None
         self.record("Admin tenant provisioning", provision.status == 200 and bool(tenant_id), f"HTTP {provision.status}; tenant={tenant_id}")
@@ -450,6 +465,7 @@ def parse_args():
     parser.add_argument("--admin-key", default=os.getenv("SUPER_ADMIN_API_KEY", ""))
     parser.add_argument("--email-domain", default=os.getenv("WARSOC_TEST_EMAIL_DOMAIN", "warsoc.tech"))
     parser.add_argument("--wait-seconds", type=int, default=int(os.getenv("WARSOC_WAIT_SECONDS", "90")))
+    parser.add_argument("--provision-timeout", type=int, default=int(os.getenv("WARSOC_PROVISION_TIMEOUT", "180")))
     parser.add_argument("--skip-pdf", action="store_true")
     args = parser.parse_args()
     if not args.admin_key:
