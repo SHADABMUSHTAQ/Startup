@@ -1,0 +1,5 @@
+# React dependencies (npm-based project)
+# This file is informational; actual installation happens via package.json
+react
+react-dom
+axios

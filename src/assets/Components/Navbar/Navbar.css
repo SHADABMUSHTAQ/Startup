@@ -1,0 +1,306 @@
+/* --- WARSOC BRAND VARIABLES --- */
+:root {
+  --nav-bg-glass: rgba(11, 19, 43, 0.85); 
+  --nav-bg-solid: #0B132B; 
+  --nav-dropdown-bg: #131F43; 
+  --nav-border: rgba(71, 165, 239, 0.2); 
+  
+  --nav-text: #f8fafc;
+  --nav-text-muted: #94a3b8;
+  
+  --nav-blue: #47A5EF; 
+  --nav-lime: #B7EA48; 
+}
+
+/* --- BASE NAVBAR --- */
+.navbar-custom {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0; 
+  margin: 0 auto; 
+  width: 100%;
+  max-width: 100%; /* Explicit starting width */
+  height: 90px;
+  z-index: 1000; 
+  
+  /* 🚀 THE FIX 1: Explicitly define ALL base states to prevent snap/flash */
+  background-color: rgba(11, 19, 43, 0); 
+  backdrop-filter: blur(0px);
+  -webkit-backdrop-filter: blur(0px);
+  border-radius: 0px; 
+  border: 1px solid rgba(71, 165, 239, 0); 
+  box-shadow: 0 0px 0px rgba(0,0,0,0);
+  
+  /* 🚀 THE FIX 2: Hardware Acceleration (Forces GPU rendering) */
+  transform: translate3d(0, 0, 0);
+  will-change: max-width, top, background-color, backdrop-filter, padding;
+
+  /* Reverting to 'all' because our base states are now perfectly mapped */
+  transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* Base Container Alignment */
+.navbar-container {
+  display: flex;
+  justify-content: space-between; 
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  max-width: 100%; 
+  margin: 0 auto;
+  padding: 0 7rem; /* Matches your Hero section */
+  transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1); 
+}
+
+/* --- SCROLLED STATE (The Floating Pill) --- */
+.navbar-custom.scrolled {
+  top: 20px; 
+  max-width: 1000px; 
+  height: 70px;
+  border-radius: 50px; 
+  background-color: var(--nav-bg-glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--nav-border); 
+  box-shadow: 0 15px 35px -10px rgba(0, 0, 0, 0.8);
+}
+
+/* Scrolled Container Padding */
+.navbar-custom.scrolled .navbar-container {
+  padding: 0 40px; 
+}
+
+/* --- LOGO SIZING --- */
+.navbar-brand-logo {
+  height: 100px; /* Reduced slightly to fit inside the 90px base perfectly */
+  width: auto;
+  display: block;
+  cursor: pointer;
+  object-fit: contain; /* Stops it from ever squishing */
+  transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.navbar-custom.scrolled .navbar-brand-logo {
+  height: 100px; /* Scales down proportionally inside the 70px pill */
+}
+
+.navbar-brand-logo:hover {
+  transform: scale(1.05);
+}
+
+/* --- RIGHT SIDE WRAPPER --- */
+.navbar-right-content {
+  display: flex;
+  align-items: center;
+  gap: 40px;
+}
+
+/* (Leave your links, buttons, and mobile code exactly as they are below here) */
+
+/* --- LINKS --- */
+.navbar-menu-links {
+  display: flex;
+  gap: 30px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  align-items: center;
+}
+
+.navbar-menu-links li a {
+  color: var(--nav-text-muted);
+  text-decoration: none;
+  font-size: 0.95rem;
+  font-weight: 500;
+  position: relative;
+  transition: color 0.3s ease;
+  padding: 5px 0;
+}
+
+.navbar-menu-links li a::after {
+  content: '';
+  position: absolute;
+  width: 0;
+  height: 2px;
+  bottom: 0;
+  left: 0;
+  background-color: var(--nav-lime);
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 2px;
+}
+
+.navbar-menu-links li a:hover {
+  color: #fff;
+}
+
+.navbar-menu-links li a:hover::after {
+  width: 100%;
+}
+
+/* --- DESKTOP LOGIN BUTTON --- */
+.navbar-btn-login {
+  padding: 10px 30px;
+  background: rgba(71, 165, 239, 0.1);
+  color: var(--nav-blue);
+  border: 1px solid var(--nav-blue);
+  border-radius: 30px; 
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.3s ease;
+  letter-spacing: 0.5px;
+}
+
+.navbar-btn-login:hover {
+  background: var(--nav-blue);
+  color: #fff;
+  box-shadow: 0 5px 20px rgba(71, 165, 239, 0.4);
+  transform: translateY(-2px);
+}
+
+/* --- PROFILE DROPDOWN --- */
+.navbar-profile-container { position: relative; padding: 10px 0; }
+.navbar-profile-trigger { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+
+.navbar-avatar-circle {
+  width: 40px; height: 40px;
+  background: linear-gradient(135deg, var(--nav-blue), #2563eb);
+  color: white; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 1.1rem;
+  box-shadow: 0 4px 10px rgba(71, 165, 239, 0.3);
+}
+
+.chevron { transition: transform 0.3s ease; }
+.chevron.rotate { transform: rotate(180deg); color: var(--nav-blue); }
+
+.navbar-profile-dropdown {
+  position: absolute; top: 100%; right: 0; width: 240px;
+  background: var(--nav-dropdown-bg); 
+  border: 1px solid var(--nav-border); 
+  border-radius: 12px;
+  opacity: 0; visibility: hidden; transform: translateY(10px);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
+  box-shadow: 0 15px 35px rgba(0,0,0,0.6);
+  z-index: 100;
+}
+
+.navbar-profile-dropdown.show { opacity: 1; visibility: visible; transform: translateY(0); }
+
+.navbar-dropdown-header { padding: 16px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.navbar-dropdown-header .user-name { color: #fff; font-weight: 600; font-size: 0.95rem; }
+.navbar-dropdown-header .user-email { color: var(--nav-text-muted); font-size: 0.8rem; margin-top: 4px; }
+
+.navbar-dropdown-item { 
+  padding: 14px 16px; color: var(--nav-text-muted); cursor: pointer; 
+  display: flex; gap: 12px; align-items: center; transition: 0.2s; font-size: 0.9rem;
+}
+.navbar-dropdown-item:hover { background: rgba(71, 165, 239, 0.1); color: var(--nav-blue); }
+.navbar-dropdown-item.logout { color: #f87171; border-top: 1px solid rgba(255,255,255,0.05); }
+.navbar-dropdown-item.logout:hover { background: rgba(248, 113, 113, 0.1); color: #fca5a5; }
+
+/* =========================================
+   ✅ MOBILE & TABLET RESPONSIVENESS
+========================================= */
+.navbar-mobile-toggle { 
+  display: none; 
+  background: none; 
+  border: none; 
+  cursor: pointer; 
+  padding: 5px;
+  transition: 0.3s;
+}
+
+.navbar-mobile-auth { display: none; }
+.navbar-mobile-overlay { display: none; }
+
+@media (max-width: 992px) {
+  .navbar-container {
+    padding: 0 2rem; /* Mobile devices shouldn't have 7rem padding */
+  }
+
+  .navbar-mobile-toggle { 
+      display: block; 
+      position: relative;
+      z-index: 1001;
+  }
+  
+  .navbar-desktop-auth { display: none; }
+
+  .navbar-custom.scrolled {
+    max-width: 95%; 
+    border-radius: 20px;
+  }
+
+  .navbar-mobile-overlay {
+      display: block;
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      z-index: 998;
+      opacity: 0; visibility: hidden;
+      transition: all 0.3s ease;
+  }
+  .navbar-mobile-overlay.active { opacity: 1; visibility: visible; }
+
+  .navbar-right-content {
+    position: fixed; top: 0; right: 0; width: 300px; height: 100vh;
+    background: var(--nav-bg-solid);
+    border-left: 1px solid var(--nav-border);
+    flex-direction: column; justify-content: flex-start;
+    padding: 100px 30px 40px; gap: 30px;
+    transform: translateX(100%); 
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: -10px 0 40px rgba(0,0,0,0.8);
+    z-index: 999;
+  }
+
+  .navbar-right-content.active { transform: translateX(0); }
+
+  .navbar-menu-links { flex-direction: column; align-items: flex-start; width: 100%; gap: 30px; }
+  .navbar-menu-links li { width: 100%; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 10px; }
+  .navbar-menu-links li a { font-size: 1.1rem; color: #fff; width: 100%; display: block; }
+  .navbar-menu-links li a::after { display: none; }
+  .navbar-menu-links li a:hover { color: var(--nav-lime); transform: translateX(5px); }
+
+  .navbar-mobile-auth { 
+      display: flex; flex-direction: column; align-items: flex-start; 
+      gap: 20px; width: 100%; margin-top: auto; 
+  }
+  
+  .mobile-user-name { color: #fff; font-size: 1.1rem; font-weight: 600; }
+  
+  .mobile-logout-btn {
+      width: 100%; padding: 14px; background: rgba(248, 113, 113, 0.1); border: 1px solid #f87171;
+      color: #f87171; border-radius: 8px; font-size: 1rem; font-weight: 600;
+      display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer;
+  }
+  
+  .navbar-mobile-login-btn { 
+      width: 100%; padding: 14px; background: var(--nav-blue); color: #fff; 
+      border-radius: 8px; text-decoration: none; font-size: 1.1rem; 
+      font-weight: 600; text-align: center; box-shadow: 0 4px 15px rgba(71, 165, 239, 0.4);
+  }
+}
+
+/* =========================================
+   ✅ LOGIN PAGE SPECIFIC NAVBAR STATE
+========================================= */
+.navbar-custom.login-mode {
+  position: relative !important;
+  background-color: transparent !important; 
+  box-shadow: none !important; 
+  backdrop-filter: none !important; 
+  border-bottom: 1px solid rgba(255,255,255,0.05) !important; 
+  top: 0 !important;
+  max-width: 100% !important;
+  height: 90px !important;
+  border-radius: 0 !important;
+}
+
+.navbar-custom.login-mode .navbar-container {
+  max-width: 1300px;
+  padding: 0 24px;
+}
