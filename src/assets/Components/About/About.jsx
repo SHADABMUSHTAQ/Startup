@@ -4,9 +4,9 @@ import "./About.css";
 
 const About = () => {
   const points = [
-    "NLP-Powered Log Analysis",      
+    "Unified SIEM Log Monitoring",      
     "Automated Windows Agent",       
-    "Aut Log Upload & Audit",     
+    "Automated Log Upload & Audit",     
     "Real-Time Threat Alerting"      
   ];
 

@@ -11,12 +11,12 @@ const partnersList = [
   {
     id: 2,
     name: "IoT Solutions",
-    companyLogo: "public/iotsol_logo.jpeg",
+    companyLogo: "/iotsol_logo.jpeg",
   },
   {
     id: 3,
     name: "CyberZeus Software", // Add more companies like this
-    companyLogo: "public/cyberzeus_software_systems_logo.jpeg",
+    companyLogo: "/cyberzeus_software_systems_logo.jpeg",
   }
 ];
 
@@ -37,16 +37,18 @@ export default function Partners() {
           {/* Hum list ko 3 dafa render kar rahe hain taake animation seamless (infinite) lagay */}
           {[...partnersList, ...partnersList, ...partnersList].map((partner, idx) => (
             <div key={idx} className="marquee-item">
-              <img
-                src={partner.companyLogo}
-                alt={partner.name}
-                className="partner-logo"
-                onError={(e) => {
-                  e.target.onerror = null;
-                  // Fallback: Agar logo image na mile toh UI break nahi hoga
-                  e.target.src = `https://ui-avatars.com/api/?name=${partner.name}&background=0f172a&color=fff&size=128&rounded=true`;
-                }}
-              />
+              <div className="partner-logo-frame">
+                <img
+                  src={partner.companyLogo}
+                  alt={partner.name}
+                  className="partner-logo"
+                  onError={(e) => {
+                    e.target.onerror = null;
+                    // Fallback: Agar logo image na mile toh UI break nahi hoga
+                    e.target.src = `https://ui-avatars.com/api/?name=${partner.name}&background=ffffff&color=0f172a&size=128&rounded=true`;
+                  }}
+                />
+              </div>
             </div>
           ))}
         </div>

@@ -20,6 +20,7 @@
   width: 100%;
   overflow: hidden;
   position: relative;
+  padding: 4px 0;
   /* Yeh gradient edges ko blur karega taake logos smooth enter/exit hon */
   mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
   -webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
@@ -27,38 +28,44 @@
 
 .marquee-track {
   display: flex;
+  gap: 120px;
   width: max-content;
   /* 20 seconds mein ek chakar. Speed change karni ho toh isko adjust karo */
   animation: scrollX 20s linear infinite; 
-}
-
-/* User jab hover karega toh slider ruk jayega (Good UX) */
-.marquee-track:hover {
-  /* animation-play-state: paused; */
-  transform: scale(1.05);
-  
+  will-change: transform;
 }
 
 .marquee-item {
-  padding: 0 50px;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 105px;
+}
+
+.partner-logo-frame {
+  width: 76px;
+  height: 76px;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  background: #ffffff;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.03);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
 }
 
 .partner-logo {
-  height: 50px; /* Logo ki max height */
-  width: auto;
-  max-width: 200px;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
-  /* Enterprise SaaS Look: Logos ko grey kardo. Hover par color aayega */
-  /* filter: grayscale(100%) opacity(0.6);
-  transition: all 0.3s ease; */
+  display: block;
 }
 
-.partner-logo:hover {
-  filter: grayscale(0%) opacity(1);
+.partner-logo-frame:hover {
   transform: scale(1.05);
+  box-shadow: 0 0 0 6px rgba(183, 234, 72, 0.08);
 }
 
 /* THE CSS MATH: Kyunke humne array ko 3 dafa map kiya hai, hum track ko exactly 33.33% shift karenge */
