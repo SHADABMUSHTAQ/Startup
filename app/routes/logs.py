@@ -6,6 +6,8 @@ from bson import ObjectId
 from datetime import datetime, timezone, timedelta
 import json
 import asyncio
+from cryptography.fernet import Fernet
+from app.config.config import get_settings
 
 # 📊 MASTER BUILD: Logs Gateway
 # Strictly Decoupled, Paginated, and Tenant-Isolated
@@ -22,6 +24,21 @@ def json_serializer(obj):
 from app.utils.audit import audit_log
 
 RAW_RETENTION_ANCHOR_FIELD = "_retention_ts"
+_settings = get_settings()
+_fernet = Fernet(_settings.encryption_key.encode()) if _settings.encryption_key else None
+
+
+def _decrypt_evidence_field(value):
+    if not value or not isinstance(value, str) or _fernet is None:
+        return value
+    try:
+        plaintext = _fernet.decrypt(value.encode()).decode()
+        try:
+            return json.loads(plaintext)
+        except Exception:
+            return plaintext
+    except Exception:
+        return value
 
 @router.get("")
 @audit_log("View Logs")
@@ -33,6 +50,7 @@ async def get_logs_master(
     limit: int = Query(100, ge=1, le=500),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    role: str = Depends(RequireRole(["admin", "manager", "analyst", "auditor"])),
     request: Request = None # Required for the @audit_log decorator
 ):
     """
@@ -43,6 +61,11 @@ async def get_logs_master(
     if not tenant_id:
         print("[!] Security Alert: User lacks tenant ID")
         raise HTTPException(status_code=403, detail="Unauthorized access to log history.")
+    if role == "auditor" and source != "compliance":
+        raise HTTPException(
+            status_code=403,
+            detail="Auditors may access entitled compliance evidence only.",
+        )
 
     #  Enterprise Isolation Query
     hot_window_start = datetime.now(timezone.utc) - timedelta(days=7)
@@ -97,7 +120,13 @@ async def get_logs_master(
 
         # If user has no entitled packs, return empty result to avoid leaking evidence
         if not entitled:
-            return {"data": [], "next_cursor": None, "limit": limit, "total": 0}
+            return {
+                "status": "success",
+                "data": [],
+                "next_cursor": None,
+                "limit": limit,
+                "total": 0,
+            }
 
         requested_pack = None
         if pack:
@@ -118,7 +147,13 @@ async def get_logs_master(
             elif "fbr_pos" in entitled:
                 collection = db["fbr_pos_logs"]
             else:
-                return {"data": [], "next_cursor": None, "limit": limit, "total": 0}
+                return {
+                    "status": "success",
+                    "data": [],
+                    "next_cursor": None,
+                    "limit": limit,
+                    "total": 0,
+                }
     else:
         collection = db["security_alerts"]
 
@@ -137,6 +172,7 @@ async def get_logs_master(
     new_cursor = logs_data[-1]["_id"] if logs_data else None
 
     return {
+        "status": "success",
         "data": logs_data,
         "next_cursor": new_cursor,
         "limit": limit,
@@ -182,7 +218,8 @@ async def get_forensic_evidence(
 
     return {
         "status": "success",
-        "raw_event_data": raw_event_data
+        "raw_event_data": _decrypt_evidence_field(raw_event_data),
+        "processed_data": _decrypt_evidence_field(doc.get("processed_data")),
     }
 
 @router.post("/inject")

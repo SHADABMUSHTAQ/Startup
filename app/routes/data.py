@@ -1,4 +1,5 @@
 import re as _re
+import json
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from datetime import datetime, timedelta, timezone
 from app.database import get_db
@@ -21,6 +22,7 @@ def _serialize_docs(docs: list[dict]) -> list[dict]:
 @router.get("/status")
 async def agent_status(
     request: Request,
+    db=Depends(get_db),
     current_user=Depends(get_current_user),
     _role: str = Depends(RoleChecker(["admin", "manager", "analyst"])),
 ):
@@ -30,34 +32,102 @@ async def agent_status(
         raise HTTPException(status_code=403, detail="Unauthorized tenant scope")
 
     redis_client = getattr(request.app.state, "redis", None)
-    if redis_client is None:
-        return {"status": "success", "data": []}
 
     try:
-        pattern = f"status:{tenant_id}:*"
-        cursor = 0
-        keys = []
+        tenant = await db["tenants"].find_one(
+            {"tenant_id": tenant_id},
+            {"_id": 0, "max_agents": 1, "agent_limit": 1},
+        )
+        tenant = tenant or {}
+        max_agents = tenant.get("max_agents", tenant.get("agent_limit"))
 
-        while True:
-            cursor, batch = await redis_client.scan(cursor=cursor, match=pattern, count=200)
-            if batch:
-                keys.extend(batch)
-            if cursor == 0:
-                break
+        agents = await db["agents"].find(
+            {
+                "tenant_id": tenant_id,
+                "status": {"$ne": "revoked"},
+                "public_key": {"$exists": True, "$ne": ""},
+            },
+            {
+                "_id": 0,
+                "agent_id": 1,
+                "last_seen": 1,
+                "version": 1,
+                "status": 1,
+                "sensor_status": 1,
+            },
+        ).to_list(length=1000)
 
-        if not keys:
-            return {"status": "success", "data": []}
-
-        values = await redis_client.mget(keys)
         data = []
-        for key, last_seen in zip(keys, values):
-            key_parts = str(key).split(":", 2)
-            if len(key_parts) != 3:
+        for agent in agents:
+            agent_id = str(agent.get("agent_id") or "")
+            if not agent_id:
                 continue
-            data.append({"agent_id": key_parts[2], "last_seen": last_seen})
+            live_last_seen = (
+                await redis_client.get(f"status:{tenant_id}:{agent_id}")
+                if redis_client is not None
+                else None
+            )
+            sensor_raw = (
+                await redis_client.get(f"warsoc:agent_sensor:{agent_id}")
+                if redis_client is not None
+                else None
+            )
+            sensor_status = agent.get("sensor_status") if isinstance(agent.get("sensor_status"), dict) else {}
+            if sensor_raw:
+                try:
+                    sensor_status = json.loads(sensor_raw)
+                except Exception:
+                    pass
+
+            channels = sensor_status.get("channels") if isinstance(sensor_status, dict) else {}
+            channels = channels if isinstance(channels, dict) else {}
+            required_channels_ok = all(
+                str((channels.get(channel) or {}).get("status") or "").lower() == "ok"
+                for channel in ("Security", "System")
+            )
+            audit_configured = str(sensor_status.get("audit_policy_status") or "").lower() == "configured"
+            online = bool(live_last_seen)
+            health = "offline"
+            if online:
+                health = "active" if required_channels_ok and audit_configured else "degraded"
+
+            last_seen = live_last_seen or agent.get("last_seen")
+            if isinstance(last_seen, datetime):
+                last_seen = last_seen.astimezone(timezone.utc).isoformat()
+            data.append(
+                {
+                    "agent_id": agent_id,
+                    "last_seen": last_seen,
+                    "version": agent.get("version"),
+                    "online": online,
+                    "health": health,
+                    "sensor_status": sensor_status,
+                }
+            )
 
         data.sort(key=lambda item: item.get("last_seen") or "", reverse=True)
-        return {"status": "success", "data": data}
+        online_count = sum(1 for item in data if item["online"])
+        degraded_count = sum(1 for item in data if item["health"] == "degraded")
+        telemetry_status = (
+            "active" if online_count and degraded_count == 0 else (
+                "degraded" if online_count else "offline"
+            )
+        )
+        return {
+            "status": "success",
+            "tenant_id": tenant_id,
+            "max_agents": max_agents,
+            "services_healthy": redis_client is not None,
+            "endpoint_status": telemetry_status,
+            "data": data,
+            "agents_online": online_count,
+            "registered_agents": len(data),
+            "agents_degraded": degraded_count,
+            "telemetry": {
+                "status": telemetry_status,
+                "last_pulse_at": data[0]["last_seen"] if data else None,
+            },
+        }
     except Exception as e:
         print(f" Status Fetch Error: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch agent status")

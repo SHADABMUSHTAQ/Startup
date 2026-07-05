@@ -8,14 +8,15 @@ from datetime import datetime, timezone
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 from cryptography.exceptions import InvalidSignature
-from typing import Optional
-import os
+from typing import Any, Optional
+from urllib.parse import urlparse
 from fastapi.responses import RedirectResponse
 
 from app.database import get_db
 from app.routes.auth import get_current_user
 from app.config.config import get_settings
 from app.utils.rbac import RoleChecker
+from app.utils.limiter import limiter
 
 
 router = APIRouter()
@@ -33,6 +34,59 @@ class HeartbeatRequest(BaseModel):
     agent_id: str
     current_version: str
     timestamp: float = None
+    sensor_status: dict[str, Any] | None = None
+
+
+def _sanitize_sensor_status(raw_status: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(raw_status, dict):
+        return {}
+
+    channels = {}
+    raw_channels = raw_status.get("channels")
+    if isinstance(raw_channels, dict):
+        for channel_name in ("Security", "System"):
+            raw_channel = raw_channels.get(channel_name)
+            if not isinstance(raw_channel, dict):
+                continue
+            status = str(raw_channel.get("status") or "unknown").strip().lower()
+            if status not in {"ok", "degraded", "error", "unknown"}:
+                status = "unknown"
+            channels[channel_name] = {
+                "status": status,
+                "last_checked_at": str(raw_channel.get("last_checked_at") or "")[:64],
+                "last_event_at": str(raw_channel.get("last_event_at") or "")[:64],
+                "last_error": str(raw_channel.get("last_error") or "")[:500] or None,
+            }
+
+    pos_audit = raw_status.get("pos_audit_log")
+    pos_audit = pos_audit if isinstance(pos_audit, dict) else {}
+    try:
+        pos_sacl_path_count = int(raw_status.get("pos_sacl_path_count") or 0)
+    except (TypeError, ValueError):
+        pos_sacl_path_count = 0
+    raw_counters = raw_status.get("counters") if isinstance(raw_status.get("counters"), dict) else {}
+    counters = {}
+    for counter_name in (
+        "windows_parse_failures",
+        "pos_jsonl_rejections",
+        "channel_failures",
+        "spool_write_failures",
+    ):
+        try:
+            counters[counter_name] = max(0, int(raw_counters.get(counter_name) or 0))
+        except (TypeError, ValueError):
+            counters[counter_name] = 0
+    return {
+        "telemetry_config_version": str(raw_status.get("telemetry_config_version") or "unknown")[:64],
+        "audit_policy_status": str(raw_status.get("audit_policy_status") or "unknown")[:32],
+        "pos_sacl_path_count": max(0, min(pos_sacl_path_count, 1000)),
+        "channels": channels,
+        "counters": counters,
+        "pos_audit_log": {
+            "configured": bool(pos_audit.get("configured", False)),
+            "present": bool(pos_audit.get("present", False)),
+        },
+    }
 
 
 def _is_valid_ip_or_cidr(value: str) -> bool:
@@ -44,6 +98,15 @@ def _is_valid_ip_or_cidr(value: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _is_valid_agent_cdn_url(value: str) -> bool:
+    parsed = urlparse(str(value or "").strip())
+    return (
+        parsed.scheme == "https"
+        and bool(parsed.netloc)
+        and parsed.path.lower().endswith(".exe")
+    )
 
 
 async def _get_tenant_enforce_bans(redis_client, tenant_id: str) -> list[str]:
@@ -72,6 +135,7 @@ async def _get_tenant_enforce_bans(redis_client, tenant_id: str) -> list[str]:
     return sorted(set(banned_ips))
 
 @router.post("/generate-activation", response_model=ActivationResponse)
+@limiter.limit("10/minute")
 async def generate_activation(
     request: Request,
     current_user: dict = Depends(get_current_user),
@@ -119,6 +183,7 @@ async def generate_activation(
     return ActivationResponse(activation_code=code, expires_in_seconds=ttl)
 
 @router.post("/register")
+@limiter.limit("10/minute")
 async def register_agent(
     request: Request,
     body: AgentRegisterRequest,
@@ -129,7 +194,17 @@ async def register_agent(
         raise HTTPException(status_code=503, detail="Redis unavailable")
         
     key = f"warsoc:activation:{body.activation_code}"
-    raw_payload = await redis_client.get(key)
+    raw_payload = await redis_client.eval(
+        """
+        local value = redis.call('GET', KEYS[1])
+        if value then
+            redis.call('DEL', KEYS[1])
+        end
+        return value
+        """,
+        1,
+        key,
+    )
     
     if not raw_payload:
         raise HTTPException(status_code=401, detail="Invalid or expired activation code")
@@ -138,7 +213,9 @@ async def register_agent(
     tenant_id = payload.get("tenant_id")
     
     tenant = await db["tenants"].find_one({"tenant_id": tenant_id})
-    limit = tenant.get("max_agents", tenant.get("agent_limit", 10)) if tenant else 10
+    if not tenant:
+        raise HTTPException(status_code=401, detail="Activation code is not bound to an active tenant")
+    limit = tenant.get("max_agents", tenant.get("agent_limit", 10))
     
     lua_script = """
     local current_count = tonumber(redis.call('GET', KEYS[1]) or '0')
@@ -306,9 +383,15 @@ async def agent_heartbeat(
         raise HTTPException(status_code=401, detail=f"Cryptographic verification failed: {repr(e)}")
         
     if tenant_id:
+        sensor_status = _sanitize_sensor_status(body.sensor_status)
         await redis_client.set(
             f"status:{tenant_id}:{body.agent_id}",
             datetime.now(timezone.utc).isoformat(),
+            ex=600,
+        )
+        await redis_client.set(
+            f"warsoc:agent_sensor:{body.agent_id}",
+            json.dumps(sensor_status),
             ex=600,
         )
 
@@ -319,7 +402,14 @@ async def agent_heartbeat(
     if not last_db_update:
         await db["agents"].update_one(
             {"agent_id": body.agent_id},
-            {"$set": {"last_seen": datetime.now(timezone.utc), "version": body.current_version, "last_ip": request.client.host}}
+            {
+                "$set": {
+                    "last_seen": datetime.now(timezone.utc),
+                    "version": body.current_version,
+                    "last_ip": request.client.host,
+                    "sensor_status": _sanitize_sensor_status(body.sensor_status),
+                }
+            },
         )
         await redis_client.setex(f"warsoc:agent_cache:db_update:{body.agent_id}", 60, "1")
     
@@ -349,13 +439,13 @@ async def download_agent(
     current_user: dict = Depends(get_current_user),
     _: str = Depends(RoleChecker(["Admin"])),
 ):
-    import os
-    
-    cdn_url = os.environ.get("AGENT_CDN_URL")
-    if cdn_url:
-        return RedirectResponse(url=cdn_url)
-        
-    raise HTTPException(status_code=503, detail="AGENT_CDN_URL is not configured.")
+    cdn_url = (settings.agent_cdn_url or "").strip()
+    if not cdn_url:
+        raise HTTPException(status_code=503, detail="Agent installer URL is not configured.")
+    if not _is_valid_agent_cdn_url(cdn_url):
+        raise HTTPException(status_code=503, detail="Agent installer URL is misconfigured.")
+
+    return RedirectResponse(url=cdn_url)
 
 @router.post("/deregister")
 async def deregister_agent(

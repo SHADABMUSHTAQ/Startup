@@ -10,14 +10,7 @@
     },
     "monitoring": {
         "target_event_ids": [
-            7,
-            8,
-            9,
-            10,
-            13,
-            17,
-            18,
-            80,
+            1100,
             1102,
             4616,
             4624,
@@ -40,19 +33,20 @@
             4776,
             4798,
             5140,
-            5156,
+            5157,
             7045
         ],
         "capture_all_security_events": false,
         "capture_all_windows_channels": false,
         "windows_channels": [
             "Security",
-            "Microsoft-Windows-Sysmon/Operational"
+            "System"
         ],
         "web_log_paths": [
             "access.log",
             "logs/*.log",
-            "C:/inetpub/logs/LogFiles/W3SVC*/u_ex*.log"
+            "C:/inetpub/logs/LogFiles/W3SVC*/u_ex*.log",
+            "%ProgramData%/WarSOC/pos_audit.log"
         ]
     },
     "agent_security": {

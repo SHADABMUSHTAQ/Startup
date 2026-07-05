@@ -16,21 +16,24 @@ COMPLIANCE_CATALOG = {
             {"id": "PECA-106 (4720)", "event_id": "4720", "name": "Rogue Account Created", "severity": "High"},
             {"id": "PECA-107 (4726)", "event_id": "4726", "name": "Account Deleted", "severity": "High"},
             {"id": "PECA-108 (4732)", "event_id": "4732", "name": "Privilege Escalation (Group Added)", "severity": "High"},
-            {"id": "PECA-109 (4697)", "event_id": "4697", "name": "Hidden Service Installation", "severity": "Critical"}
+            {"id": "PECA-109 (4697)", "event_id": "4697", "name": "Hidden Service Installation", "severity": "Critical"},
+            {"id": "PECA-110 (7045)", "event_id": "7045", "name": "New Windows Service", "severity": "Critical"},
+            {"id": "PECA-111 (1100)", "event_id": "1100", "name": "Event Logging Service Shut Down", "severity": "Critical"}
         ]
     },
     "fbr_pos": {
-        "name": "FBR Point-of-Sale (SRO 288)",
-        "description": "Mandatory real-time sales and modification tracking as per FBR S.R.O. 288(I)/2026.",
+        "name": "FBR Point-of-Sale / Digital Invoicing Readiness",
+        "description": "POS, digital invoicing, and tamper-evidence readiness mapped to FBR S.R.O. 288(I)/2026 draft framework, pending final notification.",
         "retention": {"local_hot_days": 7, "vault_days": 2190},
         "rules": [
             {"id": "FBR-101 (FBR-INV-DEL)", "event_id": "FBR-INV-DEL", "name": "Financial Record Deletion", "severity": "Warning"},
             {"id": "FBR-102 (FBR-INV-MOD)", "event_id": "FBR-INV-MOD", "name": "Financial Record Modification", "severity": "Critical"},
             {"id": "FBR-103 (4660)", "event_id": "4660", "name": "Object Deleted", "severity": "Warning"},
-            {"id": "FBR-104 (4663)", "event_id": "4663", "name": "File System Modification", "severity": "Alert"},
+            {"id": "FBR-104 (4663)", "event_id": "4663", "name": "Database Delete Intent (Correlation Context)", "severity": "Informational"},
             {"id": "FBR-105 (4670)", "event_id": "4670", "name": "Permissions Changed", "severity": "High"},
             {"id": "FBR-106 (4657)", "event_id": "4657", "name": "Registry Value Modified", "severity": "High"},
-            {"id": "FBR-107 (4698)", "event_id": "4698", "name": "Scheduled Task Created", "severity": "Medium"}
+            {"id": "FBR-107 (4698)", "event_id": "4698", "name": "Scheduled Task Created", "severity": "Medium"},
+            {"id": "FBR-108 (FIM-DB-MOD)", "event_id": "FIM-DB-MOD", "name": "Database File Tamper Confirmed", "severity": "Critical"}
         ]
     }
 }

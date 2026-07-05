@@ -1,5 +1,4 @@
 import win32evtlog
-import win32evtlogutil
 import win32security
 import requests
 import time
@@ -10,10 +9,11 @@ import sys
 import json
 import ipaddress
 import threading
-import queue
 import glob
 import hashlib
 import uuid
+import copy
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from datetime import datetime, timezone # ADDED TIMEZONE
 
@@ -49,41 +49,88 @@ if not env_loaded:
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
 TENANT_ID = os.getenv("TENANT_ID", "provision").strip() or "provision"
-JWT_TOKEN_PATH = _AGENT_DIR / ".agent_jwt"
-AGENT_ID_PATH = _AGENT_DIR / ".agent_id"
-PRIVATE_KEY_PATH = _AGENT_DIR / "agent_private_key.pem"
-try:
-    _STORED_AGENT_ID = AGENT_ID_PATH.read_text(encoding="utf-8").strip() if AGENT_ID_PATH.exists() else ""
-except Exception:
-    _STORED_AGENT_ID = ""
+PROGRAM_DATA_DIR = Path(os.getenv("PROGRAMDATA", str(_AGENT_DIR))) / "WarSOC"
+JWT_TOKEN_PATH = PROGRAM_DATA_DIR / ".agent_jwt"
+AGENT_ID_PATH = PROGRAM_DATA_DIR / ".agent_id"
+PRIVATE_KEY_PATH = PROGRAM_DATA_DIR / "agent_private_key.pem"
+LEGACY_JWT_TOKEN_PATH = _AGENT_DIR / ".agent_jwt"
+LEGACY_AGENT_ID_PATH = _AGENT_DIR / ".agent_id"
+LEGACY_PRIVATE_KEY_PATH = _AGENT_DIR / "agent_private_key.pem"
+
+
+def _read_state_text(primary_path, legacy_path):
+    try:
+        if primary_path.exists():
+            return primary_path.read_text(encoding="utf-8").strip()
+        if legacy_path.exists():
+            value = legacy_path.read_text(encoding="utf-8").strip()
+            try:
+                PROGRAM_DATA_DIR.mkdir(parents=True, exist_ok=True)
+                primary_path.write_text(value, encoding="utf-8")
+                try:
+                    legacy_path.unlink()
+                except OSError:
+                    pass
+            except Exception:
+                pass
+            return value
+    except Exception:
+        pass
+    return ""
+
+
+_STORED_AGENT_ID = _read_state_text(AGENT_ID_PATH, LEGACY_AGENT_ID_PATH)
 
 AGENT_ID = os.getenv("AGENT_ID", _STORED_AGENT_ID or TENANT_ID).strip() or TENANT_ID
 ACTIVATION_CODE = os.getenv("ACTIVATION_CODE", "").strip()
 
 # NEW: Web Server Log File Path (You can change this to your Apache/Nginx path later)
 WEB_LOG_PATH = os.getenv("WEB_LOG_PATH", "access.log")
+POS_AUDIT_LOG_PATH = PROGRAM_DATA_DIR / "pos_audit.log"
+POS_AUDIT_QUARANTINE_PATH = PROGRAM_DATA_DIR / "quarantine" / "pos_audit_rejected.jsonl"
+POS_AUDIT_OFFSET_PATH = PROGRAM_DATA_DIR / "pos_audit.offset"
+TELEMETRY_DEPLOY_EVIDENCE_PATH = PROGRAM_DATA_DIR / "telemetry-deploy.json"
 
 WHITELIST_IPS = set(["127.0.0.1", "localhost", "::1", "0.0.0.0"])
-POLL_INTERVAL = 0.25
+POLL_INTERVAL = float(os.getenv("WINDOWS_EVENT_POLL_INTERVAL", "2"))
 HEARTBEAT_INTERVAL = 300
-OUTBOUND_QUEUE_MAX = int(os.getenv("OUTBOUND_QUEUE_MAX", "5000"))
 OUTBOUND_BATCH_SIZE = int(os.getenv("OUTBOUND_BATCH_SIZE", "25"))
 OUTBOUND_BATCH_WAIT_SECONDS = float(os.getenv("OUTBOUND_BATCH_WAIT_SECONDS", "0.25"))
 INGEST_URL = f"{BACKEND_URL}/api/v1/ingest/pulse"
 LOCAL_IP = "127.0.0.1"
-WEB_LOG_PATHS = [WEB_LOG_PATH, "pos_audit.log", "firewall.log"]
-WINDOWS_CHANNELS = ["Security"]
+WEB_LOG_PATHS = [WEB_LOG_PATH, str(POS_AUDIT_LOG_PATH), "firewall.log"]
+WINDOWS_CHANNELS = ["Security", "System"]
+TELEMETRY_CONFIG_VERSION = "native-windows-v1"
+CHANNEL_STATUS = {}
+CHANNEL_STATUS_LOCK = threading.Lock()
+SENSOR_COUNTERS = {
+    "windows_parse_failures": 0,
+    "pos_jsonl_rejections": 0,
+    "channel_failures": 0,
+    "spool_write_failures": 0,
+}
+POS_AUDIT_REQUIRED_FIELDS = {
+    "event_id",
+    "event_uid",
+    "invoice_id",
+    "timestamp",
+    "actor",
+    "source_system",
+}
+POS_AUDIT_OPTIONAL_FIELDS = {
+    "reason",
+    "before_hash",
+    "after_hash",
+    "metadata",
+}
+POS_AUDIT_ALLOWED_EVENT_IDS = {"FBR-INV-MOD", "FBR-INV-DEL"}
 
-try:
-    _STORED_JWT_TOKEN = JWT_TOKEN_PATH.read_text(encoding="utf-8").strip() if JWT_TOKEN_PATH.exists() else ""
-except Exception:
-    _STORED_JWT_TOKEN = ""
+_STORED_JWT_TOKEN = _read_state_text(JWT_TOKEN_PATH, LEGACY_JWT_TOKEN_PATH)
 
 JWT_TOKEN = os.getenv("JWT_TOKEN", "").strip() or _STORED_JWT_TOKEN or None
 BANNED_IPS = set()
 BAN_LOCK = threading.Lock()
 REQUEST_SESSION = requests.Session()
-OUTBOUND_QUEUE = queue.Queue(maxsize=OUTBOUND_QUEUE_MAX)
 
 # ==========================================
 # 2. HELPER FUNCTIONS & MITIGATION
@@ -98,24 +145,27 @@ def get_local_ip():
     except Exception:
         return "127.0.0.1"
 
-def resolve_user(sid):
-    try:
-        if sid:
-            name, domain, _ = win32security.LookupAccountSid(None, sid)
-            return f"{domain}\\{name}"
-    except Exception:
-        pass
-    return "SYSTEM"
-
 LOCAL_IP = get_local_ip()
 
 
 def _load_or_create_signing_key():
     from cryptography.hazmat.primitives.asymmetric import ed25519
     from cryptography.hazmat.primitives import serialization
+    PROGRAM_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if not PRIVATE_KEY_PATH.exists() and LEGACY_PRIVATE_KEY_PATH.exists():
+        try:
+            PRIVATE_KEY_PATH.write_bytes(LEGACY_PRIVATE_KEY_PATH.read_bytes())
+            LEGACY_PRIVATE_KEY_PATH.unlink()
+        except Exception:
+            pass
+    readable_private_key_path = (
+        PRIVATE_KEY_PATH
+        if PRIVATE_KEY_PATH.exists()
+        else LEGACY_PRIVATE_KEY_PATH
+    )
     try:
-        if PRIVATE_KEY_PATH.exists():
-            pem_data = PRIVATE_KEY_PATH.read_bytes()
+        if readable_private_key_path.exists():
+            pem_data = readable_private_key_path.read_bytes()
             return serialization.load_pem_private_key(pem_data, password=None)
     except Exception:
         pass
@@ -128,6 +178,40 @@ def _load_or_create_signing_key():
     )
     PRIVATE_KEY_PATH.write_bytes(pem)
     return signing_key
+
+
+def _consume_activation_secret():
+    global ACTIVATION_CODE
+
+    env_path = _AGENT_DIR / ".env"
+    try:
+        if env_path.exists():
+            retained = [
+                line
+                for line in env_path.read_text(encoding="utf-8").splitlines()
+                if not line.strip().upper().startswith("ACTIVATION_CODE=")
+            ]
+            temporary_path = env_path.with_suffix(".env.tmp")
+            temporary_path.write_text("\n".join(retained) + "\n", encoding="utf-8")
+            os.replace(temporary_path, env_path)
+    except Exception as exc:
+        print(f"[WARN] Could not remove consumed activation code from .env: {exc}")
+
+    legacy_config_path = _AGENT_DIR / "config.json"
+    try:
+        if legacy_config_path.exists():
+            config = json.loads(legacy_config_path.read_text(encoding="utf-8"))
+            if isinstance(config, dict):
+                config.pop("activation_code", None)
+                legacy_config_path.write_text(
+                    json.dumps(config, separators=(",", ":")),
+                    encoding="utf-8",
+                )
+    except Exception as exc:
+        print(f"[WARN] Could not scrub legacy activation config: {exc}")
+
+    ACTIVATION_CODE = ""
+    os.environ.pop("ACTIVATION_CODE", None)
 
 
 def _canonical_json(value):
@@ -207,6 +291,7 @@ def register_agent(signing_key):
         except Exception as exc:
             print(f"[WARN] Could not persist agent identity: {exc}")
 
+        _consume_activation_secret()
         print("[OK] Agent registered with Ed25519 public key and JWT.")
         return True
     print(f"[FAIL] Agent enrollment failed: {resp.status_code} - {resp.text}")
@@ -260,18 +345,18 @@ def load_capture_all_windows_channels():
 
 def load_windows_channels():
     monitoring = _load_monitoring_document().get("monitoring", {})
-    channels = monitoring.get("windows_channels", ["Security"])
+    channels = monitoring.get("windows_channels", ["Security", "System"])
     parsed = [str(c).strip() for c in channels if str(c).strip()]
     if not parsed:
-        parsed = ["Security"]
+        parsed = ["Security", "System"]
     return list(dict.fromkeys(parsed))
 
 def load_web_log_paths():
     monitoring = _load_monitoring_document().get("monitoring", {})
     configured = monitoring.get("web_log_paths", [])
-    parsed = [str(p).strip() for p in configured if str(p).strip()]
+    parsed = [os.path.expandvars(str(p).strip()) for p in configured if str(p).strip()]
     if not parsed:
-        parsed = [WEB_LOG_PATH]
+        parsed = [WEB_LOG_PATH, str(POS_AUDIT_LOG_PATH)]
     return list(dict.fromkeys(parsed))
 
 def load_heartbeat_interval():
@@ -411,6 +496,11 @@ def secure_request(method, url, **kwargs):
 import re as _re
 import shutil
 
+
+class SpoolWriteError(OSError):
+    """Raised when an event cannot be made durable on local disk."""
+
+
 class DiskSpooler:
     """
     MASTER BUILD: Atomic 'Rotate & Drain' Spooler.
@@ -419,6 +509,7 @@ class DiskSpooler:
     def __init__(self, spool_dir="spool"):
         self.spool_dir = Path(spool_dir)
         self.pending_file = self.spool_dir / "pending_logs.jsonl"
+        self.dead_letter_file = self.spool_dir / "rejected_logs.jsonl"
         self.lock = threading.Lock()
 
         # Ensure spool environment exists
@@ -432,8 +523,33 @@ class DiskSpooler:
             with self.lock:
                 with open(self.pending_file, "a", encoding="utf-8") as f:
                     f.write(line)
+                    f.flush()
+                    os.fsync(f.fileno())
+            return True
         except Exception as e:
+            with CHANNEL_STATUS_LOCK:
+                SENSOR_COUNTERS["spool_write_failures"] += 1
             print(f"[!] Spooler Append Error: {e}")
+            raise SpoolWriteError(str(e)) from e
+
+    def quarantine(self, log_dict, reason):
+        """Durably retain events rejected by the backend for later inspection."""
+        entry = {
+            "quarantined_at": datetime.now(timezone.utc).isoformat(),
+            "reason": str(reason)[:1000],
+            "event": log_dict,
+        }
+        line = json.dumps(entry, ensure_ascii=False, default=str) + "\n"
+        try:
+            with self.lock:
+                with open(self.dead_letter_file, "a", encoding="utf-8") as f:
+                    f.write(line)
+                    f.flush()
+                    os.fsync(f.fileno())
+        except Exception as exc:
+            with CHANNEL_STATUS_LOCK:
+                SENSOR_COUNTERS["spool_write_failures"] += 1
+            raise SpoolWriteError(str(exc)) from exc
 
     def consume_batch(self):
         """
@@ -497,49 +613,232 @@ class DiskSpooler:
             print(f"[!] Spooler Cleanup Error: {e}")
 
 # Global Spooler Instance
-SPOOLER = DiskSpooler()
+SPOOLER = DiskSpooler(PROGRAM_DATA_DIR / "spool")
 
-# --- FORENSIC REGEX ENGINE ---
-# Targeted extraction for 4624 (Success) and 4625 (Failure)
-RE_TARGET_USER = _re.compile(r"Account Name:\s+(?!-)([\w\-\.\$]+)", _re.IGNORECASE)
-RE_SOURCE_IP = _re.compile(r"Source Network Address:\s+([\d\.:a-fA-F]+)", _re.IGNORECASE)
-RE_LOGON_TYPE = _re.compile(r"Logon Type:\s+(\d+)", _re.IGNORECASE)
+def _xml_local_name(tag):
+    return str(tag or "").split("}", 1)[-1]
 
-def parse_event_data(event_id, raw_msg):
-    """
-    MASTER BUILD: Deep Extraction with Raw Fallback.
-    Constructs the target payload contract for forensic searchability.
-    """
-    processed = None
 
-    try:
-        if event_id in [4624, 4625]:
-            users = RE_TARGET_USER.findall(raw_msg)
-            # 4624/4625 usually has two 'Account Name' entries.
-            # The first is the SUBJECT (system), the second is the TARGET (user).
-            target_user = users[1] if len(users) > 1 else (users[0] if users else "Unknown")
+def parse_windows_event_xml(xml_text):
+    """Parse Windows Event XML into locale-independent system and event fields."""
+    root = ET.fromstring(xml_text)
+    namespace = {"e": "http://schemas.microsoft.com/win/2004/08/events/event"}
+    system_node = root.find("e:System", namespace)
+    if system_node is None:
+        raise ValueError("Windows event XML has no System node")
 
-            source_ip_match = RE_SOURCE_IP.search(raw_msg)
-            logon_type_match = RE_LOGON_TYPE.search(raw_msg)
+    def _system_text(name, default=""):
+        node = system_node.find(f"e:{name}", namespace)
+        return str(node.text or default).strip() if node is not None else default
 
-            processed = {
-                "target_user": target_user,
-                "source_network_address": source_ip_match.group(1) if source_ip_match else None,
-                "logon_type": int(logon_type_match.group(1)) if logon_type_match else None
-            }
-    except Exception as e:
-        print(f"[WARN] Regex Extraction Failed: {e}")
-        processed = None
-
-    # THE MANDATE: Construct the Forensic Payload Contract
-    return {
-        "processed_data": processed,
-        "raw_event_data": raw_msg # ORIGINAL UNTOUCHED RAW BLOCK
+    provider_node = system_node.find("e:Provider", namespace)
+    time_node = system_node.find("e:TimeCreated", namespace)
+    security_node = system_node.find("e:Security", namespace)
+    event_id = _system_text("EventID")
+    system_data = {
+        "provider": provider_node.attrib.get("Name", "") if provider_node is not None else "",
+        "channel": _system_text("Channel"),
+        "computer": _system_text("Computer"),
+        "event_record_id": _system_text("EventRecordID"),
+        "level": _system_text("Level"),
+        "task": _system_text("Task"),
+        "opcode": _system_text("Opcode"),
+        "keywords": _system_text("Keywords"),
+        "system_time": time_node.attrib.get("SystemTime", "") if time_node is not None else "",
+        "user_id": security_node.attrib.get("UserID", "") if security_node is not None else "",
     }
 
+    fields = {}
+    event_data_node = root.find("e:EventData", namespace)
+    if event_data_node is not None:
+        unnamed_index = 0
+        for data_node in list(event_data_node):
+            if _xml_local_name(data_node.tag) != "Data":
+                continue
+            field_name = str(data_node.attrib.get("Name") or f"value_{unnamed_index}")
+            unnamed_index += 1
+            field_value = data_node.text or ""
+            if field_name in fields:
+                current = fields[field_name]
+                fields[field_name] = current + [field_value] if isinstance(current, list) else [current, field_value]
+            else:
+                fields[field_name] = field_value
+
+    user_data_node = root.find("e:UserData", namespace)
+    if user_data_node is not None:
+        for node in user_data_node.iter():
+            if node is user_data_node or list(node):
+                continue
+            fields.setdefault(_xml_local_name(node.tag), node.text or "")
+
+    processed = {"provider": system_data["provider"], "channel": system_data["channel"]}
+    if event_id in {"4624", "4625"}:
+        processed.update({
+            "target_user": fields.get("TargetUserName") or fields.get("TargetUserSid"),
+            "target_domain": fields.get("TargetDomainName"),
+            "source_network_address": fields.get("IpAddress"),
+            "source_port": fields.get("IpPort"),
+            "logon_type": fields.get("LogonType"),
+            "status": fields.get("Status"),
+            "sub_status": fields.get("SubStatus"),
+        })
+    elif event_id == "4688":
+        processed.update({
+            "user": fields.get("SubjectUserName"),
+            "new_process_name": fields.get("NewProcessName"),
+            "new_process_id": fields.get("NewProcessId"),
+            "parent_process_name": fields.get("ParentProcessName"),
+            "command_line": fields.get("CommandLine"),
+            "token_elevation_type": fields.get("TokenElevationType"),
+        })
+    elif event_id == "4663":
+        processed.update({
+            "user": fields.get("SubjectUserName"),
+            "object_type": fields.get("ObjectType"),
+            "object_name": fields.get("ObjectName"),
+            "handle_id": fields.get("HandleId"),
+            "process_id": fields.get("ProcessId"),
+            "process_name": fields.get("ProcessName"),
+            "access_mask": fields.get("AccessMask"),
+            "access_list": fields.get("AccessList"),
+        })
+    elif event_id == "4660":
+        processed.update({
+            "user": fields.get("SubjectUserName"),
+            "handle_id": fields.get("HandleId"),
+            "process_id": fields.get("ProcessId"),
+            "process_name": fields.get("ProcessName"),
+        })
+    elif event_id == "4670":
+        processed.update({
+            "user": fields.get("SubjectUserName"),
+            "object_type": fields.get("ObjectType"),
+            "object_name": fields.get("ObjectName"),
+            "handle_id": fields.get("HandleId"),
+            "process_id": fields.get("ProcessId"),
+            "process_name": fields.get("ProcessName"),
+            "old_security_descriptor": fields.get("OldSd"),
+            "new_security_descriptor": fields.get("NewSd"),
+        })
+    elif event_id == "7045":
+        processed.update({
+            "service_name": fields.get("ServiceName"),
+            "image_path": fields.get("ImagePath"),
+            "service_type": fields.get("ServiceType"),
+            "start_type": fields.get("StartType"),
+            "service_account": fields.get("AccountName"),
+        })
+
+    processed = {key: value for key, value in processed.items() if value not in (None, "")}
+    return {
+        "event_id": event_id,
+        "timestamp": system_data["system_time"] or datetime.now(timezone.utc).isoformat(),
+        "event_uid": f"{system_data['channel']}:{system_data['event_record_id']}",
+        "user": processed.get("target_user") or processed.get("user") or system_data["user_id"] or "SYSTEM",
+        "source_ip": processed.get("source_network_address") or LOCAL_IP,
+        "processed_data": processed,
+        "raw_event_data": {
+            "system": system_data,
+            "event_data": fields,
+            "event_xml": xml_text,
+        },
+    }
+
+
+def build_windows_event_message(parsed):
+    event_id = str(parsed.get("event_id") or "")
+    processed = parsed.get("processed_data") or {}
+    if event_id == "4688":
+        return " ".join(
+            str(value)
+            for value in (
+                processed.get("new_process_name"),
+                processed.get("command_line"),
+                processed.get("parent_process_name"),
+            )
+            if value
+        ) or "Windows process creation event"
+    if event_id == "7045":
+        return " ".join(
+            str(value)
+            for value in (
+                "Windows service installed",
+                processed.get("service_name"),
+                processed.get("image_path"),
+                processed.get("service_account"),
+            )
+            if value
+        )
+    event_fields = parsed.get("raw_event_data", {}).get("event_data", {})
+    return f"Windows Event {event_id}: {json.dumps(event_fields, ensure_ascii=False, default=str)}"
+
+
+def parse_pos_audit_line(line):
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise ValueError("invalid JSON") from exc
+    if not isinstance(record, dict):
+        raise ValueError("record must be a JSON object")
+
+    unknown_fields = set(record) - POS_AUDIT_REQUIRED_FIELDS - POS_AUDIT_OPTIONAL_FIELDS
+    if unknown_fields:
+        raise ValueError(f"unknown fields: {', '.join(sorted(unknown_fields))}")
+    missing_fields = [
+        field for field in sorted(POS_AUDIT_REQUIRED_FIELDS)
+        if not str(record.get(field) or "").strip()
+    ]
+    if missing_fields:
+        raise ValueError(f"missing fields: {', '.join(missing_fields)}")
+
+    event_id = str(record["event_id"]).strip().upper()
+    if event_id not in POS_AUDIT_ALLOWED_EVENT_IDS:
+        raise ValueError("event_id is not an allowed invoice audit event")
+    if "metadata" in record and not isinstance(record["metadata"], dict):
+        raise ValueError("metadata must be an object")
+
+    try:
+        parsed_timestamp = datetime.fromisoformat(str(record["timestamp"]).replace("Z", "+00:00"))
+        if parsed_timestamp.tzinfo is None:
+            parsed_timestamp = parsed_timestamp.replace(tzinfo=timezone.utc)
+    except Exception as exc:
+        raise ValueError("timestamp must be ISO-8601") from exc
+
+    normalized = dict(record)
+    normalized["event_id"] = event_id
+    normalized["event_uid"] = str(record["event_uid"]).strip()
+    normalized["invoice_id"] = str(record["invoice_id"]).strip()
+    normalized["actor"] = str(record["actor"]).strip()
+    normalized["source_system"] = str(record["source_system"]).strip()
+    normalized["timestamp"] = parsed_timestamp.astimezone(timezone.utc).isoformat()
+    return normalized
+
+
+def quarantine_pos_audit_line(line, reason, file_path):
+    with CHANNEL_STATUS_LOCK:
+        SENSOR_COUNTERS["pos_jsonl_rejections"] += 1
+    try:
+        POS_AUDIT_QUARANTINE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if POS_AUDIT_QUARANTINE_PATH.exists() and POS_AUDIT_QUARANTINE_PATH.stat().st_size > 10 * 1024 * 1024:
+            rotated = POS_AUDIT_QUARANTINE_PATH.with_suffix(".jsonl.1")
+            if rotated.exists():
+                rotated.unlink()
+            POS_AUDIT_QUARANTINE_PATH.replace(rotated)
+        entry = {
+            "rejected_at": datetime.now(timezone.utc).isoformat(),
+            "source_file": str(file_path),
+            "reason": str(reason),
+            "line_sha256": hashlib.sha256(line.encode("utf-8", errors="replace")).hexdigest(),
+            "raw_line": line,
+        }
+        with open(POS_AUDIT_QUARANTINE_PATH, "a", encoding="utf-8") as quarantine:
+            quarantine.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+    except Exception as exc:
+        print(f"[WARN] Could not quarantine POS audit line: {exc}")
+
 def enqueue_payload(payload):
-    """Legacy wrapper: now routes exactly to the DiskSpooler."""
-    SPOOLER.append(payload)
+    """Make an outbound event durable before its source cursor can advance."""
+    return SPOOLER.append(payload)
 
 def _estimate_payload_bytes(batch):
     """Estimate encoded request size in bytes for a JSON batch."""
@@ -645,7 +944,9 @@ def ingest_sender_thread():
                     for single_log in chunk:
                         sr = secure_request("POST", INGEST_URL, json=_build_ingest_envelope([single_log]), timeout=10)
                         if not sr or sr.status_code not in (200, 202):
-                            print(f"[DROP] Dropping malformed forensic event: {single_log.get('event_id')}")
+                            status = sr.status_code if sr else "timeout"
+                            SPOOLER.quarantine(single_log, f"backend_rejected:{status}")
+                            print(f"[QUARANTINE] Backend rejected forensic event: {single_log.get('event_id')}")
                     continue
 
                 else:
@@ -726,10 +1027,39 @@ def resolve_web_log_files():
 def heartbeat_thread():
     signing_key = _load_or_create_signing_key()
     while True:
+        with CHANNEL_STATUS_LOCK:
+            channel_status = copy.deepcopy(CHANNEL_STATUS)
+            sensor_counters = dict(SENSOR_COUNTERS)
+        pos_audit_configured = any(
+            os.path.basename(str(path)).lower() == "pos_audit.log"
+            for path in WEB_LOG_PATHS
+        )
+        deployment_evidence = {}
+        try:
+            if TELEMETRY_DEPLOY_EVIDENCE_PATH.exists():
+                deployment_evidence = json.loads(
+                    TELEMETRY_DEPLOY_EVIDENCE_PATH.read_text(encoding="utf-8-sig")
+                )
+        except Exception:
+            deployment_evidence = {}
         payload = {
             "agent_id": AGENT_ID,
-            "current_version": "4.1-Hardened",
+            "current_version": "4.2-Native",
             "timestamp": time.time(),
+            "sensor_status": {
+                "telemetry_config_version": TELEMETRY_CONFIG_VERSION,
+                "audit_policy_status": deployment_evidence.get("status", "unknown"),
+                "pos_sacl_path_count": int(deployment_evidence.get("pos_path_count", 0) or 0),
+                "channels": channel_status,
+                "counters": sensor_counters,
+                "pos_audit_log": {
+                    "configured": pos_audit_configured,
+                    "present": any(
+                        os.path.basename(str(path)).lower() == "pos_audit.log" and os.path.exists(path)
+                        for path in WEB_LOG_PATHS
+                    ),
+                },
+            },
         }
         resp = _signed_agent_post("/api/v1/agent/heartbeat", payload, signing_key, timeout=10)
         if resp and resp.status_code == 200:
@@ -752,7 +1082,15 @@ def web_hunter_thread():
 
             if file_path not in file_positions:
                 try:
-                    file_positions[file_path] = os.path.getsize(file_path)
+                    file_size = os.path.getsize(file_path)
+                    if os.path.basename(file_path).lower() == "pos_audit.log":
+                        try:
+                            stored_offset = int(POS_AUDIT_OFFSET_PATH.read_text(encoding="ascii").strip())
+                        except Exception:
+                            stored_offset = 0
+                        file_positions[file_path] = stored_offset if 0 <= stored_offset <= file_size else 0
+                    else:
+                        file_positions[file_path] = file_size
                 except Exception:
                     file_positions[file_path] = 0
 
@@ -773,168 +1111,273 @@ def web_hunter_thread():
                         if not line:
                             continue
 
+                        file_name = os.path.basename(file_path).lower()
+                        if file_name == "pos_audit.log":
+                            try:
+                                record = parse_pos_audit_line(line)
+                            except ValueError as exc:
+                                quarantine_pos_audit_line(line, exc, file_path)
+                                print(f"[WARN] Rejected POS audit record: {exc}")
+                                continue
+
+                            processed_data = {
+                                key: record.get(key)
+                                for key in (
+                                    "invoice_id",
+                                    "actor",
+                                    "source_system",
+                                    "reason",
+                                    "before_hash",
+                                    "after_hash",
+                                    "metadata",
+                                )
+                                if record.get(key) not in (None, "")
+                            }
+                            payload = {
+                                "agent_id": AGENT_ID,
+                                "source_ip": LOCAL_IP,
+                                "user": record["actor"],
+                                "event_id": record["event_id"],
+                                "event_type": "fbr_pos",
+                                "event_uid": record["event_uid"],
+                                "invoice_id": record["invoice_id"],
+                                "source_system": record["source_system"],
+                                "message": record.get("reason") or f"{record['event_id']} for invoice {record['invoice_id']}",
+                                "timestamp": record["timestamp"],
+                                "raw_data": record,
+                                "raw_event_data": record,
+                                "processed_data": processed_data,
+                                "agent_version": "4.2-Native",
+                            }
+                            enqueue_payload(payload)
+                            continue
+
                         print(f"[INFO] Web Event Detected: {line[:50]}...")
                         extracted_source_ip = extract_source_ip_from_line(line)
-                        file_name = file_path.lower()
-                        event_id = "APP-LOG-GENERIC"
-                        if "pos_audit.log" in file_name:
-                            event_id = "FBR-INV-MOD"
-                        elif "firewall.log" in file_name:
-                            event_id = "WAF-BLOCK-01"
-
+                        event_id = "WAF-BLOCK-01" if file_name == "firewall.log" else "APP-LOG-GENERIC"
+                        event_type = "firewall" if file_name == "firewall.log" else "http_request"
                         payload = {
                             "agent_id": AGENT_ID,
                             "source_ip": extracted_source_ip or LOCAL_IP,
                             "user": "System",
                             "event_id": event_id,
+                            "event_type": event_type,
                             "event_uid": uuid.uuid4().hex,
                             "message": line,
                             "timestamp": datetime.now(timezone.utc).isoformat(),
                             "raw_data": {"raw": line, "web_log_file": file_path},
                             "raw_event_data": {"raw": line, "web_log_file": file_path},
                             "processed_data": {},
-                            "agent_version": "4.0-Omni"
+                            "agent_version": "4.2-Native",
                         }
-                        # Removed per-event ECDSA signing to save CPU
                         enqueue_payload(payload)
 
                     file_positions[file_path] = file.tell()
+                    if os.path.basename(file_path).lower() == "pos_audit.log":
+                        try:
+                            PROGRAM_DATA_DIR.mkdir(parents=True, exist_ok=True)
+                            offset_temp = POS_AUDIT_OFFSET_PATH.with_suffix(".offset.tmp")
+                            offset_temp.write_text(str(file_positions[file_path]), encoding="ascii")
+                            os.replace(offset_temp, POS_AUDIT_OFFSET_PATH)
+                        except Exception as exc:
+                            print(f"[WARN] Could not persist POS audit offset: {exc}")
             except Exception as e:
                 print(f"[!] Web log read error ({file_path}): {e}")
 
         time.sleep(0.2)
 
 
-def log_hunter_thread():
-    print(f"[*] Windows Hunter Online. Streaming via Secure Tunnel...")
-    if CAPTURE_ALL_SECURITY_EVENTS:
-        print("[*] Monitoring Mode: capture_all_security_events=true (all Security log events)")
-    if CAPTURE_ALL_WINDOWS_CHANNELS:
-        print("[*] Monitoring Mode: capture_all_windows_channels=true")
+def _event_record_id_from_xml(xml_text):
+    """Extract the source cursor even when full event normalization fails."""
+    match = _re.search(r"<EventRecordID>(\d+)</EventRecordID>", str(xml_text or ""))
+    return int(match.group(1)) if match else 0
+
+
+def _persist_watermarks(watermark_file, watermarks):
+    """Atomically persist cursors; a failed write can cause duplicates, never loss."""
+    watermark_file.parent.mkdir(parents=True, exist_ok=True)
+    temporary_file = watermark_file.with_suffix(".tmp")
+    with open(temporary_file, "w", encoding="utf-8") as watermark_handle:
+        json.dump(watermarks, watermark_handle, sort_keys=True)
+        watermark_handle.flush()
+        os.fsync(watermark_handle.fileno())
+    os.replace(temporary_file, watermark_file)
+
+
+def _durably_enqueue_native_event(payload, record_id, current_watermark):
+    """Advance a source cursor only after the event is durable in the spool."""
+    enqueue_payload(payload)
+    return max(current_watermark, record_id)
+
+
+def native_log_hunter_thread():
+    """Collect native Windows channels through the language-independent Event XML API."""
+    print("[*] Native Windows Hunter Online. Streaming via Secure Tunnel...")
     print(f"[*] Monitoring Channels: {WINDOWS_CHANNELS}")
     print(f"[*] Monitoring Event IDs: {sorted(TARGET_EVENT_IDS)}")
 
-    # 💾 WATERMARK PERSISTENCE: Zero-loss after reboot/crash
-    watermark_file = Path(_AGENT_DIR) / "spool" / "watermarks.json"
+    watermark_file = PROGRAM_DATA_DIR / "spool" / "watermarks.json"
     highest_record_seen = {}
     try:
         if watermark_file.exists():
-            with open(watermark_file, "r") as f:
-                highest_record_seen = json.load(f)
-            print(f"[*] Loaded persistent watermarks: {highest_record_seen}")
-    except Exception as e:
-        print(f"[!] Failed to load watermarks, starting fresh: {e}")
+            with open(watermark_file, "r", encoding="utf-8") as watermark_handle:
+                highest_record_seen = json.load(watermark_handle)
+    except Exception as exc:
+        print(f"[WARN] Failed to load native event watermarks: {exc}")
 
-    flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
+    def set_channel_status(channel, status, error=None, last_event_at=None):
+        with CHANNEL_STATUS_LOCK:
+            current = dict(CHANNEL_STATUS.get(channel) or {})
+            current["status"] = status
+            current["last_checked_at"] = datetime.now(timezone.utc).isoformat()
+            current["last_error"] = str(error)[:500] if error else None
+            if last_event_at:
+                current["last_event_at"] = last_event_at
+            CHANNEL_STATUS[channel] = current
 
-    for log_type in WINDOWS_CHANNELS:
-        if log_type not in highest_record_seen:
-            try:
-                temp_hand = win32evtlog.OpenEventLog(None, log_type)
-                events = win32evtlog.ReadEventLog(temp_hand, flags, 0)
-                if events:
-                    highest_record_seen[log_type] = events[0].RecordNumber
-                else:
-                    highest_record_seen[log_type] = 0
-                win32evtlog.CloseEventLog(temp_hand)
-                print(f"[*] Synced channel '{log_type}'. Watermark: {highest_record_seen[log_type]}")
-            except Exception as e:
-                print(f"[!] Channel open failed ({log_type}): {e}")
-                highest_record_seen[log_type] = 0
+    def close_handle(handle):
+        try:
+            win32evtlog.EvtClose(handle)
+        except Exception:
+            pass
 
-    if not any(v >= 0 for v in highest_record_seen.values()):
-        print("[!] No Windows Event channels available. Run agent as Administrator.")
-        os._exit(1)
+    def latest_record_id(channel):
+        query_handle = None
+        event_handles = []
+        try:
+            flags = win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryReverseDirection
+            query_handle = win32evtlog.EvtQuery(channel, flags, "*")
+            event_handles = win32evtlog.EvtNext(query_handle, 1)
+            if not event_handles:
+                return 0
+            xml_text = win32evtlog.EvtRender(event_handles[0], win32evtlog.EvtRenderEventXml)
+            parsed = parse_windows_event_xml(xml_text)
+            return int(parsed["raw_event_data"]["system"].get("event_record_id") or 0)
+        finally:
+            for event_handle in event_handles:
+                close_handle(event_handle)
+            if query_handle:
+                close_handle(query_handle)
+
+    for channel in WINDOWS_CHANNELS:
+        if channel in highest_record_seen:
+            continue
+        try:
+            highest_record_seen[channel] = latest_record_id(channel)
+            set_channel_status(channel, "ok")
+            print(f"[*] Synced channel '{channel}'. Watermark: {highest_record_seen[channel]}")
+        except Exception as exc:
+            highest_record_seen[channel] = 0
+            set_channel_status(channel, "error", exc)
+            print(f"[WARN] Channel open failed ({channel}): {exc}")
 
     while True:
-        for log_type in WINDOWS_CHANNELS:
-            hand = None
+        for channel in WINDOWS_CHANNELS:
+            query_handle = None
+            event_handles = []
             try:
-                hand = win32evtlog.OpenEventLog(None, log_type)
-
-                channel_watermark = highest_record_seen.get(log_type, 0)
+                channel_watermark = int(highest_record_seen.get(channel, 0) or 0)
                 current_batch_highest = channel_watermark
-                reached_watermark = False
+                query = f"*[System[EventRecordID > {channel_watermark}]]"
+                flags = win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryForwardDirection
+                query_handle = win32evtlog.EvtQuery(channel, flags, query)
+                spool_blocked = False
 
-                # Loop to read all chunks until we hit the watermark
-                while not reached_watermark:
-                    events = win32evtlog.ReadEventLog(hand, flags, 0)
-                    if not events:
-                        break # No more events to read
+                while True:
+                    event_handles = win32evtlog.EvtNext(query_handle, 64)
+                    if not event_handles:
+                        break
+                    for event_handle in event_handles:
+                        rendered_record_id = 0
+                        try:
+                            xml_text = win32evtlog.EvtRender(event_handle, win32evtlog.EvtRenderEventXml)
+                            rendered_record_id = _event_record_id_from_xml(xml_text)
+                            parsed = parse_windows_event_xml(xml_text)
+                            event_id = str(parsed.get("event_id") or "").strip()
+                            record_id = int(parsed["raw_event_data"]["system"].get("event_record_id") or 0)
 
-                    for event in events:
-                        if event.RecordNumber <= channel_watermark:
-                            reached_watermark = True
-                            break
-
-                        current_batch_highest = max(current_batch_highest, event.RecordNumber)
-                        event_id = str(event.EventID & 0xFFFF)
-
-                        # Ignore malformed/noise records that surface as Event ID 0.
-                        if not event_id or event_id == "0":
-                            continue
-
-                        include_event = CAPTURE_ALL_WINDOWS_CHANNELS
-                        if not include_event:
-                            if log_type.lower() == "security" and CAPTURE_ALL_SECURITY_EVENTS:
-                                include_event = True
-                            elif event_id in TARGET_EVENT_IDS:
-                                include_event = True
-
-                        if include_event:
-                            try:
-                                raw_msg = win32evtlogutil.SafeFormatMessage(event, log_type)
-                            except Exception:
-                                inserts = getattr(event, "StringInserts", None) or []
-                                raw_msg = " | ".join(str(x) for x in inserts) if inserts else f"Event {event_id}"
-
-                            clean_msg = " ".join(str(raw_msg).split())
-
-                            # DEEP EXTRACTION & RAW FALLBACK
-                            parsed_payload = parse_event_data(event_id, raw_msg)
+                            include_event = CAPTURE_ALL_WINDOWS_CHANNELS
+                            if not include_event:
+                                if channel.lower() == "security" and CAPTURE_ALL_SECURITY_EVENTS:
+                                    include_event = True
+                                elif event_id in TARGET_EVENT_IDS:
+                                    include_event = True
+                            if not include_event or event_id == "0":
+                                current_batch_highest = max(current_batch_highest, record_id)
+                                continue
 
                             payload = {
                                 "agent_id": AGENT_ID,
-                                "source_ip": LOCAL_IP,
-                                "user": resolve_user(event.Sid),
+                                "source_ip": parsed["source_ip"],
+                                "user": parsed["user"],
                                 "event_id": event_id,
-                                "event_uid": f"{log_type}:{event.RecordNumber}",
-                                "message": f"[{log_type}] Event {event_id}: {clean_msg}",
-                                "timestamp": event.TimeGenerated.replace(tzinfo=datetime.now().astimezone().tzinfo).astimezone(timezone.utc).isoformat() if event.TimeGenerated else datetime.now(timezone.utc).isoformat(),
-                                "processed_data": parsed_payload["processed_data"],
-                                "raw_event_data": parsed_payload["raw_event_data"],
-                                "agent_version": "4.1-Hardened"
+                                "event_uid": parsed["event_uid"],
+                                "message": build_windows_event_message(parsed),
+                                "timestamp": parsed["timestamp"],
+                                "processed_data": parsed["processed_data"],
+                                "raw_event_data": parsed["raw_event_data"],
+                                "agent_version": "4.2-Native",
                             }
+                            current_batch_highest = _durably_enqueue_native_event(
+                                payload,
+                                record_id,
+                                current_batch_highest,
+                            )
+                            set_channel_status(channel, "ok", last_event_at=parsed["timestamp"])
+                        except SpoolWriteError as exc:
+                            spool_blocked = True
+                            set_channel_status(channel, "degraded", exc)
+                            print(
+                                f"[ERROR] Native collection paused at {channel}:"
+                                f"{rendered_record_id or 'unknown'} until spool storage recovers: {exc}"
+                            )
+                        except Exception as exc:
+                            with CHANNEL_STATUS_LOCK:
+                                SENSOR_COUNTERS["windows_parse_failures"] += 1
+                            if rendered_record_id:
+                                current_batch_highest = max(current_batch_highest, rendered_record_id)
+                            set_channel_status(channel, "degraded", exc)
+                            print(f"[WARN] Native event XML parse failed ({channel}): {exc}")
+                        finally:
+                            close_handle(event_handle)
+                        if spool_blocked:
+                            break
+                    if spool_blocked:
+                        break
+                    event_handles = []
 
-                            # Removed per-event ECDSA signing to save CPU
-
-                            print(f"[INFO] Windows Event Spooled: {log_type}:{event_id}")
-                            enqueue_payload(payload)
-
-                if highest_record_seen[log_type] != current_batch_highest:
-                    highest_record_seen[log_type] = current_batch_highest
-                    # Persist watermark immediately to avoid data loss on crash
+                if highest_record_seen.get(channel) != current_batch_highest:
+                    highest_record_seen[channel] = current_batch_highest
                     try:
-                        with open(watermark_file, "w") as f:
-                            json.dump(highest_record_seen, f)
-                    except Exception as e:
-                        pass
-
-            except Exception:
-                pass
+                        _persist_watermarks(watermark_file, highest_record_seen)
+                    except Exception as exc:
+                        set_channel_status(channel, "degraded", exc)
+                        print(f"[WARN] Failed to persist native event watermarks: {exc}")
+                if not spool_blocked:
+                    set_channel_status(channel, "ok")
+            except Exception as exc:
+                with CHANNEL_STATUS_LOCK:
+                    SENSOR_COUNTERS["channel_failures"] += 1
+                set_channel_status(channel, "error", exc)
+                print(f"[WARN] Native channel read failed ({channel}): {exc}")
             finally:
-                if hand:
-                    win32evtlog.CloseEventLog(hand)
-
+                for event_handle in event_handles:
+                    close_handle(event_handle)
+                if query_handle:
+                    close_handle(query_handle)
         time.sleep(POLL_INTERVAL)
 
 if __name__ == "__main__":
     print("==========================================")
-    print(f"   WarSOC OMNI AGENT v4.0 ")
+    print("   WarSOC OMNI AGENT v4.2 Native")
     print(f"   Tenant ID: {TENANT_ID}")
     print("==========================================")
 
-    if not TARGET_EVENT_IDS and not CAPTURE_ALL_SECURITY_EVENTS:
+    if (
+        not TARGET_EVENT_IDS
+        and not CAPTURE_ALL_SECURITY_EVENTS
+        and not CAPTURE_ALL_WINDOWS_CHANNELS
+    ):
         print("[FAIL] FATAL: No Event IDs configured. Set monitoring.target_event_ids in tenant_policy.json or app/config/config.json")
         sys.exit(1)
 
@@ -943,11 +1386,12 @@ if __name__ == "__main__":
     # START ALL SENSORS
     threading.Thread(target=heartbeat_thread, daemon=True).start()
     threading.Thread(target=ingest_sender_thread, daemon=True).start()
-    threading.Thread(target=log_hunter_thread, daemon=True).start()
-    threading.Thread(target=web_hunter_thread, daemon=True).start() # The new Web Scanner!
+    threading.Thread(target=native_log_hunter_thread, daemon=True).start()
+    threading.Thread(target=web_hunter_thread, daemon=True).start()
 
     try:
-        while True: time.sleep(1)
+        while True:
+            time.sleep(1)
     except KeyboardInterrupt:
         print("\n[INFO] Safe exit.")
         sys.exit(0)

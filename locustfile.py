@@ -16,7 +16,7 @@ from app.routes.auth import get_password_hash
 from app.config.config import get_settings
 
 
-EVENT_IDS = [4624, 3, 4657, 4688, 4697, 5156]
+EVENT_IDS = [4624, 3, 4657, 4688, 4697, 5157]
 PWD = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 SETTINGS = get_settings()
 

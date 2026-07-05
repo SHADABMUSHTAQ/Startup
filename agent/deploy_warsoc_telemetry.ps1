@@ -1,455 +1,525 @@
 [CmdletBinding()]
 param(
     [Alias("Uninstall")][switch]$Rollback,
-    [string]$SysmonUri = "https://live.sysinternals.com/Sysmon64.exe",
-    [string]$ConfigPath = ""
+    [string]$PosPaths = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
-    $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-    $ConfigPath = Join-Path $scriptDirectory "sysmon-config.xml"
-}
+$ScriptVersion = "3.0.0-native"
+$StateDirectory = Join-Path $env:ProgramData "WarSOC"
+$StatePath = Join-Path $StateDirectory "native-telemetry-state.json"
+$EvidencePath = Join-Path $StateDirectory "telemetry-deploy.json"
+$PosAuditPath = Join-Path $StateDirectory "pos_audit.log"
+$AuditRegistryPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\System\Audit"
+$AuditRegistryName = "ProcessCreationIncludeCmdLine_Enabled"
+$InstallHadExistingState = $false
 
-$ScriptVersion = "2.0.0"
-$EventLogName = "Application"
-$EventSource = "WarSOC-TelemetryDeploy"
-$AuditRegPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\System\Audit"
-$AuditRegName = "ProcessCreationIncludeCmdLine_Enabled"
-$SysmonExePath = Join-Path $env:TEMP "Sysmon64.exe"
-$PrimaryArtifactDir = Join-Path $env:ProgramData "WarSOC"
-$FallbackArtifactDir = Join-Path $env:TEMP "WarSOC"
+$AuditControls = @(
+    @{ Name = "Logon"; Id = "{0CCE9215-69AE-11D9-BED3-505054503030}"; Success = $true; Failure = $true },
+    @{ Name = "Process Creation"; Id = "{0CCE922B-69AE-11D9-BED3-505054503030}"; Success = $true; Failure = $false },
+    @{ Name = "File System"; Id = "{0CCE921D-69AE-11D9-BED3-505054503030}"; Success = $true; Failure = $true },
+    @{ Name = "Registry"; Id = "{0CCE921E-69AE-11D9-BED3-505054503030}"; Success = $true; Failure = $true },
+    @{ Name = "Other Object Access Events"; Id = "{0CCE9227-69AE-11D9-BED3-505054503030}"; Success = $true; Failure = $true },
+    @{ Name = "Filtering Platform Connection"; Id = "{0CCE9226-69AE-11D9-BED3-505054503030}"; Success = $false; Failure = $true },
+    @{ Name = "User Account Management"; Id = "{0CCE9235-69AE-11D9-BED3-505054503030}"; Success = $true; Failure = $true },
+    @{ Name = "Security Group Management"; Id = "{0CCE9237-69AE-11D9-BED3-505054503030}"; Success = $true; Failure = $true },
+    @{ Name = "Special Logon"; Id = "{0CCE921B-69AE-11D9-BED3-505054503030}"; Success = $true; Failure = $false },
+    @{ Name = "Security System Extension"; Id = "{0CCE9211-69AE-11D9-BED3-505054503030}"; Success = $true; Failure = $true },
+    @{ Name = "Audit Policy Change"; Id = "{0CCE922F-69AE-11D9-BED3-505054503030}"; Success = $true; Failure = $true }
+)
 
-$EventIds = @{
-    InstallSuccess = 7001
-    InstallFailure = 7002
-    UpdateSuccess = 7003
-    RollbackSuccess = 7004
-    RollbackFailure = 7005
-    IntegrityFailure = 7006
-    AdminGateFailure = 7007
-}
-
-$script:ArtifactDir = $null
-$script:ArtifactPath = $null
-$script:StatePath = $null
-$script:PendingEventPath = $null
-$script:TelemetryContext = [ordered]@{
-    sysmon_config_sha256 = ""
-    sysmon_config_version = ""
-    sysmon_binary_sha256 = ""
-    signer_subject = ""
-    signer_thumbprint = ""
-}
-
-function Test-IsAdmin {
+function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]::new($identity)
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Get-Operator {
-    try {
-        return [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    } catch {
-        return $env:USERNAME
+function Ensure-StateDirectory {
+    if (-not (Test-Path -LiteralPath $StateDirectory)) {
+        New-Item -ItemType Directory -Path $StateDirectory -Force | Out-Null
+    }
+    if (-not (Test-Path -LiteralPath $PosAuditPath)) {
+        New-Item -ItemType File -Path $PosAuditPath -Force | Out-Null
+    }
+
+    & icacls.exe $StateDirectory /inheritance:r `
+        /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to secure $StateDirectory"
     }
 }
 
-function Get-ConfigVersion {
-    param([string]$Path)
+function Get-AuditControlState {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Id
+    )
 
-    if (-not (Test-Path $Path)) {
-        return "missing"
+    $output = (& auditpol.exe /get "/subcategory:$Id" 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to read audit policy '$Name': $output"
     }
 
-    $firstLines = Get-Content -Path $Path -TotalCount 20
-    foreach ($line in $firstLines) {
-        if ($line -match "WarSOC-Config-Version:\s*([0-9A-Za-z._-]+)") {
-            return $Matches[1]
+    return [ordered]@{
+        name = $Name
+        id = $Id
+        success = [bool]($output -match "(?i)Success")
+        failure = [bool]($output -match "(?i)Failure")
+        raw = $output.Trim()
+    }
+}
+
+function Set-AuditControlState {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Id,
+        [Parameter(Mandatory = $true)][bool]$Success,
+        [Parameter(Mandatory = $true)][bool]$Failure
+    )
+
+    $successValue = if ($Success) { "enable" } else { "disable" }
+    $failureValue = if ($Failure) { "enable" } else { "disable" }
+    $output = (& auditpol.exe /set "/subcategory:$Id" "/success:$successValue" "/failure:$failureValue" 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to configure audit policy '$Name': $output"
+    }
+}
+
+function Get-NormalizedPosPaths {
+    param([string]$RawPaths)
+
+    if ([string]::IsNullOrWhiteSpace($RawPaths)) {
+        return @()
+    }
+
+    $normalized = @()
+    foreach ($candidate in ($RawPaths -split "[,;]")) {
+        $candidate = $candidate.Trim().Trim('"')
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
         }
+        if ($candidate.StartsWith("\\")) {
+            throw "POS path must be local, not UNC: $candidate"
+        }
+        if (-not [IO.Path]::IsPathRooted($candidate)) {
+            throw "POS path must be absolute: $candidate"
+        }
+        if (-not (Test-Path -LiteralPath $candidate -PathType Container)) {
+            throw "POS directory does not exist: $candidate"
+        }
+        $normalized += (Resolve-Path -LiteralPath $candidate).Path.TrimEnd("\")
     }
-
-    return "unversioned"
+    return @($normalized | Sort-Object -Unique)
 }
 
-function Get-FileSha256 {
-    param([string]$Path)
+function Get-MissingWarSocAuditRights {
+    param([Parameter(Mandatory = $true)][string]$Path)
 
-    if (-not (Test-Path $Path)) {
-        return ""
-    }
+    $requiredRights = [Security.AccessControl.FileSystemRights]::Delete `
+        -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles `
+        -bor [Security.AccessControl.FileSystemRights]::ChangePermissions
+    $requiredInheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit `
+        -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    $requiredAuditFlags = [Security.AccessControl.AuditFlags]::Success `
+        -bor [Security.AccessControl.AuditFlags]::Failure
+    $coveredRights = [Security.AccessControl.FileSystemRights]0
 
-    return (Get-FileHash -Path $Path -Algorithm SHA256).Hash.ToLowerInvariant()
-}
-
-function Get-ArtifactDirectory {
-    foreach ($candidate in @($PrimaryArtifactDir, $FallbackArtifactDir)) {
+    $acl = Get-Acl -LiteralPath $Path -Audit
+    foreach ($entry in $acl.Audit) {
         try {
-            if (-not (Test-Path $candidate)) {
-                New-Item -ItemType Directory -Path $candidate -Force | Out-Null
-            }
-            return $candidate
+            $sid = $entry.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
         } catch {
             continue
         }
+        if (
+            $sid -eq "S-1-1-0" -and
+            ($entry.InheritanceFlags -band $requiredInheritance) -eq $requiredInheritance -and
+            ($entry.AuditFlags -band $requiredAuditFlags) -eq $requiredAuditFlags
+        ) {
+            $coveredRights = $coveredRights -bor ($entry.FileSystemRights -band $requiredRights)
+        }
     }
 
-    throw "Unable to create artifact directory in ProgramData or TEMP."
+    return [Security.AccessControl.FileSystemRights](
+        ([int64]$requiredRights) -band (-bnot [int64]$coveredRights)
+    )
 }
 
-function Initialize-EvidencePaths {
-    $script:ArtifactDir = Get-ArtifactDirectory
-    $script:ArtifactPath = Join-Path $script:ArtifactDir "telemetry-deploy.json"
-    $script:StatePath = Join-Path $script:ArtifactDir "telemetry-state.json"
-    $script:PendingEventPath = Join-Path $script:ArtifactDir "telemetry-eventlog-pending.json"
+function New-WarSocAuditRule {
+    param([Parameter(Mandatory = $true)][Security.AccessControl.FileSystemRights]$Rights)
+
+    return [Security.AccessControl.FileSystemAuditRule]::new(
+        [Security.Principal.SecurityIdentifier]::new("S-1-1-0"),
+        $Rights,
+        (
+            [Security.AccessControl.InheritanceFlags]::ContainerInherit `
+            -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+        ),
+        [Security.AccessControl.PropagationFlags]::None,
+        (
+            [Security.AccessControl.AuditFlags]::Success `
+            -bor [Security.AccessControl.AuditFlags]::Failure
+        )
+    )
 }
 
-function Write-PendingEventArtifact {
+function Add-WarSocAuditRule {
     param(
-        [int]$EventId,
-        [string]$EntryType,
-        [string]$Message,
-        [hashtable]$Record,
-        [string]$Reason
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][Security.AccessControl.FileSystemRights]$Rights
     )
 
-    $pendingRecord = [ordered]@{
-        timestamp_utc = (Get-Date).ToUniversalTime().ToString("o")
-        event_id = $EventId
-        entry_type = $EntryType
-        source = $EventSource
-        log_name = $EventLogName
-        reason = $Reason
-        message = $Message
-        payload = $Record
-    }
-
-    $pendingJson = $pendingRecord | ConvertTo-Json -Compress -Depth 8
-    Add-Content -Path $script:PendingEventPath -Value $pendingJson -Encoding UTF8
-}
-
-function Flush-PendingEventArtifacts {
-    if (-not (Test-Path $script:PendingEventPath)) {
+    if ([int64]$Rights -eq 0) {
         return
     }
+    $rule = New-WarSocAuditRule -Rights $Rights
+    $acl = Get-Acl -LiteralPath $Path -Audit
+    $acl.AddAuditRule($rule)
+    Set-Acl -LiteralPath $Path -AclObject $acl
 
-    if (-not (Ensure-EventSource)) {
-        return
-    }
-
-    $failedLines = @()
-    $pendingLines = Get-Content -Path $script:PendingEventPath
-    foreach ($line in $pendingLines) {
-        if ([string]::IsNullOrWhiteSpace($line)) {
-            continue
-        }
-
-        try {
-            $pending = $line | ConvertFrom-Json
-            Write-EventLog -LogName $EventLogName -Source $EventSource -EventId ([int]$pending.event_id) -EntryType ([string]$pending.entry_type) -Category 0 -Message ([string]$pending.message)
-        } catch {
-            $failedLines += $line
-        }
-    }
-
-    if ($failedLines.Count -eq 0) {
-        Remove-Item -Path $script:PendingEventPath -ErrorAction SilentlyContinue
-        return
-    }
-
-    Set-Content -Path $script:PendingEventPath -Value $failedLines -Encoding UTF8
-}
-
-function Ensure-EventSource {
-    try {
-        if (-not [System.Diagnostics.EventLog]::SourceExists($EventSource)) {
-            New-EventLog -LogName $EventLogName -Source $EventSource
-        }
-        return $true
-    } catch {
-        return $false
+    $remaining = Get-MissingWarSocAuditRights -Path $Path
+    if ([int64]$remaining -ne 0) {
+        throw "SACL verification failed for $Path"
     }
 }
 
-function Write-LocalArtifact {
+function Remove-WarSocAuditRule {
     param(
-        [hashtable]$Record
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][Security.AccessControl.FileSystemRights]$Rights
     )
 
-    $json = $Record | ConvertTo-Json -Compress -Depth 8
-    Add-Content -Path $script:ArtifactPath -Value $json -Encoding UTF8
+    if ([int64]$Rights -eq 0) {
+        return
+    }
+    $rule = New-WarSocAuditRule -Rights $Rights
+    $acl = Get-Acl -LiteralPath $Path -Audit
+    [void]$acl.RemoveAuditRule($rule)
+    Set-Acl -LiteralPath $Path -AclObject $acl
 }
 
-function Write-EventArtifact {
+function Test-AuditStateMatches {
     param(
-        [int]$EventId,
-        [ValidateSet("Information", "Warning", "Error")][string]$EntryType,
-        [string]$Operation,
+        [Parameter(Mandatory = $true)]$State,
+        [Parameter(Mandatory = $true)][bool]$Success,
+        [Parameter(Mandatory = $true)][bool]$Failure
+    )
+
+    return (
+        ([bool]$State.success -eq $Success) -and
+        ([bool]$State.failure -eq $Failure)
+    )
+}
+
+function Write-Evidence {
+    param(
         [string]$Status,
-        [int]$ExitCode,
-        [string]$Detail,
-        [hashtable]$Record
-    )
-
-    $recordJson = $Record | ConvertTo-Json -Compress -Depth 8
-    $message = "operation=$Operation status=$Status exit_code=$ExitCode script_version=$ScriptVersion config_version=$($script:TelemetryContext.sysmon_config_version) host=$($Record.hostname)"
-    if ($Detail) {
-        $message = "$message`nmessage=$Detail"
-    }
-    $message = "$message`njson=$recordJson"
-
-    if (-not (Ensure-EventSource)) {
-        Write-PendingEventArtifact -EventId $EventId -EntryType $EntryType -Message $message -Record $Record -Reason "event_source_unavailable_or_permission_denied"
-        return
-    }
-
-    try {
-        Write-EventLog -LogName $EventLogName -Source $EventSource -EventId $EventId -EntryType $EntryType -Category 0 -Message $message
-    } catch {
-        Write-PendingEventArtifact -EventId $EventId -EntryType $EntryType -Message $message -Record $Record -Reason "write_eventlog_failed"
-        Write-Warning "Failed to write deployment event log evidence: $($_.Exception.Message)"
-    }
-}
-
-function Publish-Evidence {
-    param(
-        [string]$Operation,
-        [string]$Status,
-        [int]$ExitCode,
-        [int]$EventId,
-        [ValidateSet("Information", "Warning", "Error")][string]$EntryType,
+        [array]$Paths,
         [string]$Detail = ""
     )
 
     $record = [ordered]@{
-        operation = $Operation
-        status = $Status
         timestamp_utc = (Get-Date).ToUniversalTime().ToString("o")
         script_version = $ScriptVersion
-        sysmon_config_sha256 = $script:TelemetryContext.sysmon_config_sha256
-        sysmon_config_version = $script:TelemetryContext.sysmon_config_version
-        sysmon_binary_sha256 = $script:TelemetryContext.sysmon_binary_sha256
-        signer_subject = $script:TelemetryContext.signer_subject
-        signer_thumbprint = $script:TelemetryContext.signer_thumbprint
-        hostname = $env:COMPUTERNAME
-        operator = (Get-Operator)
-        rollback_marker = [bool]$Rollback
-        exit_code = $ExitCode
-        artifact_path = $script:ArtifactPath
+        telemetry_config_version = "native-windows-v1"
+        status = $Status
+        pos_path_count = @($Paths).Count
+        detail = $Detail
     }
-
-    if ($Detail) {
-        $record.error_detail = $Detail
-    }
-
-    Write-LocalArtifact -Record $record
-    Write-EventArtifact -EventId $EventId -EntryType $EntryType -Operation $Operation -Status $Status -ExitCode $ExitCode -Detail $Detail -Record $record
+    $record | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $EvidencePath -Encoding UTF8
 }
 
-function Exit-WithEvidence {
-    param(
-        [string]$Operation,
-        [string]$Status,
-        [int]$ExitCode,
-        [int]$EventId,
-        [ValidateSet("Information", "Warning", "Error")][string]$EntryType,
-        [string]$Detail = ""
-    )
+function Install-NativeTelemetry {
+    Ensure-StateDirectory
+    $paths = Get-NormalizedPosPaths -RawPaths $PosPaths
 
-    Publish-Evidence -Operation $Operation -Status $Status -ExitCode $ExitCode -EventId $EventId -EntryType $EntryType -Detail $Detail
-    exit $ExitCode
-}
-
-function Get-ProcessCreationAuditSetting {
-    $output = (& auditpol /get /subcategory:"Process Creation") 2>&1
-    foreach ($line in $output) {
-        if ($line -match "Process Creation\s+(No Auditing|Success and Failure|Success|Failure)") {
-            return $Matches[1]
+    $existingState = $null
+    $existingStateJson = $null
+    if (Test-Path -LiteralPath $StatePath) {
+        try {
+            $existingStateJson = Get-Content -LiteralPath $StatePath -Raw
+            $existingState = $existingStateJson | ConvertFrom-Json
+        } catch {
+            throw "Existing WarSOC telemetry state is unreadable; refusing to overwrite the rollback baseline."
         }
     }
-    return "Unknown"
-}
+    $script:InstallHadExistingState = ($null -ne $existingState)
 
-function Set-ProcessCreationAuditSetting {
-    param([string]$Setting)
-
-    switch ($Setting) {
-        "Success and Failure" {
-            & auditpol /set /subcategory:"Process Creation" /success:enable /failure:enable | Out-Null
+    $previousRegistry = Get-ItemProperty -Path $AuditRegistryPath -Name $AuditRegistryName -ErrorAction SilentlyContinue
+    $runAuditStates = @()
+    if ($null -ne $existingState) {
+        $processBaseline = [ordered]@{
+            existed = [bool]$existingState.process_command_line.existed
+            value = $existingState.process_command_line.value
         }
-        "Success" {
-            & auditpol /set /subcategory:"Process Creation" /success:enable /failure:disable | Out-Null
+        if ($null -eq $previousRegistry -or [int]$previousRegistry.$AuditRegistryName -ne 1) {
+            $processBaseline = [ordered]@{
+                existed = ($null -ne $previousRegistry)
+                value = if ($null -ne $previousRegistry) { [int]$previousRegistry.$AuditRegistryName } else { $null }
+            }
         }
-        "Failure" {
-            & auditpol /set /subcategory:"Process Creation" /success:disable /failure:enable | Out-Null
-        }
-        default {
-            & auditpol /set /subcategory:"Process Creation" /success:disable /failure:disable | Out-Null
-        }
-    }
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to set Process Creation audit policy to '$Setting'."
-    }
-}
-
-function Save-PreDeploymentState {
-    $previousAuditSetting = Get-ProcessCreationAuditSetting
-
-    $state = [ordered]@{
-        timestamp_utc = (Get-Date).ToUniversalTime().ToString("o")
-        previous_audit_setting = $previousAuditSetting
-        registry_value_present = $false
-        registry_value = $null
-    }
-
-    $existing = Get-ItemProperty -Path $AuditRegPath -Name $AuditRegName -ErrorAction SilentlyContinue
-    if ($null -ne $existing) {
-        $state.registry_value_present = $true
-        $state.registry_value = [int]$existing.$AuditRegName
-    }
-
-    $state | ConvertTo-Json -Depth 4 | Set-Content -Path $script:StatePath -Encoding UTF8
-}
-
-function Enable-AuditControls {
-    Save-PreDeploymentState
-    Set-ProcessCreationAuditSetting -Setting "Success and Failure"
-
-    if (-not (Test-Path $AuditRegPath)) {
-        New-Item -Path $AuditRegPath -Force | Out-Null
-    }
-
-    New-ItemProperty -Path $AuditRegPath -Name $AuditRegName -Value 1 -PropertyType DWord -Force | Out-Null
-}
-
-function Restore-AuditControls {
-    $targetSetting = "No Auditing"
-    $restoreRegistryValue = $null
-    $restoreRegistryPresence = $false
-
-    if (Test-Path $script:StatePath) {
-        $savedState = Get-Content -Path $script:StatePath -Raw | ConvertFrom-Json
-        if ($savedState.previous_audit_setting) {
-            $targetSetting = [string]$savedState.previous_audit_setting
-        }
-        $restoreRegistryPresence = [bool]$savedState.registry_value_present
-        $restoreRegistryValue = $savedState.registry_value
-    }
-
-    Set-ProcessCreationAuditSetting -Setting $targetSetting
-
-    if ($restoreRegistryPresence) {
-        New-ItemProperty -Path $AuditRegPath -Name $AuditRegName -Value ([int]$restoreRegistryValue) -PropertyType DWord -Force | Out-Null
     } else {
-        Remove-ItemProperty -Path $AuditRegPath -Name $AuditRegName -ErrorAction SilentlyContinue
-    }
-
-    Remove-Item -Path $script:StatePath -ErrorAction SilentlyContinue
-}
-
-function Download-AndValidateSysmonBinary {
-    param([string]$OperationForEvidence)
-
-    Invoke-WebRequest -Uri $SysmonUri -OutFile $SysmonExePath
-    $script:TelemetryContext.sysmon_binary_sha256 = Get-FileSha256 -Path $SysmonExePath
-
-    $signature = Get-AuthenticodeSignature -FilePath $SysmonExePath
-    if ($signature.Status -ne "Valid") {
-        Exit-WithEvidence -Operation $OperationForEvidence -Status "failed" -ExitCode 20 -EventId $EventIds.IntegrityFailure -EntryType Error -Detail "Authenticode validation failed: $($signature.Status)"
-    }
-
-    if ($null -eq $signature.SignerCertificate) {
-        Exit-WithEvidence -Operation $OperationForEvidence -Status "failed" -ExitCode 21 -EventId $EventIds.IntegrityFailure -EntryType Error -Detail "Signer certificate missing on downloaded Sysmon binary."
-    }
-
-    $subject = [string]$signature.SignerCertificate.Subject
-    if ($subject -notmatch "Microsoft Corporation") {
-        Exit-WithEvidence -Operation $OperationForEvidence -Status "failed" -ExitCode 22 -EventId $EventIds.IntegrityFailure -EntryType Error -Detail "Unexpected signer subject: $subject"
-    }
-
-    $script:TelemetryContext.signer_subject = $subject
-    $script:TelemetryContext.signer_thumbprint = [string]$signature.SignerCertificate.Thumbprint
-}
-
-function Get-SysmonService {
-    return Get-Service -Name "Sysmon64", "Sysmon" -ErrorAction SilentlyContinue | Select-Object -First 1
-}
-
-function Invoke-SysmonInstallOrUpdate {
-    if (-not (Test-Path $ConfigPath)) {
-        Exit-WithEvidence -Operation "install" -Status "failed" -ExitCode 10 -EventId $EventIds.InstallFailure -EntryType Error -Detail "sysmon-config.xml not found at: $ConfigPath"
-    }
-
-    $script:TelemetryContext.sysmon_config_sha256 = Get-FileSha256 -Path $ConfigPath
-    $script:TelemetryContext.sysmon_config_version = Get-ConfigVersion -Path $ConfigPath
-
-    Enable-AuditControls
-
-    $existingService = Get-SysmonService
-    $operation = if ($null -ne $existingService) { "update" } else { "install" }
-
-    Download-AndValidateSysmonBinary -OperationForEvidence $operation
-
-    if ($operation -eq "install") {
-        Write-Host "[*] Installing Sysmon with WarSOC configuration..."
-        & $SysmonExePath -accepteula -i $ConfigPath
-        if ($LASTEXITCODE -ne 0) {
-            Exit-WithEvidence -Operation "install" -Status "failed" -ExitCode 30 -EventId $EventIds.InstallFailure -EntryType Error -Detail "Sysmon install command failed with exit code $LASTEXITCODE"
+        $processBaseline = [ordered]@{
+            existed = ($null -ne $previousRegistry)
+            value = if ($null -ne $previousRegistry) { [int]$previousRegistry.$AuditRegistryName } else { $null }
         }
-        Exit-WithEvidence -Operation "install" -Status "success" -ExitCode 0 -EventId $EventIds.InstallSuccess -EntryType Information
+    }
+    $state = [ordered]@{
+        script_version = $ScriptVersion
+        created_at = if ($null -ne $existingState) {
+            [string]$existingState.created_at
+        } else {
+            (Get-Date).ToUniversalTime().ToString("o")
+        }
+        audit_controls = @()
+        process_command_line = $processBaseline
+        pos_paths = @()
     }
 
-    Write-Host "[*] Updating existing Sysmon configuration..."
-    & $SysmonExePath -c $ConfigPath
-    if ($LASTEXITCODE -ne 0) {
-        Exit-WithEvidence -Operation "update" -Status "failed" -ExitCode 31 -EventId $EventIds.InstallFailure -EntryType Error -Detail "Sysmon config update failed with exit code $LASTEXITCODE"
-    }
-
-    Exit-WithEvidence -Operation "update" -Status "success" -ExitCode 0 -EventId $EventIds.UpdateSuccess -EntryType Information
-}
-
-function Invoke-Rollback {
-    $script:TelemetryContext.sysmon_config_sha256 = Get-FileSha256 -Path $ConfigPath
-    $script:TelemetryContext.sysmon_config_version = Get-ConfigVersion -Path $ConfigPath
-
-    $sysmonService = Get-SysmonService
-    if ($null -ne $sysmonService) {
-        Download-AndValidateSysmonBinary -OperationForEvidence "rollback"
-        Write-Host "[*] Uninstalling Sysmon..."
-        & $SysmonExePath -u force
-        if ($LASTEXITCODE -ne 0) {
-            Exit-WithEvidence -Operation "rollback" -Status "failed" -ExitCode 40 -EventId $EventIds.RollbackFailure -EntryType Error -Detail "Sysmon uninstall failed with exit code $LASTEXITCODE"
+    foreach ($control in $AuditControls) {
+        $currentControl = Get-AuditControlState -Name $control.Name -Id $control.Id
+        $runAuditStates += $currentControl
+        $savedControl = $null
+        if ($null -ne $existingState) {
+            $savedControl = $existingState.audit_controls |
+                Where-Object { [string]$_.name -eq [string]$control.Name } |
+                Select-Object -First 1
+        }
+        if ($null -eq $savedControl) {
+            $savedControl = $currentControl
+        }
+        $baselineSuccess = [bool]$savedControl.success
+        $baselineFailure = [bool]$savedControl.failure
+        if (
+            $null -ne $savedControl.PSObject.Properties["configured_success"] -and
+            ([bool]$currentControl.success -ne [bool]$savedControl.configured_success)
+        ) {
+            $baselineSuccess = [bool]$currentControl.success
+        }
+        if (
+            $null -ne $savedControl.PSObject.Properties["configured_failure"] -and
+            ([bool]$currentControl.failure -ne [bool]$savedControl.configured_failure)
+        ) {
+            $baselineFailure = [bool]$currentControl.failure
+        }
+        $state.audit_controls += [ordered]@{
+            name = [string]$control.Name
+            id = [string]$control.Id
+            success = $baselineSuccess
+            failure = $baselineFailure
+            raw = [string]$savedControl.raw
+            configured_success = ([bool]$currentControl.success -or [bool]$control.Success)
+            configured_failure = ([bool]$currentControl.failure -or [bool]$control.Failure)
         }
     }
 
-    Restore-AuditControls
-    Exit-WithEvidence -Operation "rollback" -Status "success" -ExitCode 0 -EventId $EventIds.RollbackSuccess -EntryType Information
+    if ($null -ne $existingState) {
+        foreach ($savedPath in @($existingState.pos_paths)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$savedPath.path)) {
+                $savedAddedRights = 0
+                if ($null -ne $savedPath.PSObject.Properties["added_rights"]) {
+                    $savedAddedRights = [int64]$savedPath.added_rights
+                }
+                $state.pos_paths += [ordered]@{
+                    path = [string]$savedPath.path
+                    added_rights = $savedAddedRights
+                }
+            }
+        }
+    }
+
+    $rulesToAdd = @()
+    foreach ($path in $paths) {
+        $missingRights = [int64](Get-MissingWarSocAuditRights -Path $path)
+        $savedPath = $state.pos_paths |
+            Where-Object { [string]$_.path -ieq [string]$path } |
+            Select-Object -First 1
+        if ($null -eq $savedPath) {
+            $savedPath = [ordered]@{
+                path = $path
+                added_rights = $missingRights
+            }
+            $state.pos_paths += $savedPath
+        } else {
+            $savedPath["added_rights"] = ([int64]$savedPath.added_rights) -bor $missingRights
+        }
+        $rulesToAdd += [ordered]@{
+            path = $path
+            rights = $missingRights
+        }
+    }
+
+    $state | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $StatePath -Encoding UTF8
+
+    try {
+        foreach ($control in $state.audit_controls) {
+            Set-AuditControlState `
+                -Name ([string]$control.name) `
+                -Id ([string]$control.id) `
+                -Success ([bool]$control.configured_success) `
+                -Failure ([bool]$control.configured_failure)
+            $verified = Get-AuditControlState -Name ([string]$control.name) -Id ([string]$control.id)
+            if ([bool]$control.configured_success -and -not $verified.success) {
+                throw "Success auditing verification failed for '$($control.name)'"
+            }
+            if ([bool]$control.configured_failure -and -not $verified.failure) {
+                throw "Failure auditing verification failed for '$($control.name)'"
+            }
+        }
+
+        if (-not (Test-Path -LiteralPath $AuditRegistryPath)) {
+            New-Item -Path $AuditRegistryPath -Force | Out-Null
+        }
+        New-ItemProperty -Path $AuditRegistryPath -Name $AuditRegistryName -Value 1 -PropertyType DWord -Force | Out-Null
+        $verifiedRegistry = Get-ItemPropertyValue -Path $AuditRegistryPath -Name $AuditRegistryName
+        if ([int]$verifiedRegistry -ne 1) {
+            throw "Process command-line auditing registry verification failed."
+        }
+
+        foreach ($entry in $rulesToAdd) {
+            Add-WarSocAuditRule `
+                -Path ([string]$entry.path) `
+                -Rights ([Security.AccessControl.FileSystemRights][int64]$entry.rights)
+        }
+
+        Write-Evidence -Status "configured" -Paths $paths
+    } catch {
+        if ($null -ne $existingState) {
+            foreach ($entry in $rulesToAdd) {
+                try {
+                    Remove-WarSocAuditRule `
+                        -Path ([string]$entry.path) `
+                        -Rights ([Security.AccessControl.FileSystemRights][int64]$entry.rights)
+                } catch {
+                }
+            }
+            foreach ($before in $runAuditStates) {
+                try {
+                    $target = $state.audit_controls |
+                        Where-Object { [string]$_.id -eq [string]$before.id } |
+                        Select-Object -First 1
+                    $current = Get-AuditControlState -Name ([string]$before.name) -Id ([string]$before.id)
+                    if (
+                        $null -ne $target -and
+                        (Test-AuditStateMatches `
+                            -State $current `
+                            -Success ([bool]$target.configured_success) `
+                            -Failure ([bool]$target.configured_failure))
+                    ) {
+                        Set-AuditControlState `
+                            -Name ([string]$before.name) `
+                            -Id ([string]$before.id) `
+                            -Success ([bool]$before.success) `
+                            -Failure ([bool]$before.failure)
+                    }
+                } catch {
+                }
+            }
+            try {
+                $currentRegistry = Get-ItemProperty -Path $AuditRegistryPath -Name $AuditRegistryName -ErrorAction SilentlyContinue
+                if ($null -ne $currentRegistry -and [int]$currentRegistry.$AuditRegistryName -eq 1) {
+                    if ($null -ne $previousRegistry) {
+                        New-ItemProperty -Path $AuditRegistryPath -Name $AuditRegistryName `
+                            -Value ([int]$previousRegistry.$AuditRegistryName) -PropertyType DWord -Force | Out-Null
+                    } else {
+                        Remove-ItemProperty -Path $AuditRegistryPath -Name $AuditRegistryName -ErrorAction SilentlyContinue
+                    }
+                }
+            } catch {
+            }
+            $existingStateJson | Set-Content -LiteralPath $StatePath -Encoding UTF8
+        }
+        throw
+    }
 }
 
-Write-Host "========== WARSOC TELEMETRY DEPLOYMENT V2 ==========" -ForegroundColor Cyan
-Initialize-EvidencePaths
+function Restore-NativeTelemetry {
+    Ensure-StateDirectory
+    if (-not (Test-Path -LiteralPath $StatePath)) {
+        Write-Evidence -Status "rollback_skipped" -Paths @() -Detail "No saved state was found."
+        return
+    }
 
-if (-not (Test-IsAdmin)) {
-    Exit-WithEvidence -Operation "admin_gate" -Status "failed" -ExitCode 5 -EventId $EventIds.AdminGateFailure -EntryType Error -Detail "Please run this script as Administrator."
+    $state = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json
+    foreach ($control in $state.audit_controls) {
+        if (
+            $null -eq $control.PSObject.Properties["id"] -or
+            $null -eq $control.PSObject.Properties["configured_success"] -or
+            $null -eq $control.PSObject.Properties["configured_failure"]
+        ) {
+            continue
+        }
+
+        $current = Get-AuditControlState -Name ([string]$control.name) -Id ([string]$control.id)
+        if (Test-AuditStateMatches `
+            -State $current `
+            -Success ([bool]$control.configured_success) `
+            -Failure ([bool]$control.configured_failure)
+        ) {
+            Set-AuditControlState `
+                -Name ([string]$control.name) `
+                -Id ([string]$control.id) `
+                -Success ([bool]$control.success) `
+                -Failure ([bool]$control.failure)
+        }
+    }
+
+    $currentRegistry = Get-ItemProperty -Path $AuditRegistryPath -Name $AuditRegistryName -ErrorAction SilentlyContinue
+    if ($null -ne $currentRegistry -and [int]$currentRegistry.$AuditRegistryName -eq 1) {
+        if ([bool]$state.process_command_line.existed) {
+            New-ItemProperty -Path $AuditRegistryPath -Name $AuditRegistryName `
+                -Value ([int]$state.process_command_line.value) -PropertyType DWord -Force | Out-Null
+        } else {
+            Remove-ItemProperty -Path $AuditRegistryPath -Name $AuditRegistryName -ErrorAction SilentlyContinue
+        }
+    }
+
+    foreach ($entry in $state.pos_paths) {
+        if (
+            (Test-Path -LiteralPath ([string]$entry.path)) -and
+            ($null -ne $entry.PSObject.Properties["added_rights"])
+        ) {
+            Remove-WarSocAuditRule `
+                -Path ([string]$entry.path) `
+                -Rights ([Security.AccessControl.FileSystemRights][int64]$entry.added_rights)
+        }
+    }
+
+    Write-Evidence -Status "rolled_back" -Paths @($state.pos_paths)
+    Remove-Item -LiteralPath $StatePath -Force
 }
 
-Flush-PendingEventArtifacts
+if (-not (Test-IsAdministrator)) {
+    Write-Error "WarSOC native telemetry configuration requires Administrator privileges."
+    exit 10
+}
 
 try {
     if ($Rollback) {
-        Invoke-Rollback
+        Restore-NativeTelemetry
     } else {
-        Invoke-SysmonInstallOrUpdate
+        Install-NativeTelemetry
     }
+    exit 0
 } catch {
-    $errorText = $_.Exception.Message
-    if ($Rollback) {
-        Exit-WithEvidence -Operation "rollback" -Status "failed" -ExitCode 50 -EventId $EventIds.RollbackFailure -EntryType Error -Detail $errorText
+    $originalError = $_.Exception.Message
+    if (
+        -not $Rollback -and
+        -not $InstallHadExistingState -and
+        (Test-Path -LiteralPath $StatePath)
+    ) {
+        try {
+            Restore-NativeTelemetry
+        } catch {
+        }
     }
-
-    Exit-WithEvidence -Operation "install" -Status "failed" -ExitCode 51 -EventId $EventIds.InstallFailure -EntryType Error -Detail $errorText
+    try {
+        Ensure-StateDirectory
+        Write-Evidence -Status "failed" -Paths @() -Detail $originalError
+    } catch {
+    }
+    Write-Error $originalError
+    exit 20
 }

@@ -3,7 +3,8 @@ import orjson
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import ORJSONResponse
 from datetime import datetime, timezone
-import uuid
+from typing import Any, Literal
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.utils.rate_limiter import redis_ingest_rate_limit
 from app.routes.auth import verify_agent_token
@@ -14,6 +15,39 @@ router = APIRouter()
 RAW_LOGS_QUEUE = "raw_logs_queue"
 RAW_LOGS_QUEUE_MAXLEN = 100000
 MAX_INGEST_BODY_BYTES = 5 * 1024 * 1024
+MAX_POS_EVENTS_PER_REQUEST = 500
+
+
+class PosAuditEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    event_id: Literal["FBR-INV-DEL", "FBR-INV-MOD"]
+    event_uid: str = Field(min_length=8, max_length=200)
+    invoice_id: str = Field(min_length=1, max_length=200)
+    timestamp: datetime
+    actor: str = Field(min_length=1, max_length=200)
+    source_system: str = Field(min_length=1, max_length=200)
+    reason: str | None = Field(default=None, max_length=2000)
+    before_hash: str | None = None
+    after_hash: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("before_hash", "after_hash")
+    @classmethod
+    def validate_sha256(cls, value: str | None):
+        if value is None:
+            return value
+        normalized = value.strip().lower()
+        if len(normalized) != 64 or any(char not in "0123456789abcdef" for char in normalized):
+            raise ValueError("hash fields must be 64-character SHA-256 hex strings")
+        return normalized
+
+    @field_validator("timestamp")
+    @classmethod
+    def require_timezone(cls, value: datetime):
+        if value.tzinfo is None:
+            raise ValueError("timestamp must include a timezone")
+        return value.astimezone(timezone.utc)
 
 @router.post("/ingest", status_code=202, response_class=ORJSONResponse)
 async def ingest_pos_logs(
@@ -41,8 +75,17 @@ async def ingest_pos_logs(
         except orjson.JSONDecodeError as exc:
             raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
 
-        events_data = raw_payload.get("payload", []) if isinstance(raw_payload, dict) and "payload" in raw_payload else raw_payload
+        if isinstance(raw_payload, dict) and "payload" in raw_payload:
+            if set(raw_payload) != {"payload"}:
+                raise HTTPException(status_code=422, detail="Envelope may contain only the payload field")
+            events_data = raw_payload.get("payload", [])
+        else:
+            events_data = raw_payload
         raw_events = [events_data] if isinstance(events_data, dict) else events_data
+        if not isinstance(raw_events, list):
+            raise HTTPException(status_code=422, detail="Payload must be an event, a list, or an object containing payload")
+        if len(raw_events) > MAX_POS_EVENTS_PER_REQUEST:
+            raise HTTPException(status_code=413, detail=f"Maximum {MAX_POS_EVENTS_PER_REQUEST} POS events per request")
 
         redis = request.app.state.redis
         if not redis:
@@ -52,22 +95,37 @@ async def ingest_pos_logs(
         async with redis.pipeline(transaction=True) as pipe:
             for event in raw_events:
                 if not isinstance(event, dict):
-                    continue
-                
-                # FBR POS events must have specific event IDs
-                event_id = str(event.get("event_id", "")).strip().upper()
-                if event_id not in ("FBR-INV-DEL", "FBR-INV-MOD"):
-                    continue
+                    raise HTTPException(status_code=422, detail="Every POS event must be an object")
 
-                event.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
-                event["tenant_id"] = verified_tenant_id
-                event["agent_id"] = verified_agent_id
-                event["event_uid"] = event.get("event_uid") or uuid.uuid4().hex
-                event["type"] = "fbr_pos"
-                event.pop("agent_hmac_signature", None)
-                event["agent_signature"] = None
+                try:
+                    validated = PosAuditEvent.model_validate(event)
+                except Exception as exc:
+                    errors = exc.errors() if hasattr(exc, "errors") else [{"msg": str(exc)}]
+                    raise HTTPException(status_code=422, detail=errors) from exc
 
-                payload_to_stream = {"payload": orjson.dumps(event).decode("utf-8")}
+                event_data = validated.model_dump(mode="json")
+                event_data["tenant_id"] = verified_tenant_id
+                event_data["agent_id"] = verified_agent_id
+                event_data["type"] = "fbr_pos"
+                event_data["event_type"] = "fbr_pos"
+                event_data["source_ip"] = request.client.host if request.client else "unknown"
+                event_data["user"] = validated.actor
+                event_data["message"] = validated.reason or (
+                    f"{validated.event_id} for invoice {validated.invoice_id}"
+                )
+                event_data["processed_data"] = {
+                    "invoice_id": validated.invoice_id,
+                    "actor": validated.actor,
+                    "source_system": validated.source_system,
+                    "reason": validated.reason,
+                    "before_hash": validated.before_hash,
+                    "after_hash": validated.after_hash,
+                    "metadata": validated.metadata,
+                }
+                event_data["raw_event_data"] = validated.model_dump(mode="json")
+                event_data["agent_signature"] = None
+
+                payload_to_stream = {"payload": orjson.dumps(event_data).decode("utf-8")}
                 
                 await pipe.xadd(
                     RAW_LOGS_QUEUE,
@@ -81,13 +139,16 @@ async def ingest_pos_logs(
                 await pipe.execute()
 
         if queued_count == 0:
-            raise HTTPException(status_code=400, detail="No valid FBR POS events found in payload")
+            raise HTTPException(status_code=400, detail="No POS events were supplied")
 
-        return ORJSONResponse({
-            "status": "success",
-            "queued": queued_count,
-            "message": f"Successfully queued {queued_count} FBR POS events.",
-        })
+        return ORJSONResponse(
+            {
+                "status": "success",
+                "queued": queued_count,
+                "message": f"Successfully queued {queued_count} FBR POS events.",
+            },
+            status_code=202,
+        )
     except HTTPException:
         raise
     except Exception as exc:

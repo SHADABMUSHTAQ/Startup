@@ -49,6 +49,15 @@ class FakeCollection:
         for document in documents:
             await self.insert_one(document)
 
+    async def bulk_write(self, operations, ordered=False):
+        for op in operations:
+            if hasattr(op, '_filter') and hasattr(op, '_doc'):
+                await self.update_one(op._filter, op._doc, upsert=op._upsert)
+            else:
+                self.insert_calls += 1
+                if self.fail_on_insert:
+                    raise ConnectionError("mongo blackout")
+
     async def update_one(self, filter, update, upsert=False):
         self.insert_calls += 1
         if self.fail_on_insert:

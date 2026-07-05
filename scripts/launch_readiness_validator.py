@@ -19,9 +19,14 @@ For prod compose:
 from __future__ import annotations
 
 import argparse
+import asyncio
+import hashlib
 import json
 import os
+from pathlib import Path
+import re
 import sys
+import threading
 import time
 import uuid
 import urllib.error
@@ -43,6 +48,11 @@ class Response:
     headers: object
 
 
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class ApiClient:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
@@ -61,6 +71,7 @@ class ApiClient:
         body_bytes: bytes | None = None,
         headers: dict[str, str] | None = None,
         timeout: int = 30,
+        follow_redirects: bool = True,
     ) -> Response:
         req_headers = {"Accept": "application/json"}
         if headers:
@@ -78,8 +89,14 @@ class ApiClient:
             req_headers.setdefault("X-CSRF-Token", self.csrf_token)
 
         request = urllib.request.Request(self._url(path), data=data, headers=req_headers, method=method.upper())
+        opener = self.opener
+        if not follow_redirects:
+            opener = urllib.request.build_opener(
+                urllib.request.HTTPCookieProcessor(self.cookies),
+                NoRedirectHandler(),
+            )
         try:
-            with self.opener.open(request, timeout=timeout) as resp:
+            with opener.open(request, timeout=timeout) as resp:
                 raw = resp.read()
                 status = resp.status
                 headers_obj = resp.headers
@@ -127,15 +144,18 @@ class Validator:
         self.admin = ApiClient(args.base_url)
         self.failures: list[str] = []
         self.warnings: list[str] = []
+        self.results: list[dict[str, str]] = []
 
     def record(self, name: str, ok: bool, detail: str = ""):
         label = "PASS" if ok else "FAIL"
         print(f"[{label}] {name}{': ' + detail if detail else ''}")
+        self.results.append({"name": name, "status": label, "detail": detail})
         if not ok:
             self.failures.append(f"{name}: {detail}")
 
     def warn(self, name: str, detail: str):
         print(f"[WARN] {name}: {detail}")
+        self.results.append({"name": name, "status": "WARN", "detail": detail})
         self.warnings.append(f"{name}: {detail}")
 
     def unique_email(self, prefix: str) -> str:
@@ -159,21 +179,44 @@ class Validator:
         print(f"Base URL: {self.args.base_url}")
         print(f"Run ID: {self.run_id}")
 
+        email_baseline = self.read_metric("warsoc_email_delivered_total")
         if not self.basic_public_checks():
             return self.finish()
         tenant_id, admin_email, admin_password = self.provision_and_login()
         if not tenant_id:
             return self.finish()
 
+        self.agent_download_flow()
         agent_id, agent_jwt, private_key = self.agent_flow()
         if agent_id and agent_jwt and private_key:
             self.blacklist_flow(agent_id, private_key)
+            websocket_probe = self.start_websocket_probe()
             self.ingest_and_pipeline(agent_jwt)
+            self.finish_websocket_probe(websocket_probe)
 
         self.rbac_flow(admin_password)
         self.export_checks()
+        self.email_delivery_flow(email_baseline)
 
         return self.finish()
+
+    def read_metric(self, metric_name: str) -> float | None:
+        if not self.args.metrics_token:
+            return None
+        response = self.admin.request(
+            "GET",
+            "/metrics",
+            headers={"Authorization": f"Bearer {self.args.metrics_token}"},
+            timeout=15,
+        )
+        if response.status != 200:
+            return None
+        text = response.raw.decode("utf-8", errors="replace")
+        match = re.search(
+            rf"(?m)^{re.escape(metric_name)}(?:\{{[^}}]*\}})?\s+([0-9.eE+-]+)\s*$",
+            text,
+        )
+        return float(match.group(1)) if match else None
 
     def basic_public_checks(self):
         def health_ready():
@@ -217,8 +260,8 @@ class Validator:
         })
         self.record("Homepage contact request", contact.status == 200, f"HTTP {contact.status}")
 
-        safepay = self.admin.request("POST", "/api/v1/sales/safepay/webhook", {"event": "test"})
-        self.record("Safepay fails closed", safepay.status == 501, f"HTTP {safepay.status}")
+        legacy_payment = self.admin.request("POST", "/api/v1/sales/safepay/webhook", {"event": "test"})
+        self.record("Legacy payment webhook absent", legacy_payment.status == 404, f"HTTP {legacy_payment.status}")
         return True
 
     def provision_and_login(self):
@@ -256,6 +299,77 @@ class Validator:
         )
         self.record("Auth context hydration", ok, str(me.body)[:180])
         return tenant_id, admin_email, admin_password
+
+    def agent_download_flow(self):
+        if self.args.skip_agent_download:
+            self.warn("Agent installer CDN", "skipped by --skip-agent-download")
+            return
+
+        redirect = self.admin.request(
+            "GET",
+            "/api/v1/agent/download",
+            timeout=30,
+            follow_redirects=False,
+        )
+        location = redirect.headers.get("location") if redirect.headers else None
+        if location:
+            location = urllib.parse.urljoin(self.args.base_url + "/", location)
+        parsed = urllib.parse.urlsplit(location or "")
+        redirect_ok = (
+            redirect.status in {301, 302, 303, 307, 308}
+            and parsed.scheme == "https"
+            and parsed.path.lower().endswith(".exe")
+        )
+        self.record(
+            "Agent installer CDN redirect",
+            redirect_ok,
+            f"HTTP {redirect.status}; location={location or 'missing'}",
+        )
+        if not redirect_ok or not self.args.manifest_path:
+            if redirect_ok and not self.args.manifest_path:
+                self.warn("Agent installer CDN hash", "no --manifest-path supplied")
+            return
+
+        try:
+            manifest = json.loads(Path(self.args.manifest_path).read_text(encoding="utf-8-sig"))
+            installer = next(
+                item
+                for item in manifest.get("artifacts", [])
+                if item.get("role") == "windows-installer"
+            )
+            expected_hash = str(installer["sha256"]).upper()
+            expected_size = int(installer["size_bytes"])
+        except Exception as exc:
+            self.record("Agent installer CDN hash", False, f"invalid manifest: {exc}")
+            return
+
+        digest = hashlib.sha256()
+        downloaded = 0
+        try:
+            request = urllib.request.Request(
+                location,
+                headers={"User-Agent": "WarSOC-Production-Acceptance/1.0"},
+            )
+            with urllib.request.urlopen(request, timeout=self.args.download_timeout) as response:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    downloaded += len(chunk)
+                    if downloaded > expected_size:
+                        raise ValueError(
+                            f"CDN artifact exceeds manifest size {expected_size}"
+                        )
+                    digest.update(chunk)
+            actual_hash = digest.hexdigest().upper()
+            matches = downloaded == expected_size and actual_hash == expected_hash
+            self.record(
+                "Agent installer CDN hash",
+                matches,
+                f"bytes={downloaded}; sha256={actual_hash}",
+            )
+        except Exception as exc:
+            self.record("Agent installer CDN hash", False, str(exc))
 
     def agent_flow(self):
         activation = self.admin.request("POST", "/api/v1/agent/generate-activation", {})
@@ -346,35 +460,125 @@ class Validator:
             except Exception:
                 pass
 
+    def start_websocket_probe(self):
+        ticket_response = self.admin.request("POST", "/api/v1/ws/ticket")
+        ticket = ticket_response.body.get("ticket") if isinstance(ticket_response.body, dict) else None
+        if ticket_response.status != 200 or not ticket:
+            self.record(
+                "Authenticated WebSocket delivery",
+                False,
+                f"ticket HTTP {ticket_response.status}",
+            )
+            return None
+
+        parsed = urllib.parse.urlsplit(self.args.base_url)
+        ws_scheme = "wss" if parsed.scheme == "https" else "ws"
+        ws_url = urllib.parse.urlunsplit(
+            (
+                ws_scheme,
+                parsed.netloc,
+                "/ws/alerts",
+                urllib.parse.urlencode({"ticket": ticket}),
+                "",
+            )
+        )
+        ready = threading.Event()
+        result = {
+            "connected": False,
+            "matched": False,
+            "detail": "listener did not start",
+        }
+
+        async def listen_for_run_alert():
+            import websockets
+
+            try:
+                async with websockets.connect(
+                    ws_url,
+                    open_timeout=10,
+                    close_timeout=5,
+                    ping_interval=20,
+                ) as websocket:
+                    result["connected"] = True
+                    result["detail"] = "connected; waiting for run-specific alert"
+                    ready.set()
+                    deadline = time.monotonic() + self.args.wait_seconds
+                    while time.monotonic() < deadline:
+                        remaining = max(0.1, deadline - time.monotonic())
+                        message = await asyncio.wait_for(websocket.recv(), timeout=remaining)
+                        decoded = json.loads(message)
+                        if self.run_id in json.dumps(decoded, separators=(",", ":"), default=str):
+                            result["matched"] = True
+                            result["detail"] = "received run-specific SIEM alert"
+                            return
+                    result["detail"] = "timed out waiting for run-specific SIEM alert"
+            except Exception as exc:
+                result["detail"] = f"{type(exc).__name__}: {exc}"
+            finally:
+                ready.set()
+
+        def thread_target():
+            asyncio.run(listen_for_run_alert())
+
+        thread = threading.Thread(
+            target=thread_target,
+            name=f"warsoc-ws-probe-{self.run_id}",
+            daemon=True,
+        )
+        thread.start()
+        ready.wait(timeout=12)
+        if not result["connected"]:
+            thread.join(timeout=1)
+            self.record("Authenticated WebSocket delivery", False, result["detail"])
+            return None
+        return thread, result
+
+    def finish_websocket_probe(self, probe):
+        if probe is None:
+            return
+        thread, result = probe
+        thread.join(timeout=self.args.wait_seconds + 5)
+        self.record(
+            "Authenticated WebSocket delivery",
+            bool(result["connected"] and result["matched"]),
+            result["detail"],
+        )
+
     def ingest_and_pipeline(self, agent_jwt: str):
         now = datetime.now(timezone.utc).isoformat()
         events = [
             {
-                "event_id": "4625",
+                "event_id": "1102",
                 "event_uid": f"{self.run_id}-siem",
                 "timestamp": now,
                 "source_ip": "203.0.113.88",
-                "user": "launch-validator",
-                "message": f"login failed failed password launch validation {self.run_id}",
+                "user": "security-admin",
+                "message": f"Security audit log cleared launch validation {self.run_id}",
                 "raw_data": {"event_uid": f"{self.run_id}-siem"},
             },
             {
                 "event_id": "4663",
-                "event_uid": f"{self.run_id}-fbr",
+                "event_uid": f"{self.run_id}-fbr-intent",
                 "timestamp": now,
                 "source_ip": "203.0.113.89",
                 "user": "pos-user",
-                "message": f"FBR POS file object access modified launch validation {self.run_id}",
-                "raw_data": {"event_uid": f"{self.run_id}-fbr"},
+                "message": f"POS database delete intent launch validation {self.run_id}",
+                "processed_data": {
+                    "object_name": r"C:\POS\data\launch-validator.mdf",
+                    "handle_id": "0x44",
+                    "access_mask": "0x10000",
+                },
+                "raw_data": {"event_uid": f"{self.run_id}-fbr-intent"},
             },
             {
-                "event_id": "1102",
-                "event_uid": f"{self.run_id}-peca",
+                "event_id": "4660",
+                "event_uid": f"{self.run_id}-fbr-delete",
                 "timestamp": now,
-                "source_ip": "203.0.113.90",
-                "user": "security-admin",
-                "message": f"Security audit log cleared PECA forensic launch validation {self.run_id}",
-                "raw_data": {"event_uid": f"{self.run_id}-peca"},
+                "source_ip": "203.0.113.89",
+                "user": "pos-user",
+                "message": f"POS database deleted launch validation {self.run_id}",
+                "processed_data": {"handle_id": "0x44"},
+                "raw_data": {"event_uid": f"{self.run_id}-fbr-delete"},
             },
         ]
         ingest = self.admin.request(
@@ -389,6 +593,26 @@ class Validator:
         )
         self.record("Agent telemetry ingest", ingest.status in {200, 202}, f"HTTP {ingest.status}; {ingest.body}")
 
+        pos_ingest = self.admin.request(
+            "POST",
+            "/api/v1/fbr/pos/ingest",
+            {
+                "event_id": "FBR-INV-MOD",
+                "event_uid": f"{self.run_id}-invoice",
+                "invoice_id": f"INV-{self.run_id}",
+                "timestamp": now,
+                "actor": "launch-validator",
+                "source_system": "launch-pos",
+                "reason": "Launch validation invoice modification",
+            },
+            headers={"Authorization": f"Bearer {agent_jwt}"},
+        )
+        self.record(
+            "Authenticated POS ingest",
+            pos_ingest.status == 202,
+            f"HTTP {pos_ingest.status}; {pos_ingest.body}",
+        )
+
         def alert_ready():
             resp = self.admin.request("GET", f"/api/v1/alerts?event_uid={urllib.parse.quote(self.run_id + '-siem')}&limit=20")
             if resp.status != 200:
@@ -397,17 +621,38 @@ class Validator:
             return bool(data), f"alerts={len(data)}"
 
         def fbr_ready():
-            resp = self.admin.request("GET", "/api/v1/compliance/evidence/fbr_pos?limit=50")
+            resp = self.admin.request(
+                "GET",
+                "/api/v1/compliance/evidence/fbr_pos?event_id=FIM-DB-MOD&limit=50",
+            )
             data = resp.body.get("data", []) if isinstance(resp.body, dict) else []
-            return resp.status == 200 and bool(data), f"HTTP {resp.status}; rows={len(data)}"
+            expected_uid = f"{self.run_id}-fbr-delete:fim-delete"
+            matched = any(row.get("event_uid") == expected_uid for row in data)
+            return resp.status == 200 and matched, f"HTTP {resp.status}; matched={matched}; rows={len(data)}"
+
+        def fbr_invoice_ready():
+            resp = self.admin.request(
+                "GET",
+                "/api/v1/compliance/evidence/fbr_pos?event_id=FBR-INV-MOD&limit=50",
+            )
+            data = resp.body.get("data", []) if isinstance(resp.body, dict) else []
+            expected_uid = f"{self.run_id}-invoice"
+            matched = any(row.get("event_uid") == expected_uid for row in data)
+            return resp.status == 200 and matched, f"HTTP {resp.status}; matched={matched}; rows={len(data)}"
 
         def peca_ready():
-            resp = self.admin.request("GET", "/api/v1/compliance/evidence/peca_forensic?limit=50")
+            resp = self.admin.request(
+                "GET",
+                "/api/v1/compliance/evidence/peca_forensic?event_id=1102&limit=50",
+            )
             data = resp.body.get("data", []) if isinstance(resp.body, dict) else []
-            return resp.status == 200 and bool(data), f"HTTP {resp.status}; rows={len(data)}"
+            expected_uid = f"{self.run_id}-siem"
+            matched = any(row.get("event_uid") == expected_uid for row in data)
+            return resp.status == 200 and matched, f"HTTP {resp.status}; matched={matched}; rows={len(data)}"
 
         self.wait_for("SIEM alert visibility", alert_ready, self.args.wait_seconds)
-        self.wait_for("FBR evidence visibility", fbr_ready, self.args.wait_seconds)
+        self.wait_for("FBR correlated tamper visibility", fbr_ready, self.args.wait_seconds)
+        self.wait_for("FBR invoice evidence visibility", fbr_invoice_ready, self.args.wait_seconds)
         self.wait_for("PECA evidence visibility", peca_ready, self.args.wait_seconds)
 
     def rbac_flow(self, admin_password: str):
@@ -448,6 +693,41 @@ class Validator:
         pdf_resp = self.admin.request("GET", "/api/v1/export/audit-report?pack_id=peca_forensic", timeout=90)
         self.record("PDF audit export", pdf_resp.status == 200 and pdf_resp.raw.startswith(b"%PDF"), f"HTTP {pdf_resp.status}; bytes={len(pdf_resp.raw)}")
 
+    def email_delivery_flow(self, baseline: float | None):
+        if not self.args.metrics_token:
+            self.warn(
+                "SMTP worker delivery",
+                "not measured; supply --metrics-token for production acceptance",
+            )
+            return
+        if baseline is None:
+            self.record(
+                "SMTP worker delivery",
+                False,
+                "email delivery metric was unavailable before the test",
+            )
+            return
+
+        deadline = time.time() + self.args.email_delivery_timeout
+        latest = baseline
+        while time.time() < deadline:
+            observed = self.read_metric("warsoc_email_delivered_total")
+            if observed is not None:
+                latest = observed
+                if observed >= baseline + 2:
+                    self.record(
+                        "SMTP worker delivery",
+                        True,
+                        f"delivered_total increased by {observed - baseline:g}",
+                    )
+                    return
+            time.sleep(3)
+        self.record(
+            "SMTP worker delivery",
+            False,
+            f"delivered_total increased by only {latest - baseline:g}",
+        )
+
     def finish(self) -> int:
         print()
         print("Launch Readiness Summary")
@@ -455,8 +735,25 @@ class Validator:
         if self.failures:
             for item in self.failures:
                 print(f" - {item}")
-            return 1
-        return 0
+        exit_code = 1 if self.failures else 0
+        if self.args.report_path:
+            report_path = Path(self.args.report_path)
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report = {
+                "run_id": self.run_id,
+                "base_url": self.args.base_url,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "passed": exit_code == 0,
+                "failure_count": len(self.failures),
+                "warning_count": len(self.warnings),
+                "results": self.results,
+            }
+            report_path.write_text(
+                json.dumps(report, indent=2),
+                encoding="utf-8",
+            )
+            print(f"Report: {report_path.resolve()}")
+        return exit_code
 
 
 def parse_args():
@@ -466,6 +763,12 @@ def parse_args():
     parser.add_argument("--email-domain", default=os.getenv("WARSOC_TEST_EMAIL_DOMAIN", "warsoc.tech"))
     parser.add_argument("--wait-seconds", type=int, default=int(os.getenv("WARSOC_WAIT_SECONDS", "90")))
     parser.add_argument("--provision-timeout", type=int, default=int(os.getenv("WARSOC_PROVISION_TIMEOUT", "180")))
+    parser.add_argument("--metrics-token", default=os.getenv("METRICS_BEARER_TOKEN", ""))
+    parser.add_argument("--manifest-path", default="")
+    parser.add_argument("--report-path", default="")
+    parser.add_argument("--download-timeout", type=int, default=180)
+    parser.add_argument("--email-delivery-timeout", type=int, default=180)
+    parser.add_argument("--skip-agent-download", action="store_true")
     parser.add_argument("--skip-pdf", action="store_true")
     args = parser.parse_args()
     if not args.admin_key:

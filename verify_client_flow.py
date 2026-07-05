@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 from redis import Redis
 from dotenv import load_dotenv
 from ecdsa import NIST256p, SigningKey
@@ -27,7 +29,6 @@ from pymongo import MongoClient
 
 from app.utils.agent_crypto import (
     build_event_signature_string,
-    build_login_signature_string,
     build_payload_hash,
     build_signable_event_payload,
 )
@@ -108,49 +109,25 @@ def _admin_login(session: requests.Session, base_url: str, username_or_email: st
     return {"payload": data, "csrf": csrf}
 
 
-def _generate_enrollment_token(session: requests.Session, base_url: str, *, csrf: str, agent_id: str) -> str:
+def _generate_activation_code(session: requests.Session, base_url: str, *, csrf: str) -> str:
     response = session.post(
-        f"{base_url}/auth/agents/generate-token",
+        f"{base_url}/agent/generate-activation",
         headers={"x-csrf-token": csrf},
-        json={"agent_id": agent_id},
         timeout=30,
     )
     response.raise_for_status()
-    return response.json()["provisioning_token"]
+    return response.json()["activation_code"]
 
 
-def _enroll_agent(base_url: str, *, provisioning_token: str, agent_id: str, public_key_pem: str) -> requests.Response:
+def _register_agent(base_url: str, *, activation_code: str, public_key_pem: str) -> requests.Response:
     return requests.post(
-        f"{base_url}/auth/agents/enroll",
-        headers={"Authorization": f"Bearer {provisioning_token}"},
+        f"{base_url}/agent/register",
         json={
-            "agent_id": agent_id,
+            "activation_code": activation_code,
             "public_key": public_key_pem,
-            "hostname": "verify-host",
-            "mac_address": "00:11:22:33:44:55",
         },
         timeout=30,
     )
-
-
-def _agent_login(base_url: str, *, agent_id: str, signing_key: SigningKey) -> str:
-    timestamp = datetime.now(timezone.utc).isoformat()
-    nonce = uuid.uuid4().hex
-    canonical = build_login_signature_string(agent_id, timestamp, nonce)
-    signature = signing_key.sign(canonical.encode("utf-8"), hashfunc=hashlib.sha256).hex()
-
-    response = requests.post(
-        f"{base_url}/auth/agent-login",
-        json={
-            "agent_id": agent_id,
-            "timestamp": timestamp,
-            "nonce": nonce,
-            "signature": signature,
-        },
-        timeout=30,
-    )
-    response.raise_for_status()
-    return response.json()["access_token"]
 
 
 def _signed_ingest(base_url: str, *, agent_bearer: str, signing_key: SigningKey, agent_id: str, event_id: int, run_id: str, mode: str) -> requests.Response:
@@ -237,38 +214,38 @@ def main() -> int:
     beta_login = _admin_login(beta_session, args.api_base_url, beta["email"], beta["password"])
     print(f"[OK] Beta admin login: {beta_login['payload'].get('username')} tenant={beta_login['payload'].get('tenant_id')}")
 
-    alpha_agent_id = f"ALPHA_AGENT_{uuid.uuid4().hex[:8].upper()}"
-    alpha_token = _generate_enrollment_token(
+    alpha_activation_code = _generate_activation_code(
         alpha_session,
         args.api_base_url,
         csrf=alpha_login["csrf"],
-        agent_id=alpha_agent_id,
     )
 
     alpha_signing_key = SigningKey.generate(curve=NIST256p, hashfunc=hashlib.sha256)
-    alpha_pub = alpha_signing_key.verifying_key.to_pem().decode("utf-8")
+    alpha_agent_private_key = ed25519.Ed25519PrivateKey.generate()
+    alpha_pub = alpha_agent_private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
 
-    enroll_response = _enroll_agent(
+    register_response = _register_agent(
         args.api_base_url,
-        provisioning_token=alpha_token,
-        agent_id=alpha_agent_id,
+        activation_code=alpha_activation_code,
         public_key_pem=alpha_pub,
     )
-    if enroll_response.status_code != 201:
-        raise RuntimeError(f"Enroll failed: {enroll_response.status_code} {enroll_response.text}")
-    print("[OK] Agent enrolled (first use)")
+    if register_response.status_code != 200:
+        raise RuntimeError(f"Register failed: {register_response.status_code} {register_response.text}")
+    registered_agent = register_response.json()
+    alpha_agent_id = registered_agent["agent_id"]
+    agent_access_token = registered_agent["agent_jwt"]
+    print("[OK] Agent registered (first use)")
 
-    replay_response = _enroll_agent(
+    replay_response = _register_agent(
         args.api_base_url,
-        provisioning_token=alpha_token,
-        agent_id=alpha_agent_id,
+        activation_code=alpha_activation_code,
         public_key_pem=alpha_pub,
     )
     replay_pass = replay_response.status_code in (401, 403)
-    print(f"[{'OK' if replay_pass else 'FAIL'}] Enrollment replay rejection status={replay_response.status_code}")
-
-    agent_access_token = _agent_login(args.api_base_url, agent_id=alpha_agent_id, signing_key=alpha_signing_key)
-    print("[OK] Agent login challenge verified")
+    print(f"[{'OK' if replay_pass else 'FAIL'}] Activation replay rejection status={replay_response.status_code}")
 
     windows_event_id = 4657
     linux_event_id = 1102

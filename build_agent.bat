@@ -18,25 +18,25 @@ set "PYTHON_EXE="
 
 REM Strategy 0: Prefer the repo virtual environment when present
 if exist "%ROOT_DIR%.venv\Scripts\python.exe" (
-    set "PYTHON_EXE=%ROOT_DIR%.venv\Scripts\python.exe"
+    "%ROOT_DIR%.venv\Scripts\python.exe" -c "import PyInstaller" >nul 2>&1
+    if not errorlevel 1 set "PYTHON_EXE=%ROOT_DIR%.venv\Scripts\python.exe"
 )
 
-REM Strategy 1: Use the py launcher to print the real path
+REM Strategy 1: Prefer Python 3.13, which is supported by the pinned
+REM PyInstaller/pywin32 agent build toolchain.
+if not defined PYTHON_EXE (
+    for /f "usebackq delims=" %%P in (`py -3.13 -c "import sys; print(sys.executable)" 2^>nul`) do set "PYTHON_EXE=%%P"
+)
+
+REM Strategy 2: Fall back to another registered Python 3 runtime
 if not defined PYTHON_EXE (
     for /f "usebackq delims=" %%P in (`py -3 -c "import sys; print(sys.executable)" 2^>nul`) do set "PYTHON_EXE=%%P"
 )
 
-REM Strategy 2: Fallback to where python.exe resolves
+REM Strategy 3: Fallback to where python.exe resolves
 if not defined PYTHON_EXE (
     for /f "usebackq delims=" %%P in (`where python 2^>nul`) do (
         if not defined PYTHON_EXE set "PYTHON_EXE=%%P"
-    )
-)
-
-REM Strategy 3: Hardcoded known path from this machine
-if not defined PYTHON_EXE (
-    if exist "C:\Users\Lenovo\AppData\Local\Python\pythoncore-3.14-64\python.exe" (
-        set "PYTHON_EXE=C:\Users\Lenovo\AppData\Local\Python\pythoncore-3.14-64\python.exe"
     )
 )
 
@@ -60,25 +60,19 @@ if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
 "%PYTHON_EXE%" -m PyInstaller ^
     --onefile ^
-    --noconsole ^
+    --console ^
     --clean ^
     --collect-submodules cryptography ^
     --collect-data cryptography ^
     --collect-binaries cryptography ^
-    --collect-submodules ecdsa ^
     --hidden-import cryptography ^
     --hidden-import cryptography.hazmat.primitives ^
     --hidden-import cryptography.hazmat.primitives.serialization ^
     --hidden-import cryptography.hazmat.primitives.asymmetric ^
     --hidden-import cryptography.hazmat.primitives.asymmetric.ed25519 ^
-    --hidden-import ecdsa ^
-    --hidden-import ecdsa.keys ^
-    --hidden-import ecdsa.curves ^
-    --hidden-import ecdsa.ellipticcurve ^
     --hidden-import requests ^
     --hidden-import dotenv ^
     --hidden-import win32evtlog ^
-    --hidden-import win32evtlogutil ^
     --hidden-import win32security ^
     --hidden-import pythoncom ^
     --hidden-import pywintypes ^

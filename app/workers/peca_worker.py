@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 from datetime import datetime, timezone, timedelta
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from motor.motor_asyncio import AsyncIOMotorClient
 from redis import exceptions as redis_exceptions
 from redis.asyncio import Redis
@@ -31,7 +32,7 @@ except Exception:
     CANONICALJSON_AVAILABLE = False
 
 from app.utils.tenant_cache import get_tenant_features
-from app.utils.observability import increment_redis_counter, record_worker_heartbeat_async
+from app.utils.observability import increment_redis_counter, record_worker_heartbeat_with_client
 from app.utils.crypto_executor import get_crypto_executor, shutdown_crypto_executor, _sign_canonical_bytes
 # This worker ensures non-repudiable log integrity for court-admissible evidence.
 # Strictly Decoupled, RSA-2048 Digital Signing, Senior Architect Hardened
@@ -42,6 +43,7 @@ logger = logging.getLogger("PECA-Worker")
 
 # Module-level key storage for executor-based signing
 _KEY_DATA = None
+_KEY_PASSWORD = None
 
 settings = get_settings()
 RAW_LOGS_QUEUE = "raw_logs_queue"
@@ -141,9 +143,12 @@ def _to_canonical_bytes(obj) -> bytes:
         except Exception as e:
             logger.error(f"Canonical encoding failed: {e}")
     
-    # Fallback to high-entropy deterministic JSON if package is missing (Non-Compliant)
-    logger.warning("Using fallback deterministic JSON (Non-Compliant for PECA)")
-    return json.dumps(o, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    raise RuntimeError("canonicaljson is required for PECA forensic sealing")
+
+
+def _should_alert_directly(event_id: str) -> bool:
+    metadata = SIEM_RULES.get("event_id_map", {}).get(str(event_id), {})
+    return bool(metadata.get("alert_on_event", False))
 
 
 async def reclaim_stale_messages(redis_client: Redis, db):
@@ -225,6 +230,9 @@ async def peca_worker():
     client = AsyncIOMotorClient(settings.mongodb_uri)
     db = client[settings.mongodb_db_name]
     redis = await Redis.from_url(settings.redis_url, decode_responses=True)
+    if not CANONICALJSON_AVAILABLE:
+        logger.critical("PECA non-compliant: canonicaljson is unavailable. Worker cannot start.")
+        sys.exit(1)
 
     # 🔑 Resolve Signing Keys (prefer env-provided key material)
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -257,10 +265,14 @@ async def peca_worker():
     try:
         password = settings.private_key_password.encode() if getattr(settings, "private_key_password", None) else None
         private_key = serialization.load_pem_private_key(key_data, password=password)
+        if not isinstance(private_key, rsa.RSAPrivateKey) or private_key.key_size < 2048:
+            logger.critical("PECA non-compliant: an RSA private key of at least 2048 bits is required.")
+            sys.exit(1)
         logger.info("Loaded RSA Private Key for PECA Signing")
         # Store key_data at module level for ProcessPoolExecutor access
-        global _KEY_DATA
+        global _KEY_DATA, _KEY_PASSWORD
         _KEY_DATA = key_data
+        _KEY_PASSWORD = password
     except Exception as e:
         logger.critical(f"FAILED TO LOAD SIGNING KEY: {e}. Worker non-compliant.")
         sys.exit(1)
@@ -338,13 +350,16 @@ async def peca_worker():
     buffer = []
     buffer_ack_ids = []
     last_flush_time = time.time()
+    last_heartbeat = 0.0
     
     logger.info("⚡ WarSOC PECA Worker: Non-Repudiable Evidence Active (ETO 2002, Sections 5 & 6)...")
     
     try:
         while True:
             try:
-                await record_worker_heartbeat_async("peca_worker")
+                if time.time() - last_heartbeat >= 15:
+                    await record_worker_heartbeat_with_client(redis, "peca_worker")
+                    last_heartbeat = time.time()
                 #  HOT-RELOAD: Sync Compliance Policy every 60 seconds (BUG-24 FIX)
                 if time.time() - last_config_load > 60:
                     config = load_dynamic_config()
@@ -413,20 +428,14 @@ async def peca_worker():
                             try:
                                 log_data = json.loads(raw_payload)
                             except json.JSONDecodeError:
-                                # Best effort cleanup for Python-style stringified dicts
-                                try:
-                                    sanitized = raw_payload.replace("'", '"')
-                                    log_data = json.loads(sanitized)
-                                    logger.info(f"[*] Sanitized malformed PECA JSON: {message_id}")
-                                except Exception:
-                                    await _eject_to_dlq(
-                                        message_id,
-                                        raw_payload,
-                                        "JSON_PARSE_FAILURE",
-                                        tenant_id=DEFAULT_TENANT_ID,
-                                        stack_trace=traceback.format_exc(),
-                                    )
-                                    continue
+                                await _eject_to_dlq(
+                                    message_id,
+                                    raw_payload,
+                                    "JSON_PARSE_FAILURE",
+                                    tenant_id=DEFAULT_TENANT_ID,
+                                    stack_trace=traceback.format_exc(),
+                                )
+                                continue
                             
                             tenant_id = log_data.get("tenant_id")
 
@@ -469,6 +478,18 @@ async def peca_worker():
                                 if isinstance(log_data["raw_event_data"], (dict, list)):
                                     log_data["raw_event_data"] = json.dumps(log_data["raw_event_data"])
                                 log_data["raw_event_data"] = fernet.encrypt(str(log_data["raw_event_data"]).encode()).decode()
+                            if "processed_data" in log_data and log_data["processed_data"]:
+                                if isinstance(log_data["processed_data"], (dict, list)):
+                                    log_data["processed_data"] = json.dumps(
+                                        log_data["processed_data"],
+                                        sort_keys=True,
+                                        separators=(",", ":"),
+                                        default=str,
+                                    )
+                                log_data["processed_data"] = fernet.encrypt(
+                                    str(log_data["processed_data"]).encode()
+                                ).decode()
+                            log_data["encryption_version"] = "fernet-v1"
 
                             # 🏷 3. Tagging & Zero-Trust HMAC Sealing
                             from app.utils.compliance_catalog import get_rule_by_event_id
@@ -503,7 +524,7 @@ async def peca_worker():
                                     _sign_canonical_bytes,
                                     canonical_bytes,
                                     _KEY_DATA,
-                                    None  # password, if any
+                                    _KEY_PASSWORD,
                                 )
                             except ValueError as sign_err:
                                 logger.error(f"Executor signing failed for {message_id}: {sign_err}")
@@ -519,7 +540,9 @@ async def peca_worker():
                             # 4. Attach the immutable seal
                             log_data["signed_payload"] = base64.b64encode(canonical_bytes).decode("utf-8")
                             log_data["canonicalization_version"] = "canonicaljson-v1"
-                            log_data["digital_signature"] = "RSA-2048-PSS-SHA256 (WarSOC Master)"
+                            log_data["digital_signature"] = (
+                                f"RSA-{private_key.key_size}-PSS-SHA256 (WarSOC Master)"
+                            )
                             
                             buffer.append(log_data)
                             forensic_ack_ids.append(message_id)
@@ -550,24 +573,21 @@ async def peca_worker():
                             await db.peca_forensic_logs.bulk_write(forensic_batch)
                             logger.info(f"[*] PECA Signed and Vaulted {len(forensic_batch)} evidence logs.")
                             for item in buffer:
-                                if is_email_trigger_severity(item.get("matched_rule_severity")):
+                                if (
+                                    _should_alert_directly(str(item.get("event_id") or ""))
+                                    and is_email_trigger_severity(item.get("matched_rule_severity"))
+                                ):
                                     await dispatch_alert_if_entitled(
                                         db, redis, item.get("tenant_id"), item, "peca_forensic"
                                     )
                         except Exception as e:
                             logger.exception(f"[!] PECA vault flush failed: {e}")
-                            # On DB persistence failure, eject each pending message to DLQ to avoid losing evidence on crash
-                            for mid in forensic_ack_ids:
-                                try:
-                                    await _eject_to_dlq(
-                                        mid,
-                                        payload_by_mid.get(mid, ""),
-                                        f"DB_INSERT_FAILURE: {str(e)}",
-                                        tenant_id=DEFAULT_TENANT_ID,
-                                        stack_trace=traceback.format_exc(),
-                                    )
-                                except Exception as ex_eject:
-                                    logger.error(f"Failed to eject pending message {mid} after DB failure: {ex_eject}")
+                            # MongoDB outages are transient. Keep stream messages
+                            # pending so XCLAIM can replay them after recovery.
+                            await increment_redis_counter(
+                                redis,
+                                "warsoc_peca_persistence_retries_total",
+                            )
                         else:
                             if forensic_ack_ids:
                                 async with redis.pipeline(transaction=True) as pipe:
@@ -584,7 +604,7 @@ async def peca_worker():
                                 pipe.xack(RAW_LOGS_QUEUE, PECA_GROUP, mid)
                             await pipe.execute()
 
-                    await record_worker_heartbeat_async("peca_worker")
+                    await record_worker_heartbeat_with_client(redis, "peca_worker")
 
             except Exception as e:
                 error_msg = str(e)

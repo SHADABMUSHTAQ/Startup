@@ -54,6 +54,7 @@ run_grand_master.bat
 tests/
 docs/
 tools/
+agent/
 installer.iss
 *.spec
 *.bat
@@ -82,4 +83,5 @@ strip_emojis.py
 scripts/*
 !scripts/entrypoint.sh
 !scripts/wait_for_redis.py
+!scripts/migrate_fbr_encryption.py
 !scripts/launch_readiness_validator.py

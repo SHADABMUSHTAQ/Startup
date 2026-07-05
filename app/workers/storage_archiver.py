@@ -11,6 +11,8 @@ from bson import ObjectId
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 
+from app.utils.compliance_catalog import COMPLIANCE_CATALOG
+
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -37,6 +39,18 @@ COLLECTION_DATE_FIELDS = {
 }
 
 EXPLICIT_EXPIRY_FIELDS = {"_expire_at"}
+COMPLIANCE_PACK_BY_COLLECTION = {
+    "fbr_pos_logs": "fbr_pos",
+    "peca_forensic_logs": "peca_forensic",
+}
+COMPLIANCE_HOT_RETENTION_DAYS = {
+    collection_name: int(COMPLIANCE_CATALOG[pack_name]["retention"]["local_hot_days"])
+    for collection_name, pack_name in COMPLIANCE_PACK_BY_COLLECTION.items()
+}
+COMPLIANCE_VAULT_RETENTION_DAYS = {
+    collection_name: int(COMPLIANCE_CATALOG[pack_name]["retention"]["vault_days"])
+    for collection_name, pack_name in COMPLIANCE_PACK_BY_COLLECTION.items()
+}
 
 
 def _parse_archive_collections() -> tuple[str, ...]:
@@ -60,6 +74,28 @@ def _date_clauses(field_name: str, retention_cutoff: datetime, expiry_cutoff: da
         {field_name: {"$lte": cutoff}},
         {field_name: {"$lte": cutoff.isoformat()}},
     ]
+
+
+def _effective_retention_days(collection_name: str, tenant_retention_days: int) -> int:
+    """Return Mongo hot-retention, not the total Azure compliance-retention period."""
+    compliance_hot_days = COMPLIANCE_HOT_RETENTION_DAYS.get(collection_name)
+    if compliance_hot_days is not None:
+        return compliance_hot_days
+    return max(1, tenant_retention_days)
+
+
+def _archive_cutoffs(
+    collection_name: str,
+    tenant_retention_days: int,
+    archive_lead_days: int,
+    now: datetime | None = None,
+) -> tuple[datetime, datetime]:
+    now = now or datetime.now(timezone.utc)
+    effective_retention_days = _effective_retention_days(collection_name, tenant_retention_days)
+    return (
+        now - timedelta(days=effective_retention_days),
+        now + timedelta(days=archive_lead_days),
+    )
 
 
 def _archive_query(tenant_id: str, collection_name: str, retention_cutoff: datetime, expiry_cutoff: datetime) -> dict:
@@ -90,9 +126,23 @@ async def _archive_batch(container_client, db, tenant_id: str, collection_name: 
     base_name = _blob_base_name(tenant_id, collection_name, run_id, batch_number)
     json_blob_name = f"{base_name}.json"
     hash_blob_name = f"{base_name}.sha256"
+    vault_retention_days = COMPLIANCE_VAULT_RETENTION_DAYS.get(collection_name)
+    retain_until = (
+        datetime.now(timezone.utc) + timedelta(days=vault_retention_days)
+        if vault_retention_days
+        else None
+    )
 
     json_blob = container_client.get_blob_client(json_blob_name)
-    await json_blob.upload_blob(json_dump, overwrite=False)
+    await json_blob.upload_blob(
+        json_dump,
+        overwrite=False,
+        metadata={
+            "sha256": sha256_hash,
+            "collection": collection_name,
+            "retention_days": str(vault_retention_days or 0),
+        },
+    )
 
     hash_blob = container_client.get_blob_client(hash_blob_name)
     await hash_blob.upload_blob(sha256_hash.encode("utf-8"), overwrite=False)
@@ -109,6 +159,8 @@ async def _archive_batch(container_client, db, tenant_id: str, collection_name: 
         "last_document_id": str(document_ids[-1]),
         "oldest_timestamp": min((str(ts) for ts in timestamps if ts is not None), default=None),
         "newest_timestamp": max((str(ts) for ts in timestamps if ts is not None), default=None),
+        "vault_retention_days": vault_retention_days,
+        "retain_until": retain_until,
         "created_at": datetime.now(timezone.utc),
         "status": "archived",
     }
@@ -136,8 +188,7 @@ async def run_archiver():
 
     azure_conn_str = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     if not azure_conn_str:
-        logger.error("CRITICAL: AZURE_STORAGE_CONNECTION_STRING is missing. Archiver cannot run.")
-        return
+        raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING is required for archival")
 
     container_name = os.getenv("AZURE_STORAGE_CONTAINER", "warsoc-cold-storage")
     mongo_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
@@ -165,9 +216,6 @@ async def run_archiver():
             if not tenant_id:
                 continue
 
-            now = datetime.now(timezone.utc)
-            retention_cutoff = now - timedelta(days=retention_days)
-            expiry_cutoff = now + timedelta(days=archive_lead_days)
             logger.info(
                 "Processing tenant %s with retention_days=%s archive_lead_days=%s",
                 tenant_id,
@@ -176,6 +224,11 @@ async def run_archiver():
             )
 
             for collection_name in collections_to_archive:
+                retention_cutoff, expiry_cutoff = _archive_cutoffs(
+                    collection_name,
+                    retention_days,
+                    archive_lead_days,
+                )
                 query = _archive_query(tenant_id, collection_name, retention_cutoff, expiry_cutoff)
                 batch_number = 1
 
@@ -205,5 +258,19 @@ async def run_archiver():
     logger.info("Storage Archiver run completed.")
 
 
+async def run_archiver_scheduler():
+    interval_seconds = int(os.getenv("ARCHIVE_INTERVAL_SECONDS", "0"))
+    if interval_seconds <= 0:
+        await run_archiver()
+        return
+    if interval_seconds < 300:
+        raise RuntimeError("ARCHIVE_INTERVAL_SECONDS must be at least 300")
+
+    while True:
+        await run_archiver()
+        logger.info("Next storage archival run in %s seconds.", interval_seconds)
+        await asyncio.sleep(interval_seconds)
+
+
 if __name__ == "__main__":
-    asyncio.run(run_archiver())
+    asyncio.run(run_archiver_scheduler())

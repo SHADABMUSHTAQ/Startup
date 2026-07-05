@@ -13,5 +13,5 @@ if resp.status_code != 200:
 csrf_token = session.cookies.get("csrf_token")
 headers = {"X-CSRF-Token": csrf_token}
 
-prov_resp = session.post(f"{BASE_URL}/auth/agents/generate-token", headers=headers, json={"agent_id": "DEMO-LAPTOP-01"})
-print(f"Token Output: {prov_resp.text}")
+prov_resp = session.post(f"{BASE_URL}/agent/generate-activation", headers=headers)
+print(f"Activation Output: {prov_resp.text}")

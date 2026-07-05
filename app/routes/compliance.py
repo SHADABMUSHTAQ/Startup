@@ -190,8 +190,10 @@ def _curate_evidence_record(doc: dict, evidence_source: str, data_origin: str) -
     curated = {
         "id": str(doc.get("_id")) if doc.get("_id") is not None else None,
         "tenant_id": doc.get("tenant_id"),
+        "agent_id": doc.get("agent_id"),
         "event_uid": doc.get("event_uid"),
         "timestamp": _to_jsonable(doc.get("timestamp") or doc.get("ingested_at")),
+        "ingested_at": _to_jsonable(doc.get("ingested_at")),
         "event_id": doc.get("event_id"),
         "source_ip": doc.get("source_ip"),
         "user": doc.get("user"),
@@ -201,6 +203,7 @@ def _curate_evidence_record(doc: dict, evidence_source: str, data_origin: str) -
         "raw_event": _decrypt_field(doc.get("raw_event")),
         "raw_event_data": _decrypt_field(doc.get("raw_event_data")),
         "raw_data": _decrypt_field(doc.get("raw_data")),
+        "processed_data": _decrypt_field(doc.get("processed_data")),
         "digital_signature": signature,
         "forensic_seal": forensic_hash,
         "signed_payload": doc.get("signed_payload"),
@@ -212,10 +215,15 @@ def _curate_evidence_record(doc: dict, evidence_source: str, data_origin: str) -
     return curated
 
 
-def _base_query(tenant_id: str, event_id: Optional[int]) -> dict:
+def _base_query(tenant_id: str, event_id: Optional[str]) -> dict:
     query = {"tenant_id": tenant_id}
     if event_id is not None:
-        query["event_id"] = event_id
+        normalized_event_id = str(event_id).strip()
+        query["event_id"] = (
+            {"$in": [normalized_event_id, int(normalized_event_id)]}
+            if normalized_event_id.isdigit()
+            else normalized_event_id
+        )
     return query
 
 
@@ -368,6 +376,94 @@ async def list_compliance_packs():
     ]
 
 
+@router.get("/coverage")
+async def get_compliance_coverage(
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    _: str = Depends(RoleChecker(["admin", "manager", "auditor"])),
+):
+    """Return real tenant sensor coverage instead of a static monitoring claim."""
+    tenant_id = current_user.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="Unauthorized tenant scope")
+
+    entitled_packs = _get_entitled_packs(current_user)
+    agents = await db["agents"].find(
+        {
+            "tenant_id": tenant_id,
+            "status": {"$ne": "revoked"},
+            "public_key": {"$exists": True, "$ne": ""},
+        },
+        {"_id": 0, "agent_id": 1, "last_seen": 1, "sensor_status": 1},
+    ).to_list(length=1000)
+
+    now = datetime.now(timezone.utc)
+    agent_states = []
+    for agent in agents:
+        sensor = agent.get("sensor_status") if isinstance(agent.get("sensor_status"), dict) else {}
+        channels = sensor.get("channels") if isinstance(sensor.get("channels"), dict) else {}
+        last_seen = _coerce_dt(agent.get("last_seen"))
+        online = bool(last_seen and (now - last_seen).total_seconds() <= 600)
+        native_ready = (
+            online
+            and str(sensor.get("audit_policy_status") or "").lower() == "configured"
+            and all(
+                str((channels.get(channel) or {}).get("status") or "").lower() == "ok"
+                for channel in ("Security", "System")
+            )
+        )
+        try:
+            pos_sacl_path_count = int(sensor.get("pos_sacl_path_count") or 0)
+        except (TypeError, ValueError):
+            pos_sacl_path_count = 0
+        fbr_ready = native_ready and (
+            pos_sacl_path_count > 0
+            or (
+                bool((sensor.get("pos_audit_log") or {}).get("configured"))
+                and bool((sensor.get("pos_audit_log") or {}).get("present"))
+            )
+        )
+        agent_states.append(
+            {
+                "agent_id": agent.get("agent_id"),
+                "online": online,
+                "native_ready": native_ready,
+                "fbr_ready": fbr_ready,
+            }
+        )
+
+    coverage = []
+    for pack_id in sorted(entitled_packs):
+        required_key = "fbr_ready" if pack_id == "fbr_pos" else "native_ready"
+        ready_count = sum(1 for state in agent_states if state[required_key])
+        if not agent_states or ready_count == 0:
+            status = "not_configured"
+        elif ready_count == len(agent_states):
+            status = "active"
+        else:
+            status = "degraded"
+
+        collection_name = "fbr_pos_logs" if pack_id == "fbr_pos" else "peca_forensic_logs"
+        latest = await db[collection_name].find_one(
+            {"tenant_id": tenant_id},
+            {"timestamp": 1, "ingested_at": 1},
+            sort=[("timestamp", -1)],
+        )
+        coverage.append(
+            {
+                "pack_id": pack_id,
+                "status": status,
+                "registered_agents": len(agent_states),
+                "ready_agents": ready_count,
+                "last_evidence_at": _to_jsonable(
+                    (latest or {}).get("timestamp") or (latest or {}).get("ingested_at")
+                ),
+            }
+        )
+
+    return {"status": "success", "coverage": coverage}
+
+
 @router.get("/packs/{pack_id}", dependencies=[Depends(get_current_user)])
 async def get_pack_details(pack_id: str):
     """Returns granular controls and event monitoring rules for a specific framework (Config-Driven)."""
@@ -391,7 +487,7 @@ async def get_pack_details(pack_id: str):
 async def get_compliance_evidence(
     skip: int = Query(0, ge=0, description="Deep pagination over 10000 will be auto-adjusted to prevent memory exhaustion"),
     limit: int = Query(50, ge=1, le=500),
-    event_id: Optional[int] = Query(None),
+    event_id: Optional[str] = Query(None),
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None),
     db=Depends(get_db),
@@ -493,49 +589,51 @@ async def get_compliance_evidence(
         ])
         cursors.append({"name": coll_name, "cursor": cursor, "current": None})
 
-    for c in cursors:
-        if await c["cursor"].fetch_next:
-            c["current"] = c["cursor"].next_object()
-
     docs = []
     skipped = 0
 
-    while len(docs) < limit:
-        best_c = None
+    async def _next_document(cursor):
+        try:
+            return await cursor.__anext__()
+        except StopAsyncIteration:
+            return None
+
+    try:
         for c in cursors:
-            if c["current"] is not None:
-                if best_c is None:
-                    best_c = c
-                else:
-                    ts_c = _coerce_dt(c["current"].get("timestamp") or c["current"].get("ingested_at"))
-                    ts_best = _coerce_dt(best_c["current"].get("timestamp") or best_c["current"].get("ingested_at"))
+            c["current"] = await _next_document(c["cursor"])
 
-                    if ts_c is None:
-                        ts_c = datetime.min.replace(tzinfo=timezone.utc)
-                    if ts_best is None:
-                        ts_best = datetime.min.replace(tzinfo=timezone.utc)
-
-                    if ts_c > ts_best:
+        while len(docs) < limit:
+            best_c = None
+            for c in cursors:
+                if c["current"] is not None:
+                    if best_c is None:
                         best_c = c
+                    else:
+                        ts_c = _coerce_dt(c["current"].get("timestamp") or c["current"].get("ingested_at"))
+                        ts_best = _coerce_dt(best_c["current"].get("timestamp") or best_c["current"].get("ingested_at"))
 
-        if best_c is None:
-            break
+                        if ts_c is None:
+                            ts_c = datetime.min.replace(tzinfo=timezone.utc)
+                        if ts_best is None:
+                            ts_best = datetime.min.replace(tzinfo=timezone.utc)
 
-        doc = best_c["current"]
-        doc["_source_collection"] = best_c["name"]
+                        if ts_c > ts_best:
+                            best_c = c
 
-        if await best_c["cursor"].fetch_next:
-            best_c["current"] = best_c["cursor"].next_object()
-        else:
-            best_c["current"] = None
+            if best_c is None:
+                break
 
-        if skipped < skip:
-            skipped += 1
-        else:
-            docs.append(doc)
+            doc = best_c["current"]
+            doc["_source_collection"] = best_c["name"]
+            best_c["current"] = await _next_document(best_c["cursor"])
 
-    for c in cursors:
-        c["cursor"].close()
+            if skipped < skip:
+                skipped += 1
+            else:
+                docs.append(doc)
+    finally:
+        for c in cursors:
+            await c["cursor"].close()
 
     curated = []
     for doc in docs:
@@ -563,7 +661,7 @@ async def get_compliance_evidence_by_pack(
     pack_id: str,
     skip: int = Query(0, ge=0, description="Deep pagination over 10000 will be auto-adjusted to prevent memory exhaustion"),
     limit: int = Query(50, ge=1, le=500),
-    event_id: Optional[int] = Query(None),
+    event_id: Optional[str] = Query(None),
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None),
     db=Depends(get_db),

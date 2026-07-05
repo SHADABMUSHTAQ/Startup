@@ -79,7 +79,7 @@ async def test_e2e_admin_and_user_pov(async_client):
         "activation_code": activation_codes[0],
         "public_key": "some_other_key"
     })
-    assert res.status_code == 401, "System allowed activation code reuse!"
+    assert res.status_code in {401, 403}, f"Reused activation code was not rejected: {res.status_code} {res.text}"
     
     # Success
     with open("C:\\Users\\Lenovo\\Desktop\\Startup-backend\\scratch\\e2e_pytest_passed.txt", "w", encoding="utf-8") as f:

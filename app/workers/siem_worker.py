@@ -20,7 +20,7 @@ from app.utils.siem_logic import SIEMEngine, CorrelationEngine
 from app.utils.siem_catalog import SIEM_RULES
 from app.utils.compliance_catalog import COMPLIANCE_CATALOG
 from app.utils.tenant_cache import get_tenant_retention
-from app.utils.observability import increment_redis_counter
+from app.utils.observability import increment_redis_counter, record_worker_heartbeat_with_client
 from app.utils.custom_json import dumps as json_dumps
 from app.actions.alerting import dispatch_alert_if_entitled, is_email_trigger_severity
 
@@ -131,6 +131,15 @@ def _normalize_document_timestamps(document: dict):
     if "ingested_at" in document:
         document["ingested_at"] = _normalize_timestamp_iso_utc(document.get("ingested_at"))
     return document
+
+
+async def _record_detection_latency(redis_client, event_timestamp):
+    try:
+        event_time = _normalize_timestamp_iso_utc(event_timestamp)
+        latency = max(0.0, (datetime.now(timezone.utc) - event_time).total_seconds())
+        await redis_client.set("warsoc_detection_latency_seconds", f"{latency:.6f}", ex=600)
+    except Exception:
+        pass
 
 
 def _safe_float(val):
@@ -466,6 +475,7 @@ async def siem_worker():
     last_reclaim_run = 0.0
     processed_since_log = 0
     last_throughput_log = time.time()
+    last_heartbeat = 0.0
 
     try:
         while True:
@@ -476,6 +486,10 @@ async def siem_worker():
                     siem_engine.refresh_config(config) # Full engine re-initialization
                     corr_engine.refresh_config(config)
                     last_config_load = time.time()
+
+                if time.time() - last_heartbeat >= 15:
+                    await record_worker_heartbeat_with_client(redis, "siem_worker")
+                    last_heartbeat = time.time()
 
                 streams = []
                 now_monotonic = time.time()
@@ -542,20 +556,14 @@ async def siem_worker():
                             try:
                                 log_data = json.loads(raw_payload)
                             except json.JSONDecodeError:
-                                # Best effort cleanup for Python-style stringified dicts
-                                try:
-                                    sanitized = raw_payload.replace("'", '"')
-                                    log_data = json.loads(sanitized)
-                                    logger.info(f"[*] Sanitized malformed SIEM JSON: {message_id}")
-                                except Exception:
-                                    await _eject_to_dlq(
-                                        message_id,
-                                        raw_payload,
-                                        "JSON_PARSE_FAILURE",
-                                        stream_name=stream_name,
-                                        group_name=group_name,
-                                    )
-                                    continue
+                                await _eject_to_dlq(
+                                    message_id,
+                                    raw_payload,
+                                    "JSON_PARSE_FAILURE",
+                                    stream_name=stream_name,
+                                    group_name=group_name,
+                                )
+                                continue
 
                             tenant_id = log_data.get("tenant_id")
 
@@ -723,7 +731,8 @@ async def siem_worker():
                                 fp_tuning = win_config.get("false_positive_tuning", {}).get(event_id, {})
                                 allowed_logon_types = fp_tuning.get("allowed_logon_types", [])
 
-                                trigger_event = True
+                                event_rule = config.get("event_id_map", {}).get(event_id, {})
+                                trigger_event = bool(event_rule.get("alert_on_event", False))
                                 if allowed_logon_types and "logon_type" in processed:
                                     if processed.get("logon_type") not in allowed_logon_types:
                                         trigger_event = False
@@ -766,6 +775,7 @@ async def siem_worker():
                                         try:
                                             await db.security_alerts.update_one({"tenant_id": tenant_id, "alert_uid": alert_uid}, {"$set": c_alert}, upsert=True)
                                             await redis.publish("security_alerts", json_dumps(c_alert))
+                                            await _record_detection_latency(redis, log_data.get("timestamp"))
                                             logger.info(f"[CORR ALERT] {c_alert['severity']}: {c_alert['summary']}")
                                             if is_email_trigger_severity(c_alert.get("severity")):
                                                 await dispatch_alert_if_entitled(db, redis, tenant_id, c_alert, "SIEM")
@@ -810,6 +820,7 @@ async def siem_worker():
 
                                 # Publish to redis for live websocket dashboard
                                 await redis.publish("security_alerts", json_dumps(alert_payload))
+                                await _record_detection_latency(redis, log_data.get("timestamp"))
                                 logger.info(f"[!] ALERT: {display_title} for {tenant_id}")
                                 if is_email_trigger_severity(alert_payload.get("severity")):
                                     await dispatch_alert_if_entitled(db, redis, tenant_id, alert_payload, "SIEM")
@@ -849,6 +860,7 @@ async def siem_worker():
                                     try:
                                         await db.security_alerts.update_one({"tenant_id": tenant_id, "alert_uid": finding["alert_uid"]}, {"$set": finding}, upsert=True)
                                         await redis.publish("security_alerts", json_dumps(finding))
+                                        await _record_detection_latency(redis, log_data.get("timestamp"))
                                         logger.info(f"[!] ADVANCED ALERT: {finding['summary']} for {tenant_id}")
                                         if is_email_trigger_severity(finding.get("severity")):
                                             await dispatch_alert_if_entitled(db, redis, tenant_id, finding, "SIEM")
@@ -882,6 +894,7 @@ async def siem_worker():
                                     try:
                                         await db.security_alerts.update_one({"tenant_id": tenant_id, "alert_uid": corr_alert["alert_uid"]}, {"$set": corr_alert}, upsert=True)
                                         await redis.publish("security_alerts", json_dumps(corr_alert))
+                                        await _record_detection_latency(redis, log_data.get("timestamp"))
                                         logger.info(f"[CORR] ALERT: {corr_alert['type']} | {corr_alert['severity']} | {tenant_id}")
                                         if is_email_trigger_severity(corr_alert.get("severity")):
                                             await dispatch_alert_if_entitled(db, redis, tenant_id, corr_alert, "SIEM")

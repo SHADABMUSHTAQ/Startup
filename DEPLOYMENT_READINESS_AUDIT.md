@@ -116,7 +116,9 @@
 | `/auth/signup` | POST | None | ✅ Rate-limited |
 | `/auth/logout` | POST | Cookie | ✅ Blacklist to Redis |
 | `/auth/me` | GET | Cookie | ✅ Returns user + CSRF |
-| `/auth/agent-login` | POST | Signature | ✅ ECDSA verified |
+| `/agent/generate-activation` | POST | Admin cookie + CSRF | Activation code issued |
+| `/agent/register` | POST | Activation code + Ed25519 public key | Agent JWT issued |
+| `/ingest/pulse` | POST | Agent bearer JWT | Agent telemetry accepted |
 
 ### RBAC Implementation
 - **Mechanism:** `RoleChecker(allowed_roles)` Depends decorator

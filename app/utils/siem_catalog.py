@@ -1,4 +1,4 @@
-﻿#  THE SIEM SINGLE SOURCE OF TRUTH (SSOT)
+#  THE SIEM SINGLE SOURCE OF TRUTH (SSOT)
 # This file contains all detection rules, thresholds, event mappings, and alert labels.
 
 SIEM_RULES = {
@@ -43,13 +43,17 @@ SIEM_RULES = {
                 4672,
                 4720,
                 4726,
+                1100,
                 1102,
                 4663,
                 4660,
                 4657,
                 4698,
                 4732,
-                80,
+                4670,
+                4616,
+                4697,
+                4719,
                 4670,
                 4616,
                 4697,
@@ -62,17 +66,11 @@ SIEM_RULES = {
                 5140,
                 7045,
                 4688,
-                5156,
-                7,
-                8,
-                9,
-                10,
-                13,
-                17,
-                18
+                5157
             ],
             "severity_by_event_id": {
                 "4625": "HIGH",
+                "1100": "CRITICAL",
                 "1102": "CRITICAL",
                 "4720": "MEDIUM",
                 "4732": "HIGH",
@@ -86,17 +84,9 @@ SIEM_RULES = {
                 "4660": "MEDIUM",
                 "4657": "HIGH",
                 "4698": "HIGH",
-                "1": "INFO",
-                "3": "MEDIUM",
-                "7": "MEDIUM",
-                "8": "CRITICAL",
-                "9": "CRITICAL",
-                "10": "CRITICAL",
-                "13": "HIGH",
-                "17": "MEDIUM",
-                "18": "MEDIUM",
                 "4798": "LOW",
-                "80": "INFO"
+                "5157": "HIGH",
+                "7045": "CRITICAL"
             },
             "severity_by_keyword": {
                 "failed": "HIGH",
@@ -236,235 +226,42 @@ SIEM_RULES = {
         ]
     },
     "event_id_map": {
-        "1": {
-            "event_type": "http_request",
-            "severity": "INFO",
-            "frameworks": [
-                "peca_forensic"
-            ]
-        },
-        "4688": {
-            "event_type": "process_create",
-            "severity": "INFO",
-            "frameworks": [
-                "peca_forensic"
-            ]
-        },
-        "4624": {
-            "event_type": "successful_login",
-            "severity": "INFO",
-            "frameworks": [
-                "peca_forensic"
-            ]
-        },
-        "4625": {
-            "event_type": "failed_login",
-            "severity": "HIGH",
-            "frameworks": [
-                "peca_forensic"
-            ]
-        },
-        "4672": {
-            "event_type": "privilege_escalation",
-            "severity": "MEDIUM",
-            "frameworks": [
-                "peca_forensic"
-            ]
-        },
-        "4720": {
-            "event_type": "account_created",
-            "severity": "INFO",
-            "frameworks": [
-                "peca_forensic"
-            ]
-        },
-        "4726": {
-            "event_type": "account_deleted",
-            "severity": "INFO",
-            "frameworks": [
-                "peca_forensic"
-            ]
-        },
-        "1102": {
-            "event_type": "clear_logs",
-            "severity": "CRITICAL",
-            "frameworks": [
-                "peca_forensic",
-                "fbr_pos"
-            ]
-        },
-        "4732": {
-            "event_type": "localgroup_member_added",
-            "severity": "HIGH",
-            "frameworks": [
-                "peca_forensic",
-                "fbr_pos"
-            ]
-        },
-        "4697": {
-            "event_type": "service_installed",
-            "severity": "CRITICAL",
-            "frameworks": [
-                "peca_forensic",
-                "fbr_pos"
-            ]
-        },
-        "4648": {
-            "event_type": "explicit_credential_use",
-            "severity": "HIGH",
-            "frameworks": [
-
-            ]
-        },
-        "4776": {
-            "event_type": "ntlm_authentication",
-            "severity": "HIGH",
-            "frameworks": [
-
-            ]
-        },
-        "4768": {
-            "event_type": "kerberos_auth_ticket",
-            "severity": "MEDIUM",
-            "frameworks": [
-
-            ]
-        },
-        "4769": {
-            "event_type": "kerberos_service_ticket",
-            "severity": "MEDIUM",
-            "frameworks": [
-
-            ]
-        },
-        "5140": {
-            "event_type": "network_share_accessed",
-            "severity": "MEDIUM",
-            "frameworks": [
-
-            ]
-        },
-        "7": {
-            "event_type": "image_load",
-            "severity": "MEDIUM",
-            "frameworks": [
-
-            ]
-        },
-        "8": {
-            "event_type": "create_remote_thread",
-            "severity": "CRITICAL",
-            "frameworks": [
-
-            ]
-        },
-        "9": {
-            "event_type": "raw_access_read",
-            "severity": "CRITICAL",
-            "frameworks": [
-
-            ]
-        },
-        "10": {
-            "event_type": "process_access",
-            "severity": "CRITICAL",
-            "frameworks": [
-
-            ]
-        },
-        "13": {
-            "event_type": "registry_set",
-            "severity": "HIGH",
-            "frameworks": [
-
-            ]
-        },
-        "17": {
-            "event_type": "named_pipe_created",
-            "severity": "MEDIUM",
-            "frameworks": [
-
-            ]
-        },
-        "18": {
-            "event_type": "named_pipe_connected",
-            "severity": "MEDIUM",
-            "frameworks": [
-
-            ]
-        },
-        "4663": {
-            "event_type": "object_access",
-            "severity": "MEDIUM",
-            "frameworks": [
-                "fbr_pos"
-            ]
-        },
-        "4660": {
-            "event_type": "object_deleted",
-            "severity": "MEDIUM",
-            "frameworks": [
-                "fbr_pos"
-            ]
-        },
-        "4670": {
-            "event_type": "permissions_changed",
-            "severity": "HIGH",
-            "frameworks": [
-                "fbr_pos"
-            ]
-        },
-        "4657": {
-            "event_type": "registry_modified",
-            "severity": "HIGH",
-            "frameworks": [
-                "fbr_pos"
-            ]
-        },
-        "4698": {
-            "event_type": "scheduled_task_created",
-            "severity": "MEDIUM",
-            "frameworks": [
-                "fbr_pos"
-            ]
-        },
-        "80": {
-            "event_type": "etw_shellcode",
-            "severity": "CRITICAL",
-            "frameworks": [
-                "peca_forensic"
-            ]
-        },
-        "5156": {
-            "event_type": "firewall_block",
-            "severity": "MEDIUM",
-            "frameworks": [
-                "peca_forensic"
-            ]
-        },
-        "7045": {
-            "event_type": "service_installed",
-            "severity": "HIGH",
-            "frameworks": ["peca_forensic", "fbr_pos"]
-        },
-        "4719": {
-            "event_type": "policy_change",
-            "severity": "MEDIUM",
-            "frameworks": ["peca_forensic"]
-        },
-        "4798": {
-            "event_type": "user_enumeration",
-            "severity": "LOW",
-            "frameworks": ["peca_forensic"]
-        }
+        "1100": {"event_type": "event_logging_stopped", "severity": "CRITICAL", "frameworks": ["peca_forensic"], "alert_on_event": True},
+        "1102": {"event_type": "clear_logs", "severity": "CRITICAL", "frameworks": ["peca_forensic"], "alert_on_event": True},
+        "4616": {"event_type": "system_time_changed", "severity": "MEDIUM", "frameworks": [], "alert_on_event": False},
+        "4624": {"event_type": "successful_login", "severity": "INFO", "frameworks": ["peca_forensic"], "alert_on_event": False},
+        "4625": {"event_type": "failed_login", "severity": "HIGH", "frameworks": ["peca_forensic"], "alert_on_event": False},
+        "4648": {"event_type": "explicit_credential_use", "severity": "HIGH", "frameworks": [], "alert_on_event": False},
+        "4657": {"event_type": "registry_modified", "severity": "HIGH", "frameworks": ["fbr_pos"], "alert_on_event": False},
+        "4660": {"event_type": "object_deleted", "severity": "MEDIUM", "frameworks": ["fbr_pos"], "alert_on_event": False},
+        "4663": {"event_type": "object_access", "severity": "MEDIUM", "frameworks": ["fbr_pos"], "alert_on_event": False},
+        "4670": {"event_type": "permissions_changed", "severity": "HIGH", "frameworks": ["fbr_pos"], "alert_on_event": False},
+        "4672": {"event_type": "special_privileges_assigned", "severity": "MEDIUM", "frameworks": ["peca_forensic"], "alert_on_event": False},
+        "4688": {"event_type": "process_create", "severity": "INFO", "frameworks": ["peca_forensic"], "alert_on_event": False},
+        "4697": {"event_type": "service_installed", "severity": "CRITICAL", "frameworks": ["peca_forensic"], "alert_on_event": True},
+        "4698": {"event_type": "scheduled_task_created", "severity": "MEDIUM", "frameworks": ["fbr_pos"], "alert_on_event": False},
+        "4719": {"event_type": "policy_change", "severity": "HIGH", "frameworks": ["peca_forensic"], "alert_on_event": True},
+        "4720": {"event_type": "account_created", "severity": "HIGH", "frameworks": ["peca_forensic"], "alert_on_event": True},
+        "4726": {"event_type": "account_deleted", "severity": "HIGH", "frameworks": ["peca_forensic"], "alert_on_event": True},
+        "4732": {"event_type": "localgroup_member_added", "severity": "HIGH", "frameworks": ["peca_forensic"], "alert_on_event": True},
+        "4768": {"event_type": "kerberos_auth_ticket", "severity": "MEDIUM", "frameworks": [], "alert_on_event": False},
+        "4769": {"event_type": "kerberos_service_ticket", "severity": "MEDIUM", "frameworks": [], "alert_on_event": False},
+        "4776": {"event_type": "ntlm_authentication", "severity": "HIGH", "frameworks": [], "alert_on_event": False},
+        "4798": {"event_type": "user_enumeration", "severity": "LOW", "frameworks": ["peca_forensic"], "alert_on_event": False},
+        "5140": {"event_type": "network_share_accessed", "severity": "MEDIUM", "frameworks": [], "alert_on_event": False},
+        "5157": {"event_type": "network_connection_blocked", "severity": "HIGH", "frameworks": ["peca_forensic"], "alert_on_event": True},
+        "7045": {"event_type": "service_installed", "severity": "CRITICAL", "frameworks": ["peca_forensic"], "alert_on_event": True},
+        "FBR-INV-DEL": {"event_type": "invoice_deleted", "severity": "WARNING", "frameworks": ["fbr_pos"], "alert_on_event": False},
+        "FBR-INV-MOD": {"event_type": "invoice_modified", "severity": "CRITICAL", "frameworks": ["fbr_pos"], "alert_on_event": False},
+        "FIM-DB-MOD": {"event_type": "database_tampered", "severity": "CRITICAL", "frameworks": ["fbr_pos"], "alert_on_event": False}
     },
     "detection": {
         "siem_rules": [
             {
                 "rule_id": "SIEM-FW-001",
                 "name": "Firewall Connection Blocked",
-                "event_id": 5156,
-                "severity": "MEDIUM",
+                "event_id": 5157,
+                "severity": "HIGH",
                 "action": "alert"
             }
         ],
@@ -492,7 +289,7 @@ SIEM_RULES = {
         },
         "phishing_detection": {
             "enabled": True,
-            "score_threshold": 50,
+            "score_threshold": 40,
             "minimum_signals": 2,
             "credential_lure_keywords": [
                 "verify your account",
@@ -556,7 +353,7 @@ SIEM_RULES = {
                 "raw_ip_url": 30,
                 "punycode_domain": 35,
                 "risky_attachment": 30,
-                "lolbin_execution": 35,
+                "lolbin_execution": 50,
                 "url_shortener": 20,
                 "sender_spoof_hint": 25
             }
@@ -581,7 +378,7 @@ SIEM_RULES = {
                 "cooldown_seconds": 60
             },
             "SIEM-FW-001": {
-                "regex": "(?i)\\b(firewall|connection blocked|5156)\\b",
+                "regex": "(?i)\\b(firewall|connection blocked)\\b",
                 "sev": "MEDIUM",
                 "mitre": "N/A",
                 "summary": "Firewall Connection Blocked",
@@ -726,7 +523,7 @@ SIEM_RULES = {
                 "summary": "Timestomping: File Modification Time Altered"
             },
             "WEB_SHELL_ACTIVITY": {
-                "regex": "(?i)(cmd\\.exe\\s+/c|powershell\\.exe.*)\\s+HTTP/",
+                "regex": "(?i)(cmd\\.exe\\s+/c|powershell(?:\\.exe)?).*?\\s+HTTP/",
                 "sev": "HIGH",
                 "mitre": "T1505.003",
                 "requires_context": ["process_create", "http_request"],
@@ -796,7 +593,7 @@ SIEM_RULES = {
             "password_spraying": {
                 "enabled": True,
                 "handler": "password_spray",
-                "threshold_users": 10,
+                "threshold_users": 5,
                 "threshold_attempts": 1,
                 "window_seconds": 300,
                 "mitre_id": "T1110.003",
@@ -882,7 +679,7 @@ SIEM_RULES = {
             "ghost_admin_sequence": {
                 "enabled": True,
                 "handler": "ghost_admin_sequence",
-                "window_seconds": 3600,
+                "window_seconds": 300,
                 "mitre_id": "T1548+T1070",
                 "severity": "CRITICAL",
                 "description": "Ghost Admin Sequence Detected"
@@ -912,26 +709,6 @@ SIEM_RULES = {
                 "unique_field": "share_name",
                 "event_filter": "network_share_accessed"
             },
-            "ransomware_raw_access": {
-                "enabled": True,
-                "handler": "ransomware_raw_access",
-                "threshold": 20,
-                "window_seconds": 300,
-                "mitre_id": "T1486",
-                "severity": "CRITICAL",
-                "description": "Ransomware raw-access pattern detected",
-                "group_by": "source_ip",
-                "event_filter": "all"
-            },
-            "process_injection": {
-                "enabled": True,
-                "handler": "process_injection",
-                "window_seconds": 300,
-                "mitre_id": "T1055",
-                "severity": "CRITICAL",
-                "description": "Process injection detected",
-                "event_filter": "create_remote_thread"
-            },
             "registry_persistence": {
                 "enabled": True,
                 "handler": "registry_persistence",
@@ -939,7 +716,7 @@ SIEM_RULES = {
                 "mitre_id": "T1112",
                 "severity": "HIGH",
                 "description": "Registry persistence detected",
-                "event_filter": "registry_set"
+                "event_filter": "registry_modified"
             }
         },
         "filesystem_ransomware": {

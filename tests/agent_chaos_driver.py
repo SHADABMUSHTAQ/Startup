@@ -26,9 +26,11 @@ PECA_EVENT_IDS = {
     "4672",
     "4688",
     "4697",
+    "7045",
     "4720",
     "4726",
     "4732",
+    "1100",
     "1102",
 }
 
@@ -40,7 +42,7 @@ FBR_EVENT_IDS = {
     "4698",
     "FBR-INV-DEL",
     "FBR-INV-MOD",
-    "FBR-INV-ADD",
+    "FIM-DB-MOD",
 }
 
 LAST_PERFECT_PAYLOADS: list[dict] | None = None
@@ -56,6 +58,7 @@ VALID_WINDOWS_EVENT_IDS = [
     17,
     18,
     80,
+    1100,
     1102,
     4616,
     4624,
@@ -78,7 +81,7 @@ VALID_WINDOWS_EVENT_IDS = [
     4776,
     4798,
     5140,
-    5156,
+    5157,
     7045,
 ]
 
@@ -127,7 +130,7 @@ def generate_perfect_35() -> list[dict]:
             )
         )
 
-    custom_strings = ["FBR-INV-DEL", "FBR-INV-MOD", "FBR-INV-ADD"]
+    custom_strings = ["FBR-INV-DEL", "FBR-INV-MOD", "FIM-DB-MOD"]
     for offset, custom_event_id in enumerate(custom_strings, start=len(payloads) + 1):
         payloads.append(
             _base_payload(

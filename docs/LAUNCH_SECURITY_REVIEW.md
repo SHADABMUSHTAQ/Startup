@@ -111,7 +111,7 @@ Configured endpoint event IDs include:
 - `4719`: audit policy changed.
 - `4798`: local group membership enumerated.
 - `4648`: explicit credential use.
-- `5156`: Windows Filtering Platform network connection.
+- `5157`: Windows Filtering Platform network connection blocked.
 - `80`: custom web log event.
 - Sysmon `1`, `3`, `11`: process creation, network connection, and file creation coverage where Sysmon is enabled.
 
@@ -124,7 +124,7 @@ Network logs collected:
 - Plain text syslog fallback.
 - Nginx access/error logs at the gateway.
 - Web access logs tailed by endpoint agent paths.
-- Endpoint network telemetry via Sysmon Event 3 and Windows Event 5156.
+- Endpoint network telemetry via Sysmon Event 3 and Windows Event 5157.
 
 Application/security logs produced:
 

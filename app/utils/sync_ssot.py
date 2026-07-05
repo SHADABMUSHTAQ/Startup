@@ -43,11 +43,10 @@ def generate_tenant_policy():
 
     # 3. Add base infrastructure failsafe events
     base_ids = {
-        4624, 4625, 4672, 4720, 4726, 1102, 
-        4663, 4660, 4657, 4698, 4732, 80, 4670, 
+        1100, 4624, 4625, 4672, 4720, 4726, 1102,
+        4663, 4660, 4657, 4698, 4732, 4670,
         4616, 4697, 4719, 4798, 4648, 4776, 4768, 
-        4769, 5140, 7, 8, 9, 10, 13, 17, 18, 
-        7045, 5156, 4688
+        4769, 5140, 7045, 5157, 4688
     }
     target_event_ids.update(base_ids)
 
@@ -61,12 +60,13 @@ def generate_tenant_policy():
             "capture_all_windows_channels": False,
             "windows_channels": [
                 "Security",
-                "Microsoft-Windows-Sysmon/Operational"
+                "System"
             ],
             "web_log_paths": [
                 "access.log",
                 "logs/*.log",
-                "C:/inetpub/logs/LogFiles/W3SVC*/u_ex*.log"
+                "C:/inetpub/logs/LogFiles/W3SVC*/u_ex*.log",
+                "%ProgramData%/WarSOC/pos_audit.log"
             ]
         }
     }

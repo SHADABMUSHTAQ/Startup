@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, timezone
 
@@ -64,10 +65,21 @@ async def test_50_agent_tenant_allows_final_seat_and_blocks_51st(
     assert await redis_client.get(f"tenant:{tenant_id}:active_count") == "50"
     assert await db["agents"].count_documents({"tenant_id": tenant_id, "status": "active"}) == 1
 
+    second_activation_code = "WARSOC-QUOTA51"
+    await redis_client.set(
+        f"warsoc:activation:{second_activation_code}",
+        json.dumps(
+            {
+                "tenant_id": tenant_id,
+                "features": "SIEM,fbr_pos,peca_forensic",
+                "created_by": "quota-contract-test",
+            }
+        ),
+    )
     over_limit = await async_client.post(
         "/api/v1/agent/register",
         json={
-            "activation_code": activation_code,
+            "activation_code": second_activation_code,
             "public_key": _ed25519_public_key_pem(),
         },
     )
@@ -76,3 +88,49 @@ async def test_50_agent_tenant_allows_final_seat_and_blocks_51st(
     assert "license limit (50)" in over_limit.json()["detail"]
     assert await redis_client.get(f"tenant:{tenant_id}:active_count") == "50"
     assert await db["agents"].count_documents({"tenant_id": tenant_id, "status": "active"}) == 1
+
+
+async def test_activation_code_is_atomically_single_use_under_concurrency(
+    async_client,
+    db,
+    redis_client,
+):
+    tenant_id = "WARSOC_ATOMIC_ACTIVATION"
+    activation_code = "WARSOC-ATOMIC"
+    now = datetime.now(timezone.utc)
+    await db["tenants"].insert_one(
+        {
+            "tenant_id": tenant_id,
+            "company_name": "Atomic Activation Contract",
+            "plan_type": "Enterprise",
+            "status": "active",
+            "max_agents": 50,
+            "agent_limit": 50,
+            "created_at": now,
+        }
+    )
+    await redis_client.set(
+        f"warsoc:activation:{activation_code}",
+        json.dumps(
+            {
+                "tenant_id": tenant_id,
+                "features": "SIEM",
+                "created_by": "atomic-activation-test",
+            }
+        ),
+    )
+
+    async def register_once():
+        return await async_client.post(
+            "/api/v1/agent/register",
+            json={
+                "activation_code": activation_code,
+                "public_key": _ed25519_public_key_pem(),
+            },
+        )
+
+    first, second = await asyncio.gather(register_once(), register_once())
+    assert sorted([first.status_code, second.status_code]) == [200, 401]
+    assert await db["agents"].count_documents({"tenant_id": tenant_id}) == 1
+    assert await redis_client.get(f"tenant:{tenant_id}:active_count") == "1"
+    assert await redis_client.get(f"warsoc:activation:{activation_code}") is None

@@ -93,7 +93,7 @@ async def test_all_catalog_rules_e2e(clean_slate, mock_tenant_a, mongo_client, r
                 "BRUTE_FORCE_PATTERN": "failed password for root",
                 "XXE_INJECTION": "<!ENTITY xxe SYSTEM \"file:///etc/passwd\">",
                 "MALWARE_EXECUTION": "mimikatz.exe privilege::debug",
-                "SIEM-FW-001": "firewall connection blocked 5156"
+                "SIEM-FW-001": "firewall connection blocked 5157"
             }
             
             message += regex_matches.get(rule_name, rule_name)
@@ -131,7 +131,7 @@ async def test_all_catalog_rules_e2e(clean_slate, mock_tenant_a, mongo_client, r
         
         # 2. Horizontal Port Scan (10 events, unique destination IP)
         for i in range(11):
-            stateful_events.append(_http_event(5156, str(uuid.uuid4()), mock_tenant_a["tenant_id"], mock_tenant_a["agent_id"], f"network connection to 192.168.1.{i}", "10.1.1.1", mock_tenant_a["private_key_pem"], user="scanner"))
+            stateful_events.append(_http_event(5157, str(uuid.uuid4()), mock_tenant_a["tenant_id"], mock_tenant_a["agent_id"], f"network connection to 192.168.1.{i}", "10.1.1.1", mock_tenant_a["private_key_pem"], user="scanner"))
             # Manipulate raw_event_data so SIEM logic parses it
             stateful_events[-1]["raw_data"]["destination_ip"] = f"192.168.1.{i}"
 

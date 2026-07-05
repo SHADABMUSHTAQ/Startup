@@ -40,8 +40,12 @@ async def dispatch_alert_if_entitled(
         return False
         
     try:
-        # The Gate
-        user = await db.users.find_one({"tenant_id": tenant_id})
+        # The Gate: Always route alerts to the tenant administrator, not a random analyst
+        user = await db.users.find_one(
+            {"tenant_id": tenant_id, "role": {"$in": ["admin", "Admin", "ADMIN"]}}
+        )
+        if not user:
+            user = await db.users.find_one({"tenant_id": tenant_id})
         if not user:
             logger.warning(f"Alert dropped: No user found for tenant {tenant_id}")
             return False

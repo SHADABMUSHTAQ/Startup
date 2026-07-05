@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import time
 import logging
@@ -12,7 +13,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from redis import exceptions as redis_exceptions
 from redis.asyncio import Redis
 from app.config.config import get_settings
-from app.utils.observability import increment_redis_counter
+from app.utils.observability import increment_redis_counter, record_worker_heartbeat_with_client
 from app.utils.compliance_catalog import COMPLIANCE_CATALOG, get_rule_by_event_id
 from app.utils.siem_catalog import SIEM_RULES
 
@@ -23,7 +24,6 @@ from app.utils.agent_crypto import timestamp_age_seconds
 
 
 from cryptography.fernet import Fernet
-import copy
 import socket
 from pymongo import UpdateOne
 import uuid
@@ -34,13 +34,14 @@ try:
 except Exception:
     CANONICALJSON_AVAILABLE = False
 
-# 🏗 MASTER BUILD: FBR Compliance Worker (S.R.O. 288/I/2026 Optimized)
+# FBR compliance worker: POS evidence vaulting and rollup protection.
 # Strictly Decoupled, Hybrid Flush (100 logs or 3s), Redis-Cached Plan Check
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [FBR] %(message)s")
 logger = logging.getLogger("FBR-Worker")
 
 settings = get_settings()
+FBR_ROLLUP_EVENT_IDS = {"FIM-DB-MOD"}
 RAW_LOGS_QUEUE = "raw_logs_queue"
 FBR_GROUP = "fbr_group"
 FBR_CONSUMER = os.environ.get("CONSUMER_NAME", f"fbr_consumer_{socket.gethostname()}")
@@ -48,6 +49,191 @@ RECLAIM_MIN_IDLE_MS = 60000
 RECLAIM_BATCH_SIZE = 50
 DEFAULT_TENANT_ID = os.getenv("TENANT_ID", "WARSOC_DEFAULT")
 DLQ_QUEUE_PREFIX = "warsoc:dlq:"
+FIM_CORRELATION_TTL_SECONDS = 60
+FIM_CLAIM_TTL_SECONDS = 900
+FIM_DATABASE_EXTENSIONS = {
+    ".mdf",
+    ".ndf",
+    ".ldf",
+    ".sqlite",
+    ".sqlite3",
+    ".db",
+    ".db3",
+    ".bak",
+}
+FBR_ENCRYPTED_FIELDS = (
+    "message",
+    "raw_event",
+    "raw_data",
+    "raw_event_data",
+    "processed_data",
+)
+
+
+class FIMCorrelationUnavailable(RuntimeError):
+    """Transient Redis failure. Leave the stream event pending for reclaim."""
+
+
+def _encrypt_fbr_fields(log_data: dict, fernet: Fernet) -> dict:
+    for sensitive_field in FBR_ENCRYPTED_FIELDS:
+        value = log_data.get(sensitive_field)
+        if value in (None, "", {}, []):
+            continue
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+        log_data[sensitive_field] = fernet.encrypt(str(value).encode()).decode()
+    log_data["encryption_version"] = "fernet-v1"
+    return log_data
+
+
+def _processed_event_fields(log_data: dict) -> dict:
+    processed = log_data.get("processed_data")
+    if isinstance(processed, dict):
+        return processed
+    raw_event = log_data.get("raw_event_data")
+    if isinstance(raw_event, dict):
+        event_fields = raw_event.get("event_data")
+        if isinstance(event_fields, dict):
+            return event_fields
+    return {}
+
+
+def _is_database_path(path_value) -> bool:
+    normalized = str(path_value or "").strip().strip('"')
+    if not normalized:
+        return False
+    return os.path.splitext(normalized.lower())[1] in FIM_DATABASE_EXTENSIONS
+
+
+def _has_delete_access(processed: dict) -> bool:
+    access_mask = str(processed.get("access_mask") or "").strip().lower()
+    access_list = str(processed.get("access_list") or "").strip().lower()
+    try:
+        numeric_mask = int(access_mask, 16) if access_mask.startswith("0x") else int(access_mask or "0")
+    except ValueError:
+        numeric_mask = 0
+    return bool(numeric_mask & 0x10000) or "%%1537" in access_list or "delete" in access_list
+
+
+def _fim_correlation_key(log_data: dict, handle_id: str) -> str:
+    return (
+        "warsoc:fim_correlate:"
+        f"{log_data.get('tenant_id')}:{log_data.get('agent_id')}:{handle_id}"
+    )
+
+
+async def _atomic_claim_fim(redis: Redis, correlation_key: str, claim_key: str):
+    """Atomically move delete context into a retryable persistence claim."""
+    script = """
+    local value = redis.call('GET', KEYS[1])
+    if not value then
+        value = redis.call('GET', KEYS[2])
+    end
+    if value then
+        redis.call('SETEX', KEYS[2], ARGV[1], value)
+        redis.call('DEL', KEYS[1])
+    end
+    return value
+    """
+    return await redis.eval(
+        script,
+        2,
+        correlation_key,
+        claim_key,
+        FIM_CLAIM_TTL_SECONDS,
+    )
+
+
+def _stable_fim_event_uid(log_data: dict, event_uid: str | None) -> str:
+    supplied_uid = str(event_uid or log_data.get("event_uid") or "").strip()
+    if supplied_uid:
+        return supplied_uid
+    processed = _processed_event_fields(log_data)
+    identity = {
+        "tenant_id": log_data.get("tenant_id"),
+        "agent_id": log_data.get("agent_id"),
+        "event_id": log_data.get("event_id"),
+        "timestamp": log_data.get("timestamp"),
+        "channel": processed.get("channel"),
+        "event_record_id": processed.get("event_record_id"),
+        "handle_id": processed.get("handle_id") or processed.get("HandleId"),
+    }
+    return hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()
+
+
+async def _normalize_native_fim_event(redis: Redis, log_data: dict, event_id: str, event_uid: str = None):
+    processed = _processed_event_fields(log_data)
+    handle_id = str(processed.get("handle_id") or processed.get("HandleId") or "").strip()
+    object_path = str(processed.get("object_name") or processed.get("ObjectName") or "").strip()
+
+    if event_id == "4663":
+        if not handle_id or not _has_delete_access(processed) or not _is_database_path(object_path):
+            await increment_redis_counter(redis, "warsoc_fim_4663_writes_ignored_total")
+            return "ignore", None, None
+        key = _fim_correlation_key(log_data, handle_id)
+        try:
+            await redis.setex(key, FIM_CORRELATION_TTL_SECONDS, object_path)
+            await increment_redis_counter(redis, "warsoc_fim_delete_intents_total")
+        except Exception as exc:
+            raise FIMCorrelationUnavailable(f"Unable to persist FIM delete intent: {exc}") from exc
+        return "context", None, None
+
+    if event_id == "4660":
+        if not handle_id:
+            await increment_redis_counter(redis, "warsoc_fim_correlation_misses_total")
+            return "unmatched", None, None
+        key = _fim_correlation_key(log_data, handle_id)
+
+        event_uid_fallback = _stable_fim_event_uid(log_data, event_uid)
+        claim_id = hashlib.sha256(event_uid_fallback.encode()).hexdigest()
+        claim_key = (
+            f"warsoc:fim_claim:{log_data.get('tenant_id')}:"
+            f"{log_data.get('agent_id')}:{claim_id}"
+        )
+
+        try:
+            object_path = await _atomic_claim_fim(redis, key, claim_key)
+        except Exception as exc:
+            raise FIMCorrelationUnavailable(f"Unable to consume FIM delete intent: {exc}") from exc
+
+        if isinstance(object_path, bytes):
+            object_path = object_path.decode("utf-8", errors="replace")
+        if not object_path or not _is_database_path(object_path):
+            await increment_redis_counter(redis, "warsoc_fim_correlation_misses_total")
+            return "unmatched", None, None
+
+        normalized = copy.deepcopy(log_data)
+        normalized["source_event_id"] = "4660"
+        normalized["event_id"] = "FIM-DB-MOD"
+        normalized["event_type"] = "database_tampered"
+        normalized["event_uid"] = f"{event_uid_fallback}:fim-delete"
+        normalized["message"] = "Protected POS database file deleted"
+        normalized_processed = dict(processed)
+        normalized_processed["object_name"] = str(object_path)
+        normalized_processed["tamper_action"] = "file_deleted"
+        normalized["processed_data"] = normalized_processed
+        await increment_redis_counter(redis, "warsoc_fim_correlations_total")
+        return "emit", normalized, claim_key
+
+    if event_id == "4670":
+        if not _is_database_path(object_path):
+            return "unmatched", None, None
+        normalized = copy.deepcopy(log_data)
+        normalized["source_event_id"] = "4670"
+        normalized["event_id"] = "FIM-DB-MOD"
+        normalized["event_type"] = "database_tampered"
+        normalized["event_uid"] = f"{log_data.get('event_uid')}:fim-permissions"
+        normalized["message"] = "Protected POS database permissions changed"
+        normalized_processed = dict(processed)
+        normalized_processed["object_name"] = object_path
+        normalized_processed["tamper_action"] = "permissions_changed"
+        normalized["processed_data"] = normalized_processed
+        await increment_redis_counter(redis, "warsoc_fim_correlations_total")
+        return "emit", normalized, None
+
+    return "passthrough", log_data, None
 
 
 def _get_agent_security_config(config: dict) -> dict:
@@ -55,18 +241,21 @@ def _get_agent_security_config(config: dict) -> dict:
 
 def _clock_integrity_verdict(timestamp: str, security_config: dict) -> tuple[str, int | None]:
     skew_warning_seconds = int(security_config.get("clock_skew_warning_seconds", 60))
-    hard_drop_seconds = int(security_config.get("max_log_age_seconds", 300))
-    if hard_drop_seconds <= skew_warning_seconds:
-        hard_drop_seconds = skew_warning_seconds + 1
+    max_future_skew_seconds = int(security_config.get("max_log_age_seconds", 300))
+    if max_future_skew_seconds <= skew_warning_seconds:
+        max_future_skew_seconds = skew_warning_seconds + 1
 
     age_seconds = timestamp_age_seconds(timestamp)
     if age_seconds is None:
         return "drop", None
 
-    abs_age = abs(age_seconds)
-    if abs_age >= hard_drop_seconds:
+    # Old events can be legitimate durable-spool replays after an outage.
+    # Events far in the future cannot be explained by delivery delay.
+    if age_seconds <= -max_future_skew_seconds:
         return "drop", age_seconds
-    if abs_age > skew_warning_seconds:
+    if age_seconds >= max_future_skew_seconds:
+        return "delayed", age_seconds
+    if abs(age_seconds) > skew_warning_seconds:
         return "skew", age_seconds
     return "allow", age_seconds
 
@@ -83,7 +272,11 @@ async def _validate_stream_signature(redis: Redis, log_data: dict, security_conf
 
     verdict, age_seconds = _clock_integrity_verdict(timestamp, security_config)
     if verdict == "drop":
-        return False, "timestamp outside allowed drift window"
+        return False, "invalid timestamp or timestamp too far in the future"
+    log_data["clock_integrity"] = {
+        "verdict": verdict,
+        "age_seconds": age_seconds,
+    }
 
     # Non-cryptographic: no signature or HMAC handling performed here.
     return True, None
@@ -138,6 +331,65 @@ def _apply_rule_metadata(log_data: dict, rule_pack: str | None, rule: dict | Non
         log_data["matched_rule_id"] = rule.get("id")
         log_data["matched_rule_name"] = rule.get("name")
         log_data["matched_rule_severity"] = rule.get("severity")
+
+
+def _clean_source_ip(candidate) -> str | None:
+    text = str(candidate or "").strip()
+    if not text or text.lower() in {"unknown", "none", "null", "-"}:
+        return None
+    return text
+
+
+def _extract_fbr_source_ip(log_data: dict) -> str:
+    processed = log_data.get("processed_data") if isinstance(log_data.get("processed_data"), dict) else {}
+    raw_data = log_data.get("raw_data") if isinstance(log_data.get("raw_data"), dict) else {}
+    raw_processed = raw_data.get("processed_data") if isinstance(raw_data.get("processed_data"), dict) else {}
+    raw_event = log_data.get("raw_event_data") if isinstance(log_data.get("raw_event_data"), dict) else {}
+
+    candidates = [
+        processed.get("source_network_address"),
+        raw_processed.get("source_network_address"),
+        raw_event.get("source_network_address"),
+        processed.get("source_ip"),
+        raw_processed.get("source_ip"),
+        log_data.get("source_ip"),
+        log_data.get("src_ip"),
+    ]
+    for candidate in candidates:
+        cleaned = _clean_source_ip(candidate)
+        if cleaned:
+            return cleaned
+    return "unknown"
+
+
+def _resolve_fbr_fim_threshold(log_data: dict) -> int:
+    try:
+        if isinstance(log_data.get("fbr_threshold"), int):
+            return int(log_data.get("fbr_threshold"))
+        return int(getattr(settings, "fbr_fim_threshold", 50))
+    except Exception:
+        return 50
+
+
+def _is_fbr_rollup_candidate(event_id) -> bool:
+    return str(event_id or "").strip().upper() in FBR_ROLLUP_EVENT_IDS
+
+
+def _canonical_rollup_bytes(summary: dict) -> bytes:
+    signable = copy.deepcopy(summary)
+    signable.pop("integrity_seal", None)
+    signable.pop("integrity_algorithm", None)
+    if CANONICALJSON_AVAILABLE:
+        return encode_canonical_json(signable)
+    return json.dumps(signable, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+
+
+def _seal_fbr_rollup_summary(summary: dict) -> dict:
+    sealed = copy.deepcopy(summary)
+    sealed["integrity_algorithm"] = "SHA-256-CANONICAL-JSON"
+    sealed["integrity_seal"] = hashlib.sha256(_canonical_rollup_bytes(sealed)).hexdigest()
+    return sealed
+
 
 def load_dynamic_config():
     """Returns SSOT catalogs (CTO FIX)."""
@@ -255,37 +507,6 @@ async def _upsert_fbr_vault_and_alerts(db, cold_docs: list[dict]) -> list[dict]:
     return cold_docs
 
 
-def _to_canonical_bytes(obj) -> bytes:
-    o = copy.deepcopy(obj)
-
-    def _convert(value):
-        if isinstance(value, dict):
-            for k, v in list(value.items()):
-                if isinstance(v, datetime):
-                    value[k] = v.astimezone(timezone.utc).isoformat()
-                else:
-                    _convert(v)
-        elif isinstance(value, list):
-            for i in range(len(value)):
-                v = value[i]
-                if isinstance(v, datetime):
-                    value[i] = v.astimezone(timezone.utc).isoformat()
-                else:
-                    _convert(v)
-
-    _convert(o)
-
-    if CANONICALJSON_AVAILABLE:
-        try:
-            return encode_canonical_json(o)
-        except Exception as e:
-            logger.error(f"FBR Canonical encoding failed: {e}")
-    
-    # Fallback to high-entropy deterministic JSON (Non-Compliant)
-    logger.warning("FBR Worker: Using fallback deterministic JSON (Non-Compliant)")
-    return json.dumps(o, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
-
-
 async def reclaim_stale_messages(redis_client: Redis):
     """Best-effort reclaim for stale pending stream entries."""
     try:
@@ -372,7 +593,7 @@ async def fbr_worker():
         except Exception as dlq_err:
             logger.error(f"Critical: Failed to eject to DLQ: {dlq_err}")
 
-    # 🔒 Load Symmetric Encryption Key for Vault
+    # Load the symmetric encryption key for the evidence vault.
     try:
         fernet_key = settings.encryption_key.encode() if getattr(settings, "encryption_key", "") else None
         if not fernet_key:
@@ -405,14 +626,20 @@ async def fbr_worker():
     last_config_load = 0
     # fbr_targets already loaded from config above; do NOT reset to empty set here
     buffer = []
+    active_claim_keys = set()
     buffer_ack_ids = []
     buffer_payload_by_mid = {}
     last_flush_time = time.time()
+    last_heartbeat = 0.0
 
-    logger.info("⚡ WarSOC FBR Worker: POS Compliance Active (SRO 288/69)...")
+    logger.info("WarSOC FBR Worker: POS compliance active")
     
     while True:
         try:
+            if time.time() - last_heartbeat >= 15:
+                await record_worker_heartbeat_with_client(redis, "fbr_worker")
+                last_heartbeat = time.time()
+
             #  HOT-RELOAD: Sync Compliance Policy every 60 seconds (BUG-24 FIX)
             if time.time() - last_config_load > 60:
                 config = load_dynamic_config()
@@ -420,7 +647,7 @@ async def fbr_worker():
                 last_config_load = time.time()
                 logger.info(f"[*] FBR Policy Synced: Monitoring {len(fbr_targets)} Event IDs.")
 
-            # ⚡ Optimized Read Performance (Batch size 50)
+            # Read stream entries in bounded batches.
             streams = await redis.xreadgroup(FBR_GROUP, FBR_CONSUMER, {RAW_LOGS_QUEUE: ">"}, count=50, block=2000)
             
             if not streams:
@@ -432,7 +659,6 @@ async def fbr_worker():
                     current_time = time.time()
                     if buffer and (current_time - last_flush_time) >= 3:
                         logger.info(f"[*] Timeout Flush: {len(buffer)} FBR logs to fbr_pos_logs...")
-                        flush_batch = []
                         for item in buffer:
                             item = _normalize_document_timestamps(item)
                             event_uid = item.get("event_uid") or str(uuid.uuid4())
@@ -440,6 +666,14 @@ async def fbr_worker():
 
                         try:
                             cold_docs = await _upsert_fbr_vault_and_alerts(db, list(buffer))
+
+                            try:
+                                if active_claim_keys:
+                                    await redis.delete(*active_claim_keys)
+                            except Exception as cleanup_err:
+                                logger.error(f"[!] FBR flush: Failed to clean up active claim keys: {cleanup_err}")
+                            finally:
+                                active_claim_keys = set()
 
                             #  Phase 3 Action Engine Hook
                             for item in cold_docs:
@@ -449,19 +683,16 @@ async def fbr_worker():
                                     )
 
                         except Exception as e:
-                            logger.error(f"[!] FBR flush failed (timeout path): {e}")
-                            for mid in buffer_ack_ids:
-                                try:
-                                    await _eject_to_dlq(
-                                        mid,
-                                        buffer_payload_by_mid.get(mid, ""),
-                                        f"DB_INSERT_FAILURE: {str(e)}",
-                                        tenant_id=DEFAULT_TENANT_ID,
-                                        stack_trace=traceback.format_exc(),
-                                    )
-                                except Exception as dlq_err:
-                                    logger.error(f"Failed to eject pending FBR message {mid} after timeout DB failure: {dlq_err}")
+                            logger.error(
+                                "[!] FBR flush failed (timeout path); messages remain "
+                                f"pending for reclaim: {e}"
+                            )
+                            await increment_redis_counter(
+                                redis,
+                                "warsoc_fbr_persistence_retries_total",
+                            )
                             buffer = []
+                            active_claim_keys = set()
                             buffer_ack_ids = []
                             buffer_payload_by_mid = {}
                         else:
@@ -471,6 +702,7 @@ async def fbr_worker():
                                         pipe.xack(RAW_LOGS_QUEUE, FBR_GROUP, mid)
                                     await pipe.execute()
                             buffer = []
+                            active_claim_keys = set()
                             buffer_ack_ids = []
                             buffer_payload_by_mid = {}
                             last_flush_time = current_time
@@ -495,20 +727,14 @@ async def fbr_worker():
                         try:
                             log_data = json.loads(raw_payload)
                         except json.JSONDecodeError:
-                            # Best effort cleanup for Python-style stringified dicts
-                            try:
-                                sanitized = raw_payload.replace("'", '"')
-                                log_data = json.loads(sanitized)
-                                logger.info(f"[*] Sanitized malformed FBR JSON: {message_id}")
-                            except Exception:
-                                await _eject_to_dlq(
-                                    message_id, 
-                                    raw_payload, 
-                                    "JSON_PARSE_FAILURE",
-                                    tenant_id=DEFAULT_TENANT_ID,
-                                    stack_trace=traceback.format_exc()
-                                )
-                                continue
+                            await _eject_to_dlq(
+                                message_id,
+                                raw_payload,
+                                "JSON_PARSE_FAILURE",
+                                tenant_id=DEFAULT_TENANT_ID,
+                                stack_trace=traceback.format_exc(),
+                            )
+                            continue
 
                         is_valid_signature, signature_reason = await _validate_stream_signature(
                             redis,
@@ -534,11 +760,42 @@ async def fbr_worker():
                             immediate_ack_ids.append(message_id)
                             continue
 
-                        # 🔍 2. DYNAMIC TARGET ENFORCEMENT
+                        # Dynamic target enforcement.
                         # Normalize incoming event_id to string for SSOT lookup
                         raw_eid = log_data.get("event_id")
                         is_syslog = log_data.get("type") == "network_log"
                         event_id = str(raw_eid).strip() if raw_eid is not None else ""
+                        native_fim_generated = False
+                        message_claim_key = None
+
+                        if event_id in {"4660", "4663", "4670"}:
+                            fim_result = await _normalize_native_fim_event(
+                                redis,
+                                log_data,
+                                event_id,
+                            )
+                            fim_action = fim_result[0]
+                            if fim_action in {"context", "ignore", "unmatched"}:
+                                immediate_ack_ids.append(message_id)
+                                continue
+                            if fim_action == "emit" and fim_result[1] is not None:
+                                log_data = fim_result[1]
+                                event_id = "FIM-DB-MOD"
+                                native_fim_generated = True
+                                message_claim_key = fim_result[2]
+
+                        if event_id == "FIM-DB-MOD" and not native_fim_generated:
+                            logger.warning(
+                                "[SECURITY] Rejected externally supplied FIM-DB-MOD "
+                                f"message_id={message_id} tenant={tenant_id}"
+                            )
+                            await increment_redis_counter(
+                                redis,
+                                "warsoc_fim_external_events_rejected_total",
+                            )
+                            immediate_ack_ids.append(message_id)
+                            continue
+
                         matched_pack = None
                         matched_rule = None
                         if event_id:
@@ -553,71 +810,60 @@ async def fbr_worker():
                                 continue
 
                         # --- FBR DYNAMIC THROTTLE & ROLL-UP ---
-                        # Protect against FIM storms (mass file modifications) by using
-                        # a Redis sliding-window counter per tenant+source. If the
-                        # threshold is exceeded, create a single summary event and
-                        # skip per-event encryption to avoid CPU exhaustion.
-                        src_ip = log_data.get("source_ip") or log_data.get("src_ip") or "unknown"
+                        # Create a summary alert during a FIM storm, but never suppress
+                        # the individual encrypted compliance evidence.
+                        src_ip = _extract_fbr_source_ip(log_data)
+                        log_data["source_ip"] = src_ip
 
-                        # Inline throttle/rollup (reverted refactor)
-                        try:
-                            throttle_key = f"warsoc:fbr:count:{tenant_id}:{src_ip}"
-                            throttle_flag_key = f"warsoc:fbr:throttle:{tenant_id}:{src_ip}"
-                            use_window = int(getattr(settings, "fbr_fim_window", 10))
+                        if _is_fbr_rollup_candidate(event_id):
+                            # Inline throttle/rollup for true file/object/database tamper storms only.
                             try:
-                                cur = await incr_count(redis, throttle_key, window_seconds=use_window)
-                            except Exception:
-                                cur = 0
-
-                            if await get_flag(redis, throttle_flag_key):
-                                async with redis.pipeline(transaction=True) as pipe:
-                                    pipe.xack(RAW_LOGS_QUEUE, FBR_GROUP, message_id)
-                                    await pipe.execute()
-                                continue
-
-                            try:
-                                if isinstance(log_data.get("fbr_threshold"), int):
-                                    threshold = int(log_data.get("fbr_threshold"))
-                                else:
-                                    threshold = int(getattr(settings, "fbr_fim_threshold", 500))
-                            except Exception:
-                                threshold = 500
-
-                            if cur and cur > threshold:
-                                summary = {
-                                    "tenant_id": tenant_id,
-                                    "source_ip": src_ip,
-                                    "window_count": cur,
-                                    "threshold": threshold,
-                                    "event": "MASS_FILE_MODIFICATION_DETECTED",
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                                    "tags": "FBR_ROLLUP",
-                                    "retention_policy": "6_YEARS",
-                                }
+                                throttle_key = f"warsoc:fbr:count:{tenant_id}:{src_ip}"
+                                throttle_flag_key = f"warsoc:fbr:throttle:{tenant_id}:{src_ip}"
+                                use_window = int(getattr(settings, "fbr_fim_window", 10))
                                 try:
-                                    await db.fbr_pos_summaries.insert_one(summary)
-                                    await increment_redis_counter(redis, "warsoc_fbr_rollups_total")
-                                    await set_flag(redis, throttle_flag_key, ex=60)
-                                    logger.warning(f"[FBR-ROLLUP] Created rollup for {tenant_id}@{src_ip} count={cur}")
-                                except Exception as e:
-                                    logger.error(f"Failed to persist FBR rollup summary: {e}")
+                                    cur = await incr_count(redis, throttle_key, window_seconds=use_window)
+                                except Exception:
+                                    cur = 0
 
-                                async with redis.pipeline(transaction=True) as pipe:
-                                    pipe.xack(RAW_LOGS_QUEUE, FBR_GROUP, message_id)
-                                    await pipe.execute()
-                                continue
-                        except Exception as e:
-                            logger.error(f"FBR throttle inline handling error: {e}")
+                                threshold = _resolve_fbr_fim_threshold(log_data)
+                                rollup_active = await get_flag(redis, throttle_flag_key)
 
-                        # 🔒 3. ENCRYPT SENSITIVE PAYLOAD (Field-Level)
-                        if "message" in log_data and log_data["message"]:
-                            log_data["message"] = fernet.encrypt(str(log_data["message"]).encode()).decode()
-                        if "raw_event" in log_data and log_data["raw_event"]:
-                            if isinstance(log_data["raw_event"], (dict, list)):
-                                log_data["raw_event"] = json.dumps(log_data["raw_event"])
-                            log_data["raw_event"] = fernet.encrypt(str(log_data["raw_event"]).encode()).decode()
+                                if cur and cur > threshold and not rollup_active:
+                                    summary = {
+                                        "tenant_id": tenant_id,
+                                        "source_ip": src_ip,
+                                        "window_count": cur,
+                                        "threshold": threshold,
+                                        "event_id": "FBR-FIM-ROLLUP",
+                                        "event": "MASS_FILE_MODIFICATION_DETECTED",
+                                        "severity": "Critical",
+                                        "pack": "fbr_pos",
+                                        "compliance_pack": "fbr_pos",
+                                        "matched_rule_id": "FBR-ROLLUP-MASS-FIM",
+                                        "matched_rule_name": "Mass POS File Modification Rollup",
+                                        "matched_rule_severity": "Critical",
+                                        "event_uid": str(uuid.uuid4()),
+                                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                                        "tags": "FBR_ROLLUP",
+                                        "retention_policy": "6_YEARS",
+                                        "source_ip_confidence": "remote_or_payload_source" if src_ip != "unknown" else "unknown",
+                                    }
+                                    summary = _seal_fbr_rollup_summary(summary)
+                                    try:
+                                        await db.fbr_pos_summaries.insert_one(summary)
+                                        await increment_redis_counter(redis, "warsoc_fbr_rollups_total")
+                                        await set_flag(redis, throttle_flag_key, ex=60)
+                                        logger.warning(f"[FBR-ROLLUP] Created rollup for {tenant_id}@{src_ip} count={cur}")
+                                    except Exception as e:
+                                        logger.error(f"Failed to persist FBR rollup summary: {e}")
+                            except Exception as e:
+                                logger.error(f"FBR throttle inline handling error: {e}")
 
-                        # 🏷 4. Tagging & Zero-Trust HMAC Sealing
+                        # Encrypt sensitive payload fields.
+                        _encrypt_fbr_fields(log_data, fernet)
+
+                        # Apply retention and compliance metadata.
                         log_data["tags"] = "FBR_POS"
                         log_data["retention_policy"] = "6_YEARS"
                         _apply_rule_metadata(log_data, matched_pack or "fbr_pos", matched_rule)
@@ -629,18 +875,25 @@ async def fbr_worker():
                         buffer.append(log_data)
                         buffer_ack_ids.append(message_id)
                         buffer_payload_by_mid[message_id] = raw_payload
-                    
+                        if message_claim_key:
+                            active_claim_keys.add(message_claim_key)
+
+                    except FIMCorrelationUnavailable as e:
+                        logger.error(
+                            f"Transient FIM correlation failure for {message_id}; "
+                            f"leaving stream event pending: {e}"
+                        )
                     except Exception as e:
                         logger.error(f"Error processing FBR log: {e}")
                         await _eject_to_dlq(
                             message_id,
-                            payload_by_mid.get(message_id, payload.get("payload", "")),
+                            buffer_payload_by_mid.get(message_id, payload.get("payload", "")),
                             f"PROCESSING_ERROR: {str(e)}",
                             tenant_id=log_data.get("tenant_id") if "log_data" in locals() and isinstance(log_data, dict) else DEFAULT_TENANT_ID,
                             stack_trace=traceback.format_exc(),
                         )
                         continue
-                
+
                 # Ack intentionally skipped/malformed records immediately.
                 if immediate_ack_ids:
                     async with redis.pipeline(transaction=True) as pipe:
@@ -652,42 +905,21 @@ async def fbr_worker():
             current_time = time.time()
             if len(buffer) >= 100 or (len(buffer) > 0 and (current_time - last_flush_time) >= 3):
                 logger.info(f"[*] Batch Flush: {len(buffer)} FBR logs to fbr_pos_logs...")
-                flush_batch = []
                 for item in buffer:
-                    item = _normalize_document_timestamps(item)
-                    event_uid = item.get("event_uid") or str(uuid.uuid4())
-                    item["event_uid"] = event_uid
+                    _normalize_document_timestamps(item)
+                    if not item.get("event_uid"):
+                        item["event_uid"] = str(uuid.uuid4())
 
                 try:
                     cold_docs = await _upsert_fbr_vault_and_alerts(db, list(buffer))
-                    for d in cold_docs:
-                        _normalize_document_timestamps(d)
-                        if not d.get("event_uid"):
-                            d["event_uid"] = str(uuid.uuid4())
 
-                    inserted = []
-                    if False and cold_docs:
-                        res = None
-                        inserted = list(res.inserted_ids or [])
-
-                    meta_docs = []
-                    for idx, item in enumerate(cold_docs):
-                        meta = {
-                            "tenant_id": item.get("tenant_id"),
-                            "timestamp": _normalize_timestamp_iso_utc(item.get("ingested_at") or item.get("timestamp") or datetime.now(timezone.utc)),
-                            "event_id": str(item.get("event_id") or ""),
-                            "severity": item.get("matched_rule_severity") or "INFO",
-                            "pack": "fbr_pos",
-                            "source_ip": item.get("source_ip"),
-                            "summary": item.get("matched_rule_name") or item.get("message") or "",
-                            "event_uid": item.get("event_uid"),
-                            "cold_id": (inserted[idx] if idx < len(inserted) else None),
-                            "_retention_ts": datetime.now(timezone.utc),
-                        }
-                        meta_docs.append(meta)
-
-                    if False and meta_docs:
-                        pass
+                    try:
+                        if active_claim_keys:
+                            await redis.delete(*active_claim_keys)
+                    except Exception as cleanup_err:
+                        logger.error(f"[!] FBR flush: Failed to clean up active claim keys: {cleanup_err}")
+                    finally:
+                        active_claim_keys = set()
 
                     #  Phase 3 Action Engine Hook
                     for item in cold_docs:
@@ -697,19 +929,16 @@ async def fbr_worker():
                             )
 
                 except Exception as e:
-                    logger.error(f"[!] FBR flush failed: {e}")
-                    for mid in buffer_ack_ids:
-                        try:
-                            await _eject_to_dlq(
-                                mid,
-                                buffer_payload_by_mid.get(mid, payload_by_mid.get(mid, "")),
-                                f"DB_INSERT_FAILURE: {str(e)}",
-                                tenant_id=DEFAULT_TENANT_ID,
-                                stack_trace=traceback.format_exc(),
-                            )
-                        except Exception as dlq_err:
-                            logger.error(f"Failed to eject pending FBR message {mid} after DB failure: {dlq_err}")
+                    logger.error(
+                        "[!] FBR flush failed; messages remain pending for reclaim: "
+                        f"{e}"
+                    )
+                    await increment_redis_counter(
+                        redis,
+                        "warsoc_fbr_persistence_retries_total",
+                    )
                     buffer = []
+                    active_claim_keys = set()
                     buffer_ack_ids = []
                     buffer_payload_by_mid = {}
                 else:
@@ -719,6 +948,7 @@ async def fbr_worker():
                                 pipe.xack(RAW_LOGS_QUEUE, FBR_GROUP, mid)
                             await pipe.execute()
                     buffer = []
+                    active_claim_keys = set()
                     buffer_ack_ids = []
                     buffer_payload_by_mid = {}
                     last_flush_time = current_time

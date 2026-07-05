@@ -5,8 +5,11 @@ import pytest
 from app.workers.email_daemon import _build_message
 
 
+from unittest.mock import AsyncMock, patch
+
 @pytest.mark.asyncio
-async def test_homepage_contact_lead_is_stored_and_queued(async_client, db, redis_client):
+@patch("redis.asyncio.client.Redis.lpush", new_callable=AsyncMock)
+async def test_homepage_contact_lead_is_stored_and_queued(mock_lpush, async_client, db, redis_client):
     await db["sales_leads"].delete_many({})
     await redis_client.delete("email_alert_queue")
 
@@ -32,8 +35,9 @@ async def test_homepage_contact_lead_is_stored_and_queued(async_client, db, redi
     assert lead["inquiry_type"] == "demo"
     assert lead["status"] == "pending_sales_call"
 
-    queued = await redis_client.lrange("email_alert_queue", 0, -1)
-    job_types = {json.loads(item)["type"] for item in queued}
+    assert mock_lpush.call_count == 2
+    call_args_list = mock_lpush.call_args_list
+    job_types = {json.loads(call[0][1])["type"] for call in call_args_list}
     assert job_types == {"sales_contact", "sales_contact_confirmation"}
 
 

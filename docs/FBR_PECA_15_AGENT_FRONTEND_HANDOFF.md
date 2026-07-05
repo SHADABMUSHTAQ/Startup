@@ -652,7 +652,7 @@ Common Windows event coverage includes:
 - `4697` and `7045`: service installed
 - `4719`: audit policy changed
 - `4648`: explicit credential use
-- `5156`: Windows Filtering Platform network connection
+- `5157`: Windows Filtering Platform network connection blocked
 - Sysmon `1`: process creation
 - Sysmon `3`: network connection
 - Sysmon `11`: file creation
@@ -667,13 +667,15 @@ Current network-facing coverage:
 - CEF appliance/security events.
 - Plain text syslog fallback.
 - Nginx gateway access/error logs.
-- Endpoint network telemetry through Sysmon Event 3 and Windows Event 5156.
+- Endpoint network telemetry through Sysmon Event 3 and Windows Event 5157 (block).
 
 ### Compliance logs
 
 FBR:
 
-- POS/file/compliance events routed to `fbr_pos_logs`.
+- **Mode A (Zero-Integration FIM)**: Agent detects POS database file deletions and modifications through Windows SACL, routed to `fbr_pos_logs`.
+- **Mode B (Invoice-Level API)**: POS backend pushes authenticated invoice events directly to `/api/v1/fbr/pos/ingest` (preferred for pilot).
+- See `docs/FBR_POS_Integration_Contract.md` for full integration rules and payload schemas.
 - FBR ingest route accepts only FBR-relevant events from agents.
 - FBR records are available in compliance logs and audit PDF export.
 

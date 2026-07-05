@@ -54,23 +54,16 @@ async def get_flag(redis_client: Optional[Redis], key: str) -> bool:
 
 
 def _extract_tenant_identity(request: Request) -> str:
-    tenant_id = (
-        request.headers.get("x-tenant-id")
-        or request.headers.get("x-tenant_id")
-        or request.headers.get("X-Tenant-ID")
-        or request.headers.get("X-Tenant-Id")
-    )
-    if tenant_id:
-        normalized = str(tenant_id).strip()
-        if normalized:
-            return f"tenant:{normalized}"
+    """Extract a trusted rate-limiting identity from the request.
 
-    api_key = request.headers.get("x-api-key") or request.headers.get("X-API-Key")
-    if api_key:
-        normalized = str(api_key).strip()
-        if normalized:
-            return f"api_key:{hashlib.sha256(normalized.encode('utf-8')).hexdigest()}"
-
+    SECURITY: We deliberately do NOT trust user-supplied headers like
+    ``x-tenant-id`` for bucket assignment because an unauthenticated attacker
+    could spoof them to exhaust a victim tenant's rate-limit quota
+    (Cross-Tenant DoS).  Identity is derived exclusively from
+    cryptographically verified credentials (Bearer JWT / API key) or, as a
+    last resort, the source IP address.
+    """
+    # 1. Prefer the cryptographically verified Bearer token (JWT).
     authorization = request.headers.get("authorization") or request.headers.get("Authorization")
     if not authorization and "warsoc_token" in request.cookies:
         authorization = request.cookies.get("warsoc_token")
@@ -81,6 +74,20 @@ def _extract_tenant_identity(request: Request) -> str:
             token = token[7:].strip()
         if token:
             return f"bearer:{hashlib.sha256(token.encode('utf-8')).hexdigest()}"
+
+    # 2. Fall back to API key if present.
+    api_key = request.headers.get("x-api-key") or request.headers.get("X-API-Key")
+    if api_key:
+        normalized = str(api_key).strip()
+        if normalized:
+            return f"api_key:{hashlib.sha256(normalized.encode('utf-8')).hexdigest()}"
+
+    # 3. Last resort: source IP.  This prevents completely anonymous requests
+    #    from bypassing rate limiting while still avoiding the spoofable
+    #    x-tenant-id header.
+    client_ip = request.client.host if request.client else None
+    if client_ip:
+        return f"ip:{client_ip}"
 
     return ""
 

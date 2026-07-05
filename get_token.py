@@ -14,7 +14,9 @@ if resp.status_code != 200:
 cookie = session.cookies.get("warsoc_token")
 headers = {"Authorization": f"Bearer {cookie}"} if cookie else {}
 
-# 2. Get Provisioning Token
-prov_resp = session.post(f"{BASE_URL}/auth/agents/generate-token", headers=headers, json={"agent_id": "VM-STRIKE-01"})
-token = prov_resp.json()["provisioning_token"]
-print(token)
+# 2. Get activation code for the current agent registration flow.
+csrf_token = session.cookies.get("csrf_token")
+headers["X-CSRF-Token"] = csrf_token or ""
+prov_resp = session.post(f"{BASE_URL}/agent/generate-activation", headers=headers)
+prov_resp.raise_for_status()
+print(prov_resp.json()["activation_code"])

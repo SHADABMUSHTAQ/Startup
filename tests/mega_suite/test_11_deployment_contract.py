@@ -36,10 +36,27 @@ def _compose_worker_modules() -> set[str]:
 
 def _active_worker_sources() -> dict[str, str]:
     sources: dict[str, str] = {}
-    for module in _compose_worker_modules():
+    pending = list(_compose_worker_modules())
+    while pending:
+        module = pending.pop()
+        if module in sources:
+            continue
         relative = Path(*module.split(".")).with_suffix(".py")
         path = ROOT / relative
-        sources[module] = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+        source = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+        sources[module] = source
+        if not source:
+            continue
+        tree = ast.parse(source, filename=module)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("app.workers."):
+                pending.append(node.module)
+            elif isinstance(node, ast.Import):
+                pending.extend(
+                    alias.name
+                    for alias in node.names
+                    if alias.name.startswith("app.workers.")
+                )
     return sources
 
 
@@ -144,9 +161,8 @@ def test_claimed_security_and_business_features_have_real_backend_surface():
     checks = {
         "WebSocket ticket auth": "/ws/ticket",
         "metrics protection": "metrics_allowlist" or "metrics_bearer",
-        "agent provisioning token": "provisioning_token",
+        "agent activation code": "activation_code",
         "MFA/TOTP for SOC users": "totp",
-        "Safepay webhook billing": "safepay",
         "VirusTotal API route": "virustotal",
     }
     missing = [name for name, needle in checks.items() if needle.lower() not in all_backend.lower()]

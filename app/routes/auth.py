@@ -203,7 +203,11 @@ async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)
         csrf_cookie = request.cookies.get("csrf_token")
         csrf_header = request.headers.get("x-csrf-token")
         if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
-            print(f"🛑 CSRF Validation Failed: Cookie={csrf_cookie}, Header={csrf_header}")
+            logger.warning(
+                "CSRF validation failed: cookie_present=%s header_present=%s",
+                bool(csrf_cookie),
+                bool(csrf_header),
+            )
             raise HTTPException(status_code=403, detail="CSRF validation failed")
 
     try:
@@ -214,6 +218,10 @@ async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         jti: str = payload.get("jti")
         username: str = payload.get("sub")
+        tenant_id: str = payload.get("tenant_id")
+        token_type: str = payload.get("type")
+        if token_type != "user" or not jti or not username or not tenant_id:
+            raise HTTPException(status_code=401, detail="Invalid user token")
 
         # âœ… CTO FIX 1: Use Global Redis Pool for Lightning Fast Blacklist Checks
         redis = getattr(request.app.state, "redis", None)
@@ -233,14 +241,10 @@ async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)
             record_auth_fail_closed()
             raise HTTPException(status_code=503, detail="Authentication service unavailable: revocation check failed")
 
-        if payload.get("type") == "agent":
-            raise HTTPException(status_code=401, detail="Agent tokens cannot access user routes")
-        if username is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Could not validate credentials")
 
-    user = await db["users"].find_one({"username": username})
+    user = await db["users"].find_one({"username": username, "tenant_id": tenant_id})
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
 
@@ -270,6 +274,8 @@ async def verify_agent_token(request: Request, token: str = Depends(oauth2_schem
         jti: str = payload.get("jti")
         agent_id: str = payload.get("sub")
         token_type: str = payload.get("type")
+        if token_type != "agent" or not jti or not agent_id:
+            raise HTTPException(status_code=401, detail="Invalid agent token")
 
         # âœ… CTO FIX 1: Global Redis Pool
         redis = getattr(request.app.state, "redis", None)
@@ -286,9 +292,6 @@ async def verify_agent_token(request: Request, token: str = Depends(oauth2_schem
             logger.error(f"ðŸ”´ Redis blacklist check failed: {e}")
             record_auth_fail_closed()
             raise HTTPException(status_code=503, detail="Agent verification unavailable: revocation check failed")
-
-        if agent_id is None or token_type != "agent":
-            raise HTTPException(status_code=401, detail="Invalid agent token")
 
         # ✅ CTO FIX 2: Removed rogue DB connections. Rely strictly on `db` dependency.
         # 🛡️ PERFORMANCE FIX: Added Redis Caching to prevent DB DDoS during Nuclear Stress Test
@@ -406,7 +409,7 @@ async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
         "hashed_password": hashed_password,
         "tenant_id": new_tenant_id,
         "plan_type": canonical_plan,
-        "role": user.role or "admin",
+        "role": "admin",
         "compliance_packs": packs,
         "has_active_plan": True if canonical_plan != "Free" else False,
         "created_at": datetime.now(timezone.utc)
@@ -434,9 +437,18 @@ async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
 
+    # CSRF Token Generation (CRITICAL FIX: Prevent soft-lock on signup)
+    csrf_token = str(uuid.uuid4())
+
     # 🔑 Set HttpOnly cookie (browser sends automatically, JavaScript cannot access)
     response = JSONResponse(
-        {"message": "User created successfully", "tenant_id": new_tenant_id, "plan": canonical_plan, "username": user.username},
+        {
+            "message": "User created successfully",
+            "tenant_id": new_tenant_id,
+            "plan": canonical_plan,
+            "username": user.username,
+            "csrf_token": csrf_token
+        },
         status_code=status.HTTP_201_CREATED
     )
     secure_cookie = request.url.scheme == "https"
@@ -448,6 +460,15 @@ async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
         httponly=True,  # JavaScript cannot access
         samesite="Lax"  # CSRF protection
     )
+    # Double Submit Cookie for CSRF
+    response.set_cookie(
+        key="csrf_token",
+        value=csrf_token,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        secure=secure_cookie,
+        httponly=False,  # JS needs access to this to send as header
+        samesite="Lax"
+    )
     return response
 
 class LoginSchema(BaseModel):
@@ -455,7 +476,7 @@ class LoginSchema(BaseModel):
     password: str
 
 @router.post("/login")
-@limiter.limit("10/minute")
+@limiter.limit("5/minute")
 async def login(request: Request, user_data: LoginSchema, db=Depends(get_db)):
     db_user = await db["users"].find_one({"$or": [{"username": user_data.username}, {"email": user_data.username}]})
     if not db_user or not verify_password(user_data.password, db_user["hashed_password"]):

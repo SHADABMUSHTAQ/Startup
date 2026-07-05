@@ -2,6 +2,7 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 # --- FIX FOR PYDANTIC V2 COMPATIBILITY ---
 try:
@@ -48,10 +49,7 @@ class Settings(BaseSettings):
 
     # --- EXTERNAL INTEGRATIONS ---
     vt_api_key: str = os.getenv("VT_API_KEY", "")
-
-    # --- BILLING (Safepay) ---
-    safepay_webhook_secret: str = os.getenv("SAFEPAY_WEBHOOK_SECRET", "")
-    safepay_environment: str = os.getenv("SAFEPAY_ENVIRONMENT", "sandbox")
+    agent_cdn_url: str = os.getenv("AGENT_CDN_URL", "")
 
     # --- TRANSACTIONAL EMAIL (Zoho Mail) ---
     zoho_smtp_host: str = os.getenv("ZOHO_SMTP_HOST", "smtp.zoho.com")
@@ -73,6 +71,15 @@ def _looks_like_placeholder(value: str) -> bool:
         or normalized in {"CHANGE_ME", "CHANGEME", "TODO", "PLACEHOLDER"}
         or "LOCALHOST" in normalized
         or "127.0.0.1" in normalized
+    )
+
+
+def _is_valid_agent_cdn_url(value: str) -> bool:
+    parsed = urlparse(str(value or "").strip())
+    return (
+        parsed.scheme == "https"
+        and bool(parsed.netloc)
+        and parsed.path.lower().endswith(".exe")
     )
 
 
@@ -138,11 +145,13 @@ def get_settings():
             "PRIVATE_KEY_B64": s.private_key_b64,
             "MONGODB_URI": s.mongodb_uri,
             "REDIS_URL": s.redis_url,
-            "SAFEPAY_WEBHOOK_SECRET": s.safepay_webhook_secret,
+            "AGENT_CDN_URL": s.agent_cdn_url,
         }
         missing = [name for name, value in required_values.items() if _looks_like_placeholder(value)]
         if missing:
             raise RuntimeError(f"FATAL: Missing production secrets: {', '.join(missing)}")
+        if not _is_valid_agent_cdn_url(s.agent_cdn_url):
+            raise RuntimeError("FATAL: AGENT_CDN_URL must be an HTTPS URL that points directly to the Windows installer .exe.")
     return s
 
 def load_config(config_file: str = "config.json") -> dict:

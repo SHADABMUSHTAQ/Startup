@@ -176,3 +176,23 @@ async def record_worker_heartbeat_async(worker_name: str, timestamp: datetime | 
         pass
     # Redis not available or failed -> fallback to in-memory sync heartbeat
     return record_worker_heartbeat(worker_name, timestamp=timestamp)
+
+
+async def record_worker_heartbeat_with_client(
+    redis_client: Optional[Redis],
+    worker_name: str,
+    timestamp: datetime | None = None,
+    ttl_seconds: int = 120,
+) -> float:
+    heartbeat_at = (timestamp or datetime.now(timezone.utc)).timestamp()
+    record_worker_heartbeat(worker_name, timestamp=timestamp)
+    if redis_client:
+        try:
+            await redis_client.set(
+                f"warsoc:worker_heartbeat:{worker_name}",
+                int(heartbeat_at),
+                ex=max(30, int(ttl_seconds)),
+            )
+        except Exception:
+            pass
+    return heartbeat_at

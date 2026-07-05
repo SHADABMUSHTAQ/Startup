@@ -1,26 +1,21 @@
 import pytest
+import pytest_asyncio
 import asyncio
 import httpx
 from app.main import app as fastapi_app
 import uuid
 import time
 import json
-import os
-from ecdsa import SigningKey, SECP256k1
-import hashlib
-from app.database import get_db, db_manager
-
-API_BASE_URL = "http://127.0.0.1:8000/api/v1"
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from app.database import db_manager
+from app.workers.siem_worker import siem_worker
 
 def _now_iso():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
 
-def _http_event(event_id, event_uid, tenant_id, agent_id, message, source_ip, private_key_pem, user=None):
-    from ecdsa import SigningKey, SECP256k1
-    import hashlib
-    sk = SigningKey.from_pem(private_key_pem)
-    
+def _http_event(event_id, event_uid, tenant_id, agent_id, message, source_ip, user=None):
     payload = {
         "event_id": event_id,
         "event_uid": event_uid,
@@ -33,15 +28,21 @@ def _http_event(event_id, event_uid, tenant_id, agent_id, message, source_ip, pr
     }
     if user:
         payload["user"] = user
-    
-    payload_str = json.dumps(payload, sort_keys=True)
-    signature = sk.sign_deterministic(payload_str.encode("utf-8"), hashfunc=hashlib.sha256).hex()
-    
-    payload["agent_signature"] = signature
     return payload
 
+
+@pytest_asyncio.fixture
+async def running_siem_worker():
+    task = asyncio.create_task(siem_worker())
+    try:
+        yield
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 @pytest.mark.asyncio
-async def test_siem_deep_dive():
+async def test_siem_deep_dive(running_siem_worker):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fastapi_app), base_url="http://testserver/api/v1", timeout=30.0) as client:
         # 1. Setup Tenant and Agent
         username = f"siem_tester_{uuid.uuid4().hex[:8]}"
@@ -71,11 +72,19 @@ async def test_siem_deep_dive():
         tenant_id = signup_resp.json()["tenant_id"]
 
         # Register Agent
-        sk = SigningKey.generate(curve=SECP256k1)
-        private_key_pem = sk.to_pem().decode('utf-8')
-        public_key_pem = sk.get_verifying_key().to_pem().decode('utf-8')
+        signing_key = ed25519.Ed25519PrivateKey.generate()
+        public_key_pem = signing_key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("utf-8")
         
-        activation_resp = await client.post("/agent/generate-activation")
+        activation_resp = await client.post(
+            "/agent/generate-activation",
+            headers={
+                "Authorization": f"Bearer {user_token}",
+                "x-csrf-token": csrf_token,
+            },
+        )
         assert activation_resp.status_code == 200
         activation_code = activation_resp.json()["activation_code"]
         
@@ -90,7 +99,20 @@ async def test_siem_deep_dive():
         agent_id = agent_data["agent_id"]
         agent_jwt = agent_data["agent_jwt"]
 
-        agent_client = httpx.AsyncClient(base_url=API_BASE_URL, headers={"Authorization": f"Bearer {agent_jwt}"})
+        agent_client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=fastapi_app),
+            base_url="http://testserver/api/v1",
+            headers={"Authorization": f"Bearer {agent_jwt}"},
+        )
+        async def ingest(events):
+            return await agent_client.post(
+                "/ingest/pulse",
+                json={
+                    "nonce": uuid.uuid4().hex,
+                    "timestamp": int(time.time()),
+                    "payload": events,
+                },
+            )
         
         db = db_manager.db
 
@@ -106,9 +128,9 @@ async def test_siem_deep_dive():
             agent_id=agent_id,
             message="GET /api/v1/users?id=1' OR 1=1 -- HTTP/1.1",
             source_ip=f"8.8.8.{int(time.time()) % 255}",
-            private_key_pem=private_key_pem
         )
-        resp = await agent_client.post("/ingest/pulse", json=[sql_event])
+        sql_event["event_type"] = "http_request"
+        resp = await ingest([sql_event])
         assert resp.status_code == 200, f"SQL injection ingest failed: {resp.text}"
         
         # --- SCENARIO 2: Ransomware Shadow Copy Delete ---
@@ -120,9 +142,8 @@ async def test_siem_deep_dive():
             agent_id=agent_id,
             message="wmic shadowcopy delete",
             source_ip="10.0.0.5",
-            private_key_pem=private_key_pem
         )
-        resp = await agent_client.post("/ingest/pulse", json=[ransom_event])
+        resp = await ingest([ransom_event])
         assert resp.status_code == 200
 
         # --- SCENARIO 3: False Positive Control ---
@@ -134,9 +155,8 @@ async def test_siem_deep_dive():
             agent_id=agent_id,
             message="failed password for system healthcheck process",
             source_ip="192.168.1.50",
-            private_key_pem=private_key_pem
         )
-        resp = await agent_client.post("/ingest/pulse", json=[fp_event])
+        resp = await ingest([fp_event])
         assert resp.status_code == 200
 
         # --- SCENARIO 4: Brute Force Stateful Rule ---
@@ -152,9 +172,8 @@ async def test_siem_deep_dive():
                 agent_id=agent_id,
                 message="failed password for root",
                 source_ip="1.2.3.4",
-                private_key_pem=private_key_pem
             ))
-        resp = await agent_client.post("/ingest/pulse", json=bf_events)
+        resp = await ingest(bf_events)
         assert resp.status_code == 200
 
         # --- SCENARIO 5: Password Spraying Stateful Rule ---
@@ -169,19 +188,29 @@ async def test_siem_deep_dive():
                 agent_id=agent_id,
                 message=f"failed password for user{i}",
                 source_ip="5.5.5.5",
-                private_key_pem=private_key_pem,
                 user=f"spray_target_{i}"
             ))
-        resp = await agent_client.post("/ingest/pulse", json=spray_events)
+        resp = await ingest(spray_events)
         assert resp.status_code == 200
 
         print("[*] Waiting for SIEM Worker to process...")
-        await asyncio.sleep(10)
+        alerts = []
+        for _ in range(40):
+            alerts = await db.security_alerts.find(
+                {"tenant_id": tenant_id}
+            ).to_list(length=100)
+            alert_types = {str(item.get("type") or "") for item in alerts}
+            summaries = " ".join(str(item.get("summary") or "").lower() for item in alerts)
+            if (
+                "SQL_INJECTION" in alert_types
+                and "SIGMA_RANSOMWARE_SHADOW_DELETE" in alert_types
+                and "brute force" in summaries
+                and "spray" in summaries
+            ):
+                break
+            await asyncio.sleep(0.5)
 
         # Verification
-        alerts_cursor = db.security_alerts.find({"tenant_id": tenant_id})
-        alerts = await alerts_cursor.to_list(length=100)
-        
         # Check SQL Injection
         sql_alert = next((a for a in alerts if a.get("type") == "SQL_INJECTION"), None)
         assert sql_alert is not None, f"SQL Injection was not detected! Alerts: {[a.get('type') for a in alerts]}"
@@ -206,3 +235,4 @@ async def test_siem_deep_dive():
         assert len(spray_alerts) > 0, "Password spraying pattern not detected!"
 
         print("[*] SIEM Deep Dive: SUCCESS!")
+        await agent_client.aclose()

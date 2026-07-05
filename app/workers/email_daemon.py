@@ -4,6 +4,7 @@ import logging
 import os
 import smtplib
 import socket
+import uuid
 from html import escape
 from email.message import EmailMessage
 from typing import Any
@@ -17,8 +18,12 @@ logger = logging.getLogger("Email-Daemon")
 
 settings = get_settings()
 EMAIL_QUEUE = "email_alert_queue"
+EMAIL_PROCESSING_QUEUE = "email_alert_queue:processing"
+EMAIL_DEAD_LETTER_QUEUE = "email_alert_queue:dead"
 QUEUE_TIMEOUT_SECONDS = 5
 SMTP_TIMEOUT_SECONDS = 20
+MAX_DELIVERY_ATTEMPTS = max(1, int(os.getenv("EMAIL_MAX_DELIVERY_ATTEMPTS", "3")))
+MAX_CONCURRENT_SENDS = max(1, int(os.getenv("EMAIL_MAX_CONCURRENT_SENDS", "3")))
 DEFAULT_FROM_ADDRESS = settings.zoho_smtp_user or os.getenv("MAIL_FROM", "no-reply@warsoc.local")
 
 
@@ -231,11 +236,106 @@ def _send_email(message: EmailMessage) -> None:
         client.send_message(message)
 
 
-async def _process_job(job: dict, semaphore: asyncio.Semaphore) -> None:
-    message = _build_message(job)
-    async with semaphore:
-        await asyncio.to_thread(_send_email, message)
-    logger.info("Delivered %s to %s", job.get("type", "security_alert_email"), message["To"])
+async def _increment_metric(redis_client: Redis, metric: str) -> None:
+    try:
+        await redis_client.incr(metric)
+    except Exception:
+        logger.debug("Unable to increment email metric %s", metric, exc_info=True)
+
+
+async def _ack_processing_job(redis_client: Redis, raw_payload: str) -> None:
+    removed = await redis_client.lrem(EMAIL_PROCESSING_QUEUE, 1, raw_payload)
+    if int(removed or 0) != 1:
+        raise RuntimeError("Email processing acknowledgement did not remove exactly one job")
+
+
+async def _retry_or_quarantine(
+    redis_client: Redis,
+    raw_payload: str,
+    job: dict,
+    error: Exception,
+) -> None:
+    attempt = int(job.get("_delivery_attempt") or 0) + 1
+    job_id = str(job.get("_job_id") or uuid.uuid4().hex)
+    job["_job_id"] = job_id
+    job["_delivery_attempt"] = attempt
+    error_text = f"{type(error).__name__}: {error}"[:500]
+
+    if attempt < MAX_DELIVERY_ATTEMPTS:
+        await asyncio.sleep(min(2 ** (attempt - 1), 8))
+        retry_payload = json.dumps(job, separators=(",", ":"), default=str)
+        async with redis_client.pipeline(transaction=True) as pipe:
+            pipe.lrem(EMAIL_PROCESSING_QUEUE, 1, raw_payload)
+            pipe.lpush(EMAIL_QUEUE, retry_payload)
+            result = await pipe.execute()
+        if int(result[0] or 0) != 1:
+            raise RuntimeError("Email retry could not atomically consume the processing job")
+        await _increment_metric(redis_client, "warsoc_email_retries_total")
+        logger.warning(
+            "Email job %s failed attempt %s/%s and was requeued: %s",
+            job_id,
+            attempt,
+            MAX_DELIVERY_ATTEMPTS,
+            error_text,
+        )
+        return
+
+    dead_letter = {
+        "job_id": job_id,
+        "attempts": attempt,
+        "error": error_text,
+        "job": job,
+    }
+    dead_payload = json.dumps(dead_letter, separators=(",", ":"), default=str)
+    async with redis_client.pipeline(transaction=True) as pipe:
+        pipe.lrem(EMAIL_PROCESSING_QUEUE, 1, raw_payload)
+        pipe.lpush(EMAIL_DEAD_LETTER_QUEUE, dead_payload)
+        result = await pipe.execute()
+    if int(result[0] or 0) != 1:
+        raise RuntimeError("Email DLQ move could not atomically consume the processing job")
+    await _increment_metric(redis_client, "warsoc_email_dlq_total")
+    logger.error(
+        "Email job %s exhausted %s attempts and was quarantined: %s",
+        job_id,
+        attempt,
+        error_text,
+    )
+
+
+async def _process_job(
+    raw_payload: str,
+    redis_client: Redis,
+    semaphore: asyncio.Semaphore,
+) -> None:
+    job: dict = {}
+    try:
+        job = _parse_job(raw_payload)
+        if not job:
+            raise ValueError("Empty email job payload")
+        message = _build_message(job)
+        async with semaphore:
+            await asyncio.to_thread(_send_email, message)
+        await _ack_processing_job(redis_client, raw_payload)
+        await _increment_metric(redis_client, "warsoc_email_delivered_total")
+        logger.info("Delivered %s to %s", job.get("type", "security_alert_email"), message["To"])
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        try:
+            await _retry_or_quarantine(redis_client, raw_payload, job, exc)
+        except Exception:
+            # The original payload remains in the processing queue when the
+            # atomic retry/DLQ transition fails, so startup recovery can replay it.
+            logger.exception("Email job recovery failed; payload remains pending")
+
+
+async def _recover_processing_queue(redis_client: Redis) -> int:
+    recovered = 0
+    while True:
+        payload = await redis_client.rpoplpush(EMAIL_PROCESSING_QUEUE, EMAIL_QUEUE)
+        if payload is None:
+            return recovered
+        recovered += 1
 
 
 async def run_email_daemon() -> None:
@@ -243,7 +343,7 @@ async def run_email_daemon() -> None:
     if not redis_url:
         raise RuntimeError("REDIS_URL is required for the email daemon")
 
-    redis_client = await Redis.from_url(
+    redis_client = Redis.from_url(
         redis_url,
         decode_responses=True,
         socket_timeout=QUEUE_TIMEOUT_SECONDS + 10,
@@ -252,27 +352,27 @@ async def run_email_daemon() -> None:
     )
     logger.info("Email daemon online on host %s", socket.gethostname())
     
-    semaphore = asyncio.Semaphore(10)
+    recovered = await _recover_processing_queue(redis_client)
+    if recovered:
+        logger.warning("Recovered %s interrupted email jobs", recovered)
+
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_SENDS)
+    active_tasks: set[asyncio.Task] = set()
 
     try:
         while True:
             try:
-                item = await redis_client.brpop(EMAIL_QUEUE, timeout=QUEUE_TIMEOUT_SECONDS)
-                if not item:
+                raw_payload = await redis_client.brpoplpush(
+                    EMAIL_QUEUE,
+                    EMAIL_PROCESSING_QUEUE,
+                    timeout=QUEUE_TIMEOUT_SECONDS,
+                )
+                if raw_payload is None:
                     continue
 
-                _, raw_payload = item
-                try:
-                    job = _parse_job(raw_payload)
-                    if not job:
-                        logger.warning("Dropped empty email job payload")
-                        continue
-                    
-                    # Fire and forget with asyncio.create_task to enable concurrent processing
-                    asyncio.create_task(_process_job(job, semaphore))
-                    
-                except Exception as exc:
-                    logger.exception("Failed to queue email job: %s", exc)
+                task = asyncio.create_task(_process_job(raw_payload, redis_client, semaphore))
+                active_tasks.add(task)
+                task.add_done_callback(active_tasks.discard)
             except asyncio.CancelledError:
                 raise
             except TimeoutError:
@@ -281,6 +381,10 @@ async def run_email_daemon() -> None:
                 logger.warning("Email daemon loop error, retrying: %s", exc)
                 await asyncio.sleep(1)
     finally:
+        if active_tasks:
+            for task in active_tasks:
+                task.cancel()
+            await asyncio.gather(*active_tasks, return_exceptions=True)
         try:
             await redis_client.close()
         except Exception:

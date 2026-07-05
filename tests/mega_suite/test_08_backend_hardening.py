@@ -18,9 +18,10 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 import app.routes.admin as admin_module
+import app.routes.agent_orchestration as agent_module
 import app.routes.metrics as metrics_module
 from app.config.config import _looks_like_placeholder
-from app.routes.auth import get_password_hash
+from app.routes.auth import create_access_token, get_password_hash
 from app.routes.auth import get_current_user
 
 from app.main import app as fastapi_app
@@ -162,6 +163,26 @@ async def test_auth_me_redacts_sensitive_fields(client):
     assert "token_exp" not in user
 
 
+async def test_user_token_must_match_database_tenant(client):
+    headers, me, _ = await _signup_and_login(client, "hardening_tenant_bound_token")
+    bad_token = create_access_token(
+        {
+            "sub": me["username"],
+            "tenant_id": "WARSOC_WRONGTENANT",
+            "role": "admin",
+            "type": "user",
+        },
+        expires_delta=timedelta(minutes=5),
+    )
+
+    resp = await client.get(
+        "/api/v1/auth/me",
+        headers={**headers, "Authorization": f"Bearer {bad_token}"},
+    )
+
+    assert resp.status_code == 401
+
+
 async def test_auth_fails_closed_when_redis_revocation_is_unavailable(client, auth_headers, redis_client):
     fastapi_app.state.redis = None
     try:
@@ -213,7 +234,11 @@ async def test_agent_token_queues_live_event_and_updates_status(client, redis_cl
 
     resp = await client.post(
         "/api/v1/ingest/pulse",
-        json=payload,
+        json={
+            "nonce": secrets.token_hex(16),
+            "timestamp": int(datetime.now(timezone.utc).timestamp()),
+            "payload": [payload],
+        },
         headers=agent_headers,
     )
 
@@ -299,7 +324,7 @@ async def test_logs_endpoint_enforces_tenant_isolation(client, db):
         ]
     )
 
-    resp = await client.get("/api/v1/logs", headers=tenant_a_headers)
+    resp = await client.get("/api/v1/logs?source=siem", headers=tenant_a_headers)
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -532,7 +557,7 @@ async def test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches(client, db):
             assert "tenant_id" not in export_columns
             assert "_retention_ts" not in export_columns
             assert "digital_signature" not in export_columns
-            assert peca_doc["message"] in export_resp.text
+            assert fbr_doc["message"] in export_resp.text
         finally:
             fastapi_app.dependency_overrides.pop(get_current_user, None)
             await db["siem_cold_vault"].delete_many({"tenant_id": tenant_id})
@@ -655,7 +680,7 @@ async def test_export_csv_requires_premium_and_removes_internal_fields(client, d
         "hardening_export_pro",
         plan_type="Professional",
     )
-    await db["logs"].insert_one(
+    await db["siem_cold_vault"].insert_one(
         {
             "tenant_id": pro_user["tenant_id"],
             "timestamp": "2026-05-05T13:00:00+00:00",
@@ -680,6 +705,70 @@ async def test_export_csv_requires_premium_and_removes_internal_fields(client, d
     assert "export me" in pro_resp.text
 
 
+async def test_manager_cannot_export_compliance_evidence(client, db):
+    headers, user, _ = await _signup_and_login(
+        client,
+        "hardening_export_manager",
+        plan_type="Professional",
+        compliance_packs=["fbr_pos"],
+    )
+    await db["users"].update_one(
+        {"username": user["username"], "tenant_id": user["tenant_id"]},
+        {"$set": {"role": "manager"}},
+    )
+    await db["fbr_pos_logs"].insert_one(
+        {
+            "tenant_id": user["tenant_id"],
+            "timestamp": "2026-05-05T13:00:00+00:00",
+            "event_id": "FBR-INV-DEL",
+            "message": "restricted compliance evidence",
+        }
+    )
+
+    csv_resp = await client.get(
+        "/api/v1/export/csv?data_type=compliance&pack_id=fbr_pos",
+        headers=headers,
+    )
+    pdf_resp = await client.get(
+        "/api/v1/export/audit-report?pack_id=fbr_pos",
+        headers=headers,
+    )
+
+    assert csv_resp.status_code == 403, csv_resp.text
+    assert pdf_resp.status_code == 403, pdf_resp.text
+
+
+async def test_admin_audit_report_returns_real_pdf(client, db):
+    headers, user, _ = await _signup_and_login(
+        client,
+        "hardening_pdf_admin",
+        plan_type="Professional",
+        compliance_packs=["fbr_pos"],
+    )
+    await db["fbr_pos_logs"].insert_one(
+        {
+            "tenant_id": user["tenant_id"],
+            "timestamp": "2026-05-05T13:00:00+00:00",
+            "event_uid": "hardening-pdf-evidence",
+            "event_id": "FBR-INV-DEL",
+            "message": "Invoice deletion evidence",
+            "matched_rule_name": "Invoice Deletion",
+            "matched_rule_severity": "High",
+            "compliance_pack": "fbr_pos",
+        }
+    )
+
+    response = await client.get(
+        "/api/v1/export/audit-report?pack_id=fbr_pos",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert response.content.startswith(b"%PDF")
+    assert len(response.content) > 1000
+
+
 async def test_team_list_returns_current_tenant_members(client):
     headers, me, _ = await _signup_and_login(
         client,
@@ -697,7 +786,12 @@ async def test_team_list_returns_current_tenant_members(client):
     assert any(member["username"] == me["username"] for member in body["team"])
 
 
-async def test_agent_package_contains_customer_config_but_no_private_key_or_enrollment_token(client):
+async def test_agent_download_redirects_to_cdn(client, monkeypatch):
+    monkeypatch.setattr(
+        agent_module.settings,
+        "agent_cdn_url",
+        "https://cdn.example.com/agent.exe",
+    )
     headers, me, _ = await _signup_and_login(
         client,
         "hardening_agent_package",
@@ -705,10 +799,11 @@ async def test_agent_package_contains_customer_config_but_no_private_key_or_enro
         role="admin",
     )
 
-    resp = await client.get("/api/v1/agent/download", headers=headers)
+    # Disable httpx redirect following so we can assert the 307
+    resp = await client.get("/api/v1/agent/download", headers=headers, follow_redirects=False)
 
-    assert resp.status_code == 200, resp.text
-    assert resp.headers["content-type"] == "application/zip"
+    assert resp.status_code == 307, resp.text
+    assert resp.headers["location"] == "https://cdn.example.com/agent.exe"
 
 
 
@@ -732,14 +827,14 @@ async def test_metrics_endpoint_exposes_worker_heartbeat_and_staleness(client, m
     from app.utils.observability import record_worker_heartbeat
 
     record_worker_heartbeat("peca_worker")
-    record_worker_heartbeat("detection_worker")
+    record_worker_heartbeat("siem_worker")
 
     resp = await client.get("/metrics", headers={"Authorization": "Bearer metrics-test-token"})
 
     assert resp.status_code == 200, resp.text
     assert "warsoc_worker_staleness_seconds" in resp.text
     assert "warsoc_peca_worker_age_seconds" in resp.text
-    assert "warsoc_detection_worker_age_seconds" in resp.text
+    assert "warsoc_siem_worker_age_seconds" in resp.text
 
 
 async def test_admin_tenant_listing_redacts_secret_fields(client, db, monkeypatch):
@@ -788,4 +883,33 @@ async def test_invite_accepts_temp_password_and_normalizes_legacy_packs(client, 
     user = await db["users"].find_one({"email": invite_payload["email"]})
     assert user is not None
     assert user["role"] == "auditor"
-    assert set(user["compliance_packs"]) == {"fbr_pos", "eto_forensic"}
+    assert set(user["compliance_packs"]) == {"fbr_pos", "peca_forensic"}
+
+
+async def test_auditor_cannot_bypass_alert_rbac_through_logs_gateway(client, db):
+    headers, user, _ = await _signup_and_login(
+        client,
+        "hardening_auditor_logs",
+        plan_type="Professional",
+        role="admin",
+        compliance_packs=["fbr_pos"],
+    )
+    await db["users"].update_one(
+        {"username": user["username"], "tenant_id": user["tenant_id"]},
+        {
+            "$set": {
+                "role": "auditor",
+                "compliance_packs": ["fbr_pos"],
+            }
+        },
+    )
+
+    alerts = await client.get("/api/v1/logs", headers=headers)
+    assert alerts.status_code == 403, alerts.text
+
+    compliance = await client.get(
+        "/api/v1/logs?source=compliance&pack=fbr_pos",
+        headers=headers,
+    )
+    assert compliance.status_code == 200, compliance.text
+    assert compliance.json()["status"] == "success"

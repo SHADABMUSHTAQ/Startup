@@ -23,6 +23,8 @@ from typing import Any
 
 import pytest
 import httpx
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 from motor.motor_asyncio import AsyncIOMotorClient
 from ecdsa import SigningKey, NIST256p
 
@@ -33,7 +35,6 @@ from app.utils.agent_crypto import (
     build_event_signature_string,
     build_payload_hash,
     build_signable_event_payload,
-    build_login_signature_string,
 )
 
 settings = get_settings()
@@ -409,7 +410,6 @@ async def setup_chaos_audit_environment():
     
     # Create test tenant
     tenant_id = f"CHAOS_{secrets.token_hex(4).upper()}"
-    agent_id = f"{tenant_id}-chaos-agent"
     
     await db["tenants"].insert_one({
         "tenant_id": tenant_id,
@@ -455,54 +455,38 @@ async def setup_chaos_audit_environment():
             "x-csrf-token": csrf_token,
         }
     
-    # Generate ECDSA signing key for agent
+    # Keep an ECDSA event signing key for payload chaos data; registration identity uses Ed25519.
     signing_key = SigningKey.generate(curve=NIST256p)
-    public_key = signing_key.verifying_key.to_pem().decode("utf-8")
+    identity_key = ed25519.Ed25519PrivateKey.generate()
+    public_key = identity_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
     
-    # Enroll agent
+    # Register agent using the current activation-code flow.
     async with httpx.AsyncClient() as client:
         token_resp = await client.post(
-            f"{API_BASE_URL}/auth/agents/generate-token",
+            f"{API_BASE_URL}/agent/generate-activation",
             headers=test_user_headers,
-            json={"agent_id": agent_id},
         )
         if token_resp.status_code != 200:
-            raise RuntimeError(f"Token generation failed: {token_resp.text}")
+            raise RuntimeError(f"Activation generation failed: {token_resp.text}")
         
-        provisioning_token = token_resp.json()["provisioning_token"]
+        activation_code = token_resp.json()["activation_code"]
         
-        enroll_resp = await client.post(
-            f"{API_BASE_URL}/auth/agents/enroll",
-            headers={"Authorization": f"Bearer {provisioning_token}"},
+        register_resp = await client.post(
+            f"{API_BASE_URL}/agent/register",
             json={
-                "agent_id": agent_id,
+                "activation_code": activation_code,
                 "public_key": public_key,
-                "hostname": "chaos-audit-host",
-                "mac_address": "00:11:22:33:44:55",
             },
         )
-        if enroll_resp.status_code != 201:
-            raise RuntimeError(f"Agent enrollment failed: {enroll_resp.text}")
+        if register_resp.status_code != 200:
+            raise RuntimeError(f"Agent registration failed: {register_resp.text}")
         
-        # Agent authentication: perform agent-login to get access token
-        timestamp = datetime.now(timezone.utc).isoformat()
-        nonce = secrets.token_hex(16)
-        canonical = build_login_signature_string(agent_id, timestamp, nonce)
-        signature = signing_key.sign(canonical.encode("utf-8"), hashfunc=hashlib.sha256).hex()
-        
-        login_resp = await client.post(
-            f"{API_BASE_URL}/auth/agent-login",
-            json={
-                "agent_id": agent_id,
-                "timestamp": timestamp,
-                "nonce": nonce,
-                "signature": signature,
-            },
-        )
-        if login_resp.status_code != 200:
-            raise RuntimeError(f"Agent login failed: {login_resp.text}")
-        
-        agent_token = login_resp.json()["access_token"]
+        registration = register_resp.json()
+        agent_id = registration["agent_id"]
+        agent_token = registration["agent_jwt"]
         agent_headers = {"Authorization": f"Bearer {agent_token}"}
     
     return {

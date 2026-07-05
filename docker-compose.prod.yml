@@ -1,8 +1,15 @@
+x-warsoc-logging: &warsoc-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   warsoc-api:
     build: .
     container_name: warsoc-api-prod
     restart: always
+    logging: *warsoc-logging
     env_file:
       - ${WARSOC_ENV_FILE:-.env.prod}
     environment:
@@ -12,7 +19,8 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
       TRUSTED_PROXY_HOSTS: 172.28.0.10,127.0.0.1,::1,localhost
       REPORTS_DIR: /app/data/reports
-      AGENT_CDN_URL: ${AGENT_CDN_URL:?AGENT_CDN_URL required for production agent downloads}
+      AGENT_CDN_URL: ${AGENT_CDN_URL:?AGENT_CDN_URL required}
+      SALES_EMAIL: ${SALES_EMAIL:?SALES_EMAIL required}
     volumes:
       - reports_data_prod:/app/data/reports
       - uploads_data_prod:/app/uploaded_files
@@ -39,7 +47,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
+          cpus: '1.0'
           memory: 1G
         reservations:
           cpus: '0.5'
@@ -50,6 +58,7 @@ services:
     container_name: warsoc-unified-worker-prod
     command: python -m app.workers.unified_worker
     restart: always
+    logging: *warsoc-logging
     env_file:
       - ${WARSOC_ENV_FILE:-.env.prod}
     environment:
@@ -58,6 +67,10 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
       DB_NAME: ${MONGODB_DB_NAME:?MONGODB_DB_NAME required}
       CONSUMER_NAME: unified_worker_prod_1
+      ZOHO_SMTP_HOST: ${ZOHO_SMTP_HOST:-smtp.zoho.com}
+      ZOHO_SMTP_PORT: ${ZOHO_SMTP_PORT:-587}
+      ZOHO_SMTP_USER: ${ZOHO_SMTP_USER:?ZOHO_SMTP_USER required}
+      ZOHO_SMTP_PASS: ${ZOHO_SMTP_PASS:?ZOHO_SMTP_PASS required}
     volumes:
       - ./keys:/app/keys:ro
     read_only: true
@@ -73,8 +86,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: 768M
+          cpus: '1.5'
+          memory: 1280M
 
   threat-hunter:
     build: .
@@ -82,6 +95,7 @@ services:
     profiles: ["legacy-detection"]
     command: python -m app.workers.detection_worker
     restart: always
+    logging: *warsoc-logging
     env_file:
       - ${WARSOC_ENV_FILE:-.env.prod}
     environment:
@@ -109,6 +123,7 @@ services:
     container_name: warsoc-compliance-cron-prod
     command: python -m app.workers.compliance_cron
     restart: always
+    logging: *warsoc-logging
     env_file:
       - ${WARSOC_ENV_FILE:-.env.prod}
     environment:
@@ -135,18 +150,20 @@ services:
   storage-archiver:
     build: .
     container_name: warsoc-storage-archiver-prod
-    profiles: ["maintenance"]
     command: python -m app.workers.storage_archiver
-    restart: "no"
+    restart: on-failure
+    logging: *warsoc-logging
     env_file:
       - ${WARSOC_ENV_FILE:-.env.prod}
     environment:
       APP_ENV: production
       MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
-      AZURE_STORAGE_CONNECTION_STRING: ${AZURE_STORAGE_CONNECTION_STRING:-}
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:?MONGODB_DB_NAME required}
+      AZURE_STORAGE_CONNECTION_STRING: ${AZURE_STORAGE_CONNECTION_STRING:?AZURE_STORAGE_CONNECTION_STRING required}
       AZURE_STORAGE_CONTAINER: ${AZURE_STORAGE_CONTAINER:-warsoc-cold-storage}
       ARCHIVE_BATCH_SIZE: ${ARCHIVE_BATCH_SIZE:-5000}
       ARCHIVE_LEAD_DAYS: ${ARCHIVE_LEAD_DAYS:-1}
+      ARCHIVE_INTERVAL_SECONDS: ${ARCHIVE_INTERVAL_SECONDS:-86400}
     read_only: true
     tmpfs:
       - /tmp
@@ -158,13 +175,14 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '0.75'
+          memory: 768M
 
   mongodb:
-    image: mongo:6.0
+    image: mongo:7
     container_name: warsoc-mongo-prod
     restart: always
+    logging: *warsoc-logging
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:?MONGO_USER required}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?MONGO_PASSWORD required}
@@ -175,8 +193,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 1536M
+          cpus: '1.5'
+          memory: 2G
     healthcheck:
       test:
         - CMD-SHELL
@@ -196,7 +214,8 @@ services:
     image: redis:7.0-alpine
     container_name: warsoc-redis-prod
     restart: always
-    command: redis-server --appendonly yes --appendfsync everysec --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required}
+    logging: *warsoc-logging
+    command: redis-server --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy noeviction --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required}
     volumes:
       - redis_data_prod:/data
     networks:
@@ -205,7 +224,7 @@ services:
       resources:
         limits:
           cpus: '0.5'
-          memory: 512M
+          memory: 768M
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD required}", "ping"]
       interval: 10s
@@ -217,6 +236,7 @@ services:
     container_name: warsoc-syslog-receiver-prod
     command: python /app/syslog_receiver.py
     restart: always
+    logging: *warsoc-logging
     env_file:
       - ${WARSOC_ENV_FILE:-.env.prod}
     environment:
@@ -230,7 +250,7 @@ services:
       MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
       DB_NAME: ${MONGODB_DB_NAME:?MONGODB_DB_NAME required}
     ports:
-      - "${SYSLOG_BIND:-0.0.0.0}:5140:5140/udp"
+      - "${SYSLOG_BIND:?SYSLOG_BIND required}:5140:5140/udp"
     read_only: true
     tmpfs:
       - /tmp
@@ -245,21 +265,24 @@ services:
       resources:
         limits:
           cpus: '0.25'
-          memory: 128M
+          memory: 256M
 
   nginx:
     image: nginx:alpine
     container_name: warsoc-nginx-proxy
     restart: always
+    logging: *warsoc-logging
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/nginx/ssl:ro
+      - ./certbot/www:/var/www/certbot:ro
     read_only: true
     tmpfs:
       - /tmp
+      - /var/run
     networks:
       warsoc-internal:
         ipv4_address: 172.28.0.10
@@ -269,7 +292,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
+          cpus: '0.25'
           memory: 256M
 
 volumes:

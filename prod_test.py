@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import time
 import uuid
@@ -9,17 +8,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 from dotenv import load_dotenv
-from ecdsa import NIST256p, SigningKey
 from passlib.context import CryptContext
 from pymongo import MongoClient
-
-from app.utils.agent_crypto import (
-    build_event_signature_string,
-    build_login_signature_string,
-    build_payload_hash,
-    build_signable_event_payload,
-)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -94,53 +87,28 @@ def _admin_login(session: requests.Session, username_or_email: str, password: st
     return {"payload": data, "csrf": csrf}
 
 
-def _generate_enrollment_token(session: requests.Session, *, csrf: str, agent_id: str) -> str:
+def _generate_activation_code(session: requests.Session, *, csrf: str) -> str:
     response = session.post(
-        f"{API_BASE_URL}/auth/agents/generate-token",
+        f"{API_BASE_URL}/agent/generate-activation",
         headers={"x-csrf-token": csrf},
-        json={"agent_id": agent_id},
         timeout=30,
     )
     response.raise_for_status()
-    data = response.json()
-    return data.get("enrollment_token") or data.get("provisioning_token")
+    return response.json()["activation_code"]
 
 
-def _enroll_agent(provisioning_token: str, agent_id: str, public_key_pem: str) -> requests.Response:
+def _register_agent(activation_code: str, public_key_pem: str) -> requests.Response:
     return requests.post(
-        f"{API_BASE_URL}/auth/agents/enroll",
-        headers={"Authorization": f"Bearer {provisioning_token}"},
+        f"{API_BASE_URL}/agent/register",
         json={
-            "agent_id": agent_id,
+            "activation_code": activation_code,
             "public_key": public_key_pem,
-            "hostname": "verify-host",
-            "mac_address": "00:11:22:33:44:55",
         },
         timeout=30,
     )
 
 
-def _agent_login(agent_id: str, signing_key: SigningKey) -> str:
-    timestamp = datetime.now(timezone.utc).isoformat()
-    nonce = uuid.uuid4().hex
-    canonical = build_login_signature_string(agent_id, timestamp, nonce)
-    signature = signing_key.sign(canonical.encode("utf-8"), hashfunc=hashlib.sha256).hex()
-
-    response = requests.post(
-        f"{API_BASE_URL}/auth/agent-login",
-        json={
-            "agent_id": agent_id,
-            "timestamp": timestamp,
-            "nonce": nonce,
-            "signature": signature,
-        },
-        timeout=30,
-    )
-    response.raise_for_status()
-    return response.json()["access_token"]
-
-
-def _signed_ingest(agent_bearer: str, signing_key: SigningKey, agent_id: str, run_id: str) -> requests.Response:
+def _signed_ingest(agent_bearer: str, agent_id: str, run_id: str) -> requests.Response:
     payload = {
         "tenant_id": "system-test",
         "agent_id": agent_id,
@@ -164,15 +132,6 @@ def _signed_ingest(agent_bearer: str, signing_key: SigningKey, agent_id: str, ru
         "agent_version": "prod_test/1.0",
         "agent_signature": "",
     }
-    signable = build_signable_event_payload(payload)
-    payload_hash = build_payload_hash(signable)
-    canonical = build_event_signature_string(
-        payload["agent_id"],
-        payload["timestamp"],
-        payload["event_uid"],
-        payload_hash,
-    )
-    payload["agent_signature"] = signing_key.sign(canonical.encode("utf-8"), hashfunc=hashlib.sha256).hex()
 
     return requests.post(
         f"{API_BASE_URL}/ingest/pulse",
@@ -206,30 +165,32 @@ def run_integration_test() -> bool:
     login = _admin_login(session, admin["email"], admin["password"])
     _log(f"[OK] Admin login complete for {login['payload'].get('username')}")
 
-    agent_id = f"LOCAL_AGENT_{uuid.uuid4().hex[:8].upper()}"
-    enrollment_token = _generate_enrollment_token(session, csrf=login["csrf"], agent_id=agent_id)
-    if not enrollment_token:
-        _log("[-] Failed to mint enrollment token")
+    activation_code = _generate_activation_code(session, csrf=login["csrf"])
+    if not activation_code:
+        _log("[-] Failed to mint activation code")
         return False
-    _log("[OK] Enrollment token minted")
+    _log("[OK] Activation code minted")
 
-    signing_key = SigningKey.generate(curve=NIST256p, hashfunc=hashlib.sha256)
-    public_key_pem = signing_key.verifying_key.to_pem().decode("utf-8")
+    agent_private_key = ed25519.Ed25519PrivateKey.generate()
+    public_key_pem = agent_private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
 
-    enroll_response = _enroll_agent(enrollment_token, agent_id, public_key_pem)
-    _log(f"[ENROLL] {enroll_response.status_code} {enroll_response.text}")
-    if enroll_response.status_code != 201:
-        _log(f"[-] Agent enroll failed: {enroll_response.status_code} {enroll_response.text}")
+    register_response = _register_agent(activation_code, public_key_pem)
+    _log(f"[REGISTER] {register_response.status_code} {register_response.text}")
+    if register_response.status_code != 200:
+        _log(f"[-] Agent register failed: {register_response.status_code} {register_response.text}")
         return False
-    _log("[OK] Agent enrolled (first use)")
+    registered_agent = register_response.json()
+    agent_id = registered_agent["agent_id"]
+    agent_access_token = registered_agent["agent_jwt"]
+    _log("[OK] Agent registered")
 
-    replay_response = _enroll_agent(enrollment_token, agent_id, public_key_pem)
+    replay_response = _register_agent(activation_code, public_key_pem)
     _log(f"[REPLAY] {replay_response.status_code} {replay_response.text}")
 
-    agent_access_token = _agent_login(agent_id, signing_key)
-    _log("[OK] Agent login token issued")
-
-    ingest_response = _signed_ingest(agent_access_token, signing_key, agent_id, run_id)
+    ingest_response = _signed_ingest(agent_access_token, agent_id, run_id)
     _log(f"[INGEST] {ingest_response.status_code} {ingest_response.text}")
 
     return ingest_response.status_code == 200

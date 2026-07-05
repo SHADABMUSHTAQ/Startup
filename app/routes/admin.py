@@ -34,7 +34,7 @@ pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto
 def verify_admin(api_key: str = Security(api_key_header)):
     if not ADMIN_SECRET_KEY:
         raise HTTPException(status_code=503, detail="Super Admin Key is not configured on the server.")
-    if api_key != ADMIN_SECRET_KEY:
+    if not secrets.compare_digest(api_key, ADMIN_SECRET_KEY):
         raise HTTPException(status_code=403, detail="Forbidden: Invalid Admin Key")
     return api_key
 
@@ -84,15 +84,7 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
     }
     await db["tenants"].insert_one(tenant_doc)
     
-    # 2. Pre-Authorize the Tenant ID as a valid Agent Identity
-    await db["agents"].insert_one({
-        "agent_id": tenant_id,
-        "tenant_id": tenant_id,
-        "approved": True,
-        "created_at": datetime.now(timezone.utc).isoformat()
-    })
-
-    # 3. The Genesis Block (Zero-Day Forensic Anchor)
+    # 2. The Genesis Block (Zero-Day Forensic Anchor)
     genesis_root = hashlib.sha256(f"GENESIS:{tenant_id}".encode("utf-8")).hexdigest()
     
     genesis_block = {
@@ -107,7 +99,7 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
     }
     await db["daily_forensic_ledgers"].insert_one(genesis_block)
 
-    # 4. Create the Admin User Account (THE MISSING PIECE)
+    # 3. Create the Admin User Account
     hashed_password = pwd_context.hash(req.admin_password)
     admin_username = req.admin_email.split("@")[0]
 
@@ -126,7 +118,7 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
     }
     await db["users"].insert_one(admin_user)
 
-    # 5. Sync plan to Redis cache for instant worker entitlement checks
+    # 4. Sync plan to Redis cache for instant worker entitlement checks
     redis = getattr(request.app.state, "redis", None)
     if redis:
         try:
@@ -140,10 +132,6 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
             await asyncio.wait_for(_sync_cache(), timeout=3)
         except Exception as exc:
             logger.warning("Tenant %s provisioned but Redis entitlement cache sync failed: %s", tenant_id, exc)
-            try:
-                request.app.state.redis = None
-            except Exception:
-                pass
      
     return ProvisionResponse(
         tenant_id=tenant_id,

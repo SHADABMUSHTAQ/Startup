@@ -186,10 +186,3 @@ async def contact_sales(
 
     return {"message": "Request received successfully. Our team will contact you shortly."}
 
-@router.post('/safepay/webhook')
-async def safepay_webhook(request: Request, db=Depends(get_db)):
-    raise HTTPException(
-        status_code=501,
-        detail="Safepay webhook processing is not enabled for this launch. Use manual sales-led billing.",
-    )
-

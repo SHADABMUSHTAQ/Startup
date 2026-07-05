@@ -1,16 +1,15 @@
 import pytest
 import asyncio
+from contextlib import suppress
 import httpx
 from app.main import app as fastapi_app
 import uuid
 import time
 import json
-import os
 from ecdsa import SigningKey, SECP256k1
 import hashlib
-from app.database import get_db, db_manager
-
-API_BASE_URL = "http://127.0.0.1:8000/api/v1"
+from app.database import db_manager
+from app.workers.peca_worker import peca_worker
 
 def _now_iso():
     from datetime import datetime, timezone
@@ -90,8 +89,6 @@ async def test_peca_deep_dive():
         agent_id = agent_data["agent_id"]
         agent_jwt = agent_data["agent_jwt"]
 
-        agent_client = httpx.AsyncClient(base_url=API_BASE_URL, headers={"Authorization": f"Bearer {agent_jwt}"})
-        
         db = db_manager.db
         
         # Inject tenant features to Redis since the test doesn't go through billing flow
@@ -116,7 +113,7 @@ async def test_peca_deep_dive():
         except Exception:
             pass
             
-        await redis_client.close()
+        await redis_client.aclose()
 
         # Clear old logs for this tenant
         await db.peca_forensic_logs.delete_many({"tenant_id": tenant_id})
@@ -157,7 +154,31 @@ async def test_peca_deep_dive():
             private_key_pem=private_key_pem
         )
 
-        # --- SCENARIO 4: Non-PECA Event (Control) ---
+        # --- SCENARIO 4: Service Installation (7045) ---
+        print("[*] Testing Service Installation (7045)...")
+        service_event = _http_event(
+            event_id=7045,
+            event_uid=f"peca-service-{uuid.uuid4()}",
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            message="A service was installed in the system.",
+            source_ip="10.0.0.50",
+            private_key_pem=private_key_pem
+        )
+
+        # --- SCENARIO 5: Event Logging Service Shutdown (1100) ---
+        print("[*] Testing Event Logging Service Shutdown (1100)...")
+        logging_shutdown_event = _http_event(
+            event_id=1100,
+            event_uid=f"peca-log-shutdown-{uuid.uuid4()}",
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            message="The event logging service has shut down.",
+            source_ip="10.0.0.50",
+            private_key_pem=private_key_pem
+        )
+
+        # --- SCENARIO 6: Non-PECA Event (Control) ---
         print("[*] Testing Non-PECA Event...")
         non_peca_event = _http_event(
             event_id="FBR-INV-DEL",
@@ -169,11 +190,39 @@ async def test_peca_deep_dive():
             private_key_pem=private_key_pem
         )
 
-        resp = await agent_client.post("/ingest/pulse", json=[logon_event, audit_event, proc_event, non_peca_event])
-        assert resp.status_code == 200
+        worker_task = asyncio.create_task(peca_worker())
+        try:
+            envelope = {
+                "nonce": uuid.uuid4().hex,
+                "timestamp": int(time.time()),
+                "payload": [
+                    logon_event,
+                    audit_event,
+                    proc_event,
+                    service_event,
+                    logging_shutdown_event,
+                    non_peca_event,
+                ],
+            }
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=fastapi_app),
+                base_url="http://testserver/api/v1",
+                headers={"Authorization": f"Bearer {agent_jwt}"},
+                timeout=30.0,
+            ) as agent_client:
+                resp = await agent_client.post("/ingest/pulse", json=envelope)
+            assert resp.status_code in (200, 202), resp.text
 
-        print("[*] Waiting for PECA Worker to process...")
-        await asyncio.sleep(10)
+            print("[*] Waiting for PECA Worker to process...")
+            deadline = asyncio.get_running_loop().time() + 25
+            while asyncio.get_running_loop().time() < deadline:
+                if await db.peca_forensic_logs.count_documents({"tenant_id": tenant_id}) >= 5:
+                    break
+                await asyncio.sleep(0.25)
+        finally:
+            worker_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker_task
 
         # Verification
         peca_logs_cursor = db.peca_forensic_logs.find({"tenant_id": tenant_id})
@@ -185,6 +234,8 @@ async def test_peca_deep_dive():
         assert "4625" in stored_event_ids, "4625 was not stored in peca_forensic_logs!"
         assert "1102" in stored_event_ids, "1102 was not stored in peca_forensic_logs!"
         assert "4688" in stored_event_ids, "4688 was not stored in peca_forensic_logs!"
+        assert "7045" in stored_event_ids, "7045 was not stored in peca_forensic_logs!"
+        assert "1100" in stored_event_ids, "1100 was not stored in peca_forensic_logs!"
         
         # Verify non-PECA event was NOT stored
         assert "FBR-INV-DEL" not in stored_event_ids, "FBR-INV-DEL should NOT be stored in peca_forensic_logs!"

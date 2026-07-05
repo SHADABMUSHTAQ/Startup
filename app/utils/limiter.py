@@ -15,10 +15,9 @@ def get_real_client_ip(request: Request) -> str:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "127.0.0.1"
 
-# 🧱 Global Rate Limiter Instance
-# This decoupling prevents circular imports in the 7-tier architecture.
+# Global rate limiter instance.
 limiter = Limiter(
-    key_func=get_real_client_ip, 
+    key_func=get_real_client_ip,
     storage_uri=settings.redis_url,
-    swallow_errors=True
+    swallow_errors=True,
 )

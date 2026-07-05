@@ -30,6 +30,8 @@ from app.routes import auth, ingest_pulse, threat_intel, upload, compliance, log
 from app.routes import metrics
 from app.db.init_db import init_compliance_db
 from app.api.ws_manager import manager 
+from app.utils.rbac import RoleChecker
+from app.utils.redis_client import create_redis_client
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -169,7 +171,7 @@ async def lifespan(app: FastAPI):
     redis_pool = None
     for attempt in range(1, max_retries + 1):
         try:
-            redis_pool = await aioredis.from_url(settings.redis_url, decode_responses=True)
+            redis_pool = create_redis_client(settings.redis_url)
             await redis_pool.ping()
             print("OK: Redis pool connected and ready.")
             break
@@ -195,7 +197,7 @@ async def lifespan(app: FastAPI):
                 r = getattr(app.state, "redis", None)
                 if r is None:
                     try:
-                        pool = await aioredis.from_url(settings.redis_url, decode_responses=True)
+                        pool = create_redis_client(settings.redis_url)
                         await pool.ping()
                         app.state.redis = pool
                         print(" Redis health monitor: connected.")
@@ -302,7 +304,7 @@ async def lifespan(app: FastAPI):
     
     startup_cache_timeout = int(os.getenv("STARTUP_CACHE_TIMEOUT_SECONDS", "5"))
 
-    #  SYNC TENANT CACHE (Enterprise SRO 288 Optimization)
+    #  SYNC TENANT CACHE (Enterprise plan and entitlement optimization)
     if db_manager.db is not None and app.state.redis is not None:
         try:
             await asyncio.wait_for(
@@ -409,8 +411,12 @@ from fastapi.responses import JSONResponse
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    import logging
-    logging.error(f"422 Error! Body: {await request.body()} | Errors: {exc.errors()}")
+    logger.warning(
+        "Request validation failed: method=%s path=%s errors=%s",
+        request.method,
+        request.url.path,
+        exc.errors(),
+    )
     return JSONResponse(
         status_code=422,
         content={"detail": exc.errors()},
@@ -463,7 +469,11 @@ async def health_check():
 
 
 @app.post("/api/v1/ws/ticket")
-async def create_ws_ticket(request: Request, current_user: dict = Depends(get_current_user)):
+async def create_ws_ticket(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    _: str = Depends(RoleChecker(["admin", "manager", "analyst"])),
+):
     redis_client = getattr(request.app.state, "redis", None)
     if not redis_client:
         raise HTTPException(status_code=503, detail="WebSocket ticket service unavailable")

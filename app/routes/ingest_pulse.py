@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import os
+import re
 import redis.asyncio as aioredis
 from ipaddress import ip_address, ip_network
 from app.config.config import get_settings, load_config
@@ -264,6 +265,7 @@ def _normalize_stream_payloads(raw_payload, agent_context: dict) -> list[dict]:
                 "source_ip": fields.get("src_ip") or tags.get("src_ip") or payload.get("source_ip") or "0.0.0.0",
                 "user": fields.get("user") or tags.get("user") or payload.get("user") or "SYSTEM",
                 "event_id": "" if raw_event_id is None else str(raw_event_id).strip(),
+                "event_type": fields.get("event_type") or payload.get("event_type") or "",
                 "event_uid": str(fields.get("event_uid") or payload.get("event_uid") or uuid.uuid4().hex),
                 "message": fields.get("message", payload.get("message", "Unknown Event")),
                 "timestamp": fields.get("timestamp") or tags.get("timestamp") or payload.get("timestamp") or datetime.now(timezone.utc).isoformat(),
@@ -283,6 +285,61 @@ def _normalize_stream_payloads(raw_payload, agent_context: dict) -> list[dict]:
             normalized_payloads.append(candidate)
 
     return normalized_payloads
+
+
+async def _consume_agent_ingest_envelope(raw_payload, agent_id: str, redis_client):
+    """Validate and atomically consume the required anti-replay envelope."""
+    if not isinstance(raw_payload, dict) or set(raw_payload) != {
+        "nonce",
+        "timestamp",
+        "payload",
+    }:
+        raise HTTPException(
+            status_code=422,
+            detail="Agent ingest requires nonce, timestamp, and payload fields",
+        )
+
+    nonce = str(raw_payload.get("nonce") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", nonce):
+        raise HTTPException(status_code=400, detail="Invalid nonce format in wrapper")
+    try:
+        agent_ts = int(raw_payload.get("timestamp"))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid timestamp format in wrapper") from exc
+
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    if abs(now_ts - agent_ts) > 300:
+        logger.warning(
+            "[SECURITY] Agent envelope timestamp is outside the allowed window: agent=%s",
+            agent_id,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Payload timestamp out of acceptable 5-minute window",
+        )
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Redis unavailable for replay protection")
+
+    nonce_key = f"warsoc:nonce:{agent_id}:{nonce}"
+    nonce_accepted = await redis_client.set(
+        nonce_key,
+        "consumed",
+        nx=True,
+        ex=300,
+    )
+    if not nonce_accepted:
+        logger.warning("[SECURITY] Replay attack blocked for agent %s", agent_id)
+        raise HTTPException(
+            status_code=409,
+            detail="Conflict: Replay attack detected (Nonce already consumed)",
+        )
+
+    events_data = raw_payload.get("payload")
+    if isinstance(events_data, dict):
+        return [events_data]
+    if not isinstance(events_data, list):
+        raise HTTPException(status_code=422, detail="Envelope payload must be an event or list")
+    return events_data
 
 
 from app.utils.limiter import limiter
@@ -320,43 +377,12 @@ async def ingest_pulse_logs(
 
         raw_payload = await _read_json_body_with_limit(request)
 
-        # --- REPLAY ATTACK BLOCKADE (Phase Execution) ---
-        if isinstance(raw_payload, dict) and "nonce" in raw_payload and "timestamp" in raw_payload:
-            nonce = raw_payload.get("nonce")
-            try:
-                # Agent sends epoch timestamp (e.g. 1718116530)
-                agent_ts = int(raw_payload.get("timestamp"))
-            except (ValueError, TypeError):
-                raise HTTPException(status_code=400, detail="Invalid timestamp format in wrapper")
-
-            # 1. The Time Gate (5-Minute Window)
-            now_ts = int(datetime.now(timezone.utc).timestamp())
-            if (now_ts - agent_ts) > 300 or (agent_ts - now_ts) > 300:
-                logger.warning(f"[SECURITY] Timestamp {agent_ts} out of 5-minute window for agent {verified_agent_id}")
-                raise HTTPException(status_code=400, detail="Payload timestamp out of acceptable 5-minute window")
-
-            # 2. The Nonce Cache (Redis)
-            redis_client = getattr(request.app.state, "redis", None)
-            if redis_client:
-                nonce_key = f"warsoc:nonce:{verified_agent_id}:{nonce}"
-                exists = await redis_client.exists(nonce_key)
-                if exists:
-                    logger.warning(f"[SECURITY] Replay attack blocked for agent {verified_agent_id}, nonce {nonce}")
-                    raise HTTPException(status_code=409, detail="Conflict: Replay attack detected (Nonce already consumed)")
-
-                # Set nonce with 300s TTL (5 minutes)
-                await redis_client.setex(nonce_key, 300, "consumed")
-
-            # Extract the actual logs to feed into the normal pipeline
-            events_data = raw_payload.get("payload", [])
-            raw_events = [events_data] if isinstance(events_data, dict) else events_data
-
-            # For size checking fallback
-            original_raw_payload = raw_payload
-        else:
-            # Legacy dummy agent fallback
-            raw_events = raw_payload
-            original_raw_payload = raw_payload
+        raw_events = await _consume_agent_ingest_envelope(
+            raw_payload,
+            verified_agent_id,
+            redis_client,
+        )
+        original_raw_payload = raw_payload
 
         sanitized_payloads = _normalize_stream_payloads(raw_events, agent_context)
 

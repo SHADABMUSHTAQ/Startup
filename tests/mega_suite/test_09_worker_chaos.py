@@ -283,8 +283,7 @@ async def test_peca_worker_mongo_blackout_does_not_ack(monkeypatch):
 
     assert logs_col.insert_calls == 1
     assert logs_col.docs == []
-    # Eject to DLQ ACKs the message from the main stream
-    assert len(fake_redis.xack_calls) == 1
+    assert len(fake_redis.xack_calls) == 0
 
 
 @pytest.mark.asyncio
@@ -317,7 +316,7 @@ async def test_peca_worker_duplicate_delivery_is_idempotent(monkeypatch):
 async def test_fbr_worker_mongo_blackout_does_not_ack(monkeypatch):
     from datetime import datetime, timezone
     timestamp = datetime.now(timezone.utc).isoformat()
-    payload = {"tenant_id": "TENANT-FBR", "event_id": "4663", "message": "sale event", "event_uid": "static-uid-fbr", "agent_id": "AGENT-X", "timestamp": timestamp}
+    payload = {"tenant_id": "TENANT-FBR", "event_id": "FBR-INV-DEL", "message": "sale event", "event_uid": "static-uid-fbr", "agent_id": "AGENT-X", "timestamp": timestamp}
     fake_redis = FakeRedis([[("raw_logs_queue", [("2-0", {"payload": json.dumps(payload)})])]])
     logs_col = FakeFbrCollection(fail_on_insert=True)
     tenants_col = FakeTenantCollection(plan="FBR_PLAN")
@@ -331,8 +330,7 @@ async def test_fbr_worker_mongo_blackout_does_not_ack(monkeypatch):
 
     assert logs_col.insert_calls == 1
     assert logs_col.docs == []
-    # Eject to DLQ ACKs the message from the main stream
-    assert len(fake_redis.xack_calls) == 1
+    assert len(fake_redis.xack_calls) == 0
 
 
 @pytest.mark.asyncio
@@ -340,7 +338,7 @@ async def test_fbr_worker_mongo_blackout_does_not_ack(monkeypatch):
 async def test_fbr_worker_duplicate_delivery_is_idempotent(monkeypatch):
     from datetime import datetime, timezone
     timestamp = datetime.now(timezone.utc).isoformat()
-    payload = {"tenant_id": "TENANT-FBR", "event_id": "4663", "message": "sale event", "event_uid": "static-uid-fbr", "agent_id": "AGENT-X", "timestamp": timestamp}
+    payload = {"tenant_id": "TENANT-FBR", "event_id": "FBR-INV-DEL", "message": "sale event", "event_uid": "static-uid-fbr", "agent_id": "AGENT-X", "timestamp": timestamp}
     fake_redis = FakeRedis([
         [("raw_logs_queue", [("2-0", {"payload": json.dumps(payload)})])],
         [("raw_logs_queue", [("2-0", {"payload": json.dumps(payload)})])],

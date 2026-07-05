@@ -2,23 +2,19 @@ import pytest
 import httpx
 from app.main import app as fastapi_app
 import uuid
-from ecdsa import SigningKey, SECP256k1
+import time
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 import asyncio
+from fastapi import Request
 
-API_BASE_URL = "http://127.0.0.1:8000/api/v1"
-
-def _http_event(event_id, event_uid, tenant_id, agent_id, message, source_ip, private_key_pem):
+def _http_event(event_id, event_uid, tenant_id, agent_id, message, source_ip):
     """Helper to generate a valid HTTP event matching the Pydantic schema."""
     import time
     from datetime import datetime, timezone
     
     timestamp = datetime.now(timezone.utc).isoformat()
     raw_event = {"raw_id": event_uid, "msg": message, "syslog_ts": timestamp}
-
-    import json
-    canonical_data = json.dumps(raw_event, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    sk = SigningKey.from_pem(private_key_pem)
-    signature = sk.sign(canonical_data).hex()
 
     return {
         "event_id": event_id,
@@ -29,7 +25,6 @@ def _http_event(event_id, event_uid, tenant_id, agent_id, message, source_ip, pr
         "source_ip": source_ip,
         "message": message,
         "raw_event": raw_event,
-        "agent_signature": signature
     }
 
 @pytest.mark.asyncio
@@ -63,9 +58,11 @@ async def test_limits_deep_dive():
         tenant_id = signup_resp.json()["tenant_id"]
 
         # Register Agent
-        sk = SigningKey.generate(curve=SECP256k1)
-        private_key_pem = sk.to_pem().decode('utf-8')
-        public_key_pem = sk.get_verifying_key().to_pem().decode('utf-8')
+        signing_key = ed25519.Ed25519PrivateKey.generate()
+        public_key_pem = signing_key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("utf-8")
 
         activation_resp = await client.post("/agent/generate-activation")
         assert activation_resp.status_code == 200
@@ -83,9 +80,10 @@ async def test_limits_deep_dive():
         agent_jwt = agent_data["agent_jwt"]
 
         agent_client = httpx.AsyncClient(
-            base_url=API_BASE_URL, 
+            transport=httpx.ASGITransport(app=fastapi_app),
+            base_url="http://testserver/api/v1",
             headers={"Authorization": f"Bearer {agent_jwt}"},
-            limits=httpx.Limits(max_connections=400, max_keepalive_connections=400)
+            timeout=30.0
         )
 
         # Inject tenant features to Redis
@@ -94,28 +92,74 @@ async def test_limits_deep_dive():
         import redis.asyncio as aioredis
         redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
         await redis_client.set(f"tenant_features:{tenant_id}", "siem,fbr_pos,peca_forensic")
-        await redis_client.close()
+        await redis_client.aclose()
 
         print("[*] Testing Rate Limiting (Burst)...")
-        # Send 350 requests simultaneously to trigger the 300/second limiter
-        valid_event = _http_event("4624", uuid.uuid4().hex, tenant_id, agent_id, "Burst Test", "10.0.0.1", private_key_pem)
+        # Exercise the production Redis limiter with a lower test threshold so
+        # scheduler speed cannot move requests into a later one-second bucket.
+        from app.utils.rate_limiter import redis_ingest_rate_limit
+
+        async def test_ingest_limiter(request: Request):
+            return await redis_ingest_rate_limit(
+                request,
+                limit_per_second=10,
+                window_seconds=60,
+            )
+
+        fastapi_app.dependency_overrides[redis_ingest_rate_limit] = test_ingest_limiter
+        valid_event = _http_event(
+            "4624",
+            uuid.uuid4().hex,
+            tenant_id,
+            agent_id,
+            "Burst Test",
+            "10.0.0.1",
+        )
         
         async def make_request():
-            return await agent_client.post("/ingest/pulse", json=[valid_event])
+            return await agent_client.post(
+                "/ingest/pulse",
+                json={
+                    "nonce": uuid.uuid4().hex,
+                    "timestamp": int(time.time()),
+                    "payload": [valid_event],
+                },
+            )
 
-        # To avoid actual network timeout, we chunk the requests
-        results = await asyncio.gather(*[make_request() for _ in range(350)])
-        
-        status_codes = [r.status_code for r in results]
-        assert 429 in status_codes, f"Rate limiting did not trigger on burst traffic! Statuses: {set(status_codes)}"
-        print(f"[+] Rate Limit triggered! Received 429 Too Many Requests.")
+        try:
+            results = await asyncio.gather(*[make_request() for _ in range(25)])
+            status_codes = [r.status_code for r in results]
+            assert 503 not in status_codes, "Redis failed before rate limiting could respond"
+            assert 429 in status_codes, (
+                "Rate limiting did not trigger on burst traffic! "
+                f"Statuses: {set(status_codes)}"
+            )
+            print("[+] Rate limit triggered with HTTP 429.")
+        finally:
+            fastapi_app.dependency_overrides.pop(redis_ingest_rate_limit, None)
+
+        await asyncio.sleep(2)
         
         # Test Payload Size
         print("[*] Testing Payload Size Limit (>5MB)...")
         huge_message = "A" * (6 * 1024 * 1024) # 6 MB string
-        huge_event = _http_event("4624", uuid.uuid4().hex, tenant_id, agent_id, huge_message, "10.0.0.2", private_key_pem)
+        huge_event = _http_event(
+            "4624",
+            uuid.uuid4().hex,
+            tenant_id,
+            agent_id,
+            huge_message,
+            "10.0.0.2",
+        )
         
-        resp_huge = await agent_client.post("/ingest/pulse", json=[huge_event])
+        resp_huge = await agent_client.post(
+            "/ingest/pulse",
+            json={
+                "nonce": uuid.uuid4().hex,
+                "timestamp": int(time.time()),
+                "payload": [huge_event],
+            },
+        )
         print(f"[+] Payload Size Limit result: {resp_huge.status_code}")
         assert resp_huge.status_code in (413, 400), f"Expected 413 or 400 Payload Too Large, got {resp_huge.status_code}"
 
@@ -130,3 +174,4 @@ async def test_limits_deep_dive():
         print(f"[+] Schema validation triggered! Received 422.")
 
         print("[*] API Armor Deep Dive: SUCCESS!")
+        await agent_client.aclose()

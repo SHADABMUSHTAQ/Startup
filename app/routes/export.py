@@ -142,13 +142,20 @@ async def export_csv(
     if not tenant_id:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
+    role = str(current_user.get("role") or "").strip().lower()
     if data_type == "alerts":
+        if role not in {"admin", "manager", "analyst"}:
+            raise HTTPException(status_code=403, detail="Role is not permitted to export alerts")
         collection_name = "security_alerts"
     elif data_type == "compliance":
+        if role not in {"admin", "auditor"}:
+            raise HTTPException(status_code=403, detail="Role is not permitted to export compliance evidence")
         entitled_packs = _get_entitled_packs(current_user)
         selected_pack = _resolve_requested_pack(pack_id, entitled_packs)
         collection_name = _collection_for_pack(selected_pack)
     else:
+        if role not in {"admin", "manager", "analyst"}:
+            raise HTTPException(status_code=403, detail="Role is not permitted to export logs")
         collection_name = "siem_cold_vault"
 
     collection = db[collection_name]
@@ -167,7 +174,7 @@ async def export_csv(
         if end_dt:
             time_bounds["$lte"] = end_dt
             str_bounds["$lte"] = end_dt.isoformat()
-            
+
         # Handle mixed BSON Date and ISO String formats
         query["$or"] = [
             {"timestamp": time_bounds},
@@ -216,6 +223,8 @@ async def export_audit_report(
     tenant_id = _safe_path_segment(current_user.get("tenant_id"))
     if not tenant_id:
         raise HTTPException(status_code=403, detail="Unauthorized")
+    if str(current_user.get("role") or "").strip().lower() not in {"admin", "auditor"}:
+        raise HTTPException(status_code=403, detail="Role is not permitted to export compliance evidence")
 
     normalized_id = _normalize_pack_id(pack_id)
     entitled_packs = _get_entitled_packs(current_user)
@@ -236,9 +245,20 @@ async def export_audit_report(
     
     if start_dt or end_dt:
         time_bounds = {}
-        if start_dt: time_bounds["$gte"] = start_dt
-        if end_dt: time_bounds["$lte"] = end_dt
-        query["timestamp"] = time_bounds
+        str_bounds = {}
+        if start_dt:
+            time_bounds["$gte"] = start_dt
+            str_bounds["$gte"] = start_dt.isoformat()
+        if end_dt:
+            time_bounds["$lte"] = end_dt
+            str_bounds["$lte"] = end_dt.isoformat()
+
+        query["$or"] = [
+            {"timestamp": time_bounds},
+            {"timestamp": str_bounds},
+            {"ingested_at": time_bounds},
+            {"ingested_at": str_bounds}
+        ]
 
     # Pull Forensic Logs (Ledger)
     logs_cursor = collection.find(query).sort("timestamp", -1).limit(500)

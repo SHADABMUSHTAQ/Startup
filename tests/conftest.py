@@ -6,6 +6,33 @@ Database is Motor (async MongoDB) in test DB; Redis is flushed per test.
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit, urlunsplit
+
+# Establish isolated service targets before importing any application module.
+_runtime_db_name = os.getenv("MONGODB_DB_NAME", "WarSOC_DB")
+_test_db_name = os.getenv("TEST_MONGODB_DB_NAME", f"{_runtime_db_name}_pytest")
+if _test_db_name == _runtime_db_name:
+    raise RuntimeError("Pytest MongoDB database must differ from the runtime database")
+os.environ["MONGODB_DB_NAME"] = _test_db_name
+
+_runtime_redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+_parsed_redis_url = urlsplit(_runtime_redis_url)
+_test_redis_url = os.getenv(
+    "TEST_REDIS_URL",
+    urlunsplit(
+        (
+            _parsed_redis_url.scheme,
+            _parsed_redis_url.netloc,
+            "/15",
+            _parsed_redis_url.query,
+            _parsed_redis_url.fragment,
+        )
+    ),
+)
+if _test_redis_url == _runtime_redis_url:
+    raise RuntimeError("Pytest Redis URL must differ from the runtime Redis URL")
+os.environ["REDIS_URL"] = _test_redis_url
+os.environ["ENABLE_SELF_SIGNUP"] = "true"
 
 import pytest
 import pytest_asyncio
@@ -17,11 +44,11 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app.config.config import get_settings
 from app.routes.auth import AGENT_TOKEN_EXPIRE_MINUTES, create_access_token, get_password_hash, resolve_tenant_retention_days
 from motor.motor_asyncio import AsyncIOMotorClient
-import redis.asyncio as aioredis
 from httpx import AsyncClient, ASGITransport
 
 from app.main import app as fastapi_app
 from app.database import get_db, db_manager
+from app.utils.redis_client import create_redis_client
 
 
 # Disable MemoryLimitMiddleware for tests (host memory percent is non-deterministic)
@@ -37,8 +64,13 @@ except Exception:
 
 @pytest.fixture(scope="session")
 def settings():
-    """Provide test settings (loaded once per session)."""
-    return get_settings()
+    """Return settings already bound to isolated test services."""
+    runtime_settings = get_settings()
+    if runtime_settings.mongodb_db_name == _runtime_db_name:
+        raise RuntimeError("Refusing to run tests against the runtime MongoDB database")
+    if runtime_settings.redis_url == _runtime_redis_url:
+        raise RuntimeError("Refusing to run tests against the runtime Redis database")
+    return runtime_settings
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -85,6 +117,7 @@ async def db(mongo_client, settings):
         "csv_uploads",
         "dead_letter_logs",
         "fbr_pos_logs",
+        "fbr_pos_summaries",
         "fbr_vault",
         "firewall_rules",
         "logs",
@@ -92,6 +125,7 @@ async def db(mongo_client, settings):
         "notifications",
         "peca_forensic_logs",
         "security_alerts",
+        "siem_cold_vault",
         "system_audit",
         "tenants",
         "used_provisioning_tokens",
@@ -115,7 +149,7 @@ async def db(mongo_client, settings):
 @pytest_asyncio.fixture(scope="function")
 async def redis_client(settings):
     """Function-scoped fixture for Redis (auto cleanup)."""
-    r = await aioredis.from_url(settings.redis_url, decode_responses=True)
+    r = create_redis_client(settings.redis_url)
     try:
         await r.flushdb()
     except Exception:
@@ -125,11 +159,7 @@ async def redis_client(settings):
         await r.flushdb()
     except Exception:
         pass
-    # Don't explicitly close - let the connection manager handle cleanup
-    # try:
-    #     await r.aclose()
-    # except Exception:
-    #     pass
+    await r.aclose()
 
 
 async def _provision_mock_tenant(db, redis, *, tenant_suffix: str, plan_type: str = "Enterprise") -> dict:
@@ -220,6 +250,7 @@ async def clean_slate(db, redis_client):
         "csv_uploads",
         "dead_letter_logs",
         "fbr_pos_logs",
+        "fbr_pos_summaries",
         "fbr_vault",
         "firewall_rules",
         "logs",
@@ -227,6 +258,7 @@ async def clean_slate(db, redis_client):
         "notifications",
         "peca_forensic_logs",
         "security_alerts",
+        "siem_cold_vault",
         "system_audit",
         "tenants",
         "used_provisioning_tokens",
