@@ -216,7 +216,10 @@ function Dashboard() {
   const navigate = useNavigate();
   // 🔒 SECURITY FIX: Token moved to HttpOnly cookie, no longer in localStorage
   // WebSocket will automatically send cookie with upgrade request
-  const baseForWs = apiClient.defaults.baseURL || `${window.location.origin}/api/v1`;
+  const baseForWs =
+    import.meta.env.VITE_WS_BASE_URL ||
+    apiClient.defaults.baseURL ||
+    `${window.location.origin}/api/v1`;
   const parsed = new URL(
     baseForWs.replace(/\/api\/v1\/?$/, ""),
     window.location.origin,
