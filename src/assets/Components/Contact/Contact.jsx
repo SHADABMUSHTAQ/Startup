@@ -1,39 +1,36 @@
 import React, { useState } from 'react';
 import { ShieldAlert, Headset, MapPin, Send, Building2, CheckCircle } from 'lucide-react';
+import apiClient from '../../../api/apiClient';
+import { formatApiError } from '../../../utils/apiError';
 import './Contact.css';
 
 const Contact = () => {
-  // Form submission state handle karne ke liye
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [error, setError] = useState("");
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setError("");
 
-    // Form data collect karna
-    const formData = new FormData(e.target);
-    
-    // 👇 Yahan aap apni Web3Forms ki Access Key dalenge
-    // Get free key from: https://web3forms.com/
-    formData.append("access_key", "e79d55bf-bd4e-4152-98b5-26c41dd9f352"); 
+    const formData = new FormData(e.currentTarget);
+    const payload = {
+      name: String(formData.get("name") || "").trim(),
+      company: String(formData.get("company") || "").trim(),
+      email: String(formData.get("email") || "").trim(),
+      inquiry_type: String(formData.get("inquiryType") || ""),
+      message: String(formData.get("message") || "").trim(),
+      website: String(formData.get("website") || "").trim(),
+    };
 
     try {
-      const response = await fetch("https://api.web3forms.com/submit", {
-        method: "POST",
-        body: formData
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        setIsSubmitted(true); // Success state show karega
-      } else {
-        alert("Something went wrong. Please try again.");
-      }
+      await apiClient.post("/sales/contact", payload);
+      setIsSubmitted(true);
+      e.currentTarget.reset();
     } catch (error) {
       console.error("Error submitting form:", error);
-      alert("Network error. Please try again.");
+      setError(formatApiError(error, "Unable to submit your request. Please try again."));
     } finally {
       setIsSubmitting(false);
     }
@@ -106,6 +103,7 @@ const Contact = () => {
             // Warna normal form dikhaye
             <form className="contact-form" onSubmit={handleSubmit}>
               <h3>Request a Demo / Contact Sales</h3>
+              <input type="text" name="website" tabIndex="-1" autoComplete="off" style={{ display: 'none' }} />
               
               <div className="form-row">
                 <div className="form-group half-width">
@@ -115,7 +113,6 @@ const Contact = () => {
                 <div className="form-group half-width">
                   <label htmlFor="company">Company Name</label>
                   <div className="input-with-icon">
-                    {/* <Building2 size={16} className="input-icon" /> */}
                     <input type="text" id="company" name="company" placeholder="Acme Corp" style={{paddingLeft: '32px'}} required />
                   </div>
                 </div>
@@ -128,8 +125,8 @@ const Contact = () => {
 
               <div className="form-group">
                 <label htmlFor="inquiryType">How can we help you?</label>
-                <select id="inquiryType" name="inquiryType" required>
-                  <option value="" disabled selected>Select an option...</option>
+                <select id="inquiryType" name="inquiryType" defaultValue="" required>
+                  <option value="" disabled>Select an option...</option>
                   <option value="demo">Request a Platform Demo</option>
                   <option value="compliance">Compliance Audit & Setup</option>
                   <option value="incident">Emergency Incident Response</option>
@@ -141,6 +138,8 @@ const Contact = () => {
                 <label htmlFor="message">Additional Details</label>
                 <textarea id="message" name="message" rows="3" placeholder="Tell us about your infrastructure size and specific security needs..." required></textarea>
               </div>
+
+              {error && <p className="privacy-note" style={{ color: '#ff6b6b' }}>{error}</p>}
               
               <button type="submit" className="submit-btn" disabled={isSubmitting}>
                 {isSubmitting ? "Sending..." : "Submit Request"} 

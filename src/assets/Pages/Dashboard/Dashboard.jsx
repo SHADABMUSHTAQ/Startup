@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import apiClient from "../../../api/apiClient";
+import { useAuthStore } from "../../../store/authStore";
 import useWebSocket from "react-use-websocket";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
@@ -111,7 +112,7 @@ const MetricCard = ({
   </div>
 );
 
-const UserMenu = ({ user, onLogout }) => {
+const UserMenu = ({ user, role, onProfile, onLogout }) => {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef(null);
 
@@ -132,7 +133,7 @@ const UserMenu = ({ user, onLogout }) => {
         </div>
         <div className="user-text-info">
           <span className="user-name-label">{user?.username || "User"}</span>
-          <span className="user-role-label">Admin</span>
+          <span className="user-role-label">{role || "User"}</span>
         </div>
         <ChevronDown
           size={14}
@@ -165,7 +166,7 @@ const UserMenu = ({ user, onLogout }) => {
             )}
           </div>
           <div className="dropdown-divider"></div>
-          <button className="dropdown-item">
+          <button className="dropdown-item" onClick={onProfile}>
             <User size={14} /> My Profile
           </button>
           <button className="dropdown-item danger" onClick={onLogout}>
@@ -178,7 +179,16 @@ const UserMenu = ({ user, onLogout }) => {
 };
 
 function Dashboard() {
-  const [activeTab, setActiveTab] = useState("dashboard");
+  const { user: currentUser, role, logout } = useAuthStore();
+  const normalizedRole = String(role || currentUser?.role || "").toLowerCase();
+  const canViewOperations = ["admin", "manager", "analyst"].includes(normalizedRole);
+  const canManageAlerts = ["admin", "manager"].includes(normalizedRole);
+  const canDownloadAgent = normalizedRole === "admin";
+  const canViewCompliance = ["admin", "auditor"].includes(normalizedRole);
+  const canManageTeam = normalizedRole === "admin";
+  const [activeTab, setActiveTab] = useState(
+    normalizedRole === "auditor" ? "compliance" : "dashboard",
+  );
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [fileToDelete, setFileToDelete] = useState(null);
@@ -189,10 +199,9 @@ function Dashboard() {
   const [globalQuery, setGlobalQuery] = useState("");
   const [timeFilter, setTimeFilter] = useState("");
   const [blockedList, setBlockedList] = useState([]);
+  const [telemetryStatus, setTelemetryStatus] = useState("offline");
   const [loading, setLoading] = useState(false);
   const [viewFile, setViewFile] = useState(null);
-  const [currentUser, setCurrentUser] = useState(null);
-
   // 🚀 ALERT WORKFLOW STATE
   const [resolvingAlert, setResolvingAlert] = useState(null);
   const [resolutionNotes, setResolutionNotes] = useState("");
@@ -207,14 +216,22 @@ function Dashboard() {
   const navigate = useNavigate();
   // 🔒 SECURITY FIX: Token moved to HttpOnly cookie, no longer in localStorage
   // WebSocket will automatically send cookie with upgrade request
-  const baseForWs = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
-  const parsed = new URL(baseForWs.replace(/\/api\/v1\/?$/, ""));
+  const baseForWs = apiClient.defaults.baseURL || `${window.location.origin}/api/v1`;
+  const parsed = new URL(
+    baseForWs.replace(/\/api\/v1\/?$/, ""),
+    window.location.origin,
+  );
   const wsProto = parsed.protocol === "https:" ? "wss" : "ws";
   const [wsUrl, setWsUrl] = useState(null);
   const [wsTicketNonce, setWsTicketNonce] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+
+    if (!canViewOperations) {
+      setWsUrl(null);
+      return undefined;
+    }
 
     const fetchWsTicket = async () => {
       try {
@@ -237,7 +254,7 @@ function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [parsed.host, wsProto, wsTicketNonce]);
+  }, [canViewOperations, parsed.host, wsProto, wsTicketNonce]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -246,6 +263,7 @@ function Dashboard() {
 
   const fetchLiveLogs = useCallback(async () => {
     try {
+      if (!canViewOperations) return;
       if (!isLiveModeRef.current) return;
       const res = await apiClient.get('/logs');
       const response = res.data;
@@ -306,14 +324,16 @@ function Dashboard() {
             if (new Date(l.timestamp) > new Date(existing.time))
               existing.time = l.timestamp;
           } else {
+            const alertRef = l._id || l.alert_id;
             groupedMap.set(key, {
-              id: l._id || i,
+              id: alertRef || `${ip}-${eventId}-${i}`,
+              alertRef,
               time: l.timestamp,
               level: smartSeverity,
               message: rawMessage,
               ip: ip,
               engine: smartEngine,
-              status: "active",
+              status: String(l.status || "NEW").toLowerCase(),
               occurrences: l.occurrences || 1,
               raw_data: l.raw_data || {},
             });
@@ -328,7 +348,7 @@ function Dashboard() {
     } catch (err) {
       console.error("Live Logs Fetch Error:", err);
     }
-  }, []);
+  }, [canViewOperations]);
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -354,26 +374,36 @@ function Dashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    const fetchUserData = async () => {
-      try {
-        const response = await apiClient.get('/auth/me');
-        setCurrentUser(response.data);
-      } catch (e) {
-        console.error("Auth Check Error:", e);
-      }
-    };
+  const fetchTelemetryStatus = useCallback(async () => {
+    if (!canViewOperations) return;
+    try {
+      const res = await apiClient.get('/data/status');
+      setTelemetryStatus(
+        ["active", "degraded"].includes(res.data?.endpoint_status)
+          ? res.data.endpoint_status
+          : "offline",
+      );
+    } catch {
+      setTelemetryStatus("offline");
+    }
+  }, [canViewOperations]);
 
-    fetchUserData();
+  useEffect(() => {
+    if (!canViewOperations) return undefined;
     fetchHistory();
     fetchLiveLogs();
     fetchBlockedList();
+    fetchTelemetryStatus();
 
     const interval = setInterval(() => {
       if (isLiveModeRef.current) fetchLiveLogs();
     }, 1500);
-    return () => clearInterval(interval);
-  }, [navigate, fetchHistory, fetchLiveLogs, fetchBlockedList]);
+    const telemetryInterval = setInterval(fetchTelemetryStatus, 30000);
+    return () => {
+      clearInterval(interval);
+      clearInterval(telemetryInterval);
+    };
+  }, [canViewOperations, navigate, fetchHistory, fetchLiveLogs, fetchBlockedList, fetchTelemetryStatus]);
 
   const toggleTheme = () =>
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
@@ -501,12 +531,22 @@ function Dashboard() {
 
   // 🚀 ALERT WORKFLOW FUNCTIONS
   const handleAcknowledge = async (alertId) => {
-    setLogs((prev) =>
-      prev.map((l) =>
-        l.id === alertId ? { ...l, status: "acknowledged" } : l,
-      ),
-    );
-    toast.info("Alert Acknowledged. Analyst assigned.");
+    const alert = logs.find((item) => item.id === alertId);
+    const alertRef = alert?.alertRef || alertId;
+    try {
+      await apiClient.patch(
+        `/alerts/${encodeURIComponent(alertRef)}/status`,
+        { status: "ACKNOWLEDGED" },
+      );
+      setLogs((prev) =>
+        prev.map((item) =>
+          item.id === alertId ? { ...item, status: "acknowledged" } : item,
+        ),
+      );
+      toast.info("Alert acknowledged.");
+    } catch (error) {
+      toast.error(error.userMessage || "Alert acknowledgement failed.");
+    }
   };
 
   const handleResolveSubmit = async () => {
@@ -516,10 +556,24 @@ function Dashboard() {
       );
       return;
     }
-    setLogs((prev) => prev.filter((l) => l.id !== resolvingAlert.id));
-    toast.success("Alert officially resolved and closed.");
-    setResolvingAlert(null);
-    setResolutionNotes("");
+    if (!resolvingAlert) return;
+
+    const alertRef = resolvingAlert.alertRef || resolvingAlert.id;
+    try {
+      await apiClient.patch(
+        `/alerts/${encodeURIComponent(alertRef)}/status`,
+        {
+          status: "CLOSED",
+          resolution_notes: resolutionNotes.trim(),
+        },
+      );
+      setLogs((prev) => prev.filter((item) => item.id !== resolvingAlert.id));
+      toast.success("Alert officially resolved and closed.");
+      setResolvingAlert(null);
+      setResolutionNotes("");
+    } catch (error) {
+      toast.error(error.userMessage || "Alert resolution failed.");
+    }
   };
 
   const fetchFileDetails = async (analysisId) => {
@@ -554,8 +608,7 @@ function Dashboard() {
       toast.success("File Uploaded & Parsed!");
       if (res.data.analysis_id) await fetchFileDetails(res.data.analysis_id);
     } catch (err) {
-      let errMsg = err.response?.data?.detail || "Upload failed on server.";
-      toast.error(errMsg);
+      toast.error(err.userMessage || "Upload failed on server.");
     } finally {
       setLoading(false);
       e.target.value = "";
@@ -573,9 +626,13 @@ function Dashboard() {
       if (filterDays) url += `days=${filterDays}`;
       const res = await apiClient.get(url);
       const data = res.data;
-      if (data.results && data.results.length > 0) {
+      const results = Array.isArray(data.data)
+        ? data.data
+        : (Array.isArray(data.results) ? data.results : []);
+      const resultCount = data.pagination?.count ?? data.count ?? results.length;
+      if (results.length > 0) {
         setLogs(
-          data.results.map((f, i) => ({
+          results.map((f, i) => ({
             id: f._id || i,
             time: f.timestamp,
             level: (f.severity || "INFO").toUpperCase(),
@@ -586,14 +643,13 @@ function Dashboard() {
             occurrences: f.occurrences || 1,
           })),
         );
-        toast.success(`Found ${data.count} alerts in history.`);
+        toast.success(`Found ${resultCount} alerts in history.`);
       } else {
         toast.info(`No threats found for this search criteria.`);
         setLogs([]);
       }
     } catch (err) {
-      let errorMsg = err.response?.data?.detail || "Database Connection Error";
-      toast.error(`API Error: ${errorMsg}`);
+      toast.error(err.userMessage || "Database Connection Error");
       setLogs([]);
     } finally {
       setLoading(false);
@@ -649,12 +705,8 @@ function Dashboard() {
   };
 
   const handleLogout = async () => {
-    try {
-      await apiClient.post('/auth/logout');
-    } catch (error) {
-      console.debug("Logout request failed", error);
-    }
-    window.location.href = "/";
+    setShowLogoutModal(false);
+    await logout();
   };
 
   const handleDownloadReport = () => {
@@ -928,57 +980,55 @@ function Dashboard() {
       >
         <div className="logo-container">
           <div className="logo-box">
-            <img src="public/Logo.png" alt="#" />
+            <img src="/Logo.png" alt="WarSOC" />
           </div>
         </div>
         <nav className="nav-links">
-          <button
-            className={activeTab === "dashboard" ? "active" : ""}
-            onClick={() => setActiveTab("dashboard")}
-          >
-            <Activity size={18} /> Dashboard
-          </button>
-          <button
-            className={activeTab === "network" ? "active" : ""}
-            onClick={() => setActiveTab("network")}
-          >
-            <Globe size={18} /> Network Map
-          </button>
-          <button
-            className="nav-download-agent"
-            onClick={async () => {
-              try {
-                const response = await apiClient.get('/agent/download', { responseType: 'blob' });
-                const blob = response.data;
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `WarSOC_Agent.zip`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                window.URL.revokeObjectURL(url);
-                toast.success("Agent downloaded! Extract & run as Admin.");
-              } catch {
-                toast.error("Agent download failed.");
-              }
-            }}
-          >
-            <Download size={18} /> Download Agent
-          </button>
-          <button
-            className={activeTab === "compliance" ? "active" : ""}
-            onClick={() => setActiveTab("compliance")}
-          >
-            <ShieldCheck size={18} /> Compliance & Audit
-          </button>
-
-          <button
-            className={activeTab === "team" ? "active" : ""}
-            onClick={() => setActiveTab("team")}
-          >
-            <Users size={18} /> Team & Access
-          </button>
+          {canViewOperations && (
+            <>
+              <button
+                className={activeTab === "dashboard" ? "active" : ""}
+                onClick={() => setActiveTab("dashboard")}
+              >
+                <Activity size={18} /> Dashboard
+              </button>
+              <button
+                className={activeTab === "network" ? "active" : ""}
+                onClick={() => setActiveTab("network")}
+              >
+                <Globe size={18} /> Network Map
+              </button>
+            </>
+          )}
+          {canDownloadAgent && (
+            <button
+              className="nav-download-agent"
+              onClick={() => {
+                const baseUrl = String(
+                  apiClient.defaults.baseURL || "/api/v1",
+                ).replace(/\/$/, "");
+                window.location.assign(`${baseUrl}/agent/download`);
+              }}
+            >
+              <Download size={18} /> Download Agent
+            </button>
+          )}
+          {canViewCompliance && (
+            <button
+              className={activeTab === "compliance" ? "active" : ""}
+              onClick={() => setActiveTab("compliance")}
+            >
+              <ShieldCheck size={18} /> Compliance & Audit
+            </button>
+          )}
+          {canManageTeam && (
+            <button
+              className={activeTab === "team" ? "active" : ""}
+              onClick={() => setActiveTab("team")}
+            >
+              <Users size={18} /> Team & Access
+            </button>
+          )}
         </nav>
       </aside>
 
@@ -1097,39 +1147,59 @@ function Dashboard() {
               )}
             </button>
             <div
-              className={`live-pill ${!isLiveMode ? "offline" : ""}`}
+              className={`live-pill ${!isLiveMode || telemetryStatus === "offline" ? "offline" : ""}`}
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: "8px",
                 padding: "6px 12px",
-                background: !isLiveMode
+                background: !isLiveMode || telemetryStatus === "offline"
                   ? "rgba(71, 85, 105, 0.4)"
-                  : "rgba(16, 185, 129, 0.1)",
-                color: !isLiveMode ? "#94a3b8" : "#10b981",
+                  : telemetryStatus === "degraded"
+                    ? "rgba(245, 158, 11, 0.1)"
+                    : "rgba(16, 185, 129, 0.1)",
+                color: !isLiveMode || telemetryStatus === "offline"
+                  ? "#94a3b8"
+                  : telemetryStatus === "degraded"
+                    ? "#f59e0b"
+                    : "#10b981",
                 fontSize: "12px",
                 fontWeight: "700",
                 borderRadius: "20px",
-                border: !isLiveMode
+                border: !isLiveMode || telemetryStatus === "offline"
                   ? "none"
-                  : "1px solid rgba(16, 185, 129, 0.2)",
+                  : telemetryStatus === "degraded"
+                    ? "1px solid rgba(245, 158, 11, 0.25)"
+                    : "1px solid rgba(16, 185, 129, 0.2)",
                 whiteSpace: "nowrap",
               }}
             >
               <div
-                className={isLiveMode ? "pulse" : ""}
+                className={isLiveMode && telemetryStatus === "active" ? "pulse" : ""}
                 style={{
                   width: "8px",
                   height: "8px",
                   borderRadius: "50%",
-                  background: isLiveMode ? "#10b981" : "#94a3b8",
+                  background: !isLiveMode || telemetryStatus === "offline"
+                    ? "#94a3b8"
+                    : telemetryStatus === "degraded"
+                      ? "#f59e0b"
+                      : "#10b981",
                 }}
               ></div>
-              {isLiveMode ? "LIVE" : "HISTORICAL"}
+              {!isLiveMode
+                ? "HISTORICAL"
+                : telemetryStatus === "active"
+                  ? "ACTIVE"
+                  : telemetryStatus === "degraded"
+                    ? "DEGRADED"
+                    : "NOT CONFIGURED"}
             </div>
             <div className="divider-v"></div>
             <UserMenu
               user={currentUser}
+              role={normalizedRole}
+              onProfile={() => navigate("/profile")}
               onLogout={() => setShowLogoutModal(true)}
             />
           </div>
@@ -1451,7 +1521,7 @@ function Dashboard() {
                               </span>
                             </div>
                             <div className="td action">
-                              {log.status !== "acknowledged" && (
+                              {canManageAlerts && log.status !== "acknowledged" && (
                                 <button
                                   className="act-btn ack-btn"
                                   onClick={() => handleAcknowledge(log.id)}
@@ -1459,12 +1529,14 @@ function Dashboard() {
                                   Ack
                                 </button>
                               )}
-                              <button
-                                className="act-btn close-btn"
-                                onClick={() => setResolvingAlert(log)}
-                              >
-                                Close
-                              </button>
+                              {canManageAlerts && (
+                                <button
+                                  className="act-btn close-btn"
+                                  onClick={() => setResolvingAlert(log)}
+                                >
+                                  Close
+                                </button>
+                              )}
                               {log.ip !== "N/A" && (
                                 <button
                                   className={`act-btn ${blockedList.includes(log.ip) ? "unblock-btn" : "block-btn"}`}

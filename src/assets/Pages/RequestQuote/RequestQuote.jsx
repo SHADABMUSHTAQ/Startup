@@ -1,17 +1,27 @@
 import React, { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, Building2, BriefcaseBusiness, CheckCircle, Mail, Phone, Send, User, XCircle } from "lucide-react";
+import {
+  ArrowLeft,
+  BriefcaseBusiness,
+  Building2,
+  CheckCircle,
+  Mail,
+  Phone,
+  Send,
+  User,
+  XCircle,
+} from "lucide-react";
+import apiClient from "../../../api/apiClient";
+import { formatApiError } from "../../../utils/apiError";
 import "./RequestQuote.css";
-
-const WEB3FORMS_ACCESS_KEY = "e79d55bf-bd4e-4152-98b5-26c41dd9f352";
 
 const defaultQuote = {
   plan: "Custom Platform",
-  finalPrice: 2000,
+  finalPrice: 20000,
   activationFee: 5000,
   cycle: "monthly",
   customization: {
-    endpoints: 1,
+    endpoints: 10,
     storageGB: 5,
     retentionMonths: 0,
   },
@@ -27,6 +37,7 @@ export default function RequestQuote() {
   const quote = location.state || defaultQuote;
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [status, setStatus] = useState(null);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const quoteSummary = useMemo(() => {
     const addons = [];
@@ -36,11 +47,11 @@ export default function RequestQuote() {
     return [
       `Plan: ${quote.plan}`,
       `Billing cycle: ${quote.cycle}`,
-      `Estimated recurring price: Rs ${Number(quote.finalPrice || 0).toLocaleString()}`,
+      `Estimated price: Rs ${Number(quote.finalPrice || 0).toLocaleString()}`,
       `One-time activation fee: Rs ${Number(quote.activationFee || 0).toLocaleString()}`,
-      `Endpoints: ${quote.customization?.endpoints || 1}`,
-      `Hot storage: ${quote.customization?.storageGB || 5} GB`,
-      `Cold archive: ${quote.customization?.retentionMonths || 0} months`,
+      `Endpoints: ${quote.customization?.endpoints || 10}`,
+      `Hot storage requirement: ${quote.customization?.storageGB || 5} GB`,
+      `Optional general archive: ${quote.customization?.retentionMonths || 0} months`,
       `Add-ons: ${addons.length ? addons.join(", ") : "None"}`,
     ].join("\n");
   }, [quote]);
@@ -49,29 +60,32 @@ export default function RequestQuote() {
     event.preventDefault();
     setIsSubmitting(true);
     setStatus(null);
+    setErrorMessage("");
 
     const formData = new FormData(event.currentTarget);
-    formData.append("access_key", WEB3FORMS_ACCESS_KEY);
-    formData.append("subject", "WarSOC Custom Quote Request");
-    formData.append("from_name", "WarSOC Pricing Page");
-    formData.append("quote_summary", quoteSummary);
+    const compliancePacks = [];
+    if (quote.addons?.fbr) compliancePacks.push("fbr_pos");
+    if (quote.addons?.peca) compliancePacks.push("peca_forensic");
 
     try {
-      const response = await fetch("https://api.web3forms.com/submit", {
-        method: "POST",
-        body: formData,
+      await apiClient.post("/sales/request-quote", {
+        contact_name: String(formData.get("name") || "").trim(),
+        contact_email: String(formData.get("email") || "").trim(),
+        contact_phone: String(formData.get("phone") || "").trim() || null,
+        company_name: String(formData.get("company") || "").trim(),
+        plan_type: quote.plan || "Custom Platform",
+        endpoints: Math.max(10, Number(quote.customization?.endpoints) || 10),
+        compliance_packs: compliancePacks,
+        billing_cycle: quote.cycle === "yearly" ? "yearly" : "monthly",
+        frontend_calculated_total: Number(quote.finalPrice || 0),
       });
-      const data = await response.json();
-
-      if (!data.success) {
-        throw new Error(data.message || "Quote request failed.");
-      }
 
       setStatus("success");
       event.currentTarget.reset();
     } catch (error) {
       console.error("Quote request error:", error);
       setStatus("error");
+      setErrorMessage(formatApiError(error, "Could not submit the quote request."));
     } finally {
       setIsSubmitting(false);
     }
@@ -103,40 +117,18 @@ export default function RequestQuote() {
             </div>
 
             <dl className="quote-details">
-              <div>
-                <dt>Base Engine</dt>
-                <dd>Included</dd>
-              </div>
-              <div>
-                <dt>Endpoints Monitored</dt>
-                <dd>{quote.customization?.endpoints || 1} Devices</dd>
-              </div>
-              <div>
-                <dt>Live Hot Storage</dt>
-                <dd>{quote.customization?.storageGB || 5} GB</dd>
-              </div>
+              <div><dt>Base Engine</dt><dd>Included</dd></div>
+              <div><dt>Endpoints Monitored</dt><dd>{quote.customization?.endpoints || 10} Devices</dd></div>
+              <div><dt>Live Hot Storage</dt><dd>{quote.customization?.storageGB || 5} GB</dd></div>
               {(quote.customization?.retentionMonths || 0) > 0 && (
-                <div>
-                  <dt>Cold Archive</dt>
-                  <dd>{quote.customization.retentionMonths} Months</dd>
-                </div>
+                <div><dt>General Cold Archive</dt><dd>{quote.customization.retentionMonths} Months</dd></div>
               )}
-              {quote.addons?.fbr && (
-                <div>
-                  <dt>FBR POS Shield</dt>
-                  <dd>Included</dd>
-                </div>
-              )}
-              {quote.addons?.peca && (
-                <div>
-                  <dt>PECA Vault</dt>
-                  <dd>Included</dd>
-                </div>
-              )}
+              {quote.addons?.fbr && <div><dt>FBR POS Shield</dt><dd>Included</dd></div>}
+              {quote.addons?.peca && <div><dt>PECA Vault</dt><dd>Included</dd></div>}
             </dl>
 
             <div className="quote-total">
-              <span>Estimated MRR</span>
+              <span>Estimated Price</span>
               <strong>Rs {Number(quote.finalPrice || 0).toLocaleString()}</strong>
             </div>
           </section>
@@ -154,28 +146,25 @@ export default function RequestQuote() {
               <div className="quote-status success">
                 <CheckCircle size={42} />
                 <h3>Request Received</h3>
-                <p>Your quote request has been emailed to the WarSOC team. We will review it and issue access after approval.</p>
+                <p>Your request is stored securely and queued for the WarSOC sales team.</p>
                 <Link to="/login">Return to Login</Link>
               </div>
             ) : (
               <form className="quote-form" onSubmit={handleSubmit}>
-                <input type="hidden" name="message" value={quoteSummary} />
+                <input type="hidden" name="quote_summary" value={quoteSummary} />
 
                 <label>
                   <span><Building2 size={13} /> Company Name *</span>
                   <input name="company" type="text" placeholder="e.g. Acme Corp" required />
                 </label>
-
                 <label>
                   <span><User size={13} /> Full Name *</span>
                   <input name="name" type="text" placeholder="e.g. Jane Doe" required />
                 </label>
-
                 <label>
                   <span><Mail size={13} /> Work Email *</span>
                   <input name="email" type="email" placeholder="jane@acme.com" required />
                 </label>
-
                 <label>
                   <span><Phone size={13} /> Direct Phone Number</span>
                   <input name="phone" type="tel" placeholder="+92 300 1234567" />
@@ -183,14 +172,15 @@ export default function RequestQuote() {
 
                 {status === "error" && (
                   <div className="quote-error">
-                    <XCircle size={16} /> Could not send the request. Please try again.
+                    <XCircle size={16} /> {errorMessage}
                   </div>
                 )}
 
                 <button type="submit" className="quote-submit" disabled={isSubmitting}>
-                  {isSubmitting ? "Sending Request..." : "Request Custom Quote"} {!isSubmitting && <Send size={16} />}
+                  {isSubmitting ? "Sending Request..." : "Request Custom Quote"}
+                  {!isSubmitting && <Send size={16} />}
                 </button>
-                <p>No payment required. You will be contacted by our deployment team.</p>
+                <p>No payment required. Our deployment team will confirm the final scope.</p>
               </form>
             )}
           </section>

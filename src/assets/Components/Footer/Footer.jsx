@@ -56,7 +56,7 @@ const Footer = () => {
                 <Linkedin size={20} />
               </a>
               
-              <a href="mailto:Warosc1@outlook.com" aria-label="Email"><Mail size={20} /></a>
+              <a href="mailto:ceo@warsoc.tech" aria-label="Email"><Mail size={20} /></a>
             </div>
           </div>
 

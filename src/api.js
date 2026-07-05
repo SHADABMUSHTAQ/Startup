@@ -1,28 +1,37 @@
-import { toast } from 'react-toastify'; // [cite: 51]
+import { toast } from "react-toastify";
+import { useAuthStore } from './store/authStore';
+import { formatApiErrorData } from './utils/apiError';
+import apiClient from './api/apiClient';
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '/api/v1' : 'http://127.0.0.1:8000/api/v1');
 
-const getHeaders = (isMultipart = false) => {
-  // 🔒 SECURITY FIX: Token is now in HttpOnly cookie (browser sends automatically)
-  // NO LONGER: const token = localStorage.getItem("token");
+const getHeaders = (isMultipart = false, method = 'GET') => {
   const headers = {};
-  // Authorization header no longer needed - cookie sent automatically
   if (!isMultipart) headers["Content-Type"] = "application/json";
+
+  const csrfToken = useAuthStore.getState().csrfToken;
+  if (csrfToken && ['POST', 'PUT', 'DELETE', 'PATCH'].includes(method.toUpperCase())) {
+      headers['X-CSRF-Token'] = csrfToken;
+  }
   return headers;
 };
 
 const request = async (endpoint, options = {}) => {
+  const method = options.method || 'GET';
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
-    credentials: "include",  // 🔒 Browser automatically sends HttpOnly cookie
-    headers: { ...getHeaders(options.isMultipart), ...options.headers },
+    credentials: "include",
+    headers: { ...getHeaders(options.isMultipart, method), ...options.headers },
   });
 
   // 🚨 Handle 403 gracefully: Stop the Death Loop
   if (response.status === 403) {
     const errData = await response.clone().json().catch(() => ({}));
-    toast.error(errData.detail || "Premium Feature: Please upgrade your plan.", { theme: "dark" });
-    return { data: [], status: "error", code: 403, detail: errData.detail };
+    const detail = formatApiErrorData(errData, "Premium Feature: Please upgrade your plan.");
+    toast.error(detail, { theme: "dark" });
+    const error = new Error(detail);
+    error.status = 403;
+    throw error;
   }
 
   if (response.status === 401) {
@@ -43,7 +52,7 @@ const request = async (endpoint, options = {}) => {
   }
 
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.detail || "API Request Failed");
+  if (!response.ok) throw new Error(formatApiErrorData(data, "API Request Failed"));
   return data;
 };
 
@@ -51,8 +60,11 @@ export const api = {
   // 📁 PIPE 1: Fetches Manual File Uploads (Sidebar)
   getAnalyses: () => request("/upload/results"), 
   
-  // 🔥 PIPE 2: Fetches Live Windows Agent Logs (Main Table)
-  getLiveLogs: () => request("/logs"), 
+  // 🔥 PIPE 2: Fetches live hot-storage alerts with pagination
+  getLiveLogs: (limit = 500) => {
+    const cappedLimit = Math.min(Number(limit) || 500, 500);
+    return request(`/alerts?limit=${cappedLimit}`);
+  },
 
   uploadLog: (file) => {
     const formData = new FormData();
@@ -78,12 +90,14 @@ export const threatIntel = {
   }),
   getBlockedList: () => request("/list"),
   freshStart: () => request("/session/fresh-start", { method: "POST" }),
-  downloadAgent: () => request("/agent/download", { isBlob: true })
+  downloadAgent: () =>
+    window.location.assign(`${API_BASE_URL.replace(/\/$/, "")}/agent/download`)
 };
 
 export const loginUser = async (username, password) => {
     const response = await fetch(`${API_BASE_URL}/auth/login`, { 
         method: "POST", 
+        credentials: "include",
         headers: { "Content-Type": "application/json" }, 
         body: JSON.stringify({ username, password })
     });
@@ -97,44 +111,29 @@ export const loginUser = async (username, password) => {
     }
     if(!response.ok) { 
         const d = await response.json().catch(() => ({})); 
-        throw new Error(d.detail || "Login failed"); 
+        throw new Error(formatApiErrorData(d, "Login failed"));
     }
     return await response.json();
 };
 
-export const registerUser = async (name, email, password) => {
-    const response = await fetch(`${API_BASE_URL}/auth/signup`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }, 
-        body: JSON.stringify({ full_name: name, username: name, email, password }),
-    });
-    if (response.status === 429) {
-        throw new Error("Too many signup attempts. Please wait a moment and try again.");
-    }
-    if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.detail || "Signup failed");
-    }
-    return await response.json();
-};
 
 export const updateUserPlan = async (username, planName) => {
-    const response = await fetch(`${API_BASE_URL}/auth/update-plan`, {
-        method: "POST",
-        credentials: "include",  // 🔒 Browser sends HttpOnly cookie automatically
-        headers: { 
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ username, plan_name: planName })
-    });
-    
-    if (response.status === 403) {
-        toast.error("Access Denied: Your assigned role does not have authorization for this action."); // 
-        throw new Error("Access Denied (403)");
+    try {
+        const response = await apiClient.post('/auth/update-plan', {
+            username,
+            plan_name: planName
+        });
+        return response.data;
+    } catch (error) {
+        if (error.response?.status === 403) {
+            toast.error("Access Denied: Your assigned role does not have authorization for this action.");
+            throw new Error("Access Denied (403)");
+        }
+
+        let errorMessage = "Plan update failed";
+        if (error.response?.data) {
+             errorMessage = formatApiErrorData(error.response.data, errorMessage);
+        }
+        throw new Error(errorMessage);
     }
-    if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.detail || "Plan update failed");
-    }
-    return await response.json();
 };

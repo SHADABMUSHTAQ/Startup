@@ -257,17 +257,6 @@
   gap: 1rem;
 }
 
-.forgot-password {
-  font-size: 0.82rem;
-  color: var(--login-accent);
-  cursor: pointer;
-  transition: color 0.2s;
-}
-
-.forgot-password:hover {
-  color: var(--login-accent-2);
-}
-
 .input-group {
   position: relative;
   display: flex;

@@ -170,6 +170,14 @@
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 1.1rem;
   box-shadow: 0 4px 10px rgba(71, 165, 239, 0.3);
+  overflow: hidden;
+}
+
+.navbar-avatar-circle img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
 }
 
 .chevron { transition: transform 0.3s ease; }
@@ -223,8 +231,16 @@
   .navbar-mobile-toggle { 
       display: block; 
       position: relative;
-      z-index: 1001;
-  }
+  z-index: 1001;
+}
+
+.navbar-toggle-icon {
+  color: var(--nav-text-muted);
+}
+
+.navbar-custom.menu-open .navbar-toggle-icon {
+  color: var(--nav-lime);
+}
   
   .navbar-desktop-auth { display: none; }
 
@@ -271,6 +287,13 @@
   }
   
   .mobile-user-name { color: #fff; font-size: 1.1rem; font-weight: 600; }
+
+  .mobile-profile-btn {
+      width: 100%; padding: 14px; background: rgba(71, 165, 239, 0.1); border: 1px solid rgba(71, 165, 239, 0.35);
+      color: var(--nav-blue); border-radius: 8px; font-size: 1rem; font-weight: 600;
+      display: flex !important; align-items: center; justify-content: center; gap: 8px; cursor: pointer;
+      text-decoration: none;
+  }
   
   .mobile-logout-btn {
       width: 100%; padding: 14px; background: rgba(248, 113, 113, 0.1); border: 1px solid #f87171;

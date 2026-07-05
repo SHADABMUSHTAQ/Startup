@@ -53,7 +53,7 @@ const About = () => {
             ))}
           </div>
 
-          <a href="/about" className="about-btn">
+          <a href="/#features" className="about-btn">
             Discover Our Tech <ArrowRight size={18} />
           </a>
         </div>

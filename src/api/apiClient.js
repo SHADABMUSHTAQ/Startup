@@ -1,10 +1,14 @@
 import axios from 'axios';
-import { useAuthStore } from '../store/authStore';
+import { formatApiError } from '../utils/apiError';
+import {
+    clearUnauthorizedSession,
+    getSessionCsrfToken,
+} from './sessionBridge';
 
 // 1. The Singleton Instance
 const apiClient = axios.create({
     // Maps to your Vite env variable or defaults to your local backend
-    baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1',
+    baseURL: import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '/api/v1' : 'http://127.0.0.1:8000/api/v1'),
     // 🛡️ CRITICAL: This forces the browser to send the HttpOnly cookie automatically
     withCredentials: true, 
     // ⏱️ Anti-Infinite-Spinner: Hard timeout (10s) for network drops
@@ -16,8 +20,9 @@ const apiClient = axios.create({
 
 // 🛡️ CSRF Token Interceptor (Double-Submit Header Pattern)
 apiClient.interceptors.request.use((config) => {
+
     // Grab the ephemeral CSRF token from memory state (not localStorage)
-    const csrfToken = useAuthStore.getState().csrfToken;
+    const csrfToken = getSessionCsrfToken();
     if (csrfToken && ['post', 'put', 'delete', 'patch'].includes(config.method)) {
         config.headers['X-CSRF-Token'] = csrfToken;
     }
@@ -25,18 +30,27 @@ apiClient.interceptors.request.use((config) => {
 });
 
 // 2. The Global 401 Trap
+// Synchronous, hard-failing guard against unauthorized states.
 apiClient.interceptors.response.use(
     (response) => response,
     (error) => {
-        // If the backend rejects the cookie (expired, blacklisted, etc.)
-        // 🛑 THE FIX: Ignore 401s for /auth/me to prevent infinite hydration loops!
-        if (error.response && error.response.status === 401) {
-            const isAuthEndpoint = error.config.url.includes('/auth/me') || error.config.url.includes('/auth/login') || error.config.url.includes('/auth/logout');
-            if (!isAuthEndpoint) {
-                console.warn("Unauthorized API call intercepted. Purging state.");
-                useAuthStore.getState().logout();
+        const status = error.response?.status;
+        const reqUrl = error.config?.url ?? '';
+
+        // 1. Initial Filter: Only intercept 401s
+        if (status === 401) {
+            // 2. The Whitelist Exception: Do not redirect if the failure is from login or me
+            if (!reqUrl.includes('/auth/login') && !reqUrl.includes('/auth/me')) {
+                console.warn('Unauthorized API call intercepted. Purging state and forcing redirect.');
+
+                // 3. State Eviction Sequence
+                clearUnauthorizedSession();
             }
         }
+
+        error.userMessage = formatApiError(error);
+
+        // Maintain rejection fallthrough for all errors
         return Promise.reject(error);
     }
 );

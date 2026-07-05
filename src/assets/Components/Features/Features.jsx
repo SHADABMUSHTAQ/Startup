@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Activity, Network, BellRing, Lock, Database, FileCheck } from "lucide-react"; 
 import "./Features.css";
 
@@ -48,10 +48,8 @@ function Features() {
     },
   ];
 
-  const activeFeature = useMemo(
-    () => features.find((feature) => feature.id === activeFeatureId) || null,
-    [activeFeatureId]
-  );
+  const activeFeature =
+    features.find((feature) => feature.id === activeFeatureId) || null;
 
   useEffect(() => {
     const observer = new IntersectionObserver(

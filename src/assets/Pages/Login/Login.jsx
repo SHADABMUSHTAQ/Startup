@@ -46,7 +46,10 @@ export default function Login() {
         headers: { 'Content-Type': 'application/json' }
       });
 
-      await checkAuth();
+      const authenticated = await checkAuth();
+      if (!authenticated) {
+        throw new Error("Login succeeded, but the session could not be verified.");
+      }
       const authState = useAuthStore.getState();
 
       showToast("success", "Login Successful!");
@@ -59,7 +62,7 @@ export default function Login() {
         }
       }, 1000);
     } catch (err) {
-      showToast("error", err.message || "Authentication failed.");
+      showToast("error", err.userMessage || err.message || "Authentication failed.");
     } finally {
       setLoading(false);
     }
@@ -175,7 +178,6 @@ export default function Login() {
                   <div className="input-group-container">
                       <div className="password-header">
                         <label>Password</label>
-                        <span className="forgot-password">Forgot Password?</span>
                       </div>
                       <div className="input-group">
                           <Lock className="input-icon" size={18} />

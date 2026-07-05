@@ -49,12 +49,12 @@
     gap: 8px; 
     align-items: center; 
     transition: all 0.3s ease;
-    box-shadow: 0 4px 10px rgba(71, 165, 239, 0.3);
+    box-shadow: 0 4px 10px rgba(73, 175, 241, 0.3);
 }
 
 .btn-invite:hover {
     transform: translateY(-2px);
-    box-shadow: 0 6px 15px rgba(71, 165, 239, 0.5);
+    box-shadow: 0 6px 15px rgba(73, 175, 241, 0.5);
     background: linear-gradient(135deg, #398bd1, #1a629b);
 }
 
@@ -70,7 +70,7 @@
     transition: border-color 0.3s ease;
 }
 
-.team-table-card:hover { border-color: rgba(71, 165, 239, 0.3); }
+.team-table-card:hover { border-color: rgba(73, 175, 241, 0.3); }
 
 .team-table { width: 100%; border-collapse: collapse; }
 
@@ -93,27 +93,27 @@
     color: var(--text-sub);
 }
 
-.team-table tbody tr:hover { background: rgba(71, 165, 239, 0.05); }
+.team-table tbody tr:hover { background: rgba(73, 175, 241, 0.05); }
 .team-table tbody tr:nth-child(even) { background-color: rgba(255, 255, 255, 0.015); }
 .td-email { font-weight: 600; color: #fff !important; }
 .empty-table-msg { text-align: center; padding: 40px !important; color: var(--text-sub) !important; font-style: italic; }
 
 /* Badges */
 .role-badge.auditor { 
-    background: rgba(245, 158, 11, 0.15); 
+    background: rgba(183, 235, 72, 0.15);
     color: var(--warning); 
     padding: 6px 12px; 
     border-radius: 20px; 
     font-size: 11px; 
     font-weight: 700; 
     text-transform: uppercase;
-    border: 1px solid rgba(245, 158, 11, 0.3);
+    border: 1px solid rgba(183, 235, 72, 0.3);
 }
 
 .scope-tags { display: flex; gap: 8px; flex-wrap: wrap; }
 .tag { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; font-family: var(--font-code); text-transform: uppercase; }
-.tag.fbr { background: rgba(71, 165, 239, 0.1); color: var(--primary); border: 1px solid rgba(71, 165, 239, 0.3); }
-.tag.peca { background: rgba(183, 234, 72, 0.1); color: var(--success); border: 1px solid rgba(183, 234, 72, 0.3); }
+.tag.fbr { background: rgba(73, 175, 241, 0.1); color: var(--primary); border: 1px solid rgba(73, 175, 241, 0.3); }
+.tag.peca { background: rgba(183, 235, 72, 0.1); color: var(--success); border: 1px solid rgba(183, 235, 72, 0.3); }
 
 /* Action Button */
 .btn-revoke { 
@@ -256,7 +256,7 @@
     width: 100%; padding: 14px 16px; background: var(--bg-dark); border: 1px solid var(--border); 
     color: var(--text-main); border-radius: 8px; font-size: 14px; transition: all 0.3s ease; outline: none;
 }
-.input-group input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(71, 165, 239, 0.15); }
+.input-group input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(73, 175, 241, 0.15); }
 .input-group small { color: var(--text-sub); font-size: 12px; display: block; margin-top: 8px !important; }
 
 /* =========================================
@@ -284,9 +284,9 @@
     width: 22px;
     height: 22px;
     min-width: 22px;
-    border: 2px solid rgba(183, 234, 72, 0.4); 
+    border: 2px solid rgba(183, 235, 72, 0.4);
     border-radius: 4px;
-    background: rgba(183, 234, 72, 0.05); 
+    background: rgba(183, 235, 72, 0.05);
     cursor: pointer;
     position: relative;
     display: flex;
@@ -299,7 +299,7 @@
 .custom-check input[type="checkbox"]:checked {
     background: var(--success); 
     border-color: var(--success);
-    box-shadow: 0 0 10px rgba(183, 234, 72, 0.3);
+    box-shadow: 0 0 10px rgba(183, 235, 72, 0.3);
 }
 
 /* The Checkmark */
@@ -314,8 +314,8 @@
 .modal-footer { display: flex; justify-content: flex-end; gap: 16px; border-top: 1px solid var(--border); padding-top: 24px; }
 .btn-cancel { background: transparent; color: var(--text-sub); border: 1px solid var(--border); padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: all 0.2s ease; }
 .btn-cancel:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-main); }
-.btn-submit { background: linear-gradient(135deg, var(--primary), #207bc2); color: #fff; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 10px rgba(71, 165, 239, 0.3); transition: all 0.3s ease; }
-.btn-submit:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 15px rgba(71, 165, 239, 0.5); background: linear-gradient(135deg, #398bd1, #1a629b); }
+.btn-submit { background: linear-gradient(135deg, var(--primary), #207bc2); color: #fff; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 10px rgba(73, 175, 241, 0.3); transition: all 0.3s ease; }
+.btn-submit:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 15px rgba(73, 175, 241, 0.5); background: linear-gradient(135deg, #398bd1, #1a629b); }
 .btn-submit:disabled { background: var(--bg-hover); color: var(--text-sub); box-shadow: none; cursor: not-allowed; }
 
 /* Responsive Modal */

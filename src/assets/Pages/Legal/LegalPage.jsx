@@ -64,7 +64,7 @@ const legalDocuments = {
               "DNS query logs",
               "HTTP/HTTPS metadata, including URL paths, methods, and SNI fields, without content",
               "Windows Event Logs",
-              "Sysmon event data",
+              "Native Windows Security and System channel event data",
               "Endpoint Detection and Response (EDR) alerts",
               "FBR POS Integrity events, including system tampering attempts, time changes, and audit log clearing",
               "Server, application, and user authentication logs",

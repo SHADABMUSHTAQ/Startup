@@ -7,7 +7,7 @@ export default function Pricing({ standalone = false }) {
   const [billingCycle, setBillingCycle] = useState("monthly"); 
   
   // Customization States
-  const [endpoints, setEndpoints] = useState(1); 
+  const [endpoints, setEndpoints] = useState(10);
   const [storageGB, setStorageGB] = useState(5); 
   const [addons, setAddons] = useState({ fbr: false, peca: false });
   const [retentionMonths, setRetentionMonths] = useState(0); 
@@ -17,24 +17,14 @@ export default function Pricing({ standalone = false }) {
   // Monthly Pricing Logic (PKR)
   const ACTIVATION_FEE = 5000; 
   const PRICE_PER_ENDPOINT = 2000; 
-  const PRICE_PER_GB = 200; 
   const FBR_PRICE = 20000;
   const PECA_PRICE = 25000;
-  
-  const retentionPrices = {
-      0: 0,
-      3: 6000,
-      6: 10000,
-      12: 18000
-  };
 
-  // Calculations (Base Monthly Costs)
-  const endpointsCost = Math.max(0, endpoints - 1) * PRICE_PER_ENDPOINT; 
-  const storageCost = storageGB * PRICE_PER_GB;
-  const retentionCost = retentionPrices[retentionMonths];
+  // Keep estimates aligned with the backend pricing source of truth.
+  const endpointsCost = endpoints * PRICE_PER_ENDPOINT;
   const addonsCost = (addons.fbr ? FBR_PRICE : 0) + (addons.peca ? PECA_PRICE : 0);
 
-  const monthlyTotal = endpointsCost + storageCost + retentionCost + addonsCost;
+  const monthlyTotal = endpointsCost + addonsCost;
   
   // If yearly, multiply by 10 (gives them 2 months free equivalent)
   const displayPrice = billingCycle === "monthly" ? monthlyTotal : monthlyTotal * 10;
@@ -88,8 +78,8 @@ export default function Pricing({ standalone = false }) {
                     <div className="customization-grid">
                         <div className="input-group">
                             <label><Monitor size={18} color="#3b82f6" /> Devices (Endpoints)</label>
-                            <input type="number" min="1" max="1000" value={endpoints} onChange={(e) => setEndpoints(parseInt(e.target.value) || 1)} />
-                            <small>First device is free. +Rs 1,500/extra.</small>
+                            <input type="number" min="10" max="1000" value={endpoints} onChange={(e) => setEndpoints(Math.max(10, parseInt(e.target.value) || 10))} />
+                            <small>B2B minimum: 10 devices. Rs 2,000 per endpoint monthly.</small>
                         </div>
 
                         <div className="input-group">
@@ -99,18 +89,18 @@ export default function Pricing({ standalone = false }) {
                                 <option value="10">10 GB (Recommended)</option>
                                 <option value="50">50 GB (Enterprise)</option>
                             </select>
-                            <small>+Rs 200 per GB for fast dashboard search.</small>
+                            <small>Capacity is confirmed by the deployment team during provisioning.</small>
                         </div>
 
                         <div className="input-group archive-group">
                             <label><Archive size={18} color="#8b5cf6" /> Long-term Cold Archive</label>
                             <select value={retentionMonths} onChange={(e) => setRetentionMonths(parseInt(e.target.value))}>
-                                <option value="0">No Archive (Auto-delete)</option>
-                                <option value="3">3 Months Archive (+Rs 6,000/mo)</option>
-                                <option value="6">6 Months Archive (+Rs 10,000/mo)</option>
-                                <option value="12">12 Months Archive (+Rs 18,000/mo)</option>
+                                <option value="0">No Optional General Archive</option>
+                                <option value="3">3 Months General Archive</option>
+                                <option value="6">6 Months General Archive</option>
+                                <option value="12">12 Months General Archive</option>
                             </select>
-                            <small>We will email you 4 days before data is permanently deleted.</small>
+                            <small>Compliance vault retention is enforced separately by the selected pack.</small>
                         </div>
                     </div>
                 </div>
@@ -167,12 +157,12 @@ export default function Pricing({ standalone = false }) {
                             </li>
                             <li>
                                 <span>{storageGB} GB Hot Storage</span>
-                                <span>Rs {(storageCost * (billingCycle === 'yearly' ? 10 : 1)).toLocaleString()}</span>
+                                <span>Scoped</span>
                             </li>
                             {retentionMonths > 0 && (
                                 <li className="highlight-purple">
                                     <span>{retentionMonths}M Cold Archive</span>
-                                    <span>Rs {(retentionCost * (billingCycle === 'yearly' ? 10 : 1)).toLocaleString()}</span>
+                                    <span>Scoped</span>
                                 </li>
                             )}
                             {addons.fbr && (

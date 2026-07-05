@@ -2,7 +2,7 @@ import React from "react";
 import "./AgentLogs.css";
 
 const AgentLogs = ({ logs = [] }) => {
-  console.log(`[DEBUG] AgentLogs received ${logs.length} logs`);
+
   return (
     <div className="agent-logs-wrapper">
       <div className="agent-header">
