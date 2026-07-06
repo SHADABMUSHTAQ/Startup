@@ -1,6 +1,7 @@
 import asyncio
 import httpx
 import json
+import os
 from datetime import datetime, timezone
 
 async def run_proof():
@@ -8,9 +9,9 @@ async def run_proof():
     print(" WarSOC LIVE SYSTEM PROOF OF LIFE ")
     print("="*50)
     
-    # 1. API Health
-    print("\n[1] Checking API Health...")
     async with httpx.AsyncClient() as client:
+        # 1. API Health
+        print("\n[1] Checking API Health...")
         try:
             resp = await client.get("http://localhost:8000/health")
             print(f"    Status: {resp.status_code}")
@@ -19,14 +20,13 @@ async def run_proof():
             print(f"    FAILED: {e}")
             return
 
-    # 2. Login as CTO Admin
-    print("\n[2] Logging in as restored cto_admin...")
-    token = None
-    tenant_id = None
-    async with httpx.AsyncClient() as client:
+        # 2. Login as CTO Admin
+        print("\n[2] Logging in as restored cto_admin...")
+        token = None
+        tenant_id = None
         payload = {
             "username": "cto_admin",
-            "password": "SuperSecretPassword123!"
+            "password": os.getenv("WARSOC_TEST_PASSWORD", "changeme")
         }
         try:
             resp = await client.post("http://localhost:8000/api/v1/auth/login", json=payload)
@@ -34,7 +34,7 @@ async def run_proof():
             if resp.status_code == 200:
                 data = resp.json()
                 token = data.get("access_token")
-                print("    Success! Received JWT Access Token.")
+                print("    Success! Received JWT Access Token (Cookie captured).")
             else:
                 print(f"    FAILED: {resp.text}")
                 return
@@ -42,10 +42,10 @@ async def run_proof():
             print(f"    FAILED: {e}")
             return
 
-    # 3. Verify Identity and Tenant
-    print("\n[3] Verifying Identity & Tenant Binding...")
-    headers = {"Authorization": f"Bearer {token}"}
-    async with httpx.AsyncClient() as client:
+        # 3. Verify Identity and Tenant
+        print("\n[3] Verifying Identity & Tenant Binding...")
+        # Since we use HttpOnly cookies, the client handles it automatically now. We can still pass the header if we want, but it's not strictly necessary if the auth accepts cookies. Let's pass it just in case.
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
         try:
             resp = await client.get("http://localhost:8000/api/v1/auth/me", headers=headers)
             print(f"    Status: {resp.status_code}")
@@ -62,11 +62,9 @@ async def run_proof():
             print(f"    FAILED: {e}")
             return
 
-    # 4. Test Installer Download (Agent Orchestration)
-    print("\n[4] Testing Enterprise Installer Download Route...")
-    async with httpx.AsyncClient() as client:
+        # 4. Test Installer Download (Agent Orchestration)
+        print("\n[4] Testing Enterprise Installer Download Route...")
         try:
-            # We use stream=True so we don't load 15MB into memory
             async with client.stream("GET", "http://localhost:8000/api/v1/agent/download", headers=headers) as resp:
                 print(f"    Status: {resp.status_code}")
                 if resp.status_code == 200:
@@ -83,19 +81,17 @@ async def run_proof():
         except Exception as e:
             print(f"    FAILED: {e}")
 
-    # 5. Pipeline Test - Inject Pulse
-    print("\n[5] Testing Telemetry Ingestion Pipeline...")
-    pulse_payload = {
-        "event_id": 4624,
-        "type": "security",
-        "message": "Live Proof of Life Test Event",
-        "source_ip": "192.168.1.100",
-        "user": "proof_tester",
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }
-    
-    # We use the generic log injection endpoint used by admins to test the pipeline
-    async with httpx.AsyncClient() as client:
+        # 5. Pipeline Test - Inject Pulse
+        print("\n[5] Testing Telemetry Ingestion Pipeline...")
+        pulse_payload = {
+            "event_id": 4624,
+            "type": "security",
+            "message": "Live Proof of Life Test Event",
+            "source_ip": "192.168.1.100",
+            "user": "proof_tester",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
         try:
             resp = await client.post("http://localhost:8000/api/v1/logs/inject", json=pulse_payload, headers=headers)
             print(f"    Status: {resp.status_code}")

@@ -169,6 +169,24 @@ async def init_compliance_db(db):
         )
         #  LEGAL PHYSICS: Hard engine-level block on cross-tenant overwrites for hot feed
         await _aggressive_create_index(db.security_alerts, [("tenant_id", 1), ("alert_uid", 1)], unique=True, name="idx_alerts_tenant_alert_uid")
+        # Legacy FBR/correlation alerts used a non-indexed retention field. Give
+        # them a full hot-retention window before the absolute TTL applies.
+        await db.security_alerts.update_many(
+            {"_expire_at": {"$exists": False}},
+            [
+                {
+                    "$set": {
+                        "_expire_at": {
+                            "$dateAdd": {
+                                "startDate": "$$NOW",
+                                "unit": "day",
+                                "amount": 7,
+                            }
+                        }
+                    }
+                }
+            ],
+        )
 
         # 3.5 SIEM Cold Vault: Dynamic Retention (30/90/365 Days)
         await _ensure_ttl_index(

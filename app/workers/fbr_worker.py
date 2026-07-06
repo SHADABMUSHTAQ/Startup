@@ -507,8 +507,8 @@ async def _upsert_fbr_vault_and_alerts(db, cold_docs: list[dict]) -> list[dict]:
     return cold_docs
 
 
-async def reclaim_stale_messages(redis_client: Redis):
-    """Best-effort reclaim for stale pending stream entries."""
+async def reclaim_stale_messages(redis_client: Redis, db):
+    """Best-effort reclaim for stale pending stream entries with Dead-Letter Queue (DLQ) quarantine."""
     try:
         pending_entries = await redis_client.xpending_range(
             RAW_LOGS_QUEUE,
@@ -520,8 +520,45 @@ async def reclaim_stale_messages(redis_client: Redis):
         )
         if not pending_entries:
             return []
-            
-        stale_ids = [msg["message_id"] for msg in pending_entries]
+
+        stale_ids = []
+        for entry in pending_entries:
+            if not entry:
+                continue
+            if isinstance(entry, dict):
+                message_id = entry.get("message_id")
+                delivery_count = entry.get("delivery_count", 1)
+            else:
+                message_id = entry[0]
+                delivery_count = entry[3]
+            if isinstance(message_id, bytes):
+                message_id = message_id.decode()
+            if message_id:
+                if delivery_count >= 3:
+                    try:
+                        res = await redis_client.xrange(RAW_LOGS_QUEUE, message_id, message_id)
+                        if res:
+                            payload = res[0][1]
+                            dlq_doc = {
+                                "failed_at": datetime.now(timezone.utc).isoformat(),
+                                "error_reason": f"Max delivery count ({delivery_count}) exceeded in FBR (DLQ)",
+                                "original_payload": payload,
+                                "message_id": message_id,
+                                "tenant_id": payload.get(b"tenant_id", b"").decode("utf-8", errors="replace") if isinstance(payload, dict) else "unknown",
+                            }
+                            await db.dead_letter_logs.insert_one(dlq_doc)
+                            logger.error(f"[DLQ] Poisoned log {message_id} quarantined successfully in FBR.")
+                            await redis_client.xack(RAW_LOGS_QUEUE, FBR_GROUP, message_id)
+                        else:
+                            logger.warning(f"[DLQ] Message {message_id} evicted from stream before quarantine — NOT acknowledging to preserve PEL entry.")
+                    except Exception as dlq_err:
+                        logger.error(f"[DLQ] Failed to quarantine {message_id} in FBR: {dlq_err}")
+                else:
+                    stale_ids.append(message_id)
+
+        if not stale_ids:
+            return []
+
         reclaimed = await redis_client.xclaim(
             RAW_LOGS_QUEUE,
             FBR_GROUP,
@@ -651,7 +688,7 @@ async def fbr_worker():
             streams = await redis.xreadgroup(FBR_GROUP, FBR_CONSUMER, {RAW_LOGS_QUEUE: ">"}, count=50, block=2000)
             
             if not streams:
-                reclaimed_messages = await reclaim_stale_messages(redis)
+                reclaimed_messages = await reclaim_stale_messages(redis, db)
                 if reclaimed_messages:
                     streams = [(RAW_LOGS_QUEUE, reclaimed_messages)]
                 else:

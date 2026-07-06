@@ -332,6 +332,42 @@ async def test_logs_endpoint_enforces_tenant_isolation(client, db):
     assert body["data"][0]["message"] == "tenant A visible"
 
 
+async def test_dashboard_logs_accept_datetime_and_iso_alert_timestamps(client, db):
+    headers, user, _ = await _signup_and_login(client, "hardening_dashboard_alert_dates")
+    now = datetime.now(timezone.utc)
+
+    await db["security_alerts"].insert_many(
+        [
+            {
+                "tenant_id": user["tenant_id"],
+                "timestamp": now,
+                "event_id": "1102",
+                "severity": "CRITICAL",
+                "message": "datetime alert visible",
+                "_expire_at": now + timedelta(days=7),
+                "_retention_ts": now + timedelta(days=7),
+            },
+            {
+                "tenant_id": user["tenant_id"],
+                "timestamp": now.isoformat(),
+                "event_id": "7045",
+                "severity": "HIGH",
+                "message": "ISO alert visible",
+            },
+        ]
+    )
+
+    resp = await client.get("/api/v1/logs", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    messages = {item["message"] for item in body["data"]}
+    assert body["total"] == 2
+    assert messages == {"datetime alert visible", "ISO alert visible"}
+    assert all("_expire_at" not in item for item in body["data"])
+    assert all("_retention_ts" not in item for item in body["data"])
+
+
 async def test_alert_history_enforces_tenant_isolation(client, db):
     tenant_a_headers, tenant_a, _ = await _signup_and_login(client, "hardening_alerts_a")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fastapi_app), base_url="http://testserver") as tenant_b_client:
@@ -884,6 +920,45 @@ async def test_invite_accepts_temp_password_and_normalizes_legacy_packs(client, 
     assert user is not None
     assert user["role"] == "auditor"
     assert set(user["compliance_packs"]) == {"fbr_pos", "peca_forensic"}
+
+
+async def test_invite_email_remains_globally_unique_until_login_is_tenant_qualified(client, db):
+    tenant_a_headers, _, _ = await _signup_and_login(
+        client,
+        "hardening_invite_identity_a",
+        plan_type="Professional",
+    )
+    shared_payload = {
+        "email": "shared-operator@example.com",
+        "temp_password": "SharedOperatorPassword123!",
+        "role": "analyst",
+    }
+
+    first = await client.post(
+        "/api/v1/auth/invite",
+        json=shared_payload,
+        headers=tenant_a_headers,
+    )
+    assert first.status_code == 201, first.text
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=fastapi_app),
+        base_url="http://testserver",
+    ) as tenant_b_client:
+        tenant_b_headers, _, _ = await _signup_and_login(
+            tenant_b_client,
+            "hardening_invite_identity_b",
+            plan_type="Professional",
+        )
+        second = await tenant_b_client.post(
+            "/api/v1/auth/invite",
+            json=shared_payload,
+            headers=tenant_b_headers,
+        )
+
+    assert second.status_code == 400, second.text
+    assert "already exists" in second.json()["detail"].lower()
+    assert await db["users"].count_documents({"email": shared_payload["email"]}) == 1
 
 
 async def test_auditor_cannot_bypass_alert_rbac_through_logs_gateway(client, db):

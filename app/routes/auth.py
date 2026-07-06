@@ -433,7 +433,7 @@ async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
 
     # 🔑 SECURITY FIX: Generate access token for automatic login after signup
     access_token = create_access_token(
-        data={"sub": user.username, "type": "user", "tenant_id": new_tenant_id, "role": user.role or "admin"},
+        data={"sub": user.username, "type": "user", "tenant_id": new_tenant_id, "role": "admin"},
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
 
@@ -797,6 +797,8 @@ async def invite_user(
     if payload.role not in ["admin", "manager", "analyst", "auditor"]:
         raise HTTPException(status_code=400, detail="Invalid role specified. Must be admin, manager, analyst, or auditor.")
 
+    # Login accepts an email without tenant context, so email identity must
+    # remain globally unique until the login contract includes a tenant slug.
     existing_user = await db["users"].find_one({"email": payload.email})
     if existing_user:
         raise HTTPException(status_code=400, detail="User with this email already exists")
@@ -810,7 +812,7 @@ async def invite_user(
     packs = resolve_compliance_packs(current_user.get("plan_type", "Professional"), packs)
 
     new_user = {
-        "username": payload.email.split("@")[0],
+        "username": f'{payload.email.split("@")[0]}-{str(uuid.uuid4())[:4]}',
         "email": payload.email,
         "full_name": payload.email.split("@")[0],
         "hashed_password": hashed_password,

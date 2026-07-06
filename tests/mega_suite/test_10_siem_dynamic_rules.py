@@ -5,10 +5,13 @@ These tests exercise the config-driven correlation path directly so the suite
 covers unique-field tracking and time-window rules without needing the full
 worker loop.
 """
+from datetime import datetime, timezone
+
 import pytest
 
 from app.utils.siem_catalog import SIEM_RULES
 from app.utils.siem_logic import CorrelationEngine
+from app.workers import siem_worker
 
 
 class FakePipeline:
@@ -109,6 +112,27 @@ class FakeRedis:
     async def publish(self, channel, message):
         self.published.append((channel, message))
         return 1
+
+
+def test_correlation_alert_uses_security_alerts_absolute_expiry():
+    alert = CorrelationEngine._alert(
+        alert_type="test",
+        severity="HIGH",
+        summary="Retention contract",
+        tenant_id="TENANT-RETENTION",
+        source_ip="10.0.0.5",
+        user="analyst",
+        event_id=4625,
+        mitre="T1110",
+    )
+
+    assert "_retention_ts" not in alert
+    assert isinstance(alert["_expire_at"], datetime)
+    assert alert["_expire_at"] > datetime.now(timezone.utc)
+
+
+def test_siem_cold_vault_uses_the_indexed_absolute_expiry_field():
+    assert siem_worker.RAW_RETENTION_ANCHOR_FIELD == "_expire_at"
 
 
 @pytest.mark.asyncio

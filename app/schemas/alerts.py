@@ -6,7 +6,7 @@ These enforce strict validation before any data touches MongoDB.
 """
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Optional, Union
 from pydantic import BaseModel, Field
 import uuid
 
@@ -29,7 +29,7 @@ class AlertResponse(BaseModel):
     """Read model: what the API returns to the frontend."""
     alert_id: str
     tenant_id: str
-    event_id: int
+    event_id: Union[int, str]
     severity: AlertSeverity
     status: AlertStatus = AlertStatus.NEW
     assignee_id: Optional[str] = None

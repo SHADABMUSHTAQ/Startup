@@ -79,7 +79,7 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
         "max_agents": req.max_agents,
         "agent_limit": req.max_agents,
         "features": features,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(timezone.utc),
         "active": True
     }
     await db["tenants"].insert_one(tenant_doc)

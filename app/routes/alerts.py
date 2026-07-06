@@ -45,16 +45,20 @@ def _serialize_alert(doc: dict) -> dict:
     if not doc.get("status"):
         doc["status"] = AlertStatus.NEW.value
 
-    # Normalize event_id to int (siem_worker stores as string sometimes)
+    # Normalize event_id to int or preserve string (e.g. FBR-INV-DEL)
     raw_eid = doc.get("event_id", 0)
     try:
         doc["event_id"] = int(raw_eid) if raw_eid else 0
     except (ValueError, TypeError):
-        doc["event_id"] = 0
+        doc["event_id"] = str(raw_eid) if raw_eid else 0
 
     # Normalize severity to uppercase enum value
     raw_sev = str(doc.get("severity", "MEDIUM")).upper()
-    if raw_sev not in [s.value for s in AlertSeverity]:
+    if raw_sev in ["INFO", "INFORMATIONAL"]:
+        raw_sev = "LOW"
+    elif raw_sev == "WARNING":
+        raw_sev = "MEDIUM"
+    elif raw_sev not in [s.value for s in AlertSeverity]:
         raw_sev = "MEDIUM"
     doc["severity"] = raw_sev
 
@@ -70,6 +74,7 @@ def _serialize_alert(doc: dict) -> dict:
 
     # Strip internal MongoDB fields the frontend should never see
     doc.pop("_retention_ts", None)
+    doc.pop("_expire_at", None)
 
     return doc
 

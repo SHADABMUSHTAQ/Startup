@@ -78,7 +78,16 @@ async def get_logs_master(
             {"raw_data.event_uid": event_uid},
         ]
     if source == "security_alerts":
-        query["timestamp"] = {"$gte": hot_window_start.isoformat()}
+        query["$and"] = [
+            {
+                "$or": [
+                    {"timestamp": {"$gte": hot_window_start}},
+                    {"timestamp": {"$gte": hot_window_start.isoformat()}},
+                    {"ingested_at": {"$gte": hot_window_start}},
+                    {"ingested_at": {"$gte": hot_window_start.isoformat()}},
+                ]
+            }
+        ]
 
     if next_cursor:
         try:
@@ -87,7 +96,11 @@ async def get_logs_master(
             raise HTTPException(status_code=400, detail="Invalid cursor format")
 
     #  LAZY LOADING: Exclude the heavy raw string for O(1) ingestion speed
-    projection = {"raw_event_data": 0, RAW_RETENTION_ANCHOR_FIELD: 0}
+    projection = {
+        "raw_event_data": 0,
+        RAW_RETENTION_ANCHOR_FIELD: 0,
+        "_expire_at": 0,
+    }
 
     # 📁 Collection Selection
     if source == "security_alerts":

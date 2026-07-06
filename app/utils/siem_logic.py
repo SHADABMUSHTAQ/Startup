@@ -8,7 +8,7 @@ import re
 import uuid
 import time
 from urllib.parse import urlparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import redis.asyncio as aioredis
 from app.utils.siem_catalog import SIEM_RULES
 
@@ -589,7 +589,7 @@ class CorrelationEngine:
             "mitre":           mitre,
             "timestamp":       datetime.now(timezone.utc).isoformat(),
             "engine_source":   "CorrelationEngine",
-            "_retention_ts":   datetime.now(timezone.utc),
+            "_expire_at":      datetime.now(timezone.utc) + timedelta(days=7),
         }
         if extra:
             payload.update(extra)

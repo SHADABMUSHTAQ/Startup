@@ -10,7 +10,9 @@ binding, DNS, TLS-backed health endpoint, security headers, CORS, blocked API
 documentation, closed database ports, and the local installer manifest.
 
 ```powershell
-.\scripts\run_production_acceptance.ps1 -Phase Preflight
+.\scripts\run_production_acceptance.ps1 `
+  -Phase Preflight `
+  -ArtifactUrl "https://<artifact-account>.blob.core.windows.net/<container>/warsoc_installer.exe"
 ```
 
 ## 2. Platform Pipeline

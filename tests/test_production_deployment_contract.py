@@ -14,6 +14,8 @@ def test_production_gateway_uses_real_domain_certbot_and_health_proxy():
     assert "/etc/nginx/ssl/live/api.warsoc.tech/fullchain.pem" in nginx
     assert "/etc/nginx/ssl/live/api.warsoc.tech/privkey.pem" in nginx
     assert "location = /health" in nginx
+    assert "location = /metrics" in nginx
+    assert "proxy_pass http://warsoc_api/metrics;" in nginx
     assert "access_log /dev/stdout;" in nginx
     assert "error_log /dev/stderr warn;" in nginx
     assert "server.crt" not in nginx
@@ -133,9 +135,11 @@ def test_production_acceptance_is_gated_and_verifies_real_artifacts():
     assert "ConfirmProductionDataCreation" in coordinator
     assert "ConfirmDisposableVm" in coordinator
     assert "Frontend production API binding" in coordinator
+    assert "Frontend API proxy" in coordinator
     assert "Frontend no development API" in coordinator
     assert "Frontend contact uses WarSOC backend" in coordinator
     assert "Frontend/backend CORS" in coordinator
+    assert "Azure installer artifact" in coordinator
     assert "foreach ($port in @(27017, 6379, 8000))" in coordinator
     assert "Get-TlsCertificateInfo" in coordinator
     assert "--admin-key" not in coordinator

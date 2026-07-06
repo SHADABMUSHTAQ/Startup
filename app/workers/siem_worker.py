@@ -786,7 +786,8 @@ async def siem_worker():
 
                             # 🏷 MANDATE 4: ALERT NAMING ENFORCEMENT (Config Map)
                             title_map = config.get("alert_title_map", {})
-                            display_title = title_map.get(alert_type, f"Security Event: {alert_type}")
+                            fallback_event_type = config.get("event_id_map", {}).get(str(event_id), {}).get("event_type", alert_type).replace("_", " ").title()
+                            display_title = title_map.get(alert_type, f"Security Event: {fallback_event_type}")
 
                             if alert_triggered and not _should_persist_alert_under_bouncer(suppress_bouncer, severity):
                                 logger.info(
