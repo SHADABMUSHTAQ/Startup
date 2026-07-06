@@ -38,6 +38,7 @@ def verify_admin(api_key: str = Security(api_key_header)):
         raise HTTPException(status_code=403, detail="Forbidden: Invalid Admin Key")
     return api_key
 
+
 class ProvisionRequest(BaseModel):
     company_name: str
     plan_type: str = Field(default="Customized")
@@ -46,6 +47,7 @@ class ProvisionRequest(BaseModel):
     admin_email: EmailStr
     admin_name: str
     admin_password: str
+    retention_days: int = Field(default=90)
 
 class ProvisionResponse(BaseModel):
     tenant_id: str
@@ -78,6 +80,7 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
         "compliance_packs": compliance_packs,
         "max_agents": req.max_agents,
         "agent_limit": req.max_agents,
+        "retention_days": req.retention_days,
         "features": features,
         "created_at": datetime.now(timezone.utc),
         "active": True
@@ -113,6 +116,8 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
         "role": "admin",
         "compliance_packs": compliance_packs,
         "max_agents": req.max_agents,
+        "agent_limit": req.max_agents,
+        "retention_days": req.retention_days,
         "has_active_plan": True,
         "created_at": datetime.now(timezone.utc)
     }
@@ -127,6 +132,7 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
                 pipe.set(f"tenant_plan:{tenant_id}", req.plan_type)
                 pipe.set(f"tenant_features:{tenant_id}", ",".join(features))
                 pipe.set(f"tenant_agent_limit:{tenant_id}", str(req.max_agents))
+                pipe.set(f"tenant_retention:{tenant_id}", str(req.retention_days))
                 await pipe.execute()
 
             await asyncio.wait_for(_sync_cache(), timeout=3)

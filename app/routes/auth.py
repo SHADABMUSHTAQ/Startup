@@ -670,6 +670,8 @@ async def upgrade_plan(
     canonical_plan = normalize_plan_type(data.plan_type)
     resolved_packs = resolve_compliance_packs(canonical_plan, data.compliance_packs)
 
+    retention_days_calc = max(90, data.retention_months * 30)
+
     await db["users"].update_one(
         {"username": secure_username},
         {"$set": {
@@ -678,7 +680,8 @@ async def upgrade_plan(
             "compliance_packs": resolved_packs,
             "endpoints": data.endpoints,
             "storage_gb": data.storage_gb,
-            "retention_months": data.retention_months
+            "retention_months": data.retention_months,
+            "retention_days": retention_days_calc
         }}
     )
 
@@ -698,16 +701,10 @@ async def upgrade_plan(
                     "max_agents": data.endpoints,
                     "storage_gb": data.storage_gb,
                     "retention_months": data.retention_months,
-                },
-                "$setOnInsert": {
-                    "retention_days": resolve_tenant_retention_days(canonical_plan)
-                },
+                    "retention_days": retention_days_calc
+                }
             },
             upsert=True
-        )
-        await db["tenants"].update_one(
-            {"tenant_id": tenant_id, "retention_days": {"$exists": False}},
-            {"$set": {"retention_days": resolve_tenant_retention_days(canonical_plan)}},
         )
         # âœ… MASTER BUILD FIX: Immediate Cache Sync
         redis = request.app.state.redis
@@ -720,6 +717,7 @@ async def upgrade_plan(
             features_str = ",".join(features) if features else "SIEM"
             await redis.set(f"tenant_features:{tenant_id}", features_str)
             await redis.set(f"tenant_agent_limit:{tenant_id}", str(data.endpoints))
+            await redis.set(f"tenant_retention:{tenant_id}", str(retention_days_calc))
 
     tenant_id = db_user.get("tenant_id", "WARSOC_DEFAULT")
     access_token = create_access_token(
