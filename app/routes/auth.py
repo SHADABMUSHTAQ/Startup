@@ -18,6 +18,8 @@ from app.utils.limiter import limiter
 from app.utils.observability import record_auth_fail_closed
 from app.utils.pricing import calculate_package_price
 from app.utils.rbac import RoleChecker
+from app.routes.admin import verify_admin
+from app.utils.security_policy import PLATFORM_MAX_AGENTS, StrongPassword
 
 logger = logging.getLogger("auth")
 
@@ -36,7 +38,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=F
 class UserCreate(BaseModel):
     username: str
     email: EmailStr
-    password: str
+    password: StrongPassword
     full_name: str
     plan_type: Optional[str] = "Free"
     role: Optional[str] = "admin"
@@ -50,7 +52,7 @@ class PlanUpdate(BaseModel):
 class UpgradePlan(BaseModel):
     plan_type: str
     compliance_packs: list[str]
-    endpoints: int = Field(ge=1, le=1000)
+    endpoints: int = Field(ge=1, le=PLATFORM_MAX_AGENTS)
     storage_gb: int = Field(ge=0)
     retention_months: int = Field(ge=0)
     billing_cycle: Optional[str] = "monthly"  # Backend now calculates price based on cycle
@@ -58,8 +60,8 @@ class UpgradePlan(BaseModel):
 
 class InviteUserRequest(BaseModel):
     email: EmailStr
-    password: Optional[str] = None
-    temp_password: Optional[str] = None
+    password: Optional[StrongPassword] = None
+    temp_password: Optional[StrongPassword] = None
     role: str
     allowed_packs: Optional[list[str]] = []
 
@@ -367,6 +369,37 @@ async def verify_agent_token(request: Request, token: str = Depends(oauth2_schem
         if not mapped_tenant or token_tenant != mapped_tenant:
             raise HTTPException(status_code=403, detail="Agent tenant mismatch")
 
+        tenant_active_key = f"tenant_active:{mapped_tenant}"
+        cached_tenant_active = await redis.get(tenant_active_key)
+        if cached_tenant_active is not None:
+            cached_text = _redis_text(cached_tenant_active)
+            if cached_text != "1":
+                raise HTTPException(status_code=403, detail="Tenant subscription is inactive")
+        else:
+            tenant_doc = await db["tenants"].find_one(
+                {"tenant_id": mapped_tenant},
+                {"active": 1, "status": 1, "has_active_plan": 1},
+            )
+            if not tenant_doc:
+                await redis.setex(tenant_active_key, 60, "0")
+                raise HTTPException(status_code=403, detail="Tenant is inactive")
+
+            tenant_status = str(tenant_doc.get("status") or "active").strip().lower()
+            tenant_enabled = (
+                tenant_doc.get("active", True) is not False
+                and tenant_doc.get("has_active_plan", True) is not False
+                and tenant_status not in {"inactive", "suspended", "cancelled", "canceled", "past_due"}
+            )
+            active_user = await db["users"].find_one(
+                {"tenant_id": mapped_tenant, "has_active_plan": True},
+                {"_id": 1},
+            )
+            plan_enabled = bool(active_user or tenant_doc.get("has_active_plan") is True)
+            tenant_allowed = tenant_enabled and plan_enabled
+            await redis.setex(tenant_active_key, 60, "1" if tenant_allowed else "0")
+            if not tenant_allowed:
+                raise HTTPException(status_code=403, detail="Tenant subscription is inactive")
+
         return {
             "agent_id": agent_id,
             "tenant_id": mapped_tenant,
@@ -397,10 +430,12 @@ async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
 
     hashed_password = get_password_hash(user.password)
     new_tenant_id = f"WARSOC_{str(uuid.uuid4())[:8].upper()}"
-    canonical_plan = normalize_plan_type(user.plan_type)
+    # Enterprise, FBR, and PECA access must be provisioned by an admin after a sale.
+    canonical_plan = "Free"
 
-    # ✅ MASTER BUILD: Auto-provision packs based on selected plan
-    packs = resolve_compliance_packs(canonical_plan, user.compliance_packs)
+    # Compliance packs are not granted through public signup.
+    # Public signup remains non-commercial even if ENABLE_SELF_SIGNUP is enabled.
+    packs = []
 
     new_user = {
         "username": user.username,
@@ -411,7 +446,7 @@ async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
         "plan_type": canonical_plan,
         "role": "admin",
         "compliance_packs": packs,
-        "has_active_plan": True if canonical_plan != "Free" else False,
+        "has_active_plan": False,
         "created_at": datetime.now(timezone.utc)
     }
     await db["users"].insert_one(new_user)
@@ -421,7 +456,9 @@ async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
         "company_name": user.full_name,
         "plan": canonical_plan,
         "retention_days": resolve_tenant_retention_days(canonical_plan),
-        "status": "active",
+        "status": "inactive",
+        "active": False,
+        "has_active_plan": False,
         "created_at": datetime.now(timezone.utc)
     }
     await db["tenants"].insert_one(new_tenant)
@@ -664,7 +701,8 @@ async def upgrade_plan(
     data: UpgradePlan,
     db=Depends(get_db),
     current_user=Depends(get_current_user),
-    _: str = Depends(RoleChecker(["admin"]))
+    _role: str = Depends(RoleChecker(["admin"])),
+    _admin_key: str = Depends(verify_admin),
 ):
     secure_username = current_user["username"]
     canonical_plan = normalize_plan_type(data.plan_type)

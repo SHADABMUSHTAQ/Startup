@@ -95,3 +95,48 @@ def test_email_daemon_builds_homepage_contact_messages():
     assert "Please schedule a platform demo." in sales_message.get_content()
     assert confirmation_message["To"] == "ayesha@example.com"
     assert confirmation_message["Subject"] == "We received your WarSOC request"
+
+
+def test_quote_emails_include_archive_request_and_escape_html():
+    sales_message = _build_message(
+        {
+            "type": "sales_quote",
+            "recipient": "sales@example.com",
+            "payload": {
+                "contact_name": "Ayesha Khan",
+                "contact_email": "ayesha@example.com",
+                "company_name": "Northstar Retail",
+                "plan_type": "Custom Platform",
+                "endpoints": 50,
+                "compliance_packs": ["fbr_pos", "peca_forensic"],
+                "billing_cycle": "monthly",
+                "frontend_calculated_total": 145000,
+                "activation_fee": 5000,
+                "backend_initial_payment": 150000,
+                "customization": {"retention_months": 12},
+            },
+        }
+    )
+    confirmation = _build_message(
+        {
+            "type": "sales_quote_confirmation",
+            "recipient": "ayesha@example.com",
+            "payload": {
+                "contact_name": "<script>alert(1)</script>",
+                "company_name": "Northstar Retail",
+                "plan_type": "Custom Platform",
+                "endpoints": 50,
+                "compliance_packs": ["fbr_pos", "peca_forensic"],
+                "billing_cycle": "monthly",
+                "frontend_total": 145000,
+                "customization": {"retention_months": 12},
+            },
+        }
+    )
+
+    assert "Requested General Archive: 12 months" in sales_message.get_content()
+    assert "Calculated MRR: Rs 145000" in sales_message.get_content()
+    html = confirmation.get_body(preferencelist=("html",)).get_content()
+    assert "Requested General Archive:</strong> 12 months" in html
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html

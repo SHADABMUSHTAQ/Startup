@@ -19,7 +19,6 @@ from app.database import ensure_threat_intel_indexes
 from app.utils.siem_logic import SIEMEngine, CorrelationEngine
 from app.utils.siem_catalog import SIEM_RULES
 from app.utils.compliance_catalog import COMPLIANCE_CATALOG
-from app.utils.tenant_cache import get_tenant_retention
 from app.utils.observability import increment_redis_counter, record_worker_heartbeat_with_client
 from app.utils.custom_json import dumps as json_dumps
 from app.actions.alerting import dispatch_alert_if_entitled, is_email_trigger_severity
@@ -42,6 +41,7 @@ SIEM_RAW_READ_BATCH_SIZE = int(os.getenv("SIEM_RAW_READ_BATCH_SIZE", "50"))
 SIEM_COLD_VAULT_BATCH_SIZE = int(os.getenv("SIEM_COLD_VAULT_BATCH_SIZE", "500"))
 SIEM_RECLAIM_INTERVAL_SECONDS = int(os.getenv("SIEM_RECLAIM_INTERVAL_SECONDS", "60"))
 SIEM_THROUGHPUT_LOG_INTERVAL = int(os.getenv("SIEM_THROUGHPUT_LOG_INTERVAL", "1000"))
+SIEM_HOT_RETENTION_DAYS = max(1, min(7, int(os.getenv("SIEM_HOT_RETENTION_DAYS", "7"))))
 
 
 _GENERIC_HIGH_SIGNAL_KEYWORDS = {
@@ -567,9 +567,6 @@ async def siem_worker():
 
                             tenant_id = log_data.get("tenant_id")
 
-                            # 🔍 0. Fetch Configs
-                            retention_days = await get_tenant_retention(redis, tenant_id)
-
                             # 🏷 1. Global Normalization
                             api_now = datetime.now(timezone.utc)
                             log_data["ingested_at"] = api_now.isoformat()
@@ -592,7 +589,7 @@ async def siem_worker():
                             _normalize_document_timestamps(log_data)
                             log_data[RAW_RETENTION_ANCHOR_FIELD] = _build_retention_anchor(
                                 log_data.get("timestamp") or log_data.get("ingested_at"),
-                                retention_days,
+                                SIEM_HOT_RETENTION_DAYS,
                             )
 
                             if is_hot_stream and await _is_siem_hot_done(redis, tenant_id, event_uid):
@@ -638,23 +635,17 @@ async def siem_worker():
                             log_data["source_ip"] = source_ip
                             log_data["user"] = extracted_user
 
-                            if await _is_whitelisted_source(redis, tenant_id, source_ip, extracted_user, siem_engine):
-                                _normalize_document_timestamps(log_data)
-                                log_data[RAW_RETENTION_ANCHOR_FIELD] = _build_retention_anchor(
-                                    log_data.get("timestamp") or log_data.get("ingested_at"),
-                                    retention_days,
-                                )
-                                cold_batch.append(log_data)
-                                cold_ack_ids.append(message_id)
-                                if len(cold_batch) >= SIEM_COLD_VAULT_BATCH_SIZE:
-                                    try:
-                                        await _flush_siem_cold_vault(db, cold_batch)
-                                        ack_ids.extend(cold_ack_ids)
-                                    except Exception as e:
-                                        logger.error(f"[SIEM][DB] whitelisted cold-vault bulk flush failed: {e}")
-                                    cold_batch = []
-                                    cold_ack_ids = []
-                                continue
+                            is_whitelisted_source = await _is_whitelisted_source(
+                                redis,
+                                tenant_id,
+                                source_ip,
+                                extracted_user,
+                                siem_engine,
+                            )
+                            if is_whitelisted_source:
+                                # Whitelists reduce low-signal alert noise; they must not bypass
+                                # threat intel, regex, or correlation engines.
+                                log_data["whitelisted_source"] = True
 
                             # ---- BOUNCER (Alert Sieve) ----
                             # Dampens known noisy event IDs, but never bypasses the detection engines.
@@ -789,14 +780,34 @@ async def siem_worker():
                             fallback_event_type = config.get("event_id_map", {}).get(str(event_id), {}).get("event_type", alert_type).replace("_", " ").title()
                             display_title = title_map.get(alert_type, f"Security Event: {fallback_event_type}")
 
-                            if alert_triggered and not _should_persist_alert_under_bouncer(suppress_bouncer, severity):
+                            whitelist_suppressed = (
+                                is_whitelisted_source
+                                and str(severity or "").upper() not in {"HIGH", "CRITICAL"}
+                            )
+
+                            if alert_triggered and whitelist_suppressed:
+                                logger.info(
+                                    f"[WHITELIST] Suppressed low-severity alert {alert_type} "
+                                    f"for tenant {tenant_id} source={source_ip} user={extracted_user}"
+                                )
+                                await increment_redis_counter(redis, "warsoc_whitelist_suppressed_alerts_total")
+
+                            if (
+                                alert_triggered
+                                and not whitelist_suppressed
+                                and not _should_persist_alert_under_bouncer(suppress_bouncer, severity)
+                            ):
                                 logger.info(
                                     f"[BOUNCER] Suppressed low-severity alert {alert_type} "
                                     f"for event {event_id} tenant {tenant_id}"
                                 )
                                 await increment_redis_counter(redis, "warsoc_bouncer_suppressed_alerts_total")
 
-                            if alert_triggered and _should_persist_alert_under_bouncer(suppress_bouncer, severity):
+                            if (
+                                alert_triggered
+                                and not whitelist_suppressed
+                                and _should_persist_alert_under_bouncer(suppress_bouncer, severity)
+                            ):
                                 alert_payload = {
                                     "tenant_id": tenant_id,
                                     "type": alert_type,
@@ -909,7 +920,7 @@ async def siem_worker():
                             _normalize_document_timestamps(log_data)
                             log_data[RAW_RETENTION_ANCHOR_FIELD] = _build_retention_anchor(
                                     log_data.get("timestamp") or log_data.get("ingested_at"),
-                                    retention_days
+                                    SIEM_HOT_RETENTION_DAYS
                             )
                             cold_batch.append(log_data)
                             cold_ack_ids.append(message_id)

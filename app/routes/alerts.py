@@ -14,6 +14,7 @@ from app.routes.auth import get_current_user
 from app.schemas.alerts import AlertResponse, AlertUpdate, AlertSeverity, AlertStatus
 from app.utils.limiter import limiter
 from app.utils.rbac import RoleChecker
+from app.utils.archive_reader import fetch_archived_documents
 from bson import ObjectId
 import json
 
@@ -88,6 +89,7 @@ async def get_alerts(
     request: Request,
     next_cursor: str | None = Query(None),
     limit: int = Query(50, ge=1, le=500),
+    days: int = Query(7, ge=1, le=365),
     event_uid: str | None = Query(None),
     severity: Optional[str] = Query(None, description="Filter by severity: LOW, MEDIUM, HIGH, CRITICAL"),
     status: Optional[str] = Query(None, description="Filter by status: NEW, ACKNOWLEDGED, CLOSED, FALSE_POSITIVE"),
@@ -104,8 +106,12 @@ async def get_alerts(
     if not tenant_id:
         raise HTTPException(status_code=403, detail="Critical: User lacks tenant assignment.")
 
+    tenant = await db["tenants"].find_one({"tenant_id": tenant_id}, {"retention_days": 1})
+    retention_days = int((tenant or {}).get("retention_days") or days)
+    window_days = min(days, max(1, retention_days))
+
     # Build strictly tenant-scoped query
-    hot_window_start = datetime.now(timezone.utc) - timedelta(days=7)
+    hot_window_start = datetime.now(timezone.utc) - timedelta(days=window_days)
     query = {
         "tenant_id": tenant_id,
         "$and": [
@@ -154,12 +160,43 @@ async def get_alerts(
     # Fetch page
     cursor = db["security_alerts"].find(query).sort([("timestamp", -1), ("_id", -1)]).limit(limit)
     docs = await cursor.to_list(length=limit)
+    hot_next_cursor = str(docs[-1].get("_id")) if docs else None
+    archived_docs = []
+    if not next_cursor:
+        archived_docs, _ = await fetch_archived_documents(
+            db,
+            tenant_id=tenant_id,
+            collections=["security_alerts"],
+            start_dt=hot_window_start,
+            end_dt=None,
+            event_uid=event_uid,
+            limit=limit,
+        )
+        if severity:
+            archived_docs = [
+                doc for doc in archived_docs
+                if str(doc.get("severity", "")).upper() == severity.upper()
+            ]
+        if status:
+            archived_docs = [
+                doc for doc in archived_docs
+                if str(doc.get("status", AlertStatus.NEW.value)).upper() == status.upper()
+            ]
+        total += len(archived_docs)
+
+    if archived_docs:
+        deduped = {str(doc.get("_id")): doc for doc in [*docs, *archived_docs]}
+        docs = sorted(
+            deduped.values(),
+            key=lambda doc: str(doc.get("timestamp") or doc.get("ingested_at") or ""),
+            reverse=True,
+        )[:limit]
 
     # Serialize for frontend consumption
     alerts = [_serialize_alert(doc) for doc in docs]
     alerts = json.loads(json.dumps(alerts, default=_json_serializer))
     
-    new_cursor = alerts[-1].get("_id") if alerts else None
+    new_cursor = hot_next_cursor
 
     return {
         "data": alerts,

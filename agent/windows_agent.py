@@ -833,8 +833,11 @@ def quarantine_pos_audit_line(line, reason, file_path):
         }
         with open(POS_AUDIT_QUARANTINE_PATH, "a", encoding="utf-8") as quarantine:
             quarantine.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+            quarantine.flush()
+            os.fsync(quarantine.fileno())
     except Exception as exc:
         print(f"[WARN] Could not quarantine POS audit line: {exc}")
+        raise SpoolWriteError(f"POS quarantine write failed: {exc}") from exc
 
 def enqueue_payload(payload):
     """Make an outbound event durable before its source cursor can advance."""

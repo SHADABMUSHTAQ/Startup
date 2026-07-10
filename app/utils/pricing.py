@@ -1,6 +1,7 @@
 from dataclasses import asdict, dataclass
 
 from app.utils.tenant_cache import normalize_pack_id
+from app.utils.security_policy import PLATFORM_MAX_AGENTS
 
 
 PRICING_VERSION = "commercial_package_v1"
@@ -48,6 +49,8 @@ def calculate_package_price(
     normalized_packs = normalize_compliance_packs(compliance_packs)
     cycle = normalize_billing_cycle(billing_cycle)
     endpoint_count = max(0, int(endpoints or 0))
+    if endpoint_count < 1 or endpoint_count > PLATFORM_MAX_AGENTS:
+        raise ValueError(f"Endpoint count must be between 1 and {PLATFORM_MAX_AGENTS}")
 
     endpoints_cost = endpoint_count * PRICE_PER_ENDPOINT
     breakdown = {

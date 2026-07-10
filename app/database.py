@@ -201,40 +201,9 @@ async def init_db():
         await ensure_threat_intel_indexes(db_manager.db)
         await ensure_used_provisioning_token_indexes(db_manager.db)
         
-        # Ensure TTL index for forensic retention
-        try:
-            async def _ensure_ttl(coll_name: str, retention_seconds: int, field_name: str = "_retention_ts"):
-                coll = db_manager.db.get_collection(coll_name)
-                idxs = await coll.index_information()
-                
-                # Check for existing TTL indexes and drop conflicting ones
-                for name, info in idxs.items():
-                    if info.get("key") == [(field_name, 1)]:
-                        existing_ttl = info.get("expireAfterSeconds")
-                        if existing_ttl != retention_seconds:
-                            await coll.drop_index(name)
-                            await coll.create_index([(field_name, 1)], expireAfterSeconds=retention_seconds, name=f"idx_{coll_name}_{field_name}")
-                            print(f"    - Recreated TTL index on {coll_name} expireAfterSeconds={retention_seconds}")
-                        else:
-                            print(f"    - TTL index {name} present with {existing_ttl}s on {coll_name}")
-                        break
-                else:
-                    await coll.create_index([(field_name, 1)], expireAfterSeconds=retention_seconds, name=f"idx_{coll_name}_{field_name}")
-                    print(f"    - Created TTL index on {coll_name} expireAfterSeconds={retention_seconds}")
-
-            # 7 days
-            await _ensure_ttl("security_alerts", 604800)
-            
-            # 1 year (Mandated by PECA)
-            await _ensure_ttl("peca_forensic_logs", 31536000)
-            
-            # 6 years (mandated for FBR compliance)
-            await _ensure_ttl("fbr_pos_logs", 189216000)
-            
-            # Hot Logs (7 days)
-            await _ensure_ttl("logs", 604800)
-        except Exception as e:
-            print(f" TTL index setup failed: {e}")
+        # TTL indexes are centralized in app.db.init_db.init_compliance_db.
+        # Do not create retention indexes here; split ownership caused old
+        # _retention_ts TTL indexes to coexist with the current _expire_at model.
 
         print(" MongoDB Indexes Ensured")
 

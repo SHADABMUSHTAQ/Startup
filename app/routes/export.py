@@ -3,9 +3,11 @@ import io
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
+from cryptography.fernet import Fernet
 from app.database import get_db
 from app.routes.auth import require_premium_plan
+from app.config.config import get_settings
 from app.utils.compliance_catalog import COMPLIANCE_CATALOG
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -16,6 +18,7 @@ import json
 import re
 from pathlib import Path
 from app.utils.report_engine import get_reports_base_dir
+from app.utils.archive_reader import fetch_archived_documents
 
 def _load_runtime_config() -> dict:
     config_path = Path(__file__).resolve().parent.parent / "config" / "config.json"
@@ -32,6 +35,20 @@ from pydantic import BaseModel
 from typing import List
 
 router = APIRouter()
+
+_settings = get_settings()
+try:
+    _fernet = Fernet(_settings.encryption_key.encode()) if _settings.encryption_key else None
+except Exception:
+    _fernet = None
+
+_SENSITIVE_COMPLIANCE_FIELDS = (
+    "message",
+    "raw_event",
+    "raw_event_data",
+    "raw_data",
+    "processed_data",
+)
 
 
 _PACK_ALIASES = {
@@ -91,6 +108,28 @@ def _safe_path_segment(value: str) -> str:
     segment = re.sub(r"[^A-Za-z0-9_.-]", "_", segment)
     return segment or "unknown"
 
+
+def _decrypt_export_field(value: Any) -> Any:
+    if not value or not isinstance(value, str) or not _fernet:
+        return value
+    try:
+        plaintext = _fernet.decrypt(value.encode()).decode()
+    except Exception:
+        return value
+    try:
+        return json.loads(plaintext)
+    except Exception:
+        return plaintext
+
+
+def _prepare_csv_export_doc(doc: dict, *, decrypt_sensitive: bool) -> dict:
+    prepared = dict(doc)
+    if decrypt_sensitive:
+        for field in _SENSITIVE_COMPLIANCE_FIELDS:
+            if field in prepared:
+                prepared[field] = _decrypt_export_field(prepared.get(field))
+    return prepared
+
 def _parse_time(time_str: str) -> Optional[datetime]:
     if not time_str:
         return None
@@ -112,6 +151,27 @@ async def csv_generator(cursor, fieldnames):
     buffer.truncate(0)
 
     async for doc in cursor:
+        row = {}
+        for field in fieldnames:
+            value = doc.get(field, "")
+            if isinstance(value, (dict, list)):
+                value = str(value)
+            row[field] = value
+        writer.writerow(row)
+        yield buffer.getvalue().encode("utf-8")
+        buffer.seek(0)
+        buffer.truncate(0)
+
+
+async def csv_list_generator(docs: list[dict], fieldnames):
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    yield buffer.getvalue().encode("utf-8")
+    buffer.seek(0)
+    buffer.truncate(0)
+
+    for doc in docs:
         row = {}
         for field in fieldnames:
             value = doc.get(field, "")
@@ -184,26 +244,51 @@ async def export_csv(
         ]
 
     cursor = collection.find(query).sort("timestamp", -1).limit(limit)
-    preview_cursor = collection.find(query).sort("timestamp", -1).limit(min(limit, 100))
+    hot_docs = await cursor.to_list(length=limit)
+    archived_docs, _ = await fetch_archived_documents(
+        db,
+        tenant_id=tenant_id,
+        collections=[collection_name],
+        start_dt=start_dt,
+        end_dt=end_dt,
+        event_id=None,
+        limit=limit,
+    )
+    export_docs = sorted(
+        [*hot_docs, *archived_docs],
+        key=lambda doc: _parse_time(str(doc.get("timestamp") or doc.get("ingested_at") or "")) or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )[:limit]
+    export_docs = [
+        _prepare_csv_export_doc(doc, decrypt_sensitive=data_type == "compliance")
+        for doc in export_docs
+    ]
 
     fieldnames = set()
-    found_any = False
-    async for doc in preview_cursor:
-        found_any = True
+    for doc in export_docs[:100]:
         fieldnames.update(doc.keys())
 
-    if not found_any:
+    if not export_docs:
         raise HTTPException(status_code=404, detail="No data found for the given criteria.")
 
     # Strip internal fields to prevent data leakage
-    for internal in ["_id", "tenant_id", "_retention_ts", "digital_signature"]:
+    for internal in [
+        "_id",
+        "tenant_id",
+        "_retention_ts",
+        "_expire_at",
+        "_archived",
+        "_source_collection",
+        "_archive_blob_name",
+        "digital_signature",
+    ]:
         fieldnames.discard(internal)
 
     fieldnames = sorted(list(fieldnames))
     filename = f"warsoc_export_{data_type}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
     
     return StreamingResponse(
-        csv_generator(cursor, fieldnames),
+        csv_list_generator(export_docs, fieldnames),
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
@@ -263,22 +348,51 @@ async def export_audit_report(
     # Pull Forensic Logs (Ledger)
     logs_cursor = collection.find(query).sort("timestamp", -1).limit(500)
     forensic_logs = await logs_cursor.to_list(length=500)
+    archived_forensic_logs, _ = await fetch_archived_documents(
+        db,
+        tenant_id=tenant_id,
+        collections=[collection_name],
+        start_dt=start_dt,
+        end_dt=end_dt,
+        event_id=None,
+        limit=500,
+    )
+    forensic_logs = sorted(
+        [*forensic_logs, *archived_forensic_logs],
+        key=lambda doc: _parse_time(str(doc.get("timestamp") or doc.get("ingested_at") or "")) or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )[:500]
 
     # Pull Alert Summary (Scorecard)
+    pack_alert_filters = [
+        {"pack_id": normalized_id},
+        {"pack": normalized_id},
+        {"compliance_pack": normalized_id},
+        {"required_pack": normalized_id},
+    ]
     alerts_query = {
         "tenant_id": tenant_id,
-        "$or": [
-            {"pack_id": normalized_id},
-            {"pack": normalized_id},
-            {"compliance_pack": normalized_id},
-            {"required_pack": normalized_id},
-        ],
+        "$and": [{"$or": pack_alert_filters}],
     }
-    if start_dt or end_dt:
-        alerts_query["timestamp"] = query["timestamp"]
+    if (start_dt or end_dt) and "$or" in query:
+        alerts_query["$and"].append({"$or": query["$or"]})
     
     alerts_cursor = alerts_coll.find(alerts_query)
     all_alerts = await alerts_cursor.to_list(length=5000)
+    archived_alerts, _ = await fetch_archived_documents(
+        db,
+        tenant_id=tenant_id,
+        collections=["security_alerts"],
+        start_dt=start_dt,
+        end_dt=end_dt,
+        event_id=None,
+        limit=5000,
+    )
+    archived_alerts = [
+        alert for alert in archived_alerts
+        if any(str(alert.get(field) or "") == normalized_id for field in ("pack_id", "pack", "compliance_pack", "required_pack"))
+    ]
+    all_alerts.extend(archived_alerts)
     
     # Aggregate Alert Counts
     alert_counts = {}

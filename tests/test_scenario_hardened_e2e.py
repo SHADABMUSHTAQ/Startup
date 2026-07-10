@@ -12,7 +12,7 @@ async def test_scenario_admin_provisioning_forces_admin_role(async_client: Async
     # 1. Attempt malicious signup
     payload = {
         "username": "scenario_user",
-        "password": "Password123!",
+        "password": "Password123!Secure",
         "email": "scenario@example.com",
         "full_name": "Scenario Tenant",
         "plan_type": "Free",
@@ -33,7 +33,7 @@ async def test_scenario_admin_provisioning_forces_admin_role(async_client: Async
     # 2. Login to verify the role assigned
     login = await async_client.post(
         "/api/v1/auth/login",
-        json={"username": "scenario_user", "password": "Password123!"},
+        json={"username": "scenario_user", "password": "Password123!Secure"},
         headers={"X-Forwarded-For": "192.168.1.100"}
     )
     assert login.status_code == 200

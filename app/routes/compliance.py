@@ -12,6 +12,7 @@ from app.config.config import get_settings
 from app.database import get_db
 from app.routes.auth import get_current_user, require_premium_plan
 from app.utils.rbac import RoleChecker
+from app.utils.archive_reader import fetch_archived_documents
 
 settings = get_settings()
 try:
@@ -50,6 +51,27 @@ async def csv_generator(cursor, fieldnames):
     buffer.truncate(0)
 
     async for doc in cursor:
+        row = {}
+        for field in fieldnames:
+            value = doc.get(field, "")
+            if isinstance(value, (dict, list)):
+                value = str(value)
+            row[field] = value
+        writer.writerow(row)
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+
+async def csv_list_generator(docs: list[dict], fieldnames):
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    yield buffer.getvalue()
+    buffer.seek(0)
+    buffer.truncate(0)
+
+    for doc in docs:
         row = {}
         for field in fieldnames:
             value = doc.get(field, "")
@@ -244,6 +266,28 @@ async def _fetch_docs_page(
     ]).skip(skip).limit(limit)
     docs = await cursor.to_list(length=limit)
     return docs, total
+
+
+async def _fetch_archived_page(
+    db,
+    tenant_id: str,
+    collection_names: list[str],
+    start_dt: Optional[datetime],
+    end_dt: Optional[datetime],
+    event_id: Optional[str],
+    skip: int,
+    limit: int,
+):
+    archived_docs, archived_total = await fetch_archived_documents(
+        db,
+        tenant_id=tenant_id,
+        collections=collection_names,
+        start_dt=start_dt,
+        end_dt=end_dt,
+        event_id=event_id,
+        limit=skip + limit,
+    )
+    return archived_docs[skip: skip + limit], archived_total
 
 
 def _paginate(items: list, skip: int, limit: int):
@@ -642,6 +686,22 @@ async def get_compliance_evidence(
         curated_doc = _curate_evidence_record(doc, source, origin)
         curated.append(curated_doc)
 
+    archived_docs, archived_total = await fetch_archived_documents(
+        db,
+        tenant_id=tenant_id,
+        collections=collections_to_query,
+        start_dt=start_dt,
+        end_dt=end_dt,
+        event_id=event_id,
+        limit=limit,
+    )
+    for doc in archived_docs:
+        origin = doc.get("_source_collection") or doc.get("_archive_collection") or "archived"
+        source = "peca_forensic" if origin == "peca_forensic_logs" else "fbr_pos"
+        curated.append(_curate_evidence_record(doc, source, origin))
+    total += archived_total
+    curated = sorted(curated, key=_event_sort_key, reverse=True)[:limit]
+
     response = {
         "status": "success",
         "data": curated,
@@ -716,6 +776,21 @@ async def get_compliance_evidence_by_pack(
             limit=limit,
         )
 
+    archived_collection = "peca_forensic_logs" if normalized_pack == "peca_forensic" else "fbr_pos_logs"
+    archived_docs, archived_total = await _fetch_archived_page(
+        db,
+        tenant_id,
+        [archived_collection],
+        start_dt,
+        end_dt,
+        event_id,
+        skip=0,
+        limit=limit,
+    )
+    if archived_docs:
+        docs = sorted([*docs, *archived_docs], key=_event_sort_key, reverse=True)[:limit]
+        total += archived_total
+
     curated = _apply_pack_curation(docs, normalized_pack, origin)
 
     response = {
@@ -769,19 +844,32 @@ async def export_compliance_evidence(
         if end_dt: query["timestamp"]["$lte"] = end_dt
 
     cursor = collection.find(query).sort("timestamp", -1).limit(limit)
+    hot_docs = await cursor.to_list(length=limit)
+    archived_docs, _ = await fetch_archived_documents(
+        db,
+        tenant_id=tenant_id,
+        collections=[collection_name],
+        start_dt=start_dt,
+        end_dt=end_dt,
+        event_id=None,
+        limit=limit,
+    )
+    export_docs = sorted([*hot_docs, *archived_docs], key=_event_sort_key, reverse=True)[:limit]
 
-    doc = await collection.find_one(query)
-    if doc:
-        fieldnames = list(doc.keys())
-        if "_id" in fieldnames: fieldnames.remove("_id")
-        if "tenant_id" in fieldnames: fieldnames.remove("tenant_id")
+    if export_docs:
+        fieldnames = set()
+        for doc in export_docs[:100]:
+            fieldnames.update(doc.keys())
+        for internal in ("_id", "tenant_id", "_retention_ts", "_expire_at", "_archived", "_source_collection", "_archive_blob_name"):
+            fieldnames.discard(internal)
+        fieldnames = sorted(fieldnames)
     else:
         fieldnames = ["timestamp", "event_id", "severity", "message"]
 
     filename = f"{type}_compliance_export_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
 
     return StreamingResponse(
-        csv_generator(cursor, fieldnames),
+        csv_list_generator(export_docs, fieldnames),
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )

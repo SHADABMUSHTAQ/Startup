@@ -8,6 +8,7 @@ import json
 import asyncio
 from cryptography.fernet import Fernet
 from app.config.config import get_settings
+from app.utils.archive_reader import fetch_archived_documents
 
 # 📊 MASTER BUILD: Logs Gateway
 # Strictly Decoupled, Paginated, and Tenant-Isolated
@@ -47,6 +48,7 @@ async def get_logs_master(
     pack: str | None = Query(None),
     event_uid: str | None = Query(None),
     next_cursor: str | None = Query(None),
+    days: int = Query(7, ge=1, le=365),
     limit: int = Query(100, ge=1, le=500),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
@@ -67,8 +69,11 @@ async def get_logs_master(
             detail="Auditors may access entitled compliance evidence only.",
         )
 
+    tenant = await db["tenants"].find_one({"tenant_id": tenant_id}, {"retention_days": 1})
+    retention_days = int((tenant or {}).get("retention_days") or days)
+
     #  Enterprise Isolation Query
-    hot_window_start = datetime.now(timezone.utc) - timedelta(days=7)
+    hot_window_start = datetime.now(timezone.utc) - timedelta(days=min(days, max(1, retention_days)))
 
     query = {"tenant_id": tenant_id}
     if event_uid:
@@ -98,6 +103,9 @@ async def get_logs_master(
     #  LAZY LOADING: Exclude the heavy raw string for O(1) ingestion speed
     projection = {
         "raw_event_data": 0,
+        "raw_event": 0,
+        "raw_data": 0,
+        "processed_data": 0,
         RAW_RETENTION_ANCHOR_FIELD: 0,
         "_expire_at": 0,
     }
@@ -176,6 +184,25 @@ async def get_logs_master(
     # ⚡ Paginated Fetch (Meta-only)
     cursor = collection.find(query, projection).sort([("timestamp", -1), ("_id", -1)]).limit(limit)
     logs_raw = await cursor.to_list(length=limit)
+    if source == "compliance":
+        archived_docs, archived_total = await fetch_archived_documents(
+            db,
+            tenant_id=tenant_id,
+            collections=[collection.name],
+            event_uid=event_uid,
+            limit=limit,
+        )
+        if archived_docs:
+            for doc in archived_docs:
+                for field, include in projection.items():
+                    if include == 0:
+                        doc.pop(field, None)
+            logs_raw = sorted(
+                [*logs_raw, *archived_docs],
+                key=lambda doc: str(doc.get("timestamp") or doc.get("ingested_at") or ""),
+                reverse=True,
+            )[:limit]
+            total += archived_total
 
     # Manual BSON -> JSON serialization (offloaded to thread to avoid blocking event loop)
     logs_data = await asyncio.to_thread(
@@ -217,6 +244,15 @@ async def get_forensic_evidence(
         doc = await db.peca_forensic_logs.find_one({"_id": log_obj_id, "tenant_id": tenant_id})
     if not doc:
         doc = await db.fbr_pos_logs.find_one({"_id": log_obj_id, "tenant_id": tenant_id})
+    if not doc:
+        archived_docs, _ = await fetch_archived_documents(
+            db,
+            tenant_id=tenant_id,
+            collections=["siem_cold_vault", "peca_forensic_logs", "fbr_pos_logs"],
+            document_id=log_id,
+            limit=1,
+        )
+        doc = archived_docs[0] if archived_docs else None
 
     if not doc:
         raise HTTPException(status_code=404, detail="Forensic evidence purged or inaccessible")

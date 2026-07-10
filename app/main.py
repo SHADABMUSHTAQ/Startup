@@ -5,6 +5,7 @@ import uuid
 import ipaddress
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 import redis.asyncio as aioredis
@@ -63,10 +64,17 @@ class MemoryLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, threshold: float = 0.85):
         super().__init__(app)
         self.threshold = threshold
+        self.cache_seconds = float(os.getenv("MEMORY_CHECK_CACHE_SECONDS", "1.0"))
+        self._last_check_at = 0.0
+        self._last_memory_percent = 0.0
 
     async def dispatch(self, request: Request, call_next):
         try:
-            memory_percent = psutil.virtual_memory().percent / 100.0
+            now = time.monotonic()
+            if now - self._last_check_at >= self.cache_seconds:
+                self._last_memory_percent = psutil.virtual_memory().percent / 100.0
+                self._last_check_at = now
+            memory_percent = self._last_memory_percent
         except Exception:
             return JSONResponse(status_code=503, content={"detail": "Service unavailable: memory pressure check failed"})
 
@@ -424,11 +432,20 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.middleware("http")
 async def memory_debug_middleware(request: Request, call_next):
-    try:
-        mem = psutil.virtual_memory().percent
-    except Exception as e:
-        mem = None
-    logger.debug(f"[Memory Debug] env={settings.environment} mem_percent={mem}")
+    if logger.isEnabledFor(logging.DEBUG):
+        now = time.monotonic()
+        last_check = getattr(app.state, "_memory_debug_last_check", 0.0)
+        if now - last_check >= 5.0:
+            try:
+                app.state._memory_debug_percent = psutil.virtual_memory().percent
+            except Exception:
+                app.state._memory_debug_percent = None
+            app.state._memory_debug_last_check = now
+        logger.debug(
+            "[Memory Debug] env=%s mem_percent=%s",
+            settings.environment,
+            getattr(app.state, "_memory_debug_percent", None),
+        )
     return await call_next(request)
 
 # ==========================================

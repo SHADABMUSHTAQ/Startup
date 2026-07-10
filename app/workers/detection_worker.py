@@ -14,6 +14,7 @@ siem_worker.py or run as a standalone consumer.
 import logging
 import os
 import socket
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -174,16 +175,20 @@ async def detect_brute_force(
     # Tenant-isolated Redis key
     redis_key = f"brute_force:{tenant_id}:{username}"
 
-    # Atomic pipeline: INCR + EXPIRE in a single network round-trip.
-    # If the key is new, INCR creates it at 1 and EXPIRE sets the 5-min window.
-    # If the key exists, INCR bumps the count and EXPIRE refreshes the window.
+    now_ms = int(time.time() * 1000)
+    window_start_ms = now_ms - (BRUTE_FORCE_WINDOW_SECONDS * 1000)
+    member = f"{now_ms}:{uuid.uuid4().hex}:{ip_address}"
+
+    # True rolling window: remove entries older than 5 minutes before counting.
+    # This prevents slow attacks from stretching a fixed TTL into a fake window.
     async with redis_client.pipeline(transaction=True) as pipe:
-        pipe.incr(redis_key)
-        pipe.expire(redis_key, BRUTE_FORCE_WINDOW_SECONDS)
+        pipe.zadd(redis_key, {member: now_ms})
+        pipe.zremrangebyscore(redis_key, 0, window_start_ms)
+        pipe.zcard(redis_key)
+        pipe.expire(redis_key, BRUTE_FORCE_WINDOW_SECONDS + 60)
         results = await pipe.execute()
 
-    # results[0] = current count after INCR
-    current_count = results[0]
+    current_count = int(results[2])
 
     if current_count < BRUTE_FORCE_THRESHOLD:
         return None

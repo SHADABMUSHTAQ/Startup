@@ -51,6 +51,14 @@ COMPLIANCE_VAULT_RETENTION_DAYS = {
     collection_name: int(COMPLIANCE_CATALOG[pack_name]["retention"]["vault_days"])
     for collection_name, pack_name in COMPLIANCE_PACK_BY_COLLECTION.items()
 }
+DEFAULT_SIEM_HOT_RETENTION_DAYS = max(1, min(7, int(os.getenv("SIEM_HOT_RETENTION_DAYS", "7"))))
+DEFAULT_RAW_LOG_HOT_RETENTION_DAYS = max(1, min(7, int(os.getenv("RAW_LOG_HOT_RETENTION_DAYS", "7"))))
+HOT_RETENTION_DAYS_BY_COLLECTION = {
+    **COMPLIANCE_HOT_RETENTION_DAYS,
+    "siem_cold_vault": DEFAULT_SIEM_HOT_RETENTION_DAYS,
+    "security_alerts": DEFAULT_SIEM_HOT_RETENTION_DAYS,
+    "logs": DEFAULT_RAW_LOG_HOT_RETENTION_DAYS,
+}
 
 
 def _parse_archive_collections() -> tuple[str, ...]:
@@ -68,6 +76,18 @@ def _json_default(value):
     return str(value)
 
 
+def _coerce_archive_datetime(value):
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
 def _date_clauses(field_name: str, retention_cutoff: datetime, expiry_cutoff: datetime) -> list[dict]:
     cutoff = expiry_cutoff if field_name in EXPLICIT_EXPIRY_FIELDS else retention_cutoff
     return [
@@ -78,9 +98,9 @@ def _date_clauses(field_name: str, retention_cutoff: datetime, expiry_cutoff: da
 
 def _effective_retention_days(collection_name: str, tenant_retention_days: int) -> int:
     """Return Mongo hot-retention, not the total Azure compliance-retention period."""
-    compliance_hot_days = COMPLIANCE_HOT_RETENTION_DAYS.get(collection_name)
-    if compliance_hot_days is not None:
-        return compliance_hot_days
+    fixed_hot_days = HOT_RETENTION_DAYS_BY_COLLECTION.get(collection_name)
+    if fixed_hot_days is not None:
+        return max(1, fixed_hot_days)
     return max(1, tenant_retention_days)
 
 
@@ -115,7 +135,23 @@ def _blob_base_name(tenant_id: str, collection_name: str, run_id: str, batch_num
     )
 
 
-async def _archive_batch(container_client, db, tenant_id: str, collection_name: str, docs: list[dict], run_id: str, batch_number: int):
+def _effective_vault_retention_days(collection_name: str, tenant_retention_days: int) -> int:
+    compliance_vault_days = COMPLIANCE_VAULT_RETENTION_DAYS.get(collection_name)
+    if compliance_vault_days is not None:
+        return max(1, compliance_vault_days)
+    return max(1, tenant_retention_days)
+
+
+async def _archive_batch(
+    container_client,
+    db,
+    tenant_id: str,
+    collection_name: str,
+    docs: list[dict],
+    run_id: str,
+    batch_number: int,
+    tenant_retention_days: int,
+):
     document_ids = [doc["_id"] for doc in docs if "_id" in doc]
     if not document_ids:
         return 0
@@ -126,7 +162,7 @@ async def _archive_batch(container_client, db, tenant_id: str, collection_name: 
     base_name = _blob_base_name(tenant_id, collection_name, run_id, batch_number)
     json_blob_name = f"{base_name}.json"
     hash_blob_name = f"{base_name}.sha256"
-    vault_retention_days = COMPLIANCE_VAULT_RETENTION_DAYS.get(collection_name)
+    vault_retention_days = _effective_vault_retention_days(collection_name, tenant_retention_days)
     retain_until = (
         datetime.now(timezone.utc) + timedelta(days=vault_retention_days)
         if vault_retention_days
@@ -148,6 +184,10 @@ async def _archive_batch(container_client, db, tenant_id: str, collection_name: 
     await hash_blob.upload_blob(sha256_hash.encode("utf-8"), overwrite=False)
 
     timestamps = [doc.get("timestamp") or doc.get("ingested_at") or doc.get("uploaded_at") for doc in docs]
+    parsed_timestamps = [timestamp for timestamp in map(_coerce_archive_datetime, timestamps) if timestamp]
+    event_ids = sorted({str(doc.get("event_id")) for doc in docs if doc.get("event_id") is not None})
+    event_uids = sorted({str(doc.get("event_uid")) for doc in docs if doc.get("event_uid")})
+    alert_uids = sorted({str(doc.get("alert_uid")) for doc in docs if doc.get("alert_uid")})
     archive_doc = {
         "tenant_id": tenant_id,
         "collection": collection_name,
@@ -159,6 +199,11 @@ async def _archive_batch(container_client, db, tenant_id: str, collection_name: 
         "last_document_id": str(document_ids[-1]),
         "oldest_timestamp": min((str(ts) for ts in timestamps if ts is not None), default=None),
         "newest_timestamp": max((str(ts) for ts in timestamps if ts is not None), default=None),
+        "oldest_at": min(parsed_timestamps) if parsed_timestamps else None,
+        "newest_at": max(parsed_timestamps) if parsed_timestamps else None,
+        "event_ids": event_ids,
+        "event_uids": event_uids,
+        "alert_uids": alert_uids,
         "vault_retention_days": vault_retention_days,
         "retain_until": retain_until,
         "created_at": datetime.now(timezone.utc),
@@ -238,7 +283,16 @@ async def run_archiver():
                         break
 
                     try:
-                        await _archive_batch(container_client, db, tenant_id, collection_name, docs, run_id, batch_number)
+                        await _archive_batch(
+                            container_client,
+                            db,
+                            tenant_id,
+                            collection_name,
+                            docs,
+                            run_id,
+                            batch_number,
+                            retention_days,
+                        )
                     except Exception as exc:
                         logger.error(
                             "Failed to archive %s for tenant %s. Records were not deleted. Error: %s",

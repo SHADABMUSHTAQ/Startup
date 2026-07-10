@@ -17,10 +17,31 @@ from app.routes.auth import get_current_user
 from app.config.config import get_settings
 from app.utils.rbac import RoleChecker
 from app.utils.limiter import limiter
+from app.utils.security_policy import effective_agent_limit
 
 
 router = APIRouter()
 settings = get_settings()
+
+
+ACTIVE_AGENT_QUERY = {"status": {"$nin": ["inactive", "revoked"]}}
+
+
+async def _database_active_agent_count(db, tenant_id: str) -> int:
+    return int(await db["agents"].count_documents({"tenant_id": tenant_id, **ACTIVE_AGENT_QUERY}))
+
+
+async def _sync_active_count_floor(redis_client, count_key: str, database_count: int) -> int:
+    script = """
+    local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+    local floor = tonumber(ARGV[1])
+    if current < floor then
+        current = floor
+        redis.call('SET', KEYS[1], current)
+    end
+    return current
+    """
+    return int(await redis_client.eval(script, 1, count_key, int(database_count)))
 
 class ActivationResponse(BaseModel):
     activation_code: str
@@ -159,9 +180,10 @@ async def generate_activation(
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
         
-    limit = tenant.get("max_agents", tenant.get("agent_limit", 10))
-    
-    current_count = int(await redis_client.get(f"tenant:{tenant_id}:active_count") or 0)
+    limit = effective_agent_limit(tenant.get("max_agents", tenant.get("agent_limit", 10)))
+    count_key = f"tenant:{tenant_id}:active_count"
+    database_count = await _database_active_agent_count(db, tenant_id)
+    current_count = await _sync_active_count_floor(redis_client, count_key, database_count)
     if current_count >= limit:
         raise HTTPException(
             status_code=403, 
@@ -215,14 +237,23 @@ async def register_agent(
     tenant = await db["tenants"].find_one({"tenant_id": tenant_id})
     if not tenant:
         raise HTTPException(status_code=401, detail="Activation code is not bound to an active tenant")
-    limit = tenant.get("max_agents", tenant.get("agent_limit", 10))
+    if tenant.get("active") is False or str(tenant.get("status") or "active").lower() != "active":
+        raise HTTPException(status_code=401, detail="Activation code is not bound to an active tenant")
+    limit = effective_agent_limit(tenant.get("max_agents", tenant.get("agent_limit", 10)))
+    database_count = await _database_active_agent_count(db, tenant_id)
     
     lua_script = """
     local current_count = tonumber(redis.call('GET', KEYS[1]) or '0')
     local limit = tonumber(ARGV[1])
+    local database_count = tonumber(ARGV[2])
+
+    if current_count < database_count then
+        current_count = database_count
+        redis.call('SET', KEYS[1], current_count)
+    end
 
     if current_count < limit then
-        redis.call('INCR', KEYS[1])
+        redis.call('SET', KEYS[1], current_count + 1)
         return 1
     else
         return 0
@@ -230,7 +261,7 @@ async def register_agent(
     """
     
     count_key = f"tenant:{tenant_id}:active_count"
-    success = await redis_client.eval(lua_script, 1, count_key, limit)
+    success = await redis_client.eval(lua_script, 1, count_key, limit, database_count)
     if not success:
         raise HTTPException(
             status_code=403, 

@@ -134,3 +134,54 @@ async def test_activation_code_is_atomically_single_use_under_concurrency(
     assert await db["agents"].count_documents({"tenant_id": tenant_id}) == 1
     assert await redis_client.get(f"tenant:{tenant_id}:active_count") == "1"
     assert await redis_client.get(f"warsoc:activation:{activation_code}") is None
+
+
+async def test_database_count_prevents_redis_restart_from_bypassing_50_agent_cap(
+    async_client,
+    db,
+    redis_client,
+):
+    tenant_id = "WARSOC_DB_FLOOR_50"
+    activation_code = "WARSOC-DBFLOOR"
+    now = datetime.now(timezone.utc)
+    await db["tenants"].insert_one(
+        {
+            "tenant_id": tenant_id,
+            "company_name": "Database Floor Contract",
+            "plan_type": "Enterprise",
+            "status": "active",
+            "active": True,
+            "max_agents": 100,
+            "agent_limit": 100,
+            "created_at": now,
+        }
+    )
+    await db["agents"].insert_many(
+        [
+            {
+                "tenant_id": tenant_id,
+                "agent_id": f"WARSOC_EXISTING_{index}",
+                "status": "active",
+                "public_key": "existing",
+            }
+            for index in range(50)
+        ]
+    )
+    await redis_client.delete(f"tenant:{tenant_id}:active_count")
+    await redis_client.set(
+        f"warsoc:activation:{activation_code}",
+        json.dumps({"tenant_id": tenant_id, "features": "SIEM"}),
+    )
+
+    response = await async_client.post(
+        "/api/v1/agent/register",
+        json={
+            "activation_code": activation_code,
+            "public_key": _ed25519_public_key_pem(),
+        },
+    )
+
+    assert response.status_code == 403
+    assert "license limit (50)" in response.json()["detail"]
+    assert await redis_client.get(f"tenant:{tenant_id}:active_count") == "50"
+    assert await db["agents"].count_documents({"tenant_id": tenant_id}) == 50

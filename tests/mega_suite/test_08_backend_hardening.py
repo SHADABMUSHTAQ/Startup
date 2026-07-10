@@ -8,6 +8,7 @@ agent-only ingestion, and export redaction.
 import asyncio
 import io
 import json
+import os
 import secrets
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -41,7 +42,7 @@ async def _signup_and_login(
     client,
     username: str,
     *,
-    password: str = "Password123!",
+    password: str = "Password123!Secure",
     plan_type: str = "Free",
     role: str = "admin",
     compliance_packs: list[str] | None = None,
@@ -55,8 +56,25 @@ async def _signup_and_login(
         "role": role,
         "compliance_packs": compliance_packs or [],
     }
-    signup = await client.post("/api/v1/auth/signup", json=payload)
-    assert signup.status_code == 201, signup.text
+    if plan_type == "Free":
+        account_response = await client.post("/api/v1/auth/signup", json=payload)
+        assert account_response.status_code == 201, account_response.text
+    else:
+        account_response = await client.post(
+            "/api/v1/admin/provision",
+            headers={"X-Admin-Key": os.environ["SUPER_ADMIN_API_KEY"]},
+            json={
+                "company_name": f"{username} Tenant",
+                "plan_type": plan_type,
+                "compliance_packs": compliance_packs or [],
+                "max_agents": 50,
+                "admin_email": payload["email"],
+                "admin_name": payload["full_name"],
+                "admin_password": password,
+                "retention_days": 90,
+            },
+        )
+        assert account_response.status_code == 200, account_response.text
 
     login = await client.post(
         "/api/v1/auth/login",
@@ -70,7 +88,7 @@ async def _signup_and_login(
     headers = {"x-csrf-token": csrf_token}
     me = await client.get("/api/v1/auth/me", headers=headers)
     assert me.status_code == 200, me.text
-    return headers, me.json()["user"], signup.json()
+    return headers, me.json()["user"], account_response.json()
 
 
 def _ed25519_public_key_pem() -> str:
@@ -117,7 +135,7 @@ def _live_agent_payload(agent_id: str, *, timestamp: str | None = None, event_id
 
 
 async def test_signup_persists_hashed_user_tenant_and_plan_cache(client, db, redis_client):
-    password = "Password123!"
+    password = "Password123!Secure"
     payload = {
         "username": "hardening_signup",
         "password": password,
@@ -131,19 +149,21 @@ async def test_signup_persists_hashed_user_tenant_and_plan_cache(client, db, red
     assert resp.status_code == 201, resp.text
     body = resp.json()
     tenant_id = body["tenant_id"]
-    assert body["plan"] == "Professional"
+    assert body["plan"] == "Free"
 
     user = await db["users"].find_one({"username": payload["username"]})
     assert user is not None
     assert user["tenant_id"] == tenant_id
-    assert user["plan_type"] == "Professional"
-    assert user["has_active_plan"] is True
+    assert user["plan_type"] == "Free"
+    assert user["has_active_plan"] is False
     assert user["hashed_password"] != password
     assert "password" not in user
 
     tenant = await db["tenants"].find_one({"tenant_id": tenant_id})
     assert tenant is not None
-    assert tenant["plan"] == "Professional"
+    assert tenant["plan"] == "Free"
+    assert tenant["active"] is False
+    assert tenant["status"] == "inactive"
     assert tenant["retention_days"] == 90
 
 
@@ -161,6 +181,28 @@ async def test_auth_me_redacts_sensitive_fields(client):
     assert "hashed_password" not in user
     assert "current_jti" not in user
     assert "token_exp" not in user
+
+
+async def test_tenant_admin_cannot_self_activate_paid_plan(client, db):
+    headers, user, _ = await _signup_and_login(client, "hardening_no_self_upgrade")
+
+    response = await client.post(
+        "/api/v1/auth/upgrade",
+        headers=headers,
+        json={
+            "plan_type": "Professional",
+            "compliance_packs": ["fbr_pos", "peca_forensic"],
+            "endpoints": 50,
+            "storage_gb": 100,
+            "retention_months": 12,
+            "billing_cycle": "monthly",
+        },
+    )
+
+    assert response.status_code in {401, 403}
+    stored = await db["users"].find_one({"username": user["username"]})
+    assert stored["plan_type"] == "Free"
+    assert stored["has_active_plan"] is False
 
 
 async def test_user_token_must_match_database_tenant(client):

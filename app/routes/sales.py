@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Request, Depends, HTTPException
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from datetime import datetime, timezone
 import json
 import logging
@@ -9,20 +9,40 @@ from typing import Literal
 from app.database import get_db
 from app.utils.limiter import limiter
 from app.utils.pricing import calculate_package_price
+from app.utils.security_policy import PLATFORM_MAX_AGENTS
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+class QuoteCustomization(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    endpoints: int | None = Field(default=None, ge=10, le=PLATFORM_MAX_AGENTS)
+    retentionMonths: int = Field(default=0, ge=0, le=72)
+
+    def normalized(self, fallback_endpoints: int) -> dict:
+        retention_months = int(self.retentionMonths or 0)
+        return {
+            "endpoints": int(self.endpoints or fallback_endpoints),
+            "retention_months": retention_months,
+            "retention_days": retention_months * 30,
+            "cold_archive_requested": retention_months > 0,
+        }
+
+
 class QuoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     contact_name: str
     contact_email: EmailStr
     contact_phone: str | None = None
     company_name: str
     plan_type: str
-    endpoints: int = Field(ge=10, le=1000)
+    endpoints: int = Field(ge=10, le=PLATFORM_MAX_AGENTS)
     compliance_packs: list[str]
     billing_cycle: str
     frontend_calculated_total: float
+    customization: QuoteCustomization = Field(default_factory=QuoteCustomization)
 
 
 class ContactRequest(BaseModel):
@@ -55,6 +75,7 @@ async def request_quote(
         compliance_packs=data.compliance_packs,
         billing_cycle=data.billing_cycle,
     )
+    customization = data.customization.normalized(fallback_endpoints=data.endpoints)
     
     # 2. Build the structured Lead Document
     lead_doc = {
@@ -73,6 +94,9 @@ async def request_quote(
         "backend_initial_payment": price.initial_payment,
         "backend_yearly_value": price.yearly_value,
         "price_breakdown": price.breakdown,
+        "customization": customization,
+        "requested_retention_months": customization["retention_months"],
+        "requested_retention_days": customization["retention_days"],
         "status": "pending_sales_call",
         "created_at": datetime.now(timezone.utc)
     }
@@ -105,7 +129,8 @@ async def request_quote(
             "endpoints": data.endpoints,
             "compliance_packs": price.compliance_packs,
             "billing_cycle": price.billing_cycle,
-            "frontend_total": data.frontend_calculated_total
+            "frontend_total": data.frontend_calculated_total,
+            "customization": customization,
         }
     }
 

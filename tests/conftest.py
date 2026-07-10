@@ -33,6 +33,7 @@ if _test_redis_url == _runtime_redis_url:
     raise RuntimeError("Pytest Redis URL must differ from the runtime Redis URL")
 os.environ["REDIS_URL"] = _test_redis_url
 os.environ["ENABLE_SELF_SIGNUP"] = "true"
+os.environ.setdefault("SUPER_ADMIN_API_KEY", "warsoc-test-super-admin-key-2026")
 
 import pytest
 import pytest_asyncio
@@ -183,7 +184,7 @@ async def _provision_mock_tenant(db, redis, *, tenant_suffix: str, plan_type: st
         "username": f"{tenant_suffix.lower()}_admin",
         "email": f"{tenant_suffix.lower()}_admin@example.com",
         "full_name": f"{tenant_suffix} Admin",
-        "hashed_password": get_password_hash("Password123!"),
+        "hashed_password": get_password_hash("Password123!Secure"),
         "tenant_id": tenant_id,
         "plan_type": plan_type,
         "role": "admin",
@@ -226,7 +227,7 @@ async def _provision_mock_tenant(db, redis, *, tenant_suffix: str, plan_type: st
         "private_key_pem": signing_key.to_pem().decode("utf-8"),
         "agent_jwt": agent_jwt,
         "username": user_doc["username"],
-        "password": "Password123!",
+        "password": "Password123!Secure",
         "plan_type": plan_type,
     }
 
@@ -302,7 +303,7 @@ async def auth_headers(async_client):
     """Create test user and return auth headers."""
     payload = {
         "username": "test_integ_user",
-        "password": "Password123!",
+        "password": "Password123!Secure",
         "email": "test_integ@example.com",
         "full_name": "Integration Tester",
         "plan_type": "Free",

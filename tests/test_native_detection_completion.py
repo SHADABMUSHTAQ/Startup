@@ -563,6 +563,26 @@ def test_native_spool_failure_cannot_advance_watermark(monkeypatch, tmp_path):
     assert previous_watermark == 99
 
 
+def test_pos_quarantine_is_durable_and_fails_closed(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    fsync_calls = []
+    monkeypatch.setattr(agent.os, "fsync", lambda descriptor: fsync_calls.append(descriptor))
+
+    agent.quarantine_pos_audit_line("not-json", "invalid JSON", "pos_audit.log")
+
+    assert fsync_calls
+    quarantined = agent.POS_AUDIT_QUARANTINE_PATH.read_text(encoding="utf-8")
+    assert "not-json" in quarantined
+    assert "invalid JSON" in quarantined
+
+    def fail_fsync(_descriptor):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(agent.os, "fsync", fail_fsync)
+    with pytest.raises(agent.SpoolWriteError):
+        agent.quarantine_pos_audit_line("still-bad", "invalid JSON", "pos_audit.log")
+
+
 def test_shipped_runtime_contains_no_sysmon_references():
     paths = [ROOT / "installer.iss", ROOT / "build_agent.bat"]
     for runtime_root in (ROOT / "agent", ROOT / "app", ROOT / "deploy"):

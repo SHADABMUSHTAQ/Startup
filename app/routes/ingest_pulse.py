@@ -14,6 +14,7 @@ import redis.asyncio as aioredis
 from ipaddress import ip_address, ip_network
 from app.config.config import get_settings, load_config
 from app.utils.siem_catalog import SIEM_RULES
+from app.utils.security_policy import effective_agent_limit
 
 from app.database import get_db
 #  Secures the Dashboard endpoints below
@@ -31,6 +32,10 @@ RAW_RETENTION_ANCHOR_FIELD = "_retention_ts"
 STATUS_KEY_PREFIX = "status"
 STATUS_TTL_SECONDS = 86400
 MAX_INGEST_BODY_BYTES = 5 * 1024 * 1024
+DEFAULT_AGENT_LIMIT_FOR_QUOTA = 10
+DEFAULT_DAILY_INGEST_BYTES_PER_AGENT = int(os.getenv("INGEST_DAILY_BYTES_PER_AGENT", str(250 * 1024 * 1024)))
+DEFAULT_DAILY_INGEST_BYTES_FLOOR = int(os.getenv("INGEST_DAILY_BYTES_FLOOR", str(1024 * 1024 * 1024)))
+INGEST_DAILY_QUOTA_TTL_SECONDS = int(os.getenv("INGEST_DAILY_QUOTA_TTL_SECONDS", str(3 * 24 * 60 * 60)))
 
 _GENERIC_HIGH_SIGNAL_KEYWORDS = {
     "../",
@@ -208,6 +213,89 @@ async def _read_json_body_with_limit(request: Request, max_bytes: int = MAX_INGE
         raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
 
 
+def _redis_text(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _positive_int(value, default: int = 0) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+async def _resolve_daily_ingest_quota_bytes(redis_client, tenant_id: str) -> int:
+    tenant_override = _redis_text(await redis_client.get(f"tenant_ingest_quota_bytes:{tenant_id}"))
+    override_quota = _positive_int(tenant_override)
+    if override_quota:
+        return override_quota
+
+    cached_limit = _redis_text(await redis_client.get(f"tenant_agent_limit:{tenant_id}"))
+    agent_limit = effective_agent_limit(
+        _positive_int(cached_limit, DEFAULT_AGENT_LIMIT_FOR_QUOTA),
+        DEFAULT_AGENT_LIMIT_FOR_QUOTA,
+    )
+    return max(
+        DEFAULT_DAILY_INGEST_BYTES_FLOOR,
+        agent_limit * max(1, DEFAULT_DAILY_INGEST_BYTES_PER_AGENT),
+    )
+
+
+async def _enforce_daily_ingest_quota(redis_client, tenant_id: str, payload_bytes: int) -> None:
+    if payload_bytes <= 0:
+        return
+
+    try:
+        quota_bytes = await _resolve_daily_ingest_quota_bytes(redis_client, tenant_id)
+        day_bucket = datetime.now(timezone.utc).strftime("%Y%m%d")
+        quota_key = f"warsoc:ingest:bytes:{tenant_id}:{day_bucket}"
+        script = """
+local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+local increment = tonumber(ARGV[1])
+local limit = tonumber(ARGV[2])
+if current + increment > limit then
+  return {0, current, limit}
+end
+local updated = redis.call('INCRBY', KEYS[1], increment)
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
+return {1, updated, limit}
+"""
+        result = await redis_client.eval(
+            script,
+            1,
+            quota_key,
+            int(payload_bytes),
+            int(quota_bytes),
+            int(INGEST_DAILY_QUOTA_TTL_SECONDS),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Tenant ingest quota check failed for %s: %s", tenant_id, exc)
+        raise HTTPException(status_code=503, detail="Ingest quota service unavailable") from exc
+
+    allowed = int(result[0]) if result else 0
+    if allowed != 1:
+        used = int(result[1]) if len(result) > 1 else 0
+        quota = int(result[2]) if len(result) > 2 else 0
+        logger.warning(
+            "Tenant daily ingest quota exceeded: tenant=%s used=%s quota=%s attempted=%s",
+            tenant_id,
+            used,
+            quota,
+            payload_bytes,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail="Tenant daily ingest quota exceeded. Contact WarSOC support to raise the contracted ingest limit.",
+        )
+
+
 def _classify_clock_integrity(
     timestamp_str: str,
     skew_warning_seconds: int,
@@ -376,6 +464,7 @@ async def ingest_pulse_logs(
         #  THE INGESTION THROTTLE: Handled by Depends(redis_ingest_rate_limit) middleware
 
         raw_payload = await _read_json_body_with_limit(request)
+        raw_payload_bytes = len(orjson.dumps(raw_payload))
 
         raw_events = await _consume_agent_ingest_envelope(
             raw_payload,
@@ -383,6 +472,11 @@ async def ingest_pulse_logs(
             redis_client,
         )
         original_raw_payload = raw_payload
+        await _enforce_daily_ingest_quota(
+            redis_client,
+            verified_tenant_id,
+            raw_payload_bytes,
+        )
 
         sanitized_payloads = _normalize_stream_payloads(raw_events, agent_context)
 

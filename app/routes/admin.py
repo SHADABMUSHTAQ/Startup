@@ -13,6 +13,7 @@ from passlib.context import CryptContext
 from app.database import get_db
 from app.utils.limiter import limiter
 from app.utils.tenant_cache import normalize_pack_id
+from app.utils.security_policy import PLATFORM_MAX_AGENTS, StrongPassword
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -43,11 +44,12 @@ class ProvisionRequest(BaseModel):
     company_name: str
     plan_type: str = Field(default="Customized")
     compliance_packs: list[str] = Field(default_factory=list)
-    max_agents: int = Field(default=10, ge=1)
+    max_agents: int = Field(default=10, ge=1, le=PLATFORM_MAX_AGENTS)
     admin_email: EmailStr
     admin_name: str
-    admin_password: str
-    retention_days: int = Field(default=90)
+    admin_password: StrongPassword
+    retention_days: int = Field(default=90, ge=1, le=2190)
+    daily_ingest_quota_bytes: int | None = Field(default=None, ge=1)
 
 class ProvisionResponse(BaseModel):
     tenant_id: str
@@ -81,9 +83,12 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
         "max_agents": req.max_agents,
         "agent_limit": req.max_agents,
         "retention_days": req.retention_days,
+        "daily_ingest_quota_bytes": req.daily_ingest_quota_bytes,
         "features": features,
         "created_at": datetime.now(timezone.utc),
-        "active": True
+        "active": True,
+        "status": "active",
+        "has_active_plan": True,
     }
     await db["tenants"].insert_one(tenant_doc)
     
@@ -118,6 +123,7 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
         "max_agents": req.max_agents,
         "agent_limit": req.max_agents,
         "retention_days": req.retention_days,
+        "daily_ingest_quota_bytes": req.daily_ingest_quota_bytes,
         "has_active_plan": True,
         "created_at": datetime.now(timezone.utc)
     }
@@ -133,6 +139,9 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
                 pipe.set(f"tenant_features:{tenant_id}", ",".join(features))
                 pipe.set(f"tenant_agent_limit:{tenant_id}", str(req.max_agents))
                 pipe.set(f"tenant_retention:{tenant_id}", str(req.retention_days))
+                pipe.setex(f"tenant_active:{tenant_id}", 60, "1")
+                if req.daily_ingest_quota_bytes:
+                    pipe.set(f"tenant_ingest_quota_bytes:{tenant_id}", str(req.daily_ingest_quota_bytes))
                 await pipe.execute()
 
             await asyncio.wait_for(_sync_cache(), timeout=3)
