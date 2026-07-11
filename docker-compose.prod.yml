@@ -285,6 +285,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      - /var/cache/nginx
       - /var/run
     networks:
       warsoc-internal:
