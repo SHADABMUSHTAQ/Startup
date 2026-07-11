@@ -62,7 +62,7 @@ def main() -> int:
         "/api/v1/admin/provision",
         {
             "company_name": f"Native 50 Agent Soak {run_id}",
-            "plan_type": "Enterprise",
+            "plan_type": "Customized",
             "compliance_packs": ["fbr_pos", "peca_forensic"],
             "max_agents": 50,
             "admin_email": admin_email,

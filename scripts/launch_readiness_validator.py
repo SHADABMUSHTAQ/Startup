@@ -231,7 +231,7 @@ class Validator:
             "email": self.unique_email("rogue"),
             "password": "RoguePass123!",
             "full_name": "Rogue Signup",
-            "plan_type": "Enterprise",
+            "plan_type": "Customized",
             "compliance_packs": ["fbr_pos", "peca_forensic"],
             "role": "admin",
         }
@@ -272,7 +272,7 @@ class Validator:
             "/api/v1/admin/provision",
             {
                 "company_name": "Launch Validation Tenant",
-                "plan_type": "Enterprise",
+                "plan_type": "Customized",
                 "compliance_packs": ["fbr_pos", "peca_forensic"],
                 "max_agents": 15,
                 "admin_email": admin_email,

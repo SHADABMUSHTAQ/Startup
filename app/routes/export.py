@@ -198,9 +198,10 @@ async def export_csv(
     Dynamically generates CSV reports for SIEM alerts, raw logs, or compliance evidence.
     Restricted to Professional and Enterprise tiers via require_premium_plan.
     """
-    tenant_id = _safe_path_segment(current_user.get("tenant_id"))
-    if not tenant_id:
+    raw_tenant_id = current_user.get("tenant_id")
+    if not raw_tenant_id:
         raise HTTPException(status_code=403, detail="Unauthorized")
+    tenant_id = _safe_path_segment(raw_tenant_id)
 
     role = str(current_user.get("role") or "").strip().lower()
     if data_type == "alerts":
@@ -307,9 +308,10 @@ async def export_audit_report(
     The source PECA records can carry RSA-PSS signatures. The generated PDF is
     a summary artifact and is not itself digitally signed.
     """
-    tenant_id = _safe_path_segment(current_user.get("tenant_id"))
-    if not tenant_id:
+    raw_tenant_id = current_user.get("tenant_id")
+    if not raw_tenant_id:
         raise HTTPException(status_code=403, detail="Unauthorized")
+    tenant_id = _safe_path_segment(raw_tenant_id)
     if str(current_user.get("role") or "").strip().lower() not in {"admin", "auditor"}:
         raise HTTPException(status_code=403, detail="Role is not permitted to export compliance evidence")
 

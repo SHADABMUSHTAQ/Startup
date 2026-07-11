@@ -113,13 +113,13 @@ def _build_message(job: dict) -> EmailMessage:
         total = escape(str(payload.get("frontend_total", 0)))
         customization = payload.get("customization") if isinstance(payload.get("customization"), dict) else {}
         retention_months = escape(str(customization.get("retention_months", customization.get("retentionMonths", 0))))
-        subject = f"Your Custom WarSOC Enterprise Quote - {company}"
+        subject = f"Your Custom WarSOC Quote - {company}"
         html_body = f"""
         <html>
             <body style="font-family: Arial, sans-serif; color: #333;">
                 <h2 style="color: #0056b3;">WarSOC Security Operations</h2>
                 <p>Dear {contact_name},</p>
-                <p>Thank you for requesting a custom quote for <strong>WarSOC Enterprise ({plan} Tier)</strong>.</p>
+                <p>Thank you for requesting a custom WarSOC deployment quote for <strong>{plan}</strong>.</p>
                 <p>We have successfully received your requested architecture details:</p>
                 <ul>
                     <li><strong>Endpoints:</strong> {endpoints}</li>
@@ -128,7 +128,7 @@ def _build_message(job: dict) -> EmailMessage:
                     <li><strong>Billing Cycle:</strong> {billing.title()}</li>
                     <li><strong>Estimated Total:</strong> Rs {total}</li>
                 </ul>
-                <p>A member of our elite WarSOC deployment team will be contacting you shortly to finalize your network requirements and provide your official B2B contract.</p>
+                <p>A member of the WarSOC deployment team will contact you shortly to finalize your network requirements and provide your official B2B contract.</p>
                 <br/>
                 <p>Securely yours,<br/><strong>WarSOC Deployments</strong></p>
             </body>

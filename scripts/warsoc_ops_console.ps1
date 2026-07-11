@@ -1,5 +1,6 @@
 param(
-    [string]$DefaultApiBase = "https://api.warsoc.tech/api/v1"
+    [string]$DefaultApiBase = "https://api.warsoc.tech/api/v1",
+    [switch]$SelfTest
 )
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -8,6 +9,21 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 $ErrorActionPreference = "Stop"
+
+function New-Point {
+    param([int]$X, [int]$Y)
+    return New-Object System.Drawing.Point -ArgumentList $X, $Y
+}
+
+function New-Size {
+    param([int]$Width, [int]$Height)
+    return New-Object System.Drawing.Size -ArgumentList $Width, $Height
+}
+
+function New-Font {
+    param([string]$Name, [float]$Size)
+    return New-Object System.Drawing.Font -ArgumentList $Name, $Size
+}
 
 function Normalize-ApiBase {
     param([string]$Value)
@@ -72,11 +88,11 @@ function Get-ErrorMessage {
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "WarSOC Ops Provisioning"
-$form.Size = New-Object System.Drawing.Size(760, 680)
+$form.Size = New-Size 760 680
 $form.StartPosition = "CenterScreen"
-$form.MinimumSize = New-Object System.Drawing.Size(760, 680)
+$form.MinimumSize = New-Size 760 680
 
-$font = New-Object System.Drawing.Font("Segoe UI", 9)
+$font = New-Font "Segoe UI" 9
 $form.Font = $font
 
 $y = 18
@@ -84,8 +100,8 @@ function Add-Label {
     param([string]$Text, [int]$Top)
     $label = New-Object System.Windows.Forms.Label
     $label.Text = $Text
-    $label.Location = New-Object System.Drawing.Point(18, $Top)
-    $label.Size = New-Object System.Drawing.Size(170, 24)
+    $label.Location = New-Point 18 $Top
+    $label.Size = New-Size 170 24
     $form.Controls.Add($label)
     return $label
 }
@@ -93,8 +109,8 @@ function Add-Label {
 function Add-TextBox {
     param([int]$Top, [string]$Text = "", [bool]$Masked = $false)
     $box = New-Object System.Windows.Forms.TextBox
-    $box.Location = New-Object System.Drawing.Point(195, $Top)
-    $box.Size = New-Object System.Drawing.Size(520, 24)
+    $box.Location = New-Point 195 $Top
+    $box.Size = New-Size 520 24
     $box.Text = $Text
     if ($Masked) { $box.UseSystemPasswordChar = $true }
     $form.Controls.Add($box)
@@ -113,35 +129,30 @@ Add-Label "Company name" $y | Out-Null
 $companyBox = Add-TextBox $y "Customer Company"
 $y += 34
 
-Add-Label "Plan type" $y | Out-Null
-$planBox = New-Object System.Windows.Forms.ComboBox
-$planBox.Location = New-Object System.Drawing.Point(195, $y)
-$planBox.Size = New-Object System.Drawing.Size(220, 24)
-$planBox.DropDownStyle = "DropDownList"
-[void]$planBox.Items.AddRange(@("Enterprise", "Professional", "Customized", "15_AGENT_FBR_PECA"))
-$planBox.SelectedIndex = 0
-$form.Controls.Add($planBox)
+Add-Label "Contract type" $y | Out-Null
+$contractBox = Add-TextBox $y "Customized"
+$contractBox.ReadOnly = $true
 $y += 34
 
 Add-Label "Compliance packs" $y | Out-Null
 $fbrCheck = New-Object System.Windows.Forms.CheckBox
 $fbrCheck.Text = "FBR POS"
 $fbrCheck.Checked = $true
-$fbrCheck.Location = New-Object System.Drawing.Point(195, $y)
-$fbrCheck.Size = New-Object System.Drawing.Size(100, 24)
+$fbrCheck.Location = New-Point 195 $y
+$fbrCheck.Size = New-Size 100 24
 $form.Controls.Add($fbrCheck)
 $pecaCheck = New-Object System.Windows.Forms.CheckBox
 $pecaCheck.Text = "PECA Forensic"
 $pecaCheck.Checked = $true
-$pecaCheck.Location = New-Object System.Drawing.Point(315, $y)
-$pecaCheck.Size = New-Object System.Drawing.Size(130, 24)
+$pecaCheck.Location = New-Point 315 $y
+$pecaCheck.Size = New-Size 130 24
 $form.Controls.Add($pecaCheck)
 $y += 34
 
 Add-Label "Max agents" $y | Out-Null
 $agentsBox = New-Object System.Windows.Forms.NumericUpDown
-$agentsBox.Location = New-Object System.Drawing.Point(195, $y)
-$agentsBox.Size = New-Object System.Drawing.Size(100, 24)
+$agentsBox.Location = New-Point 195 $y
+$agentsBox.Size = New-Size 100 24
 $agentsBox.Minimum = 1
 $agentsBox.Maximum = 50
 $agentsBox.Value = 15
@@ -150,31 +161,31 @@ $y += 34
 
 Add-Label "Retention days" $y | Out-Null
 $retentionBox = New-Object System.Windows.Forms.NumericUpDown
-$retentionBox.Location = New-Object System.Drawing.Point(195, $y)
-$retentionBox.Size = New-Object System.Drawing.Size(100, 24)
+$retentionBox.Location = New-Point 195 $y
+$retentionBox.Size = New-Size 100 24
 $retentionBox.Minimum = 1
 $retentionBox.Maximum = 2190
 $retentionBox.Value = 90
 $form.Controls.Add($retentionBox)
 $retentionHint = New-Object System.Windows.Forms.Label
-$retentionHint.Text = "FBR vault evidence is retained by compliance policy; this is tenant default/archive setting."
-$retentionHint.Location = New-Object System.Drawing.Point(310, $y + 2)
-$retentionHint.Size = New-Object System.Drawing.Size(420, 24)
+$retentionHint.Text = "Tenant default. Policy vault: FBR 2190 days, PECA 365 days."
+$retentionHint.Location = New-Point 310 ($y + 2)
+$retentionHint.Size = New-Size 420 24
 $form.Controls.Add($retentionHint)
 $y += 34
 
 Add-Label "Daily quota GiB" $y | Out-Null
 $quotaBox = New-Object System.Windows.Forms.NumericUpDown
-$quotaBox.Location = New-Object System.Drawing.Point(195, $y)
-$quotaBox.Size = New-Object System.Drawing.Size(100, 24)
+$quotaBox.Location = New-Point 195 $y
+$quotaBox.Size = New-Size 100 24
 $quotaBox.Minimum = 0
 $quotaBox.Maximum = 500
 $quotaBox.Value = 0
 $form.Controls.Add($quotaBox)
 $quotaHint = New-Object System.Windows.Forms.Label
 $quotaHint.Text = "0 = backend default. Use a number only for a specific contract."
-$quotaHint.Location = New-Object System.Drawing.Point(310, $y + 2)
-$quotaHint.Size = New-Object System.Drawing.Size(360, 24)
+$quotaHint.Location = New-Point 310 ($y + 2)
+$quotaHint.Size = New-Size 360 24
 $form.Controls.Add($quotaHint)
 $y += 34
 
@@ -190,37 +201,37 @@ Add-Label "Admin password" $y | Out-Null
 $passwordBox = Add-TextBox $y "" $true
 $generateButton = New-Object System.Windows.Forms.Button
 $generateButton.Text = "Generate"
-$generateButton.Location = New-Object System.Drawing.Point(610, $y - 1)
-$generateButton.Size = New-Object System.Drawing.Size(105, 27)
+$generateButton.Location = New-Point 610 ($y - 1)
+$generateButton.Size = New-Size 105 27
 $form.Controls.Add($generateButton)
 $y += 44
 
 $provisionButton = New-Object System.Windows.Forms.Button
 $provisionButton.Text = "Provision Tenant"
-$provisionButton.Location = New-Object System.Drawing.Point(195, $y)
-$provisionButton.Size = New-Object System.Drawing.Size(140, 32)
+$provisionButton.Location = New-Point 195 $y
+$provisionButton.Size = New-Size 140 32
 $form.Controls.Add($provisionButton)
 
 $listButton = New-Object System.Windows.Forms.Button
 $listButton.Text = "List Tenants"
-$listButton.Location = New-Object System.Drawing.Point(345, $y)
-$listButton.Size = New-Object System.Drawing.Size(110, 32)
+$listButton.Location = New-Point 345 $y
+$listButton.Size = New-Size 110 32
 $form.Controls.Add($listButton)
 
 $clearButton = New-Object System.Windows.Forms.Button
 $clearButton.Text = "Clear"
-$clearButton.Location = New-Object System.Drawing.Point(465, $y)
-$clearButton.Size = New-Object System.Drawing.Size(85, 32)
+$clearButton.Location = New-Point 465 $y
+$clearButton.Size = New-Size 85 32
 $form.Controls.Add($clearButton)
 $y += 44
 
 $outputBox = New-Object System.Windows.Forms.TextBox
-$outputBox.Location = New-Object System.Drawing.Point(18, $y)
-$outputBox.Size = New-Object System.Drawing.Size(700, 210)
+$outputBox.Location = New-Point 18 $y
+$outputBox.Size = New-Size 700 210
 $outputBox.Multiline = $true
 $outputBox.ScrollBars = "Vertical"
 $outputBox.ReadOnly = $true
-$outputBox.Font = New-Object System.Drawing.Font("Consolas", 9)
+$outputBox.Font = New-Font "Consolas" 9
 $form.Controls.Add($outputBox)
 
 function Write-OutputBox {
@@ -270,7 +281,7 @@ $provisionButton.Add_Click({
 
         $body = @{
             company_name = $companyBox.Text.Trim()
-            plan_type = $planBox.SelectedItem.ToString()
+            plan_type = "Customized"
             compliance_packs = @($packs)
             max_agents = [int]$agentsBox.Value
             retention_days = [int]$retentionBox.Value
@@ -303,5 +314,10 @@ $provisionButton.Add_Click({
         Write-OutputBox ("ERROR: " + (Get-ErrorMessage $_))
     }
 })
+
+if ($SelfTest) {
+    Write-Output "WarSOC ops console self-test OK. Controls created: $($form.Controls.Count)"
+    return
+}
 
 [void]$form.ShowDialog()

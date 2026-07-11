@@ -52,26 +52,37 @@ Run this on the WarSOC operator machine:
 powershell -ExecutionPolicy Bypass -File .\scripts\warsoc_ops_console.ps1
 ```
 
+To validate the GUI loads before opening it:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\warsoc_ops_console.ps1 -SelfTest
+```
+
 The GUI asks for:
 
 - production API URL
 - `SUPER_ADMIN_API_KEY`
 - company name
-- plan type
+- custom contract type
 - compliance packs
 - max agents, capped at 50
 - retention days
 - optional daily quota
 - customer admin email/name/password
 
+Retention days is the custom tenant default/archive setting. Compliance vault retention is policy-driven:
+
+- FBR POS evidence: 2190 days
+- PECA forensic evidence: 365 days
+
 The tool does not store the super-admin key or customer password on disk.
 
-## Standard 15-Agent FBR + PECA Customer
+## 15-Agent Custom FBR + PECA Customer
 
 Use:
 
 ```text
-Plan type: Enterprise
+Contract type: Customized
 Compliance packs: FBR POS + PECA Forensic
 Max agents: 15
 Retention days: 90 unless contract says otherwise
@@ -84,12 +95,12 @@ The generated customer admin logs in at:
 https://warsoc.tech
 ```
 
-## Standard 50-Agent Customer
+## 50-Agent Custom Customer
 
 Use:
 
 ```text
-Plan type: Enterprise
+Contract type: Customized
 Compliance packs: FBR POS + PECA Forensic
 Max agents: 50
 Retention days: contract value

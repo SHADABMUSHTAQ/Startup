@@ -735,7 +735,7 @@ async def get_compliance_evidence_by_pack(
 
     plan_type = current_user.get("plan_type", "Free")
     if plan_type.lower() in ["free", "basic", "trial", "starter"]:
-        raise HTTPException(status_code=403, detail="Compliance evidence vault access requires Professional or Enterprise tier. Please upgrade.")
+        raise HTTPException(status_code=403, detail="Compliance evidence vault access requires an active WarSOC custom contract entitlement.")
 
     info_message = None
     if skip > 10000:

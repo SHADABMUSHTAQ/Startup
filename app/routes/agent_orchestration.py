@@ -187,7 +187,7 @@ async def generate_activation(
     if current_count >= limit:
         raise HTTPException(
             status_code=403, 
-            detail=f"Agent license limit ({limit}) reached. Please upgrade to deploy more agents."
+            detail=f"Agent contract limit ({limit}) reached. Contact WarSOC operations to increase the contracted agent limit."
         )
 
     alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"

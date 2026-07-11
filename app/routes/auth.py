@@ -258,10 +258,10 @@ async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)
 async def require_premium_plan(current_user: dict = Depends(get_current_user)):
     """RBAC Entitlement Checker for Premium features."""
     plan_type = current_user.get("plan_type", "Free").lower()
-    if plan_type in ["free", "basic", "trial", "starter"]:
+    if current_user.get("has_active_plan") is False or plan_type in ["free", "basic", "trial", "starter"]:
         raise HTTPException(
             status_code=403,
-            detail="This feature requires a Professional or Enterprise tier. Please upgrade."
+            detail="This feature requires an active WarSOC custom contract entitlement."
         )
     return current_user
 
@@ -650,6 +650,11 @@ async def update_plan(
     current_user=Depends(get_current_user),
     _: str = Depends(RoleChecker(["admin"]))
 ):
+    raise HTTPException(
+        status_code=403,
+        detail="Contract and compliance-pack changes are handled through WarSOC operations provisioning.",
+    )
+
     secure_username = current_user["username"]
     canonical_plan = normalize_plan_type(data.plan_name)
 
@@ -695,7 +700,7 @@ async def update_plan(
             await redis.set(f"tenant_features:{tenant_id}", features_str)
 
 @router.post("/upgrade")
-@audit_log("Enterprise Upgrade")
+@audit_log("Contract Update")
 async def upgrade_plan(
     request: Request,
     data: UpgradePlan,
@@ -704,6 +709,11 @@ async def upgrade_plan(
     _role: str = Depends(RoleChecker(["admin"])),
     _admin_key: str = Depends(verify_admin),
 ):
+    raise HTTPException(
+        status_code=403,
+        detail="Contract changes are handled through WarSOC operations provisioning and manual invoice approval.",
+    )
+
     secure_username = current_user["username"]
     canonical_plan = normalize_plan_type(data.plan_type)
     resolved_packs = resolve_compliance_packs(canonical_plan, data.compliance_packs)
@@ -845,7 +855,7 @@ async def invite_user(
         raise HTTPException(status_code=500, detail="Current admin lacks a valid tenant context.")
 
     packs = payload.allowed_packs if payload.role == "auditor" else ["internal_full"]
-    packs = resolve_compliance_packs(current_user.get("plan_type", "Professional"), packs)
+    packs = resolve_compliance_packs(current_user.get("plan_type", "Customized"), packs)
 
     new_user = {
         "username": f'{payload.email.split("@")[0]}-{str(uuid.uuid4())[:4]}',
@@ -853,7 +863,7 @@ async def invite_user(
         "full_name": payload.email.split("@")[0],
         "hashed_password": hashed_password,
         "tenant_id": tenant_id,
-        "plan_type": current_user.get("plan_type", "Professional"),
+        "plan_type": current_user.get("plan_type", "Customized"),
         "role": payload.role,
         "compliance_packs": packs,
         "has_active_plan": True,
