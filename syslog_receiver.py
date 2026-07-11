@@ -22,6 +22,7 @@ Environment Variables:
 """
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
@@ -40,6 +41,8 @@ REDIS_PORT       = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_PASSWORD   = os.getenv("REDIS_PASSWORD", None)
 REDIS_TLS        = os.getenv("REDIS_TLS", "false").lower() in ("true", "1", "yes")
 TENANT_ID        = os.getenv("NETWORK_TENANT_ID", "WARSOC_NETWORK")
+APP_ENV          = os.getenv("APP_ENV", "development").strip().lower()
+SYSLOG_ALLOWED_SOURCES_RAW = os.getenv("SYSLOG_ALLOWED_SOURCES", "")
 SYSLOG_PORT      = int(os.getenv("SYSLOG_PORT", "5140"))
 DRAIN_BATCH_SIZE = int(os.getenv("DRAIN_BATCH_SIZE", "50"))
 DRAIN_INTERVAL   = int(os.getenv("DRAIN_INTERVAL_MS", "100")) / 1000.0
@@ -48,6 +51,32 @@ RAW_LOGS_QUEUE       = "raw_logs_queue"
 RAW_LOGS_QUEUE_MAXLEN = 100000
 BUFFER_MAX           = 50_000
 AGENT_ID             = "syslog_receiver"
+
+
+def parse_allowed_source_networks(raw_value: str) -> tuple:
+    networks = []
+    for raw_entry in str(raw_value or "").split(","):
+        entry = raw_entry.strip()
+        if not entry:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError as exc:
+            raise RuntimeError(f"Invalid SYSLOG_ALLOWED_SOURCES entry: {entry}") from exc
+    return tuple(networks)
+
+
+ALLOWED_SOURCE_NETWORKS = parse_allowed_source_networks(SYSLOG_ALLOWED_SOURCES_RAW)
+
+
+def source_is_allowed(source_ip: str, allowed_networks=ALLOWED_SOURCE_NETWORKS) -> bool:
+    if not allowed_networks:
+        return APP_ENV != "production"
+    try:
+        address = ipaddress.ip_address(str(source_ip))
+    except ValueError:
+        return False
+    return any(address in network for network in allowed_networks)
 
 # ─── Logging ─────────────────────────────────────────────────────
 logging.basicConfig(
@@ -251,6 +280,7 @@ class SyslogUDPProtocol(asyncio.DatagramProtocol):
         self._queue = queue
         self._received = 0
         self._dropped = 0
+        self._unauthorized = 0
 
     def connection_made(self, transport):
         self._transport = transport
@@ -258,6 +288,17 @@ class SyslogUDPProtocol(asyncio.DatagramProtocol):
 
     def datagram_received(self, data: bytes, addr: tuple):
         self._received += 1
+
+        sender_ip = addr[0] if addr else ""
+        if not source_is_allowed(sender_ip):
+            self._unauthorized += 1
+            if self._unauthorized % 100 == 1:
+                logger.warning(
+                    "Rejected syslog from non-allowlisted source %s (total rejected: %s)",
+                    sender_ip or "unknown",
+                    self._unauthorized,
+                )
+            return
 
         try:
             raw = data.decode("utf-8", errors="replace").strip()
@@ -414,8 +455,9 @@ async def stats_reporter(queue: asyncio.Queue, protocol_ref: list):
         proto = protocol_ref[0] if protocol_ref else None
         received = proto._received if proto else 0
         dropped = proto._dropped if proto else 0
+        unauthorized = proto._unauthorized if proto else 0
         logger.info(
-            f"[STATS] received={received} | dropped={dropped} | "
+            f"[STATS] received={received} | dropped={dropped} | unauthorized={unauthorized} | "
             f"queue={queue.qsize()}/{BUFFER_MAX} | "
             f"drop_rate={dropped/max(received,1)*100:.2f}%"
         )
@@ -425,6 +467,15 @@ async def stats_reporter(queue: asyncio.Queue, protocol_ref: list):
 #  MAIN
 # ═══════════════════════════════════════════════════════════════════
 async def main():
+    if APP_ENV == "production":
+        if TENANT_ID == "WARSOC_NETWORK":
+            raise RuntimeError(
+                "NETWORK_TENANT_ID must identify the contracted tenant when network syslog is enabled."
+            )
+        if not ALLOWED_SOURCE_NETWORKS:
+            raise RuntimeError(
+                "SYSLOG_ALLOWED_SOURCES must contain at least one IP/CIDR in production."
+            )
     logger.info("╔══════════════════════════════════════════════════╗")
     logger.info("║   WARSOC TIER 2 — SYSLOG RECEIVER ONLINE       ║")
     logger.info("╚══════════════════════════════════════════════════╝")

@@ -6,19 +6,17 @@ from app.main import app as fastapi_app
 import uuid
 import time
 import json
-from ecdsa import SigningKey, SECP256k1
-import hashlib
+from cryptography.hazmat.primitives import serialization
 from app.database import db_manager
 from app.workers.peca_worker import peca_worker
+from tests.helpers import ed25519_keypair_pem, provision_and_login_admin
 
 def _now_iso():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
 
 def _http_event(event_id, event_uid, tenant_id, agent_id, message, source_ip, private_key_pem, user=None):
-    from ecdsa import SigningKey, SECP256k1
-    import hashlib
-    sk = SigningKey.from_pem(private_key_pem)
+    sk = serialization.load_pem_private_key(private_key_pem.encode("ascii"), password=None)
     
     payload = {
         "event_id": event_id,
@@ -34,7 +32,7 @@ def _http_event(event_id, event_uid, tenant_id, agent_id, message, source_ip, pr
         payload["user"] = user
     
     payload_str = json.dumps(payload, sort_keys=True)
-    signature = sk.sign_deterministic(payload_str.encode("utf-8"), hashfunc=hashlib.sha256).hex()
+    signature = sk.sign(payload_str.encode("utf-8")).hex()
     
     payload["agent_signature"] = signature
     return payload
@@ -43,36 +41,13 @@ def _http_event(event_id, event_uid, tenant_id, agent_id, message, source_ip, pr
 async def test_peca_deep_dive():
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fastapi_app), base_url="http://testserver/api/v1", timeout=30.0) as client:
         # 1. Setup Tenant and Agent
-        username = f"peca_tester_{uuid.uuid4().hex[:8]}"
-        password = "SuperSecretPassword123!"
-        
-        signup_resp = await client.post("/auth/signup", json={
-            "email": f"{username}@example.com",
-            "username": username,
-            "password": password,
-            "full_name": "PECA Tester",
-            "company_name": "PECA Deep Dive Corp"
-        })
-        assert signup_resp.status_code == 201
-        
-        login_resp = await client.post("/auth/login", json={
-            "username": username,
-            "password": password
-        })
-        assert login_resp.status_code == 200
-        
-        user_token = login_resp.cookies.get("warsoc_token")
-        csrf_token = login_resp.cookies.get("csrf_token")
-        client.cookies.set("warsoc_token", user_token)
-        client.cookies.set("csrf_token", csrf_token)
-        client.headers.update({"x-csrf-token": csrf_token})
-        
-        tenant_id = signup_resp.json()["tenant_id"]
+        session = await provision_and_login_admin(client, "peca_tester", api_prefix="")
+        user_token = session["token"]
+        csrf_token = session["csrf_token"]
+        tenant_id = session["tenant_id"]
 
         # Register Agent
-        sk = SigningKey.generate(curve=SECP256k1)
-        private_key_pem = sk.to_pem().decode('utf-8')
-        public_key_pem = sk.get_verifying_key().to_pem().decode('utf-8')
+        private_key_pem, public_key_pem = ed25519_keypair_pem()
         
         activation_resp = await client.post("/agent/generate-activation")
         assert activation_resp.status_code == 200

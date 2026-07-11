@@ -11,7 +11,7 @@ async def test_signup_valid(async_client):
     """Test valid user signup."""
     payload = {
         "username": "integ_signup_user",
-        "password": "Password123!",
+        "password": "Password123!Secure",
         "email": "integ_signup@example.com",
         "full_name": "Integ Signup",
         "plan_type": "Free",
@@ -27,7 +27,7 @@ async def test_signup_duplicate(async_client):
     """Test signup with duplicate username/email."""
     payload = {
         "username": "dup_user",
-        "password": "Password123!",
+        "password": "Password123!Secure",
         "email": "dup@example.com",
         "full_name": "Dup User",
         "plan_type": "Free",
@@ -43,7 +43,7 @@ async def test_login_valid_and_logout(async_client):
     """Test valid login followed by logout."""
     payload = {
         "username": "login_user",
-        "password": "Password123!",
+        "password": "Password123!Secure",
         "email": "login_user@example.com",
         "full_name": "Login User",
         "plan_type": "Free",
@@ -71,7 +71,7 @@ async def test_login_wrong_password(async_client):
     """Test login with incorrect password."""
     payload = {
         "username": "wrongpass_user",
-        "password": "Password123!",
+        "password": "Password123!Secure",
         "email": "wrongpass@example.com",
         "full_name": "WrongPass User",
         "plan_type": "Free",

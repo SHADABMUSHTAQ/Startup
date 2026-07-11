@@ -49,7 +49,7 @@ class ActivationResponse(BaseModel):
 
 class AgentRegisterRequest(BaseModel):
     activation_code: str
-    public_key: str # PEM encoded Ed25519 public key
+    public_key: str = Field(min_length=80, max_length=1000)  # PEM encoded Ed25519 public key
 
 class HeartbeatRequest(BaseModel):
     agent_id: str
@@ -214,6 +214,17 @@ async def register_agent(
     redis_client = getattr(request.app.state, "redis", None)
     if not redis_client:
         raise HTTPException(status_code=503, detail="Redis unavailable")
+
+    try:
+        parsed_public_key = serialization.load_pem_public_key(body.public_key.encode("utf-8"))
+        if not isinstance(parsed_public_key, ed25519.Ed25519PublicKey):
+            raise ValueError("expected Ed25519 public key")
+        canonical_public_key = parsed_public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("ascii")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid Ed25519 public key") from exc
         
     key = f"warsoc:activation:{body.activation_code}"
     raw_payload = await redis_client.eval(
@@ -274,7 +285,7 @@ async def register_agent(
     agent_doc = {
         "agent_id": agent_id,
         "tenant_id": tenant_id,
-        "public_key": body.public_key,
+        "public_key": canonical_public_key,
         "status": "active",
         "key_rotation_status": "completed",
         "created_at": now,
@@ -311,7 +322,7 @@ async def register_agent(
             f"warsoc:agent_cache:{agent_id}",
             mapping={
                 "tenant_id": tenant_id,
-                "public_key": body.public_key,
+                "public_key": canonical_public_key,
                 "approved": "True",
                 "status": "active"
             }

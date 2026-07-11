@@ -161,6 +161,7 @@ services:
       MONGODB_DB_NAME: ${MONGODB_DB_NAME:?MONGODB_DB_NAME required}
       AZURE_STORAGE_CONNECTION_STRING: ${AZURE_STORAGE_CONNECTION_STRING:?AZURE_STORAGE_CONNECTION_STRING required}
       AZURE_STORAGE_CONTAINER: ${AZURE_STORAGE_CONTAINER:-warsoc-cold-storage}
+      AZURE_IMMUTABILITY_REQUIRED: ${AZURE_IMMUTABILITY_REQUIRED:-true}
       ARCHIVE_BATCH_SIZE: ${ARCHIVE_BATCH_SIZE:-5000}
       ARCHIVE_LEAD_DAYS: ${ARCHIVE_LEAD_DAYS:-1}
       ARCHIVE_INTERVAL_SECONDS: ${ARCHIVE_INTERVAL_SECONDS:-86400}
@@ -235,6 +236,7 @@ services:
     build: .
     container_name: warsoc-syslog-receiver-prod
     command: python /app/syslog_receiver.py
+    profiles: ["network-syslog"]
     restart: always
     logging: *warsoc-logging
     env_file:
@@ -246,11 +248,12 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD required}
       NETWORK_TENANT_ID: ${NETWORK_TENANT_ID:-WARSOC_NETWORK}
+      SYSLOG_ALLOWED_SOURCES: ${SYSLOG_ALLOWED_SOURCES:-}
       SYSLOG_PORT: 5140
       MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
       DB_NAME: ${MONGODB_DB_NAME:?MONGODB_DB_NAME required}
     ports:
-      - "${SYSLOG_BIND:?SYSLOG_BIND required}:5140:5140/udp"
+      - "${SYSLOG_BIND:-127.0.0.1}:5140:5140/udp"
     read_only: true
     tmpfs:
       - /tmp

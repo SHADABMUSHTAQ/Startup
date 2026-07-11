@@ -31,7 +31,10 @@ def test_production_compose_is_private_fail_fast_and_sized_for_pilot():
     assert "/etc/letsencrypt:/etc/nginx/ssl:ro" in compose
     assert "./certbot/www:/var/www/certbot:ro" in compose
     assert "- /var/run" in compose
-    assert "${SYSLOG_BIND:?SYSLOG_BIND required}:5140:5140/udp" in compose
+    assert 'profiles: ["network-syslog"]' in compose
+    assert "${SYSLOG_BIND:-127.0.0.1}:5140:5140/udp" in compose
+    assert "SYSLOG_ALLOWED_SOURCES" in compose
+    assert "AZURE_IMMUTABILITY_REQUIRED" in compose
     assert "0.0.0.0}:5140" not in compose
     assert "AGENT_CDN_URL required" in compose
     assert "SALES_EMAIL required" in compose

@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -8,6 +9,14 @@ from pathlib import Path
 from motor.motor_asyncio import AsyncIOMotorClient
 from app.config.config import get_settings
 from app.utils.report_engine import ComplianceReportGenerator
+from app.utils.compliance_chain import (
+    CHAIN_VERSION,
+    HASH_ALGORITHM,
+    compute_daily_root,
+    evidence_record_digest,
+    genesis_root,
+    verify_ledger_entry,
+)
 
 # 🏗 COMPLIANCE CRON: Daily compliance maintenance worker
 # Architecture: Standalone asyncio worker.  Does NOT share the FastAPI event loop.
@@ -52,14 +61,11 @@ DEAD_AIR_THRESHOLD = load_dead_air_threshold()
 
 
 async def _compute_daily_root(db, tenant_id: str, date_str: str, start_dt: datetime, end_dt: datetime, previous_root: str) -> dict:
-    """
-    Builds a lightweight daily ledger entry for a tenant.
-
-    The cryptographic seal chain has been removed by policy. The cron job now
-    records a deterministic operational summary from source collections.
-    """
+    """Build a deterministic hash commitment over the day's evidence."""
     log_count = 0
     seen_event_ids = []
+    source_counts = {}
+    evidence_hasher = hashlib.sha256()
 
     for collection_name in SOURCE_COLLECTIONS:
         collection = db[collection_name]
@@ -78,18 +84,33 @@ async def _compute_daily_root(db, tenant_id: str, date_str: str, start_dt: datet
 
         async for doc in cursor:
             log_count += 1
+            source_counts[collection_name] = source_counts.get(collection_name, 0) + 1
+            record_digest = evidence_record_digest(collection_name, doc)
+            evidence_hasher.update(f"{collection_name}:{record_digest}\n".encode("ascii"))
             event_id = doc.get("event_id")
             if event_id is not None:
                 seen_event_ids.append(str(event_id))
 
-    daily_root = f"sealed-disabled:{tenant_id}:{date_str}"
+    evidence_digest = evidence_hasher.hexdigest()
+    daily_root = compute_daily_root(
+        tenant_id=tenant_id,
+        date_str=date_str,
+        previous_root_hash=previous_root,
+        evidence_digest=evidence_digest,
+        log_count=log_count,
+        source_counts=source_counts,
+    )
 
     ledger_entry = {
         "tenant_id": tenant_id,
         "date": date_str,
+        "chain_version": CHAIN_VERSION,
+        "hash_algorithm": HASH_ALGORITHM,
         "daily_root_hash": daily_root,
         "previous_root_hash": previous_root,
+        "evidence_digest": evidence_digest,
         "log_count": log_count,
+        "source_counts": source_counts,
         "event_id_sample": seen_event_ids[:25],
         "source_collections": SOURCE_COLLECTIONS,
         "computed_at": datetime.now(timezone.utc).isoformat(),
@@ -126,7 +147,7 @@ async def run_daily_chain(db):
     for tenant_id in sorted(all_tenants):
         # Check if we already computed this day (idempotency guard)
         existing = await ledger_coll.find_one({"tenant_id": tenant_id, "date": date_str})
-        if existing:
+        if existing and verify_ledger_entry(existing):
             logger.info(f"[{tenant_id}] {date_str} already chained. Skipping.")
             continue
 
@@ -134,19 +155,27 @@ async def run_daily_chain(db):
         prev_date_str = (yesterday - timedelta(days=1)).strftime("%Y-%m-%d")
         prev_entry = await ledger_coll.find_one({"tenant_id": tenant_id, "date": prev_date_str})
 
-        if prev_entry:
+        chain_reset_reason = None
+        if prev_entry and verify_ledger_entry(prev_entry):
             previous_root = prev_entry["daily_root_hash"]
         else:
-            previous_root = f"genesis:{tenant_id}"
-            logger.info(f"[{tenant_id}] No previous ledger found. Using genesis marker.")
+            previous_root = genesis_root(tenant_id)
+            chain_reset_reason = "previous_ledger_missing_or_unverified"
+            logger.info(f"[{tenant_id}] Starting a verified chain from the tenant genesis root.")
 
         # Compute the daily maintenance entry
         ledger_entry = await _compute_daily_root(
             db, tenant_id, date_str, yesterday, end_of_yesterday, previous_root
         )
+        if chain_reset_reason:
+            ledger_entry["chain_reset_reason"] = chain_reset_reason
 
-        # Persist to MongoDB
-        await ledger_coll.insert_one(ledger_entry)
+        # Replace legacy/unverified entries for the same day without creating duplicates.
+        await ledger_coll.replace_one(
+            {"tenant_id": tenant_id, "date": date_str},
+            ledger_entry,
+            upsert=True,
+        )
         logger.info(f"[{tenant_id}]  Recorded {date_str}: {ledger_entry['log_count']} logs.")
 
     logger.info(f"=== Daily Maintenance Complete for {date_str} ===")

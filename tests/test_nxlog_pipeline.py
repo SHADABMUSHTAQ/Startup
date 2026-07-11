@@ -5,7 +5,7 @@ import time
 from datetime import datetime, timezone
 
 @pytest.mark.asyncio
-async def test_nxlog_end_to_end_pipeline(async_client: AsyncClient, db, redis_client, auth_headers):
+async def test_nxlog_end_to_end_pipeline(async_client: AsyncClient, db, redis_client, auth_headers, agent_public_key_pem):
     # 1. Generate Activation Code (Mocking the UI Dashboard action)
     act_resp = await async_client.post(
         "/api/v1/agent/generate-activation",
@@ -17,7 +17,7 @@ async def test_nxlog_end_to_end_pipeline(async_client: AsyncClient, db, redis_cl
     # 2. Phase 1: Activate Agent (Mocking activate_agent.ps1)
     reg_payload = {
         "activation_code": act_code,
-        "public_key": "NXLOG_TLS_NATIVE"
+        "public_key": agent_public_key_pem
     }
     reg_resp = await async_client.post("/api/v1/agent/register", json=reg_payload)
     assert reg_resp.status_code == 200

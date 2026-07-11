@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from app.database import db_manager
 from app.workers.siem_worker import siem_worker
+from tests.helpers import provision_and_login_admin
 
 def _now_iso():
     from datetime import datetime, timezone
@@ -45,31 +46,10 @@ async def running_siem_worker():
 async def test_siem_deep_dive(running_siem_worker):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fastapi_app), base_url="http://testserver/api/v1", timeout=30.0) as client:
         # 1. Setup Tenant and Agent
-        username = f"siem_tester_{uuid.uuid4().hex[:8]}"
-        password = "SuperSecretPassword123!"
-        
-        signup_resp = await client.post("/auth/signup", json={
-            "email": f"{username}@example.com",
-            "username": username,
-            "password": password,
-            "full_name": "SIEM Tester",
-            "company_name": "SIEM Deep Dive Corp"
-        })
-        assert signup_resp.status_code == 201
-        
-        login_resp = await client.post("/auth/login", json={
-            "username": username,
-            "password": password
-        })
-        assert login_resp.status_code == 200
-        
-        user_token = login_resp.cookies.get("warsoc_token")
-        csrf_token = login_resp.cookies.get("csrf_token")
-        client.cookies.set("warsoc_token", user_token)
-        client.cookies.set("csrf_token", csrf_token)
-        client.headers.update({"x-csrf-token": csrf_token})
-        
-        tenant_id = signup_resp.json()["tenant_id"]
+        session = await provision_and_login_admin(client, "siem_tester", api_prefix="")
+        user_token = session["token"]
+        csrf_token = session["csrf_token"]
+        tenant_id = session["tenant_id"]
 
         # Register Agent
         signing_key = ed25519.Ed25519PrivateKey.generate()

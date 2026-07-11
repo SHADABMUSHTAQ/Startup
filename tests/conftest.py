@@ -50,6 +50,7 @@ from httpx import AsyncClient, ASGITransport
 from app.main import app as fastapi_app
 from app.database import get_db, db_manager
 from app.utils.redis_client import create_redis_client
+from tests.helpers import ed25519_keypair_pem, provision_and_login_admin
 
 
 # Disable MemoryLimitMiddleware for tests (host memory percent is non-deterministic)
@@ -300,20 +301,34 @@ async def async_client(redis_client, db):
 
 @pytest_asyncio.fixture(scope="function")
 async def auth_headers(async_client):
-    """Create test user and return auth headers."""
+    """Provision an active B2B tenant admin and return browser auth headers."""
+    session = await provision_and_login_admin(async_client, "test_integ")
+    return {"x-csrf-token": session["csrf_token"]}
+
+
+@pytest.fixture(scope="function")
+def agent_public_key_pem():
+    """Return a valid Ed25519 public key for enrollment tests."""
+    return ed25519_keypair_pem()[1]
+
+
+@pytest_asyncio.fixture(scope="function")
+async def free_auth_headers(async_client):
+    """Create an inactive self-signup account for premium-access denial tests."""
     payload = {
-        "username": "test_integ_user",
+        "username": "free_integ_user",
         "password": "Password123!Secure",
-        "email": "test_integ@example.com",
-        "full_name": "Integration Tester",
+        "email": "free_integ@example.com",
+        "full_name": "Free Integration Tester",
         "plan_type": "Free",
     }
-    resp = await async_client.post("/api/v1/auth/signup", json=payload)
-    assert resp.status_code == 201
-
-    login = await async_client.post("/api/v1/auth/login", json={"username": payload["username"], "password": payload["password"]})
-    assert login.status_code == 200
-    assert "warsoc_token" in login.cookies
+    signup = await async_client.post("/api/v1/auth/signup", json=payload)
+    assert signup.status_code == 201, signup.text
+    login = await async_client.post(
+        "/api/v1/auth/login",
+        json={"username": payload["username"], "password": payload["password"]},
+    )
+    assert login.status_code == 200, login.text
     token = login.cookies.get("warsoc_token")
     csrf_token = login.json().get("csrf_token", "")
     async_client.cookies.set("warsoc_token", token)

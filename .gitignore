@@ -80,6 +80,7 @@ scripts/*
 !scripts/native_50_agent_soak.py
 !scripts/validate_native_windows_vm.ps1
 !scripts/generate_pilot_hash_manifest.ps1
+!scripts/run_production_acceptance.ps1
 !scripts/backup_mongodb.sh
 !build_agent.bat
 trigger_alerts.py

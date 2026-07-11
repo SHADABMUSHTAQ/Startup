@@ -302,8 +302,10 @@ async def export_audit_report(
     current_user: dict = Depends(require_premium_plan)
 ):
     """
-    Audit-Ready PDF Export Engine (ETO 2002 Masterpiece).
-    Generates a cryptographically-sealed forensic report for auditors.
+    Generate a tenant-scoped forensic evidence summary for auditors.
+
+    The source PECA records can carry RSA-PSS signatures. The generated PDF is
+    a summary artifact and is not itself digitally signed.
     """
     tenant_id = _safe_path_segment(current_user.get("tenant_id"))
     if not tenant_id:
@@ -480,7 +482,16 @@ async def export_audit_report(
 
     # --- Footer ---
     elements.append(Spacer(1, 0.5 * inch))
-    footer_text = "Forensic signatures generated and verified in accordance with the Electronic Transactions Ordinance (ETO) 2002, Sections 5 & 6. This document is a legally admissible and non-repudiable electronic record."
+    signed_records = sum(
+        1
+        for record in forensic_logs
+        if record.get("forensic_seal") and record.get("signed_payload")
+    )
+    footer_text = (
+        f"Source records carrying PECA signature material: {signed_records}/{len(forensic_logs)}. "
+        "This PDF is an evidence summary and is not itself digitally signed. Legal admissibility "
+        "depends on applicable law, chain of custody, and independent signature verification."
+    )
     elements.append(Paragraph(footer_text, footer_style))
 
     doc.build(elements)

@@ -13,16 +13,19 @@ class TestDataExport:
     @pytest.mark.asyncio
     async def test_export_csv_endpoint(self, client, authenticated_user):
         """Test exporting data to CSV format."""
-        resp = await client.get("/api/v1/export/csv", headers=authenticated_user)
-        # Endpoint may require additional parameters or specific roles
-        assert resp.status_code in [200, 403, 404], f"Got {resp.status_code}"
+        resp = await client.get("/api/v1/export/csv?data_type=logs", headers=authenticated_user)
+        assert resp.status_code == 404, resp.text
+        assert "No data found" in resp.json()["detail"]
     
     @pytest.mark.asyncio
     async def test_audit_report_generation(self, client, authenticated_user):
         """Test audit report generation endpoint."""
-        resp = await client.get("/api/v1/export/audit-report", headers=authenticated_user)
-        # Endpoint may require additional parameters or specific roles
-        assert resp.status_code in [200, 403, 404], f"Got {resp.status_code}"
+        resp = await client.get(
+            "/api/v1/export/audit-report?pack_id=peca_forensic",
+            headers=authenticated_user,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"].startswith("application/pdf")
     
     @pytest.mark.asyncio
     async def test_list_reports(self, client, authenticated_user):

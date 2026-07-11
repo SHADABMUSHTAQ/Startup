@@ -61,6 +61,61 @@ HOT_RETENTION_DAYS_BY_COLLECTION = {
 }
 
 
+def _environment_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _as_utc(value):
+    if not isinstance(value, datetime):
+        return None
+    return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _blob_immutability_status(properties, required_until: datetime) -> dict:
+    legal_hold = bool(getattr(properties, "has_legal_hold", False))
+    policy = getattr(properties, "immutability_policy", None)
+    raw_policy_mode = getattr(policy, "policy_mode", "") or ""
+    policy_mode = str(getattr(raw_policy_mode, "value", raw_policy_mode))
+    policy_expiry = _as_utc(getattr(policy, "expiry_time", None))
+    required_until = _as_utc(required_until)
+    locked = policy_mode.strip().lower() == "locked"
+    adequate_expiry = bool(policy_expiry and required_until and policy_expiry >= required_until)
+    return {
+        "verified": legal_hold or (locked and adequate_expiry),
+        "legal_hold": legal_hold,
+        "policy_mode": policy_mode or None,
+        "policy_expiry": policy_expiry,
+    }
+
+
+async def _verify_blob_immutability(blob_client, required_until: datetime) -> dict:
+    properties = await blob_client.get_blob_properties()
+    status = _blob_immutability_status(properties, required_until)
+    if not status["verified"]:
+        raise RuntimeError(
+            "Azure blob is not protected by a legal hold or a locked immutability "
+            f"policy through {required_until.isoformat()}"
+        )
+    return status
+
+
+async def _verify_container_immutability_capability(container_client) -> None:
+    properties = await container_client.get_container_properties()
+    capable = bool(
+        getattr(properties, "has_immutability_policy", False)
+        or getattr(properties, "has_legal_hold", False)
+        or getattr(properties, "immutable_storage_with_versioning_enabled", False)
+    )
+    if not capable:
+        raise RuntimeError(
+            "Azure evidence container has no immutable-storage capability or policy. "
+            "Hot records will not be deleted."
+        )
+
+
 def _parse_archive_collections() -> tuple[str, ...]:
     raw = os.getenv("ARCHIVE_COLLECTIONS", "")
     if not raw.strip():
@@ -183,6 +238,17 @@ async def _archive_batch(
     hash_blob = container_client.get_blob_client(hash_blob_name)
     await hash_blob.upload_blob(sha256_hash.encode("utf-8"), overwrite=False)
 
+    immutability_required = _environment_flag("AZURE_IMMUTABILITY_REQUIRED", default=False)
+    immutability_status = None
+    if immutability_required:
+        json_status = await _verify_blob_immutability(json_blob, retain_until)
+        hash_status = await _verify_blob_immutability(hash_blob, retain_until)
+        immutability_status = {
+            "verified": True,
+            "json": json_status,
+            "sha256": hash_status,
+        }
+
     timestamps = [doc.get("timestamp") or doc.get("ingested_at") or doc.get("uploaded_at") for doc in docs]
     parsed_timestamps = [timestamp for timestamp in map(_coerce_archive_datetime, timestamps) if timestamp]
     event_ids = sorted({str(doc.get("event_id")) for doc in docs if doc.get("event_id") is not None})
@@ -206,6 +272,7 @@ async def _archive_batch(
         "alert_uids": alert_uids,
         "vault_retention_days": vault_retention_days,
         "retain_until": retain_until,
+        "immutability": immutability_status,
         "created_at": datetime.now(timezone.utc),
         "status": "archived",
     }
@@ -253,6 +320,8 @@ async def run_archiver():
         if not await container_client.exists():
             await container_client.create_container()
             logger.info("Created Azure container: %s", container_name)
+        if _environment_flag("AZURE_IMMUTABILITY_REQUIRED", default=False):
+            await _verify_container_immutability_capability(container_client)
 
         cursor = db.tenants.find({})
         async for tenant in cursor:

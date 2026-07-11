@@ -5,7 +5,7 @@
 COMPLIANCE_CATALOG = {
     "peca_forensic": {
         "name": "PECA Forensic Trail (Section 46)",
-        "description": "Non-repudiable log integrity and court-admissible forensic evidence (PECA 2016).",
+        "description": "Signed forensic records designed to support PECA investigations and evidence workflows.",
         "retention": {"local_hot_days": 30, "vault_days": 365},
         "rules": [
             {"id": "PECA-101 (4625)", "event_id": "4625", "name": "Unauthorized Access Attempt (Failed Logon)", "severity": "High"},

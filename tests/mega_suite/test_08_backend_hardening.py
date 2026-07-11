@@ -742,15 +742,15 @@ async def test_alerts_route_accepts_lowercase_admin_role(client):
     assert resp.status_code == 200, resp.text
 
 
-async def test_compliance_evidence_free_plan_is_denied(client, auth_headers):
-    resp = await client.get("/api/v1/compliance/evidence", headers=auth_headers)
+async def test_compliance_evidence_free_plan_is_denied(client, free_auth_headers):
+    resp = await client.get("/api/v1/compliance/evidence", headers=free_auth_headers)
 
     assert resp.status_code == 403
     assert "Professional or Enterprise" in resp.json()["detail"]
 
 
-async def test_export_csv_requires_premium_and_removes_internal_fields(client, db, auth_headers):
-    free_resp = await client.get("/api/v1/export/csv?data_type=logs", headers=auth_headers)
+async def test_export_csv_requires_premium_and_removes_internal_fields(client, db, free_auth_headers):
+    free_resp = await client.get("/api/v1/export/csv?data_type=logs", headers=free_auth_headers)
     assert free_resp.status_code == 403
 
     pro_headers, pro_user, _ = await _signup_and_login(

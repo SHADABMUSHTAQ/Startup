@@ -136,6 +136,52 @@ async def test_activation_code_is_atomically_single_use_under_concurrency(
     assert await redis_client.get(f"warsoc:activation:{activation_code}") is None
 
 
+async def test_invalid_public_key_does_not_consume_activation_code(
+    async_client,
+    db,
+    redis_client,
+):
+    tenant_id = "WARSOC_KEY_VALIDATION"
+    activation_code = "WARSOC-KEYCHECK"
+    await db["tenants"].insert_one(
+        {
+            "tenant_id": tenant_id,
+            "company_name": "Key Validation Contract",
+            "plan_type": "Enterprise",
+            "status": "active",
+            "active": True,
+            "max_agents": 10,
+        }
+    )
+    activation_key = f"warsoc:activation:{activation_code}"
+    await redis_client.set(
+        activation_key,
+        json.dumps({"tenant_id": tenant_id, "features": "SIEM"}),
+    )
+
+    invalid = await async_client.post(
+        "/api/v1/agent/register",
+        json={
+            "activation_code": activation_code,
+            "public_key": "-----BEGIN PUBLIC KEY-----\n" + ("A" * 120) + "\n-----END PUBLIC KEY-----",
+        },
+    )
+
+    assert invalid.status_code == 400
+    assert invalid.json()["detail"] == "Invalid Ed25519 public key"
+    assert await redis_client.get(activation_key) is not None
+
+    valid = await async_client.post(
+        "/api/v1/agent/register",
+        json={
+            "activation_code": activation_code,
+            "public_key": _ed25519_public_key_pem(),
+        },
+    )
+    assert valid.status_code == 200, valid.text
+    assert await redis_client.get(activation_key) is None
+
+
 async def test_database_count_prevents_redis_restart_from_bypassing_50_agent_cap(
     async_client,
     db,

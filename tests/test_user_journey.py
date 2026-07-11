@@ -3,6 +3,7 @@ import asyncio
 import time
 import uuid
 from httpx import AsyncClient
+from tests.helpers import ed25519_keypair_pem, provision_and_login_admin
 
 @pytest.mark.asyncio
 async def test_full_user_and_agent_journey(async_client: AsyncClient, db, redis_client):
@@ -13,27 +14,10 @@ async def test_full_user_and_agent_journey(async_client: AsyncClient, db, redis_
     # ---------------------------------------------------------
     # Phase 1: User Sign Up & Login (The Pharmacy Owner POV)
     # ---------------------------------------------------------
-    username = f"pharmacy_admin_{uuid.uuid4().hex[:6]}"
-    password = "SecurePassword123!"
-    
-    # 1A. Register
-    reg_payload = {
-        "username": username,
-        "email": f"{username}@example.com",
-        "password": password,
-        "full_name": "NIC Karachi Pharmacy",
-        "plan_type": "Professional"
-    }
-    resp = await async_client.post("/api/v1/auth/signup", json=reg_payload)
-    assert resp.status_code == 201, f"Register failed: {resp.text}"
-    print("[+] User POV: Registered new tenant successfully.")
-
-    # 1B. Login
-    login_data = {"username": username, "password": password}
-    resp = await async_client.post("/api/v1/auth/login", json=login_data)
-    assert resp.status_code == 200, f"Login failed: {resp.text}"
-    user_token = resp.cookies.get("warsoc_token")
-    csrf_token = resp.json().get("csrf_token")
+    session = await provision_and_login_admin(async_client, "pharmacy_admin")
+    print("[+] Admin POV: Provisioned and logged into a paid tenant successfully.")
+    user_token = session["token"]
+    csrf_token = session["csrf_token"]
     user_headers = {"x-csrf-token": csrf_token}
     async_client.cookies.set("warsoc_token", user_token)
     print("[+] User POV: Logged in. Received HttpOnly Cookie and CSRF Token.")
@@ -57,9 +41,10 @@ async def test_full_user_and_agent_journey(async_client: AsyncClient, db, redis_
     print(f"[+] Admin POV: Generated 10-minute activation code: {act_code}")
 
     # 2B. The `activate_agent.ps1` script redeems the code for a permanent JWT
+    _, public_key_pem = ed25519_keypair_pem()
     reg_payload = {
         "activation_code": act_code,
-        "public_key": "NXLOG_WINDOWS_ENDPOINT"
+        "public_key": public_key_pem
     }
     resp = await async_client.post("/api/v1/agent/register", json=reg_payload)
     assert resp.status_code == 200, f"Agent register failed: {resp.text}"

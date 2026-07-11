@@ -1,6 +1,8 @@
 import hashlib
 import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -43,6 +45,77 @@ def test_siem_hot_retention_is_capped_to_seven_days():
     assert storage_archiver._effective_retention_days("siem_cold_vault", 90) == 7
     assert storage_archiver._effective_retention_days("security_alerts", 90) == 7
     assert storage_archiver._effective_retention_days("logs", 90) == 7
+
+
+def test_blob_immutability_requires_locked_policy_through_retention():
+    required_until = datetime(2032, 7, 10, tzinfo=timezone.utc)
+    adequate = SimpleNamespace(
+        has_legal_hold=False,
+        immutability_policy=SimpleNamespace(
+            policy_mode="Locked",
+            expiry_time=datetime(2032, 7, 11, tzinfo=timezone.utc),
+        ),
+    )
+    unlocked = SimpleNamespace(
+        has_legal_hold=False,
+        immutability_policy=SimpleNamespace(
+            policy_mode="Unlocked",
+            expiry_time=datetime(2035, 1, 1, tzinfo=timezone.utc),
+        ),
+    )
+    assert storage_archiver._blob_immutability_status(adequate, required_until)["verified"] is True
+    assert storage_archiver._blob_immutability_status(unlocked, required_until)["verified"] is False
+
+
+@pytest.mark.asyncio
+async def test_archive_never_deletes_hot_records_without_verified_immutability(monkeypatch):
+    unlocked_properties = SimpleNamespace(
+        has_legal_hold=False,
+        immutability_policy=SimpleNamespace(
+            policy_mode="Unlocked",
+            expiry_time=datetime(2035, 1, 1, tzinfo=timezone.utc),
+        ),
+    )
+
+    class FakeBlob:
+        async def upload_blob(self, *_args, **_kwargs):
+            return None
+
+        async def get_blob_properties(self):
+            return unlocked_properties
+
+    class FakeContainer:
+        def get_blob_client(self, _name):
+            return FakeBlob()
+
+    class FakeCollection:
+        def __init__(self):
+            self.delete_many = AsyncMock()
+            self.insert_one = AsyncMock()
+
+    collections = {
+        "storage_archives": FakeCollection(),
+        "fbr_pos_logs": FakeCollection(),
+    }
+
+    class FakeDb:
+        def __getitem__(self, name):
+            return collections[name]
+
+    monkeypatch.setenv("AZURE_IMMUTABILITY_REQUIRED", "true")
+    with pytest.raises(RuntimeError, match="not protected"):
+        await storage_archiver._archive_batch(
+            FakeContainer(),
+            FakeDb(),
+            "TENANT-A",
+            "fbr_pos_logs",
+            [{"_id": "doc-1", "timestamp": datetime.now(timezone.utc)}],
+            "run-1",
+            1,
+            90,
+        )
+    collections["fbr_pos_logs"].delete_many.assert_not_awaited()
+    collections["storage_archives"].insert_one.assert_not_awaited()
 
 
 @pytest.mark.asyncio
