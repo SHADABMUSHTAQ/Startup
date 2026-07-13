@@ -9,6 +9,7 @@ import asyncio
 from cryptography.fernet import Fernet
 from app.config.config import get_settings
 from app.utils.archive_reader import fetch_archived_documents
+from app.utils.alert_incidents import aggregate_security_alerts
 
 # 📊 MASTER BUILD: Logs Gateway
 # Strictly Decoupled, Paginated, and Tenant-Isolated
@@ -50,6 +51,7 @@ async def get_logs_master(
     next_cursor: str | None = Query(None),
     days: int = Query(7, ge=1, le=365),
     limit: int = Query(100, ge=1, le=500),
+    aggregate: bool = Query(True, description="Group repeated security alerts into operator incidents"),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
     role: str = Depends(RequireRole(["admin", "manager", "analyst", "auditor"])),
@@ -178,8 +180,9 @@ async def get_logs_master(
     else:
         collection = db["security_alerts"]
 
-    #  Count total documents
-    total = await collection.count_documents(query)
+    # Count raw documents before optional operator-view aggregation.
+    raw_total = await collection.count_documents(query)
+    total = raw_total
 
     # ⚡ Paginated Fetch (Meta-only)
     cursor = collection.find(query, projection).sort([("timestamp", -1), ("_id", -1)]).limit(limit)
@@ -210,13 +213,19 @@ async def get_logs_master(
     )
 
     new_cursor = logs_data[-1]["_id"] if logs_data else None
+    incident_count = len(logs_data)
+    if source == "security_alerts" and aggregate:
+        logs_data = aggregate_security_alerts(logs_data)
+        incident_count = len(logs_data)
 
     return {
         "status": "success",
         "data": logs_data,
         "next_cursor": new_cursor,
         "limit": limit,
-        "total": total
+        "total": total,
+        "incident_count": incident_count,
+        "raw_total": raw_total,
     }
 
 @router.get("/{log_id}/evidence")

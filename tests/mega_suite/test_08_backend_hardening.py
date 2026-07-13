@@ -808,6 +808,82 @@ async def test_alerts_route_accepts_lowercase_admin_role(client):
     assert resp.status_code == 200, resp.text
 
 
+async def test_alert_feed_groups_repeated_events_and_closes_all_related_records(client, db):
+    headers, user, _ = await _signup_and_login(
+        client,
+        "hardening_incident_group",
+        role="admin",
+    )
+    now = datetime.now(timezone.utc)
+    documents = [
+        {
+            "tenant_id": user["tenant_id"],
+            "alert_uid": "direct-1102-1",
+            "event_uid": "Security:100",
+            "event_id": "1102",
+            "type": "WIN_EVENT_1102_DETECTED",
+            "summary": "Security Event: Clear Logs",
+            "message": 'Windows Event 1102: {"SubjectUserName":"admin"}',
+            "severity": "CRITICAL",
+            "source_ip": "10.0.0.9",
+            "user": "admin",
+            "timestamp": now,
+        },
+        {
+            "tenant_id": user["tenant_id"],
+            "alert_uid": "advanced-1102-1",
+            "event_uid": "Security:100",
+            "event_id": "1102",
+            "type": "EVENT_ID_1102_CLEAR_LOGS",
+            "summary": "Clear Logs detected",
+            "message": 'Windows Event 1102: {"SubjectUserName":"admin"}',
+            "severity": "CRITICAL",
+            "source_ip": "10.0.0.9",
+            "user": "admin",
+            "timestamp": now,
+        },
+        {
+            "tenant_id": user["tenant_id"],
+            "alert_uid": "advanced-1102-2",
+            "event_uid": "Security:101",
+            "event_id": "1102",
+            "type": "EVENT_ID_1102_CLEAR_LOGS",
+            "summary": "Clear Logs detected",
+            "message": 'Windows Event 1102: {"SubjectUserName":"admin"}',
+            "severity": "CRITICAL",
+            "source_ip": "10.0.0.9",
+            "user": "admin",
+            "timestamp": now + timedelta(seconds=1),
+        },
+    ]
+    await db["security_alerts"].insert_many(documents)
+
+    feed = await client.get("/api/v1/logs", headers=headers)
+
+    assert feed.status_code == 200, feed.text
+    incidents = feed.json()["data"]
+    assert len(incidents) == 1
+    assert incidents[0]["occurrences"] == 2
+    assert len(incidents[0]["related_alert_ids"]) == 3
+    assert "SubjectUserName" not in incidents[0]["message"]
+
+    close = await client.patch(
+        f"/api/v1/alerts/{incidents[0]['_id']}/status",
+        headers=headers,
+        json={
+            "status": "CLOSED",
+            "resolution_notes": "Reviewed as one repeated incident during validation.",
+            "related_alert_ids": incidents[0]["related_alert_ids"],
+        },
+    )
+
+    assert close.status_code == 200, close.text
+    assert close.json()["updated_alerts"] == 3
+    assert await db["security_alerts"].count_documents(
+        {"tenant_id": user["tenant_id"], "status": "CLOSED"}
+    ) == 3
+
+
 async def test_compliance_evidence_free_plan_is_denied(client, free_auth_headers):
     resp = await client.get("/api/v1/compliance/evidence", headers=free_auth_headers)
 

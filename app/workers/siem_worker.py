@@ -21,6 +21,7 @@ from app.utils.siem_catalog import SIEM_RULES
 from app.utils.compliance_catalog import COMPLIANCE_CATALOG
 from app.utils.observability import increment_redis_counter, record_worker_heartbeat_with_client
 from app.utils.custom_json import dumps as json_dumps
+from app.utils.alert_incidents import operator_message
 from app.actions.alerting import dispatch_alert_if_entitled, is_email_trigger_severity
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [SIEM-Worker] %(message)s")
@@ -106,6 +107,15 @@ def _resolve_event_id_meaning(config: dict, event_id_value) -> str | None:
 
     meaning = _humanize_event_type(event_type)
     return meaning if meaning else None
+
+
+def _resolve_direct_event_severity(event_rule: dict, windows_config: dict, event_id: str) -> str:
+    """Resolve direct-alert severity from the event SSOT before legacy fallbacks."""
+    return str(
+        event_rule.get("severity")
+        or windows_config.get("severity_by_event_id", {}).get(str(event_id))
+        or "MEDIUM"
+    ).upper()
 
 
 def _normalize_timestamp_iso_utc(value) -> datetime:
@@ -632,6 +642,21 @@ async def siem_worker():
                             processed = log_data.get("processed_data") or {}
                             source_ip = str(processed.get("source_network_address") or log_data.get("source_ip") or "0.0.0.0").strip()
                             extracted_user = str(processed.get("user") or log_data.get("user") or "unknown").strip()
+                            raw_event_data = log_data.get("raw_event_data") if isinstance(log_data.get("raw_event_data"), dict) else {}
+                            raw_system = raw_event_data.get("system") if isinstance(raw_event_data.get("system"), dict) else {}
+                            alert_computer = str(processed.get("computer") or raw_system.get("computer") or "").strip()
+                            alert_target = str(
+                                processed.get("service_name")
+                                or processed.get("object_name")
+                                or processed.get("task_name")
+                                or processed.get("share_name")
+                                or processed.get("target_server")
+                                or processed.get("target_user")
+                                or processed.get("member_name")
+                                or processed.get("destination_address")
+                                or processed.get("new_process_name")
+                                or ""
+                            ).strip()
                             log_data["source_ip"] = source_ip
                             log_data["user"] = extracted_user
 
@@ -715,6 +740,7 @@ async def siem_worker():
                                 continue
 
                             corr_alerts_already_run = False
+                            direct_event_rule_alerted = False
                             #  MANDATE 3: WINDOWS EVENT MAPPING (Stateful/Stateless)
                             win_config = config.get("source_classification", {}).get("Windows-Sec", {})
                             if not alert_triggered and not is_basic_plan and event_id in map(str, win_config.get("trigger_event_ids", [])):
@@ -729,8 +755,13 @@ async def siem_worker():
                                         trigger_event = False
 
                                 if trigger_event:
-                                    severity = win_config.get("severity_by_event_id", {}).get(event_id, "MEDIUM")
+                                    severity = _resolve_direct_event_severity(
+                                        event_rule,
+                                        win_config,
+                                        event_id,
+                                    )
                                     alert_triggered = True
+                                    direct_event_rule_alerted = True
                                     alert_type = f"WIN_EVENT_{event_id}_DETECTED"
 
                                 # STATEFUL: Configuration-Driven Correlation Engine
@@ -756,6 +787,10 @@ async def siem_worker():
 
                                     for c_alert in corr_alerts:
                                         c_alert["tenant_id"] = tenant_id
+                                        c_alert.setdefault("event_uid", log_data.get("event_uid"))
+                                        c_alert.setdefault("agent_id", log_data.get("agent_id"))
+                                        c_alert.setdefault("computer", alert_computer)
+                                        c_alert.setdefault("target", alert_target)
                                         alert_uid = c_alert.get("alert_uid") or _stable_alert_uid(
                                             "corr",
                                             tenant_id,
@@ -772,6 +807,7 @@ async def siem_worker():
                                                 await dispatch_alert_if_entitled(db, redis, tenant_id, c_alert, "SIEM")
                                         except Exception as corr_db_err:
                                             logger.error(f"[CORR][DB] Failed to persist correlation alert: {corr_db_err}")
+                                            raise
                                     # Skip the unified corr block below since we already ran it here
                                     corr_alerts_already_run = True
 
@@ -818,7 +854,18 @@ async def siem_worker():
                                     "event_uid": log_data.get("event_uid"),
                                     "alert_uid": f"alert_{tenant_id}_{log_data.get('event_uid', message_id)}_{alert_type}",
                                     "source_ip": source_ip,
-                                    "message": raw_message,
+                                    "user": extracted_user,
+                                    "agent_id": log_data.get("agent_id"),
+                                    "computer": alert_computer,
+                                    "target": alert_target,
+                                    "message": operator_message({
+                                        "summary": display_title,
+                                        "event_id": event_id,
+                                        "event_id_meaning": event_id_meaning,
+                                        "message": raw_message,
+                                        "computer": alert_computer,
+                                        "agent_id": log_data.get("agent_id"),
+                                    }),
                                     "raw_message": raw_message,
                                     "timestamp": log_data["ingested_at"],
                                     "_expire_at": datetime.now(timezone.utc) + timedelta(days=7),
@@ -829,6 +876,7 @@ async def siem_worker():
                                     await db.security_alerts.update_one({"tenant_id": tenant_id, "alert_uid": alert_payload["alert_uid"]}, {"$set": alert_payload}, upsert=True)
                                 except Exception as e:
                                     logger.error(f"[SIEM][DB] alert insert failed for {message_id}: {e}")
+                                    raise
 
                                 # Publish to redis for live websocket dashboard
                                 await redis.publish("security_alerts", json_dumps(alert_payload))
@@ -839,9 +887,15 @@ async def siem_worker():
 
                             # 🧠 ADVANCED SIEM ENGINE (Regex, Phishing, Event Map)
                             if not is_basic_plan:
-                                findings = await siem_engine.analyze_single_log(log_data)
+                                analysis_log = dict(log_data)
+                                analysis_log["_direct_event_rule_alerted"] = direct_event_rule_alerted
+                                findings = await siem_engine.analyze_single_log(analysis_log)
                                 for finding in findings:
                                     finding["tenant_id"] = tenant_id
+                                    finding.setdefault("agent_id", log_data.get("agent_id"))
+                                    finding.setdefault("computer", alert_computer)
+                                    finding.setdefault("target", alert_target)
+                                    finding.setdefault("user", extracted_user)
                                     if not finding.get("event_id") and event_id:
                                         finding["event_id"] = event_id
                                     if not finding.get("event_uid") and log_data.get("event_uid"):
@@ -858,8 +912,12 @@ async def siem_worker():
                                     if not finding.get("raw_message"):
                                         finding["raw_message"] = raw_message
 
-                                    if not finding.get("message"):
-                                        finding["message"] = raw_message
+                                    finding["message"] = operator_message({
+                                        **finding,
+                                        "message": finding.get("message") or raw_message,
+                                        "computer": alert_computer,
+                                        "agent_id": log_data.get("agent_id"),
+                                    })
 
                                     _normalize_document_timestamps(finding)
                                     finding["_expire_at"] = datetime.now(timezone.utc) + timedelta(days=7)
@@ -878,6 +936,7 @@ async def siem_worker():
                                             await dispatch_alert_if_entitled(db, redis, tenant_id, finding, "SIEM")
                                     except Exception as e:
                                         logger.error(f"[SIEM][DB] finding insert failed for {message_id}: {e}")
+                                        raise
 
                             # ⚡ CORRELATION ENGINE (Stateful Redis-backed multi-event rules)
                             # Only run if not already run inside the Windows event block above
@@ -897,6 +956,9 @@ async def siem_worker():
                                     _normalize_document_timestamps(corr_alert)
                                     if not corr_alert.get("event_uid") and log_data.get("event_uid"):
                                         corr_alert["event_uid"] = log_data.get("event_uid")
+                                    corr_alert.setdefault("agent_id", log_data.get("agent_id"))
+                                    corr_alert.setdefault("computer", alert_computer)
+                                    corr_alert.setdefault("target", alert_target)
                                     corr_alert["alert_uid"] = corr_alert.get("alert_uid") or _stable_alert_uid(
                                         "corr_adv",
                                         tenant_id,
@@ -912,6 +974,7 @@ async def siem_worker():
                                             await dispatch_alert_if_entitled(db, redis, tenant_id, corr_alert, "SIEM")
                                     except Exception as corr_err:
                                         logger.error(f"[CORR] Failed to save correlation alert: {corr_err}")
+                                        raise
 
                             if log_data.get("siem_hot_enqueued"):
                                 await _mark_siem_hot_done(redis, tenant_id, log_data.get("event_uid"))
@@ -935,17 +998,14 @@ async def siem_worker():
 
                         except Exception as e:
                             logger.exception(f"Processing Error for {message_id}: {e}")
-                            # Eject to DLQ instead of silently losing the message
-                            try:
-                                await _eject_to_dlq(
-                                    message_id,
-                                    payload.get("payload", ""),
-                                    f"PROCESSING_EXCEPTION: {e}",
-                                    stream_name=stream_name,
-                                    group_name=group_name,
-                                )
-                            except Exception as dlq_err:
-                                logger.error(f"[DLQ] Failed to eject {message_id}: {dlq_err}")
+                            # Do not acknowledge or immediately eject operational
+                            # failures. The stream PEL retains the event for reclaim;
+                            # repeated failures are quarantined by the delivery-count
+                            # DLQ path with the original payload preserved.
+                            await increment_redis_counter(
+                                redis,
+                                "warsoc_siem_processing_retries_total",
+                            )
 
                     if cold_batch:
                         try:

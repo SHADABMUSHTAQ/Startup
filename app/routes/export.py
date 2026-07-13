@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 from app.utils.report_engine import get_reports_base_dir
 from app.utils.archive_reader import fetch_archived_documents
+from app.utils.alert_incidents import aggregate_security_alerts
 
 def _load_runtime_config() -> dict:
     config_path = Path(__file__).resolve().parent.parent / "config" / "config.json"
@@ -260,6 +261,8 @@ async def export_csv(
         key=lambda doc: _parse_time(str(doc.get("timestamp") or doc.get("ingested_at") or "")) or datetime.min.replace(tzinfo=timezone.utc),
         reverse=True,
     )[:limit]
+    if data_type == "alerts":
+        export_docs = aggregate_security_alerts(export_docs)
     export_docs = [
         _prepare_csv_export_doc(doc, decrypt_sensitive=data_type == "compliance")
         for doc in export_docs
@@ -326,7 +329,6 @@ async def export_audit_report(
 
     collection_name = _collection_for_pack(normalized_id)
     collection = db[collection_name]
-    alerts_coll = db["security_alerts"]
     
     query = {"tenant_id": tenant_id}
     start_dt = _parse_time(start_time)
@@ -361,48 +363,24 @@ async def export_audit_report(
         event_id=None,
         limit=500,
     )
+    evidence_by_identity = {}
+    for evidence in [*forensic_logs, *archived_forensic_logs]:
+        identity = str(evidence.get("event_uid") or evidence.get("_id") or "")
+        if identity:
+            evidence_by_identity[identity] = evidence
     forensic_logs = sorted(
-        [*forensic_logs, *archived_forensic_logs],
+        evidence_by_identity.values(),
         key=lambda doc: _parse_time(str(doc.get("timestamp") or doc.get("ingested_at") or "")) or datetime.min.replace(tzinfo=timezone.utc),
         reverse=True,
     )[:500]
-
-    # Pull Alert Summary (Scorecard)
-    pack_alert_filters = [
-        {"pack_id": normalized_id},
-        {"pack": normalized_id},
-        {"compliance_pack": normalized_id},
-        {"required_pack": normalized_id},
-    ]
-    alerts_query = {
-        "tenant_id": tenant_id,
-        "$and": [{"$or": pack_alert_filters}],
-    }
-    if (start_dt or end_dt) and "$or" in query:
-        alerts_query["$and"].append({"$or": query["$or"]})
     
-    alerts_cursor = alerts_coll.find(alerts_query)
-    all_alerts = await alerts_cursor.to_list(length=5000)
-    archived_alerts, _ = await fetch_archived_documents(
-        db,
-        tenant_id=tenant_id,
-        collections=["security_alerts"],
-        start_dt=start_dt,
-        end_dt=end_dt,
-        event_id=None,
-        limit=5000,
-    )
-    archived_alerts = [
-        alert for alert in archived_alerts
-        if any(str(alert.get(field) or "") == normalized_id for field in ("pack_id", "pack", "compliance_pack", "required_pack"))
-    ]
-    all_alerts.extend(archived_alerts)
-    
-    # Aggregate Alert Counts
-    alert_counts = {}
-    for alert in all_alerts:
-        eid = alert.get("event_id")
-        alert_counts[eid] = alert_counts.get(eid, 0) + 1
+    # Compliance coverage is based on immutable evidence, not operational alert
+    # fan-out. One Windows event may legitimately produce more than one SIEM
+    # interpretation, which must not inflate the compliance scorecard.
+    evidence_counts = {}
+    for evidence in forensic_logs:
+        event_id = str(evidence.get("event_id") or "")
+        evidence_counts[event_id] = evidence_counts.get(event_id, 0) + 1
 
     # 2. Generate PDF
     buffer = io.BytesIO()
@@ -428,11 +406,11 @@ async def export_audit_report(
 
     # --- Section 1: Compliance Scorecard ---
     elements.append(Paragraph("SECTION 1: COMPLIANCE SCORECARD", header_style))
-    scorecard_data = [["Rule ID", "Control Description", "Severity", "Alert Count"]]
+    scorecard_data = [["Rule ID", "Control Description", "Severity", "Evidence Count"]]
     
     for rule in pack["rules"]:
         eid = rule["event_id"]
-        count = alert_counts.get(eid, 0)
+        count = evidence_counts.get(str(eid), 0)
         scorecard_data.append([rule["id"], rule["name"], rule["severity"], str(count)])
 
     scorecard_table = Table(scorecard_data, colWidths=[1.2*inch, 2.5*inch, 1*inch, 1*inch])

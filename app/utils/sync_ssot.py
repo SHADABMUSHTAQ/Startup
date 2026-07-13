@@ -64,7 +64,6 @@ def generate_tenant_policy():
             ],
             "web_log_paths": [
                 "access.log",
-                "logs/*.log",
                 "C:/inetpub/logs/LogFiles/W3SVC*/u_ex*.log",
                 "%ProgramData%/WarSOC/pos_audit.log"
             ]

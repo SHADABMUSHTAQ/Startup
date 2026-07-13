@@ -713,7 +713,11 @@ def parse_windows_event_xml(xml_text):
                 continue
             fields.setdefault(_xml_local_name(node.tag), node.text or "")
 
-    processed = {"provider": system_data["provider"], "channel": system_data["channel"]}
+    processed = {
+        "provider": system_data["provider"],
+        "channel": system_data["channel"],
+        "computer": system_data["computer"],
+    }
     if event_id in {"4624", "4625"}:
         processed.update({
             "target_user": fields.get("TargetUserName") or fields.get("TargetUserSid"),
@@ -732,6 +736,48 @@ def parse_windows_event_xml(xml_text):
             "parent_process_name": fields.get("ParentProcessName"),
             "command_line": fields.get("CommandLine"),
             "token_elevation_type": fields.get("TokenElevationType"),
+        })
+    elif event_id in {"1102", "4672"}:
+        processed.update({
+            "user": fields.get("SubjectUserName") or fields.get("SubjectUserSid"),
+            "user_domain": fields.get("SubjectDomainName"),
+            "subject_logon_id": fields.get("SubjectLogonId"),
+            "privilege_list": fields.get("PrivilegeList"),
+        })
+    elif event_id == "4616":
+        processed.update({
+            "user": fields.get("SubjectUserName") or fields.get("SubjectUserSid"),
+            "user_domain": fields.get("SubjectDomainName"),
+            "previous_time": fields.get("PreviousTime"),
+            "new_time": fields.get("NewTime"),
+            "process_name": fields.get("ProcessName"),
+        })
+    elif event_id == "4648":
+        processed.update({
+            "user": fields.get("SubjectUserName") or fields.get("SubjectUserSid"),
+            "user_domain": fields.get("SubjectDomainName"),
+            "target_user": fields.get("TargetUserName") or fields.get("TargetUserSid"),
+            "target_domain": fields.get("TargetDomainName"),
+            "target_server": fields.get("TargetServerName"),
+            "process_name": fields.get("ProcessName"),
+            "source_network_address": fields.get("IpAddress"),
+            "source_port": fields.get("IpPort"),
+        })
+    elif event_id in {"4720", "4726"}:
+        processed.update({
+            "user": fields.get("SubjectUserName") or fields.get("SubjectUserSid"),
+            "user_domain": fields.get("SubjectDomainName"),
+            "target_user": fields.get("TargetUserName") or fields.get("TargetSid"),
+            "target_domain": fields.get("TargetDomainName"),
+            "sam_account_name": fields.get("SamAccountName"),
+        })
+    elif event_id == "4732":
+        processed.update({
+            "user": fields.get("SubjectUserName") or fields.get("SubjectUserSid"),
+            "user_domain": fields.get("SubjectDomainName"),
+            "group_name": fields.get("TargetUserName") or fields.get("TargetSid"),
+            "group_domain": fields.get("TargetDomainName"),
+            "member_name": fields.get("MemberName") or fields.get("MemberSid"),
         })
     elif event_id == "4663":
         processed.update({
@@ -762,21 +808,94 @@ def parse_windows_event_xml(xml_text):
             "old_security_descriptor": fields.get("OldSd"),
             "new_security_descriptor": fields.get("NewSd"),
         })
-    elif event_id == "7045":
+    elif event_id == "4657":
         processed.update({
+            "user": fields.get("SubjectUserName") or fields.get("SubjectUserSid"),
+            "object_name": fields.get("ObjectName"),
+            "object_value_name": fields.get("ObjectValueName"),
+            "operation_type": fields.get("OperationType"),
+            "old_value": fields.get("OldValue"),
+            "new_value": fields.get("NewValue"),
+            "process_name": fields.get("ProcessName"),
+        })
+    elif event_id in {"4697", "7045"}:
+        processed.update({
+            "user": fields.get("SubjectUserName") or fields.get("SubjectUserSid"),
             "service_name": fields.get("ServiceName"),
-            "image_path": fields.get("ImagePath"),
+            "image_path": fields.get("ImagePath") or fields.get("ServiceFileName"),
             "service_type": fields.get("ServiceType"),
-            "start_type": fields.get("StartType"),
-            "service_account": fields.get("AccountName"),
+            "start_type": fields.get("StartType") or fields.get("ServiceStartType"),
+            "service_account": fields.get("AccountName") or fields.get("ServiceAccount"),
+        })
+    elif event_id == "4698":
+        processed.update({
+            "user": fields.get("SubjectUserName") or fields.get("SubjectUserSid"),
+            "task_name": fields.get("TaskName"),
+            "task_content": fields.get("TaskContentNew") or fields.get("TaskContent"),
+        })
+    elif event_id == "4719":
+        processed.update({
+            "user": fields.get("SubjectUserName") or fields.get("SubjectUserSid"),
+            "category_id": fields.get("CategoryId"),
+            "subcategory_id": fields.get("SubcategoryId"),
+            "audit_policy_changes": fields.get("AuditPolicyChanges"),
+        })
+    elif event_id == "4798":
+        processed.update({
+            "user": fields.get("SubjectUserName") or fields.get("SubjectUserSid"),
+            "target_user": fields.get("TargetUserName") or fields.get("TargetSid"),
+            "caller_process_name": fields.get("CallerProcessName"),
+            "caller_process_id": fields.get("CallerProcessId"),
+        })
+    elif event_id in {"4768", "4769"}:
+        processed.update({
+            "user": fields.get("TargetUserName") or fields.get("TargetUserSid"),
+            "target_user": fields.get("TargetUserName") or fields.get("TargetUserSid"),
+            "service_name": fields.get("ServiceName"),
+            "source_network_address": fields.get("IpAddress"),
+            "source_port": fields.get("IpPort"),
+            "status": fields.get("Status") or fields.get("FailureCode"),
+            "ticket_options": fields.get("TicketOptions"),
+            "pre_auth_type": fields.get("PreAuthType"),
+        })
+    elif event_id == "4776":
+        processed.update({
+            "user": fields.get("TargetUserName") or fields.get("TargetUserSid"),
+            "target_user": fields.get("TargetUserName") or fields.get("TargetUserSid"),
+            "workstation": fields.get("Workstation"),
+            "status": fields.get("Status"),
+            "authentication_package": fields.get("PackageName"),
+        })
+    elif event_id == "5140":
+        processed.update({
+            "user": fields.get("SubjectUserName") or fields.get("SubjectUserSid"),
+            "source_network_address": fields.get("IpAddress"),
+            "source_port": fields.get("IpPort"),
+            "share_name": fields.get("ShareName"),
+            "share_path": fields.get("ShareLocalPath"),
+            "access_mask": fields.get("AccessMask"),
+        })
+    elif event_id == "5157":
+        processed.update({
+            "user": fields.get("Application"),
+            "application": fields.get("Application"),
+            "source_network_address": fields.get("SourceAddress"),
+            "source_port": fields.get("SourcePort"),
+            "destination_address": fields.get("DestAddress"),
+            "destination_port": fields.get("DestPort"),
+            "protocol": fields.get("Protocol"),
         })
 
     processed = {key: value for key, value in processed.items() if value not in (None, "")}
+    if event_id in {"4624", "4625"}:
+        event_user = processed.get("target_user")
+    else:
+        event_user = processed.get("user") or processed.get("target_user")
     return {
         "event_id": event_id,
         "timestamp": system_data["system_time"] or datetime.now(timezone.utc).isoformat(),
         "event_uid": f"{system_data['channel']}:{system_data['event_record_id']}",
-        "user": processed.get("target_user") or processed.get("user") or system_data["user_id"] or "SYSTEM",
+        "user": event_user or system_data["user_id"] or "SYSTEM",
         "source_ip": processed.get("source_network_address") or LOCAL_IP,
         "processed_data": processed,
         "raw_event_data": {
@@ -790,29 +909,114 @@ def parse_windows_event_xml(xml_text):
 def build_windows_event_message(parsed):
     event_id = str(parsed.get("event_id") or "")
     processed = parsed.get("processed_data") or {}
+    user = str(processed.get("user") or parsed.get("user") or "SYSTEM")
+    target_user = str(processed.get("target_user") or "unknown account")
+    source_ip = str(processed.get("source_network_address") or parsed.get("source_ip") or "local host")
+
+    if event_id == "1100":
+        return "Windows Event Log service stopped"
+    if event_id == "1102":
+        return f"Windows Security audit log cleared by {user}"
+    if event_id == "4624":
+        logon_type = processed.get("logon_type")
+        suffix = f" (logon type {logon_type})" if logon_type else ""
+        return f"Successful sign-in for {target_user} from {source_ip}{suffix}"
+    if event_id == "4625":
+        details = []
+        if processed.get("logon_type"):
+            details.append(f"logon type {processed['logon_type']}")
+        if processed.get("status"):
+            details.append(f"status {processed['status']}")
+        suffix = f" ({', '.join(details)})" if details else ""
+        return f"Failed sign-in for {target_user} from {source_ip}{suffix}"
+    if event_id == "4672":
+        return f"Administrative privileges assigned to {user}"
+    if event_id == "4616":
+        process_name = processed.get("process_name") or "unknown process"
+        return f"System clock changed by {user} using {process_name}"
+    if event_id == "4648":
+        target = processed.get("target_user") or "unknown account"
+        server = processed.get("target_server") or "unknown server"
+        return f"Explicit credentials for {target} used by {user} against {server}"
     if event_id == "4688":
-        return " ".join(
-            str(value)
-            for value in (
-                processed.get("new_process_name"),
-                processed.get("command_line"),
-                processed.get("parent_process_name"),
-            )
-            if value
-        ) or "Windows process creation event"
-    if event_id == "7045":
-        return " ".join(
-            str(value)
-            for value in (
-                "Windows service installed",
-                processed.get("service_name"),
-                processed.get("image_path"),
-                processed.get("service_account"),
-            )
-            if value
-        )
+        process_name = processed.get("new_process_name") or "unknown process"
+        message = f"Process started by {user}: {process_name}"
+        if processed.get("command_line"):
+            message += f"; command: {processed['command_line']}"
+        if processed.get("parent_process_name"):
+            message += f"; parent: {processed['parent_process_name']}"
+        return message
+    if event_id == "4720":
+        return f"User account {target_user} created by {user}"
+    if event_id == "4726":
+        return f"User account {target_user} deleted by {user}"
+    if event_id == "4732":
+        member = processed.get("member_name") or "unknown member"
+        group = processed.get("group_name") or "unknown local group"
+        return f"{member} added to local group {group} by {user}"
+    if event_id in {"4697", "7045"}:
+        service = processed.get("service_name") or "unknown service"
+        message = f"Windows service installed: {service}"
+        if processed.get("image_path"):
+            message += f"; executable: {processed['image_path']}"
+        if processed.get("service_account"):
+            message += f"; account: {processed['service_account']}"
+        return message
+    if event_id == "4719":
+        change = processed.get("audit_policy_changes") or "audit policy changed"
+        return f"Windows audit policy changed by {user}: {change}"
+    if event_id == "5157":
+        destination = processed.get("destination_address") or "unknown destination"
+        if processed.get("destination_port"):
+            destination = f"{destination}:{processed['destination_port']}"
+        source = source_ip
+        if processed.get("source_port"):
+            source = f"{source}:{processed['source_port']}"
+        return f"Windows Firewall blocked connection from {source} to {destination}"
+    if event_id == "4663":
+        target = processed.get("object_name") or "protected object"
+        return f"Delete access requested for {target} by {user}"
+    if event_id == "4660":
+        process_name = processed.get("process_name") or "unknown process"
+        return f"Object deletion confirmed for handle {processed.get('handle_id') or 'unknown'} by {process_name}"
+    if event_id == "4670":
+        target = processed.get("object_name") or "protected object"
+        return f"Permissions changed on {target} by {user}"
+    if event_id == "4657":
+        target = processed.get("object_name") or "registry value"
+        value_name = processed.get("object_value_name")
+        target_value = f"{target}\\{value_name}" if value_name else str(target)
+        return f"Registry value changed by {user}: {target_value}"
+    if event_id == "4698":
+        return f"Scheduled task created by {user}: {processed.get('task_name') or 'unknown task'}"
+    if event_id == "4798":
+        process_name = processed.get("caller_process_name") or "unknown process"
+        return f"Local group membership enumerated for {target_user} by {process_name}"
+    if event_id == "4768":
+        status = processed.get("status")
+        suffix = f"; status {status}" if status else ""
+        return f"Kerberos authentication ticket requested for {target_user} from {source_ip}{suffix}"
+    if event_id == "4769":
+        service = processed.get("service_name") or "unknown service"
+        status = processed.get("status")
+        suffix = f"; status {status}" if status else ""
+        return f"Kerberos service ticket requested for {target_user} to {service} from {source_ip}{suffix}"
+    if event_id == "4776":
+        workstation = processed.get("workstation") or "unknown workstation"
+        status = processed.get("status")
+        suffix = f"; status {status}" if status else ""
+        return f"Credential validation for {target_user} from {workstation}{suffix}"
+    if event_id == "5140":
+        share = processed.get("share_name") or "unknown network share"
+        return f"Network share accessed by {user} from {source_ip}: {share}"
+
     event_fields = parsed.get("raw_event_data", {}).get("event_data", {})
-    return f"Windows Event {event_id}: {json.dumps(event_fields, ensure_ascii=False, default=str)}"
+    compact_fields = []
+    for key, value in list(event_fields.items())[:4]:
+        if value not in (None, "", "-"):
+            compact_fields.append(f"{key}={value}")
+    details = f": {', '.join(compact_fields)}" if compact_fields else ""
+    return f"Windows event {event_id or 'unknown'}{details}"
 
 
 def parse_pos_audit_line(line):
@@ -1071,13 +1275,23 @@ def ingest_sender_thread():
 def resolve_web_log_files():
     """Resolve configured web log files and glob patterns to concrete file paths."""
     resolved = []
+    own_log_dir = (_AGENT_DIR / "logs").resolve()
     for path_pattern in WEB_LOG_PATHS:
         matches = glob.glob(path_pattern)
         if matches:
             resolved.extend(matches)
         elif os.path.exists(path_pattern):
             resolved.append(path_pattern)
-    return sorted(set(resolved))
+    safe_paths = []
+    for candidate in sorted(set(resolved)):
+        try:
+            resolved_candidate = Path(candidate).resolve()
+            if resolved_candidate.parent == own_log_dir:
+                continue
+        except Exception:
+            pass
+        safe_paths.append(candidate)
+    return safe_paths
 
 # ==========================================
 # 4. THREADS

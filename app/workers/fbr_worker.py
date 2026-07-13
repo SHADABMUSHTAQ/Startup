@@ -485,6 +485,9 @@ async def _upsert_fbr_vault_and_alerts(db, cold_docs: list[dict]) -> list[dict]:
             "pack": "fbr_pos",
             "compliance_pack": "fbr_pos",
             "source_ip": item.get("source_ip"),
+            "agent_id": item.get("agent_id"),
+            "user": item.get("user"),
+            "target_fingerprint": item.get("target_fingerprint"),
             "summary": item.get("matched_rule_name") or item.get("message") or "",
             "event_uid": event_uid,
             "cold_id": cold_id_by_key.get((tenant_id, event_uid)),
@@ -897,6 +900,22 @@ async def fbr_worker():
                             except Exception as e:
                                 logger.error(f"FBR throttle inline handling error: {e}")
 
+                        # Keep only a non-reversible target identity in the hot
+                        # incident view. Exact POS paths/invoice identifiers stay
+                        # inside encrypted compliance evidence.
+                        identity_fields = _processed_event_fields(log_data)
+                        target_identity = str(
+                            identity_fields.get("object_name")
+                            or identity_fields.get("ObjectName")
+                            or log_data.get("invoice_id")
+                            or log_data.get("fbr_invoice_id")
+                            or ""
+                        ).strip()
+                        if target_identity:
+                            log_data["target_fingerprint"] = hashlib.sha256(
+                                target_identity.encode("utf-8", errors="replace")
+                            ).hexdigest()[:24]
+
                         # Encrypt sensitive payload fields.
                         _encrypt_fbr_fields(log_data, fernet)
 
@@ -922,12 +941,12 @@ async def fbr_worker():
                         )
                     except Exception as e:
                         logger.error(f"Error processing FBR log: {e}")
-                        await _eject_to_dlq(
-                            message_id,
-                            buffer_payload_by_mid.get(message_id, payload.get("payload", "")),
-                            f"PROCESSING_ERROR: {str(e)}",
-                            tenant_id=log_data.get("tenant_id") if "log_data" in locals() and isinstance(log_data, dict) else DEFAULT_TENANT_ID,
-                            stack_trace=traceback.format_exc(),
+                        # Preserve operational failures in the stream PEL for
+                        # reclaim. Repeated failures are moved to the durable
+                        # delivery-count DLQ instead of being acknowledged here.
+                        await increment_redis_counter(
+                            redis,
+                            "warsoc_fbr_processing_retries_total",
                         )
                         continue
 

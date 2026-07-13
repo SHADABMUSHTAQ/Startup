@@ -512,16 +512,40 @@ def test_native_xml_and_jsonl_parsers(monkeypatch, tmp_path):
 
     native_cases = [
         ("4688", "Security", {"NewProcessName": r"C:\Windows\cmd.exe", "CommandLine": "cmd /c whoami"}, "command_line"),
+        ("4672", "Security", {"SubjectUserName": "admin", "PrivilegeList": "SeDebugPrivilege"}, "privilege_list"),
+        ("4616", "Security", {"SubjectUserName": "admin", "PreviousTime": "old", "NewTime": "new", "ProcessName": r"C:\Windows\System32\svchost.exe"}, "new_time"),
+        ("4648", "Security", {"SubjectUserName": "admin", "TargetUserName": "service-user", "TargetServerName": "POS-SERVER", "IpAddress": "10.0.0.8"}, "target_server"),
+        ("4720", "Security", {"SubjectUserName": "admin", "TargetUserName": "new-user"}, "target_user"),
+        ("4726", "Security", {"SubjectUserName": "admin", "TargetUserName": "old-user"}, "target_user"),
+        ("4732", "Security", {"SubjectUserName": "admin", "TargetUserName": "Administrators", "MemberName": "new-user"}, "member_name"),
+        ("4697", "Security", {"ServiceName": "BadSvc", "ServiceFileName": r"C:\Temp\bad.exe"}, "service_name"),
         ("4663", "Security", {"ObjectName": r"C:\POS\sales.mdf", "HandleId": "0x44", "AccessMask": "0x10000"}, "object_name"),
         ("4660", "Security", {"HandleId": "0x44", "ProcessName": r"C:\POS\pos.exe"}, "handle_id"),
         ("4670", "Security", {"ObjectName": r"C:\POS\sales.db", "OldSd": "OLD", "NewSd": "NEW"}, "new_security_descriptor"),
         ("7045", "System", {"ServiceName": "BadSvc", "ImagePath": r"C:\Temp\bad.exe"}, "service_name"),
+        ("4768", "Security", {"TargetUserName": "alice", "IpAddress": "10.0.0.9", "Status": "0x0"}, "source_network_address"),
+        ("4769", "Security", {"TargetUserName": "alice", "ServiceName": "cifs/POS-SERVER", "IpAddress": "10.0.0.9"}, "service_name"),
+        ("4776", "Security", {"TargetUserName": "alice", "Workstation": "POS-02", "Status": "0xC000006A"}, "workstation"),
+        ("5140", "Security", {"SubjectUserName": "alice", "IpAddress": "10.0.0.9", "ShareName": r"\\*\POS"}, "share_name"),
     ]
     for event_id, channel, fields, expected_field in native_cases:
         native = agent.parse_windows_event_xml(xml_event(event_id, channel, fields))
         assert native["event_id"] == event_id
         assert native["processed_data"][expected_field]
         assert native["raw_event_data"]["system"]["channel"] == channel
+        assert "{" not in agent.build_windows_event_message(native)
+
+    failed_login = agent.parse_windows_event_xml(
+        xml_event(
+            "4625",
+            "Security",
+            {"TargetUserName": "alice", "IpAddress": "203.0.113.8", "LogonType": "10", "Status": "0xC000006D"},
+        )
+    )
+    failed_login_message = agent.build_windows_event_message(failed_login)
+    assert failed_login["user"] == "alice"
+    assert failed_login_message.startswith("Failed sign-in for alice from 203.0.113.8")
+    assert "TargetUserName" not in failed_login_message
 
     line = json.dumps(
         {
@@ -635,3 +659,34 @@ def test_installer_configures_native_telemetry_before_nssm_run_entries():
     build_script = (ROOT / "build_agent.bat").read_text(encoding="utf-8")
     assert "--console" in build_script
     assert "--noconsole" not in build_script
+
+
+def test_agent_does_not_monitor_its_own_service_logs(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    agent_dir = tmp_path / "WarSOC"
+    own_logs = agent_dir / "logs"
+    own_logs.mkdir(parents=True)
+    own_log = own_logs / "warsoc_agent.out.log"
+    own_log.write_text("[FAIL] Agent enrollment failed\n", encoding="utf-8")
+
+    app_log = agent_dir / "access.log"
+    app_log.write_text("GET /index.html 200\n", encoding="utf-8")
+
+    monkeypatch.setattr(agent, "_AGENT_DIR", agent_dir)
+    monkeypatch.setattr(agent, "WEB_LOG_PATHS", [str(own_logs / "*.log"), str(app_log)])
+
+    resolved = {Path(path).resolve() for path in agent.resolve_web_log_files()}
+    assert app_log.resolve() in resolved
+    assert own_log.resolve() not in resolved
+
+    policy = json.loads((ROOT / "agent" / "tenant_policy.json").read_text(encoding="utf-8"))
+    assert "logs/*.log" not in policy["monitoring"]["web_log_paths"]
+
+    deploy_policy = json.loads((ROOT / "deploy" / "tenant_policy.json").read_text(encoding="utf-8"))
+    assert "logs/*.log" not in deploy_policy["monitoring"]["web_log_paths"]
+
+    runtime_config = json.loads((ROOT / "app" / "config" / "config.json").read_text(encoding="utf-8"))
+    assert "logs/*.log" not in runtime_config["monitoring"]["web_log_paths"]
+
+    sync_source = (ROOT / "app" / "utils" / "sync_ssot.py").read_text(encoding="utf-8")
+    assert '"logs/*.log"' not in sync_source

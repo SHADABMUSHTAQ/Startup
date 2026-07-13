@@ -411,7 +411,6 @@ async def peca_worker():
                         continue
 
                     forensic_batch = []
-                    forensic_ack_ids = []
                     immediate_ack_ids = []
                     payload_by_mid = {}
 
@@ -544,19 +543,18 @@ async def peca_worker():
                                 f"RSA-{private_key.key_size}-PSS-SHA256 (WarSOC Master)"
                             )
                             
-                            buffer.append(log_data)
-                            forensic_ack_ids.append(message_id)
+                            if message_id not in buffer_ack_ids:
+                                buffer.append(log_data)
+                                buffer_ack_ids.append(message_id)
                         
                         except Exception as e:
-                            # On any per-message processing failure, eject to DLQ and ack to avoid death-loop
-                            reason = f"PROCESSING_ERROR: {str(e)}"
+                            # Operational failures remain pending for Redis reclaim.
+                            # Repeated failures are quarantined by the delivery-count
+                            # DLQ path, preserving the original stream payload.
                             logger.exception(f"Error signing forensic log for {message_id}: {e}")
-                            await _eject_to_dlq(
-                                message_id,
-                                payload_by_mid.get(message_id, raw_payload),
-                                reason,
-                                tenant_id=log_data.get("tenant_id") if "log_data" in locals() and isinstance(log_data, dict) else DEFAULT_TENANT_ID,
-                                stack_trace=traceback.format_exc(),
+                            await increment_redis_counter(
+                                redis,
+                                "warsoc_peca_processing_retries_total",
                             )
                             continue
 
@@ -589,13 +587,14 @@ async def peca_worker():
                                 "warsoc_peca_persistence_retries_total",
                             )
                         else:
-                            if forensic_ack_ids:
+                            if buffer_ack_ids:
                                 async with redis.pipeline(transaction=True) as pipe:
-                                    for mid in forensic_ack_ids:
+                                    for mid in buffer_ack_ids:
                                         pipe.xack(RAW_LOGS_QUEUE, PECA_GROUP, mid)
                                     await pipe.execute()
                             # Clear the buffer after successful persistence so we do not re-insert
                             buffer.clear()
+                            buffer_ack_ids.clear()
 
                     # Ack intentionally skipped/malformed records immediately.
                     if immediate_ack_ids:

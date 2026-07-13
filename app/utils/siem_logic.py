@@ -138,7 +138,11 @@ class SIEMEngine:
         # ---------------------------------------------------------
         # WINDOWS EVENT ID ENGINE
         # ---------------------------------------------------------
-        if event_id and event_id in self.event_id_rules:
+        if (
+            event_id
+            and event_id in self.event_id_rules
+            and not log_entry.get("_direct_event_rule_alerted")
+        ):
             rule = self.event_id_rules[event_id]
             if rule.get("alert_on_event", True):
                 findings.append(self._create_alert(

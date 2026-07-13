@@ -51,3 +51,8 @@ class AlertUpdate(BaseModel):
     status: Optional[AlertStatus] = None
     assignee_id: Optional[str] = None
     resolution_notes: Optional[str] = None
+    related_alert_ids: list[str] = Field(
+        default_factory=list,
+        max_length=500,
+        description="Tenant-scoped members of an aggregated incident view",
+    )

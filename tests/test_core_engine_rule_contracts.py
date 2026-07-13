@@ -69,7 +69,7 @@ def test_peca_and_fbr_catalogs_are_complete_and_disjoint():
     fbr_ids = {str(rule["event_id"]) for rule in COMPLIANCE_CATALOG["fbr_pos"]["rules"]}
 
     assert len(peca_ids) == 11
-    assert len(fbr_ids) == 8
+    assert len(fbr_ids) == 6
     assert "4625" in peca_ids
     assert "1102" in peca_ids
     assert "1100" in peca_ids
@@ -79,6 +79,8 @@ def test_peca_and_fbr_catalogs_are_complete_and_disjoint():
     assert "FBR-INV-MOD" in fbr_ids
     assert "FIM-DB-MOD" in fbr_ids
     assert "4660" in fbr_ids
+    assert "4657" not in fbr_ids
+    assert "4698" not in fbr_ids
     assert "4625" not in fbr_ids
     assert "FBR-INV-DEL" not in peca_ids
 

@@ -31,9 +31,7 @@ COMPLIANCE_CATALOG = {
             {"id": "FBR-103 (4660)", "event_id": "4660", "name": "Object Deleted", "severity": "Warning"},
             {"id": "FBR-104 (4663)", "event_id": "4663", "name": "Database Delete Intent (Correlation Context)", "severity": "Informational"},
             {"id": "FBR-105 (4670)", "event_id": "4670", "name": "Permissions Changed", "severity": "High"},
-            {"id": "FBR-106 (4657)", "event_id": "4657", "name": "Registry Value Modified", "severity": "High"},
-            {"id": "FBR-107 (4698)", "event_id": "4698", "name": "Scheduled Task Created", "severity": "Medium"},
-            {"id": "FBR-108 (FIM-DB-MOD)", "event_id": "FIM-DB-MOD", "name": "Database File Tamper Confirmed", "severity": "Critical"}
+            {"id": "FBR-106 (FIM-DB-MOD)", "event_id": "FIM-DB-MOD", "name": "Database File Tamper Confirmed", "severity": "Critical"}
         ]
     }
 }

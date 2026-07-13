@@ -15,6 +15,7 @@ from app.schemas.alerts import AlertResponse, AlertUpdate, AlertSeverity, AlertS
 from app.utils.limiter import limiter
 from app.utils.rbac import RoleChecker
 from app.utils.archive_reader import fetch_archived_documents
+from app.utils.alert_incidents import aggregate_security_alerts
 from bson import ObjectId
 import json
 
@@ -93,6 +94,7 @@ async def get_alerts(
     event_uid: str | None = Query(None),
     severity: Optional[str] = Query(None, description="Filter by severity: LOW, MEDIUM, HIGH, CRITICAL"),
     status: Optional[str] = Query(None, description="Filter by status: NEW, ACKNOWLEDGED, CLOSED, FALSE_POSITIVE"),
+    aggregate: bool = Query(True, description="Group repeated alerts into operator incidents"),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
     role: str = Depends(RoleChecker(["Analyst", "Manager", "Admin"]))
@@ -155,7 +157,8 @@ async def get_alerts(
             query["status"] = status_upper
 
     # Count total for pagination metadata
-    total = await db["security_alerts"].count_documents(query)
+    raw_total = await db["security_alerts"].count_documents(query)
+    total = raw_total
 
     # Fetch page
     cursor = db["security_alerts"].find(query).sort([("timestamp", -1), ("_id", -1)]).limit(limit)
@@ -182,7 +185,8 @@ async def get_alerts(
                 doc for doc in archived_docs
                 if str(doc.get("status", AlertStatus.NEW.value)).upper() == status.upper()
             ]
-        total += len(archived_docs)
+        raw_total += len(archived_docs)
+        total = raw_total
 
     if archived_docs:
         deduped = {str(doc.get("_id")): doc for doc in [*docs, *archived_docs]}
@@ -195,7 +199,9 @@ async def get_alerts(
     # Serialize for frontend consumption
     alerts = [_serialize_alert(doc) for doc in docs]
     alerts = json.loads(json.dumps(alerts, default=_json_serializer))
-    
+    if aggregate:
+        alerts = aggregate_security_alerts(alerts)
+
     new_cursor = hot_next_cursor
 
     return {
@@ -203,6 +209,8 @@ async def get_alerts(
         "next_cursor": new_cursor,
         "limit": limit,
         "total": total,
+        "incident_count": len(alerts),
+        "raw_total": raw_total,
     }
 
 
@@ -262,16 +270,16 @@ async def update_alert_status(
     # backward compatibility with legacy alerts that lack alert_id.
     from bson import ObjectId
 
-    id_filter = {"tenant_id": tenant_id}
-    if ObjectId.is_valid(alert_id):
-        id_filter["$or"] = [
-            {"_id": ObjectId(alert_id)},
-            {"alert_id": alert_id},
-        ]
-    else:
-        id_filter["alert_id"] = alert_id
+    requested_ids = [alert_id, *update.related_alert_ids]
+    unique_ids = list(dict.fromkeys(value.strip() for value in requested_ids if value and value.strip()))
+    id_terms = []
+    for requested_id in unique_ids:
+        if ObjectId.is_valid(requested_id):
+            id_terms.append({"_id": ObjectId(requested_id)})
+        id_terms.append({"alert_id": requested_id})
 
-    result = await db["security_alerts"].update_one(
+    id_filter = {"tenant_id": tenant_id, "$or": id_terms}
+    result = await db["security_alerts"].update_many(
         id_filter,
         {"$set": set_fields},
     )
@@ -286,4 +294,5 @@ async def update_alert_status(
         "status": "success",
         "message": f"Alert {alert_id} updated successfully.",
         "updated_fields": list(set_fields.keys()),
+        "updated_alerts": result.matched_count,
     }
