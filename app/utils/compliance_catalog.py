@@ -6,7 +6,7 @@ COMPLIANCE_CATALOG = {
     "peca_forensic": {
         "name": "PECA Forensic Trail (Section 46)",
         "description": "Signed forensic records designed to support PECA investigations and evidence workflows.",
-        "retention": {"local_hot_days": 30, "vault_days": 365},
+        "retention": {"local_hot_days": 7, "vault_days": 365},
         "rules": [
             {"id": "PECA-101 (4625)", "event_id": "4625", "name": "Unauthorized Access Attempt (Failed Logon)", "severity": "High"},
             {"id": "PECA-102 (1102)", "event_id": "1102", "name": "Forensic Log Deletion (Audit Cleared)", "severity": "Critical"},

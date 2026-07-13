@@ -12,7 +12,7 @@ from app.utils import archive_reader
 
 def test_compliance_hot_retention_is_separate_from_vault_retention():
     assert storage_archiver._effective_retention_days("fbr_pos_logs", 90) == 7
-    assert storage_archiver._effective_retention_days("peca_forensic_logs", 90) == 30
+    assert storage_archiver._effective_retention_days("peca_forensic_logs", 90) == 7
     assert storage_archiver._effective_retention_days("siem_cold_vault", 90) == 7
     assert storage_archiver._effective_retention_days("security_alerts", 90) == 7
     assert storage_archiver._effective_retention_days("logs", 90) == 7
@@ -36,7 +36,7 @@ def test_archive_cutoff_uses_compliance_hot_window():
         now=now,
     )
     assert (now - fbr_cutoff).days == 7
-    assert (now - peca_cutoff).days == 30
+    assert (now - peca_cutoff).days == 7
 
 
 def test_siem_hot_retention_is_capped_to_seven_days():
@@ -136,6 +136,16 @@ def test_production_archiver_is_scheduled_and_requires_azure_secret():
     assert "restart: on-failure" in service
     assert "AZURE_STORAGE_CONNECTION_STRING required" in service
     assert "ARCHIVE_INTERVAL_SECONDS" in service
+
+
+def test_async_azure_transport_is_packaged_for_archive_runtime():
+    from pathlib import Path
+
+    requirements = (
+        Path(__file__).resolve().parents[1] / "requirements.txt"
+    ).read_text(encoding="utf-8").lower()
+    assert "azure-storage-blob" in requirements
+    assert "aiohttp" in requirements
 
 
 def test_archive_managed_collections_have_no_independent_ttl_deletion():

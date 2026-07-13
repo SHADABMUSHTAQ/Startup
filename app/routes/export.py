@@ -352,9 +352,10 @@ async def export_audit_report(
         ]
 
     # Pull Forensic Logs (Ledger)
+    hot_total = await collection.count_documents(query)
     logs_cursor = collection.find(query).sort("timestamp", -1).limit(500)
     forensic_logs = await logs_cursor.to_list(length=500)
-    archived_forensic_logs, _ = await fetch_archived_documents(
+    archived_forensic_logs, archived_total = await fetch_archived_documents(
         db,
         tenant_id=tenant_id,
         collections=[collection_name],
@@ -373,6 +374,7 @@ async def export_audit_report(
         key=lambda doc: _parse_time(str(doc.get("timestamp") or doc.get("ingested_at") or "")) or datetime.min.replace(tzinfo=timezone.utc),
         reverse=True,
     )[:500]
+    total_matching_records = hot_total + archived_total
     
     # Compliance coverage is based on immutable evidence, not operational alert
     # fan-out. One Windows event may legitimately produce more than one SIEM
@@ -428,7 +430,13 @@ async def export_audit_report(
 
     # --- Section 2: Forensic Ledger ---
     elements.append(Paragraph("SECTION 2: FORENSIC EVIDENCE LEDGER", header_style))
-    elements.append(Paragraph("The following records were retrieved from the tenant-isolated compliance vault for audit review.", body_style))
+    preview_count = min(50, len(forensic_logs))
+    elements.append(Paragraph(
+        "The ledger below is a summary preview of the newest "
+        f"{preview_count} of {total_matching_records} matching evidence records. "
+        "Use the Auditor CSV export when record-level detail is required.",
+        body_style,
+    ))
     elements.append(Spacer(1, 0.1 * inch))
 
     ledger_data = [["Timestamp", "Event", "Source IP", "Forensic Seal (Partial)"]]
@@ -457,8 +465,11 @@ async def export_audit_report(
     ]))
     elements.append(ledger_table)
     
-    if len(forensic_logs) > 50:
-        elements.append(Paragraph(f"<i>... and {len(forensic_logs)-50} more records (truncated for summary)</i>", body_style))
+    if total_matching_records > 50:
+        elements.append(Paragraph(
+            f"<i>{total_matching_records - 50} additional matching records are omitted from this PDF summary; use the Auditor CSV export for detail.</i>",
+            body_style,
+        ))
 
     # --- Footer ---
     elements.append(Spacer(1, 0.5 * inch))
