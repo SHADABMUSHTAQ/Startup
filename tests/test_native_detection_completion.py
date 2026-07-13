@@ -563,6 +563,23 @@ def test_native_spool_failure_cannot_advance_watermark(monkeypatch, tmp_path):
     assert previous_watermark == 99
 
 
+def test_malformed_spool_lines_are_quarantined_before_processing_file_cleanup(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    spooler = agent.DiskSpooler(tmp_path / "durable-spool")
+    processing_file = spooler.spool_dir / "processing_1.jsonl"
+    processing_file.write_text(
+        '{"event_id":"4688","event_uid":"Security:100"}\nnot-json\n',
+        encoding="utf-8",
+    )
+
+    logs, filename = spooler.consume_batch()
+
+    assert filename == str(processing_file)
+    assert logs == [{"event_id": "4688", "event_uid": "Security:100"}]
+    quarantined = spooler.dead_letter_file.read_text(encoding="utf-8")
+    assert "not-json" in quarantined
+    assert "malformed_spool_json" in quarantined
+
 def test_pos_quarantine_is_durable_and_fails_closed(monkeypatch, tmp_path):
     agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
     fsync_calls = []

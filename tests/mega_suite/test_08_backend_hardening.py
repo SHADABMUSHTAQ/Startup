@@ -119,6 +119,48 @@ async def _register_agent(client, user_headers):
     return body["agent_id"], {"Authorization": f"Bearer {body['agent_jwt']}"}, activation_code
 
 
+async def test_activation_validation_blocks_random_codes_without_consuming_valid_code(client):
+    user_headers, _, _ = await _signup_and_login(
+        client,
+        "hardening_activation_preflight",
+        plan_type="Professional",
+    )
+    activation_resp = await client.post(
+        "/api/v1/agent/generate-activation",
+        headers=user_headers,
+    )
+    assert activation_resp.status_code == 200, activation_resp.text
+    activation_code = activation_resp.json()["activation_code"]
+
+    random_resp = await client.post(
+        "/api/v1/agent/validate-activation",
+        json={"activation_code": "WARSOC-00000000"},
+    )
+    assert random_resp.status_code == 401, random_resp.text
+
+    validate_resp = await client.post(
+        "/api/v1/agent/validate-activation",
+        json={"activation_code": activation_code},
+    )
+    assert validate_resp.status_code == 200, validate_resp.text
+    assert validate_resp.json()["status"] == "valid"
+
+    register_resp = await client.post(
+        "/api/v1/agent/register",
+        json={
+            "activation_code": activation_code,
+            "public_key": _ed25519_public_key_pem(),
+        },
+    )
+    assert register_resp.status_code == 200, register_resp.text
+
+    consumed_resp = await client.post(
+        "/api/v1/agent/validate-activation",
+        json={"activation_code": activation_code},
+    )
+    assert consumed_resp.status_code == 401, consumed_resp.text
+
+
 def _live_agent_payload(agent_id: str, *, timestamp: str | None = None, event_id: int = 4688):
     return {
         "agent_id": agent_id,
@@ -181,6 +223,30 @@ async def test_auth_me_redacts_sensitive_fields(client):
     assert "hashed_password" not in user
     assert "current_jti" not in user
     assert "token_exp" not in user
+
+
+async def test_paid_tenant_suspension_blocks_login_and_existing_sessions(client, db):
+    headers, user, _ = await _signup_and_login(
+        client,
+        "hardening_suspended_tenant",
+        plan_type="Professional",
+    )
+
+    await db["tenants"].update_one(
+        {"tenant_id": user["tenant_id"]},
+        {"$set": {"active": False, "status": "suspended", "has_active_plan": False}},
+    )
+
+    existing_session = await client.get("/api/v1/auth/me", headers=headers)
+    assert existing_session.status_code == 403
+    assert existing_session.json()["detail"] == "Tenant contract is inactive"
+
+    new_login = await client.post(
+        "/api/v1/auth/login",
+        json={"username": user["username"], "password": "Password123!Secure"},
+    )
+    assert new_login.status_code == 403
+    assert new_login.json()["detail"] == "Tenant contract is inactive"
 
 
 async def test_tenant_admin_cannot_self_activate_paid_plan(client, db):
@@ -746,7 +812,7 @@ async def test_compliance_evidence_free_plan_is_denied(client, free_auth_headers
     resp = await client.get("/api/v1/compliance/evidence", headers=free_auth_headers)
 
     assert resp.status_code == 403
-    assert "Professional or Enterprise" in resp.json()["detail"]
+    assert "active WarSOC custom contract entitlement" in resp.json()["detail"]
 
 
 async def test_export_csv_requires_premium_and_removes_internal_fields(client, db, free_auth_headers):

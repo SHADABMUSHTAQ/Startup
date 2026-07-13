@@ -84,6 +84,124 @@ begin
   ActivationPage.Values[1] := 'https://api.warsoc.tech';
 end;
 
+function TrimTrailingSlash(Value: String): String;
+begin
+  Result := Trim(Value);
+  while (Length(Result) > 0) and (Copy(Result, Length(Result), 1) = '/') do
+    Delete(Result, Length(Result), 1);
+end;
+
+function JsonEscape(Value: String): String;
+begin
+  Result := Value;
+  StringChangeEx(Result, '\', '\\', True);
+  StringChangeEx(Result, '"', '\"', True);
+end;
+
+function IsActivationCodeFormatValid(Value: String): Boolean;
+var
+  Code: String;
+  i: Integer;
+  Ch: String;
+begin
+  Code := Uppercase(Trim(Value));
+  Result := False;
+  if Length(Code) <> 15 then
+    Exit;
+  if Copy(Code, 1, 7) <> 'WARSOC-' then
+    Exit;
+  for i := 8 to 15 do
+  begin
+    Ch := Copy(Code, i, 1);
+    if Pos(Ch, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') = 0 then
+      Exit;
+  end;
+  Result := True;
+end;
+
+function IsBackendUrlAllowed(Value: String): Boolean;
+var
+  Url: String;
+begin
+  Url := Lowercase(Trim(Value));
+  Result :=
+    (Pos('https://', Url) = 1) or
+    (Pos('http://127.0.0.1', Url) = 1) or
+    (Pos('http://localhost', Url) = 1);
+end;
+
+function ValidateActivationCode(ActivationCode: String; ApiBaseUrl: String): Boolean;
+var
+  Http: Variant;
+  RequestUrl: String;
+  Body: String;
+begin
+  Result := False;
+  RequestUrl := TrimTrailingSlash(ApiBaseUrl) + '/api/v1/agent/validate-activation';
+  Body := '{"activation_code":"' + JsonEscape(Uppercase(Trim(ActivationCode))) + '"}';
+
+  try
+    Http := CreateOleObject('WinHttp.WinHttpRequest.5.1');
+    Http.SetTimeouts(5000, 5000, 10000, 10000);
+    Http.Open('POST', RequestUrl, False);
+    Http.SetRequestHeader('Content-Type', 'application/json');
+    Http.Send(Body);
+
+    if Http.Status = 200 then
+    begin
+      Result := True;
+      Exit;
+    end;
+
+    MsgBox(
+      'WarSOC rejected this activation code. Generate a fresh activation code from the dashboard and try again.' + #13#10#13#10 +
+      'Server response: HTTP ' + IntToStr(Http.Status),
+      mbError,
+      MB_OK
+    );
+  except
+    MsgBox(
+      'The installer could not contact the WarSOC backend to validate activation.' + #13#10#13#10 +
+      'Check the backend URL and internet connectivity, then try again.',
+      mbError,
+      MB_OK
+    );
+  end;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if CurPageID <> ActivationPage.ID then
+    Exit;
+
+  Token := Uppercase(Trim(ActivationPage.Values[0]));
+  BackendUrl := TrimTrailingSlash(ActivationPage.Values[1]);
+
+  if not IsActivationCodeFormatValid(Token) then
+  begin
+    MsgBox('Enter a valid WarSOC activation code in the format WARSOC-XXXXXXXX.', mbError, MB_OK);
+    Result := False;
+    Exit;
+  end;
+
+  if not IsBackendUrlAllowed(BackendUrl) then
+  begin
+    MsgBox('Backend URL must use HTTPS in production. Local HTTP is only allowed for 127.0.0.1 or localhost testing.', mbError, MB_OK);
+    Result := False;
+    Exit;
+  end;
+
+  ActivationPage.Values[0] := Token;
+  ActivationPage.Values[1] := BackendUrl;
+
+  if not ValidateActivationCode(Token, BackendUrl) then
+  begin
+    Result := False;
+    Exit;
+  end;
+end;
+
 procedure ConfigureTelemetryAndAgent;
 var
   ConfigFile: String;
@@ -137,6 +255,14 @@ begin
     RaiseException('An activation code is required.');
   if BackendUrl = '' then
     RaiseException('A backend URL is required.');
+  Token := Uppercase(Trim(Token));
+  BackendUrl := TrimTrailingSlash(BackendUrl);
+  if not IsActivationCodeFormatValid(Token) then
+    RaiseException('Activation code format is invalid. Expected WARSOC-XXXXXXXX.');
+  if not IsBackendUrlAllowed(BackendUrl) then
+    RaiseException('Backend URL must use HTTPS in production. Local HTTP is only allowed for 127.0.0.1 or localhost testing.');
+  if not ValidateActivationCode(Token, BackendUrl) then
+    RaiseException('Activation validation failed. Installation aborted before service startup.');
 
   { Generate the installed config files }
   ConfigFile := ExpandConstant('{app}\.env');

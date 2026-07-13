@@ -194,6 +194,33 @@ async def _ensure_users_tenant_index(db) -> None:
     except Exception as exc:
         logger.warning("users.tenant_id index normalization skipped: %s", exc)
 
+
+INACTIVE_TENANT_STATUSES = {"inactive", "suspended", "cancelled", "canceled", "past_due"}
+
+
+async def _require_active_paid_tenant(db, user: dict) -> None:
+    """Block paid users when operations has suspended or removed their tenant."""
+    if user.get("has_active_plan") is not True:
+        return
+
+    tenant_id = str(user.get("tenant_id") or "").strip()
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant contract is inactive")
+
+    tenant = await db["tenants"].find_one(
+        {"tenant_id": tenant_id},
+        {"active": 1, "status": 1, "has_active_plan": 1},
+    )
+    tenant_status = str((tenant or {}).get("status") or "active").strip().lower()
+    tenant_active = bool(
+        tenant
+        and tenant.get("active", True) is not False
+        and tenant.get("has_active_plan", True) is not False
+        and tenant_status not in INACTIVE_TENANT_STATUSES
+    )
+    if not tenant_active:
+        raise HTTPException(status_code=403, detail="Tenant contract is inactive")
+
 # --- DEPENDENCIES ---
 def _extract_token(request: Request, token: Optional[str]) -> Optional[str]:
     if token:
@@ -250,6 +277,8 @@ async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)
     user = await db["users"].find_one({"username": username, "tenant_id": tenant_id})
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
+
+    await _require_active_paid_tenant(db, user)
 
     # Attach token payload for revocation usage later
     user["current_jti"] = jti
@@ -519,6 +548,8 @@ async def login(request: Request, user_data: LoginSchema, db=Depends(get_db)):
     db_user = await db["users"].find_one({"$or": [{"username": user_data.username}, {"email": user_data.username}]})
     if not db_user or not verify_password(user_data.password, db_user["hashed_password"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    await _require_active_paid_tenant(db, db_user)
 
     tenant_id = db_user.get("tenant_id", "WARSOC_DEFAULT")
     access_token = create_access_token(

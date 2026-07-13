@@ -48,7 +48,6 @@ DRAIN_BATCH_SIZE = int(os.getenv("DRAIN_BATCH_SIZE", "50"))
 DRAIN_INTERVAL   = int(os.getenv("DRAIN_INTERVAL_MS", "100")) / 1000.0
 
 RAW_LOGS_QUEUE       = "raw_logs_queue"
-RAW_LOGS_QUEUE_MAXLEN = 100000
 BUFFER_MAX           = 50_000
 AGENT_ID             = "syslog_receiver"
 
@@ -386,8 +385,6 @@ async def drain_to_redis(queue: asyncio.Queue, pool: aioredis.ConnectionPool, db
                     await pipe.xadd(
                         RAW_LOGS_QUEUE,
                         stream_payload,
-                        maxlen=RAW_LOGS_QUEUE_MAXLEN,
-                        approximate=True,
                     )
                 await pipe.execute()
 
@@ -428,8 +425,6 @@ async def drain_to_redis(queue: asyncio.Queue, pool: aioredis.ConnectionPool, db
                             await pipe.xadd(
                                 RAW_LOGS_QUEUE,
                                 {"payload": json.dumps(log_dict, default=str)},
-                                maxlen=RAW_LOGS_QUEUE_MAXLEN,
-                                approximate=True,
                             )
                         await pipe.execute()
                     logger.info(f"Flushed {len(batch)} remaining items on shutdown.")

@@ -49,12 +49,12 @@ settings = get_settings()
 RAW_LOGS_QUEUE = "raw_logs_queue"
 PECA_GROUP = "eto_group" # 🏗 Unified: ETO/PECA shared group
 SIGNER_ID = "WarSOC-PK-2026-v1" 
-PECA_CONSUMER = os.environ.get("CONSUMER_NAME", f"peca_consumer_{socket.gethostname()}")
+PECA_CONSUMER = f"peca_{os.getenv('CONSUMER_NAME', 'worker')}_{socket.gethostname()}"
 ETO_GROUP = PECA_GROUP # Legacy alias support
 ETO_CONSUMER = PECA_CONSUMER
 RECLAIM_MIN_IDLE_MS = 60000
 RECLAIM_BATCH_SIZE = 50
-DEFAULT_TENANT_ID = os.getenv("TENANT_ID", "WARSOC_898F3395")
+DEFAULT_TENANT_ID = "UNATTRIBUTED"
 
 def load_dynamic_config():
     """Returns SSOT catalogs (CTO FIX)."""

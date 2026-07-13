@@ -250,6 +250,17 @@ async def test_catalog_password_spray_triggers_after_five_users_in_five_minutes(
     assert alerts[0]["type"] == "Password spraying attack detected"
     assert "10.0.0.55" in redis.sets["warsoc:banned_ips:TENANT-SPRAY"]
 
+    duplicate_alerts = await engine.run_dynamic_rules(
+        tenant_id="TENANT-SPRAY",
+        source_ip="10.0.0.55",
+        user="user5",
+        event_id="4625",
+        event_type="failed_login",
+        timestamp_iso="2026-05-06T10:00:01+00:00",
+        log_entry={"username": "user5"},
+    )
+    assert duplicate_alerts == []
+
 
 @pytest.mark.asyncio
 async def test_auto_revocation_skips_invalid_and_whitelisted_sources():

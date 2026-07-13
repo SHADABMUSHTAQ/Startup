@@ -5,7 +5,7 @@ import time
 from datetime import datetime, timezone
 
 @pytest.mark.asyncio
-async def test_nxlog_end_to_end_pipeline(async_client: AsyncClient, db, redis_client, auth_headers, agent_public_key_pem):
+async def test_native_agent_ingest_security_contract(async_client: AsyncClient, db, redis_client, auth_headers, agent_public_key_pem):
     # 1. Generate Activation Code (Mocking the UI Dashboard action)
     act_resp = await async_client.post(
         "/api/v1/agent/generate-activation",
@@ -14,7 +14,7 @@ async def test_nxlog_end_to_end_pipeline(async_client: AsyncClient, db, redis_cl
     assert act_resp.status_code == 200
     act_code = act_resp.json()["activation_code"]
     
-    # 2. Phase 1: Activate Agent (Mocking activate_agent.ps1)
+    # 2. Activate the native Windows agent identity.
     reg_payload = {
         "activation_code": act_code,
         "public_key": agent_public_key_pem
@@ -44,12 +44,12 @@ async def test_nxlog_end_to_end_pipeline(async_client: AsyncClient, db, redis_cl
     assert pulse_resp_bad.status_code == 400
     assert "Payload timestamp out of acceptable 5-minute window" in pulse_resp_bad.json()["detail"]
     
-    # 4. Phase 4: Test Successful NXLog Ingestion
+    # 4. Test successful native Windows event ingestion.
     valid_nonce = str(uuid.uuid4())
     good_payload = {
         "nonce": valid_nonce,
         "timestamp": int(time.time()),
-        "payload": [{"event_id": 4663, "message": "NXLog File Deletion Test"}]
+        "payload": [{"event_id": 4688, "message": "Native process creation test"}]
     }
     
     pulse_resp_good = await async_client.post("/api/v1/ingest/pulse", json=good_payload, headers=headers)
@@ -62,4 +62,4 @@ async def test_nxlog_end_to_end_pipeline(async_client: AsyncClient, db, redis_cl
     assert pulse_resp_replay.status_code == 409
     assert "Replay attack detected" in pulse_resp_replay.json()["detail"]
 
-    print("\n[+] End-to-End NXLog Pipeline Tests Passed: Registration -> JWT Injection -> Replay Prevention -> Successful Ingestion")
+    print("\n[+] Native agent ingest contract passed: registration -> identity -> replay prevention -> ingestion")

@@ -229,7 +229,7 @@ class Validator:
         signup_payload = {
             "username": f"rogue_{self.run_id}",
             "email": self.unique_email("rogue"),
-            "password": "RoguePass123!",
+            "password": "RoguePass123!Secure",
             "full_name": "Rogue Signup",
             "plan_type": "Customized",
             "compliance_packs": ["fbr_pos", "peca_forensic"],

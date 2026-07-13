@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Request, HTTPException, Header
 from pydantic import BaseModel, Field
 import json
+import logging
 import uuid
 import secrets
 import ipaddress
@@ -22,9 +23,22 @@ from app.utils.security_policy import effective_agent_limit
 
 router = APIRouter()
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 ACTIVE_AGENT_QUERY = {"status": {"$nin": ["inactive", "revoked"]}}
+INACTIVE_TENANT_STATUSES = {"inactive", "suspended", "cancelled", "canceled", "past_due"}
+
+
+def _tenant_accepts_agents(tenant: dict | None) -> bool:
+    if not tenant:
+        return False
+    status = str(tenant.get("status") or "active").strip().lower()
+    return bool(
+        tenant.get("active", True) is not False
+        and tenant.get("has_active_plan", True) is not False
+        and status not in INACTIVE_TENANT_STATUSES
+    )
 
 
 async def _database_active_agent_count(db, tenant_id: str) -> int:
@@ -46,6 +60,9 @@ async def _sync_active_count_floor(redis_client, count_key: str, database_count:
 class ActivationResponse(BaseModel):
     activation_code: str
     expires_in_seconds: int
+
+class ActivationValidateRequest(BaseModel):
+    activation_code: str = Field(min_length=8, max_length=64)
 
 class AgentRegisterRequest(BaseModel):
     activation_code: str
@@ -177,8 +194,8 @@ async def generate_activation(
         features = "SIEM"
         
     tenant = await db["tenants"].find_one({"tenant_id": tenant_id})
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+    if not _tenant_accepts_agents(tenant):
+        raise HTTPException(status_code=403, detail="Tenant contract is inactive")
         
     limit = effective_agent_limit(tenant.get("max_agents", tenant.get("agent_limit", 10)))
     count_key = f"tenant:{tenant_id}:active_count"
@@ -203,6 +220,41 @@ async def generate_activation(
     await redis_client.setex(f"warsoc:activation:{code}", ttl, json.dumps(payload))
     
     return ActivationResponse(activation_code=code, expires_in_seconds=ttl)
+
+@router.post("/validate-activation")
+@limiter.limit("20/minute")
+async def validate_activation(
+    request: Request,
+    body: ActivationValidateRequest,
+    db = Depends(get_db)
+):
+    redis_client = getattr(request.app.state, "redis", None)
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+
+    activation_code = body.activation_code.strip()
+    raw_payload = await redis_client.get(f"warsoc:activation:{activation_code}")
+    if not raw_payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired activation code")
+
+    if isinstance(raw_payload, bytes):
+        raw_payload = raw_payload.decode("utf-8", errors="ignore")
+    try:
+        payload = json.loads(raw_payload)
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired activation code") from exc
+
+    tenant_id = payload.get("tenant_id")
+    tenant = await db["tenants"].find_one({"tenant_id": tenant_id})
+    if not _tenant_accepts_agents(tenant):
+        raise HTTPException(status_code=401, detail="Invalid or expired activation code")
+
+    ttl = await redis_client.ttl(f"warsoc:activation:{activation_code}")
+    return {
+        "status": "valid",
+        "expires_in_seconds": max(int(ttl or 0), 0),
+        "features": payload.get("features", "SIEM"),
+    }
 
 @router.post("/register")
 @limiter.limit("10/minute")
@@ -246,9 +298,7 @@ async def register_agent(
     tenant_id = payload.get("tenant_id")
     
     tenant = await db["tenants"].find_one({"tenant_id": tenant_id})
-    if not tenant:
-        raise HTTPException(status_code=401, detail="Activation code is not bound to an active tenant")
-    if tenant.get("active") is False or str(tenant.get("status") or "active").lower() != "active":
+    if not _tenant_accepts_agents(tenant):
         raise HTTPException(status_code=401, detail="Activation code is not bound to an active tenant")
     limit = effective_agent_limit(tenant.get("max_agents", tenant.get("agent_limit", 10)))
     database_count = await _database_active_agent_count(db, tenant_id)
@@ -276,7 +326,7 @@ async def register_agent(
     if not success:
         raise HTTPException(
             status_code=403, 
-            detail=f"Agent license limit ({limit}) reached. Registration denied."
+            detail=f"Agent contract limit ({limit}) reached. Registration denied."
         )
     
     agent_id = f"WARSOC_AGENT_{uuid.uuid4().hex}"
@@ -456,19 +506,11 @@ async def agent_heartbeat(
         await redis_client.setex(f"warsoc:agent_cache:db_update:{body.agent_id}", 60, "1")
     
     # Check OTA Updates
-    auto_update_enabled = getattr(settings, "auto_update_enabled", "false").lower() == "true"
-    
+    auto_update_enabled = str(getattr(settings, "auto_update_enabled", "false")).lower() == "true"
     if auto_update_enabled:
-        target_version = getattr(settings, "agent_target_version", "1.0.0")
-        if body.current_version != target_version:
-            return {
-                "status": "ok",
-                "update_available": True,
-                "enforce_bans": enforce_bans,
-                "target_version": target_version,
-                "download_url": f"https://ota.warsoc.io/releases/windows/warsoc_agent_v{target_version}.exe",
-                "release_signature": getattr(settings, "agent_release_signature", "mock_ed25519_signature_hex")
-            }
+        # OTA is intentionally fail-closed until a dedicated signed-agent URL
+        # and release-signature verification contract are configured.
+        logger.error("Agent auto-update was requested but signed OTA delivery is not configured")
             
     return {
         "status": "ok",

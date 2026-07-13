@@ -7,7 +7,6 @@ from app.config.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-RAW_RETENTION_SECONDS = 7776000  # 90 days
 DEFAULT_TENANT_RETENTION_DAYS = 90
 SIEM_HOT_RETENTION_DAYS = max(1, min(7, int(os.getenv("SIEM_HOT_RETENTION_DAYS", "7"))))
 RAW_RETENTION_ANCHOR_FIELD = "_retention_ts"
@@ -30,11 +29,6 @@ async def init_db():
         raise
 
 
-def _is_single_field_key(index_def: dict, field_name: str) -> bool:
-    key = index_def.get("key")
-    return isinstance(key, list) and len(key) == 1 and key[0][0] == field_name
-
-
 async def _drop_ttl_indexes(collection, collection_name: str):
     indexes = await collection.index_information()
     for idx_name, idx_def in indexes.items():
@@ -49,28 +43,6 @@ async def _drop_ttl_indexes(collection, collection_name: str):
                     pass
                 else:
                     raise e
-
-
-async def _drop_ttl_indexes_except(collection, collection_name: str, allowed_field_name: str):
-    indexes = await collection.index_information()
-    for idx_name, idx_def in indexes.items():
-        if idx_name == "_id_":
-            continue
-        if idx_def.get("expireAfterSeconds") is None:
-            continue
-        if _is_single_field_key(idx_def, allowed_field_name):
-            continue
-        try:
-            await collection.drop_index(idx_name)
-            logger.warning(
-                f"Dropped legacy TTL index {collection_name}.{idx_name}; {allowed_field_name} is the retention source of truth"
-            )
-        except OperationFailure as e:
-            if e.code == 27 or "IndexNotFound" in str(e):
-                pass
-            else:
-                raise e
-
 
 async def _backfill_expire_at(collection, retention_days: int):
     await collection.update_many(
@@ -108,51 +80,6 @@ async def _backfill_expire_at(collection, retention_days: int):
         ],
     )
 
-
-
-async def _ensure_ttl_index(
-    collection,
-    collection_name: str,
-    field_name: str,
-    ttl_seconds: int,
-    index_name: str,
-):
-    indexes = await collection.index_information()
-    for idx_name, idx_def in indexes.items():
-        if idx_name == "_id_":
-            continue
-        if not _is_single_field_key(idx_def, field_name):
-            continue
-
-        existing_ttl = idx_def.get("expireAfterSeconds")
-        if existing_ttl == ttl_seconds:
-            # Matching TTL already present.
-            return
-
-        # Same key with wrong/missing TTL blocks compliant recreation.
-        try:
-            await collection.drop_index(idx_name)
-            logger.warning(
-                f"Dropped index {collection_name}.{idx_name} to enforce TTL={ttl_seconds}s on {field_name}"
-            )
-        except OperationFailure as e:
-            if e.code == 27 or "IndexNotFound" in str(e):
-                pass
-            else:
-                raise e
-
-    await collection.create_index(
-        [(field_name, 1)],
-        name=index_name,
-        expireAfterSeconds=ttl_seconds,
-    )
-
-async def init_compliance_db(db):
-    """
-    Enforce PTA CTDISR-2025 and ETO 2002 Sections 5 & 6 compliance via TTL indexes.
-    This ensures automated data retention and forensic sealing audit trails.
-    """
-    
 async def _aggressive_create_index(collection, keys, **kwargs):
     try:
         await collection.create_index(keys, **kwargs)
@@ -186,16 +113,10 @@ async def init_compliance_db(db):
     try:
         logger.info("Initializing PTA/ETO 2002 Sections 5 & 6 Compliance Layer...")
         
-        # 1. PECA Forensic Logs: 1 Year Retention (via _expire_at)
-        await _drop_ttl_indexes_except(db.peca_forensic_logs, "peca_forensic_logs", "_expire_at")
+        # Archive-managed collections keep retention metadata, but only the
+        # verified Azure archiver may delete their hot records.
+        await _drop_ttl_indexes(db.peca_forensic_logs, "peca_forensic_logs")
         await _backfill_expire_at(db.peca_forensic_logs, retention_days=365)
-        await _ensure_ttl_index(
-            db.peca_forensic_logs,
-            collection_name="peca_forensic_logs",
-            field_name="_expire_at",
-            ttl_seconds=0,
-            index_name="peca_forensic_logs_expire_at",
-        )
         # Drop legacy unique index if present; PECA must allow repeated event IDs across tenants/time.
         peca_indexes = await db.peca_forensic_logs.index_information()
         legacy_event_idx = peca_indexes.get("event_id_1")
@@ -208,30 +129,16 @@ async def init_compliance_db(db):
         #  LEGAL PHYSICS: Hard engine-level block on cross-tenant overwrites
         await _aggressive_create_index(db.peca_forensic_logs, [("tenant_id", 1), ("event_uid", 1)], unique=True, name="idx_peca_tenant_event_uid")
 
-        # 2. FBR POS Compliance: 6 Year Retention (via _expire_at)
-        await _drop_ttl_indexes_except(db.fbr_pos_logs, "fbr_pos_logs", "_expire_at")
+        # 2. FBR POS Compliance: 6 Year vault-retention metadata.
+        await _drop_ttl_indexes(db.fbr_pos_logs, "fbr_pos_logs")
         await _backfill_expire_at(db.fbr_pos_logs, retention_days=365 * 6)
-        await _ensure_ttl_index(
-            db.fbr_pos_logs,
-            collection_name="fbr_pos_logs",
-            field_name="_expire_at",
-            ttl_seconds=0,
-            index_name="fbr_pos_logs_expire_at",
-        )
         await _aggressive_create_index(db.fbr_pos_logs, [("tenant_id", 1), ("timestamp", -1)])
         await _aggressive_create_index(db.fbr_pos_logs, [("fbr_invoice_id", 1)])
         #  LEGAL PHYSICS: Hard engine-level block on cross-tenant overwrites
         await _aggressive_create_index(db.fbr_pos_logs, [("tenant_id", 1), ("event_uid", 1)], unique=True, name="idx_fbr_tenant_event_uid")
 
-        # 3. SIEM Security Audit Trail: Hot Feed (via _expire_at)
-        await _drop_ttl_indexes_except(db.security_alerts, "security_alerts", "_expire_at")
-        await _ensure_ttl_index(
-            db.security_alerts,
-            collection_name="security_alerts",
-            field_name="_expire_at",
-            ttl_seconds=0,
-            index_name="security_alerts_expire_at",
-        )
+        # 3. SIEM Security Audit Trail: seven-day hot feed, archive-before-delete.
+        await _drop_ttl_indexes(db.security_alerts, "security_alerts")
         #  LEGAL PHYSICS: Hard engine-level block on cross-tenant overwrites for hot feed
         await _aggressive_create_index(db.security_alerts, [("tenant_id", 1), ("alert_uid", 1)], unique=True, name="idx_alerts_tenant_alert_uid")
         # Legacy FBR/correlation alerts used a non-indexed retention field. Give
@@ -258,34 +165,14 @@ async def init_compliance_db(db):
         await _drop_ttl_indexes(db.siem_cold_vault, "siem_cold_vault")
         await _backfill_expire_at(db.siem_cold_vault, retention_days=SIEM_HOT_RETENTION_DAYS)
 
-        # 4. PHASE 5 RAW DATA SELF-CLEANING (90-Day)
-        # Drop legacy TTL index on string timestamp to save DB overhead
-        await _drop_ttl_indexes(db.logs, "logs_ttl_90d")
-        await _ensure_ttl_index(
-            db.logs,
-            collection_name="logs",
-            field_name=RAW_RETENTION_ANCHOR_FIELD,
-            ttl_seconds=RAW_RETENTION_SECONDS,
-            index_name="logs_anchor_ttl_90d",
-        )
-        # Drop legacy TTL index on string timestamp
-        await _drop_ttl_indexes(db.csv_uploads, "csv_uploads_ttl_90d")
-        await _ensure_ttl_index(
-            db.csv_uploads,
-            collection_name="csv_uploads",
-            field_name=RAW_RETENTION_ANCHOR_FIELD,
-            ttl_seconds=RAW_RETENTION_SECONDS,
-            index_name="csv_uploads_anchor_ttl_90d",
-        )
-        await _ensure_ttl_index(
-            db.analysis_results,
-            collection_name="analysis_results",
-            field_name="uploaded_at",
-            ttl_seconds=RAW_RETENTION_SECONDS,
-            index_name="analysis_results_ttl_90d",
-        )
+        # 4. Raw uploads/results are also archive-managed. Remove every legacy
+        # TTL so an Azure outage causes visible hot-storage growth, not data loss.
+        await _drop_ttl_indexes(db.logs, "logs")
+        await _drop_ttl_indexes(db.csv_uploads, "csv_uploads")
+        await _drop_ttl_indexes(db.analysis_results, "analysis_results")
 
-        # Backfill Date anchors so TTL applies to existing string-timestamp records too.
+        # Backfill date anchors so the archiver can select legacy records that
+        # stored display timestamps as strings.
         await db.logs.update_many(
             {RAW_RETENTION_ANCHOR_FIELD: {"$exists": False}},
             [

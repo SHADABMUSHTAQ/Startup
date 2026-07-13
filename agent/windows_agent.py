@@ -135,6 +135,24 @@ REQUEST_SESSION = requests.Session()
 # ==========================================
 # 2. HELPER FUNCTIONS & MITIGATION
 # ==========================================
+def _clear_cached_agent_identity(reason):
+    global JWT_TOKEN, AGENT_ID
+    JWT_TOKEN = None
+    AGENT_ID = TENANT_ID
+    for state_path in (
+        JWT_TOKEN_PATH,
+        AGENT_ID_PATH,
+        LEGACY_JWT_TOKEN_PATH,
+        LEGACY_AGENT_ID_PATH,
+    ):
+        try:
+            if state_path.exists():
+                state_path.unlink()
+        except Exception:
+            pass
+    print(f"[WARN] Cleared cached agent identity: {reason}")
+
+
 def get_local_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -149,6 +167,7 @@ LOCAL_IP = get_local_ip()
 
 
 def _load_or_create_signing_key():
+    global JWT_TOKEN, AGENT_ID
     from cryptography.hazmat.primitives.asymmetric import ed25519
     from cryptography.hazmat.primitives import serialization
     PROGRAM_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -163,12 +182,27 @@ def _load_or_create_signing_key():
         if PRIVATE_KEY_PATH.exists()
         else LEGACY_PRIVATE_KEY_PATH
     )
+    if not readable_private_key_path.exists() and JWT_TOKEN:
+        _clear_cached_agent_identity("cached token existed without an agent signing key")
+
     try:
         if readable_private_key_path.exists():
             pem_data = readable_private_key_path.read_bytes()
-            return serialization.load_pem_private_key(pem_data, password=None)
+            private_key = serialization.load_pem_private_key(pem_data, password=None)
+            if isinstance(private_key, ed25519.Ed25519PrivateKey):
+                return private_key
+
+            backup_path = readable_private_key_path.with_suffix(
+                readable_private_key_path.suffix + f".unsupported-{int(time.time())}.bak"
+            )
+            try:
+                readable_private_key_path.replace(backup_path)
+                print(f"[WARN] Replaced unsupported legacy agent signing key: {backup_path}")
+            except Exception as exc:
+                print(f"[WARN] Could not quarantine unsupported legacy signing key: {exc}")
+            _clear_cached_agent_identity("legacy signing key was not Ed25519")
     except Exception:
-        pass
+        _clear_cached_agent_identity("agent signing key was unreadable")
 
     signing_key = ed25519.Ed25519PrivateKey.generate()
     pem = signing_key.private_bytes(
@@ -594,8 +628,16 @@ class DiskSpooler:
                             logs.append(parsed)
                         else:
                             malformed_count += 1
+                            self.quarantine(
+                                {"raw_spool_record": parsed},
+                                f"malformed_spool_record:{file_path}",
+                            )
                     except json.JSONDecodeError:
                         malformed_count += 1
+                        self.quarantine(
+                            {"raw_spool_line": line},
+                            f"malformed_spool_json:{file_path}",
+                        )
 
             if malformed_count:
                 print(f"[!] Spooler skipped {malformed_count} malformed JSONL records from {file_path}")
@@ -944,12 +986,25 @@ def ingest_sender_thread():
                 elif resp and resp.status_code == 422:
                     # POISON PILL RECOVERY: Isolate malformed log
                     print(f"[WARN] Batch chunk rejected (422). Isolating broken records...")
+                    transient_retry = False
                     for single_log in chunk:
                         sr = secure_request("POST", INGEST_URL, json=_build_ingest_envelope([single_log]), timeout=10)
-                        if not sr or sr.status_code not in (200, 202):
-                            status = sr.status_code if sr else "timeout"
+                        if sr and sr.status_code in (200, 202):
+                            continue
+
+                        status = sr.status_code if sr else "timeout"
+                        if sr and sr.status_code in (400, 422):
                             SPOOLER.quarantine(single_log, f"backend_rejected:{status}")
                             print(f"[QUARANTINE] Backend rejected forensic event: {single_log.get('event_id')}")
+                        elif sr and sr.status_code == 413:
+                            SPOOLER.append(_truncate_single_log_payload(single_log))
+                            print(f"[WARN] Oversized isolated event trimmed and re-queued: {single_log.get('event_id')}")
+                        else:
+                            SPOOLER.append(single_log)
+                            transient_retry = True
+                            print(f"[WARN] Isolated event delivery deferred ({status}): {single_log.get('event_id')}")
+                    if transient_retry:
+                        time.sleep(5)
                     continue
 
                 else:

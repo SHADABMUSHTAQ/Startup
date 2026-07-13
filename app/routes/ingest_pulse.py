@@ -26,8 +26,6 @@ settings = get_settings()
 logger = logging.getLogger("ingest_pulse")
 RAW_LOGS_QUEUE = "raw_logs_queue"
 SIEM_HOT_QUEUE = "siem_hot_queue"
-RAW_LOGS_QUEUE_MAXLEN = 100000
-SIEM_HOT_QUEUE_MAXLEN = 100000
 RAW_RETENTION_ANCHOR_FIELD = "_retention_ts"
 STATUS_KEY_PREFIX = "status"
 STATUS_TTL_SECONDS = 86400
@@ -524,15 +522,11 @@ async def ingest_pulse_logs(
                 await pipe.xadd(
                     RAW_LOGS_QUEUE,
                     payload_to_stream,
-                    maxlen=RAW_LOGS_QUEUE_MAXLEN,
-                    approximate=True,
                 )
                 if siem_hot_event:
                     await pipe.xadd(
                         SIEM_HOT_QUEUE,
                         payload_to_stream,
-                        maxlen=SIEM_HOT_QUEUE_MAXLEN,
-                        approximate=True,
                     )
                 status_updates.append((verified_tenant_id, verified_agent_id))
 

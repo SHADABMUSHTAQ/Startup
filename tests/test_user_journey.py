@@ -6,7 +6,7 @@ from httpx import AsyncClient
 from tests.helpers import ed25519_keypair_pem, provision_and_login_admin
 
 @pytest.mark.asyncio
-async def test_full_user_and_agent_journey(async_client: AsyncClient, db, redis_client):
+async def test_user_and_agent_ingest_journey(async_client: AsyncClient, db, redis_client):
     print("\n\n" + "="*60)
     print("[START] WARSOC END-TO-END JOURNEY TEST")
     print("="*60)
@@ -55,15 +55,21 @@ async def test_full_user_and_agent_journey(async_client: AsyncClient, db, redis_
 
 
     # ---------------------------------------------------------
-    # Phase 3: Telemetry Ingestion (The NXLog POV)
+    # Phase 3: Native Windows Telemetry Ingestion
     # ---------------------------------------------------------
     agent_headers = {"Authorization": f"Bearer {agent_jwt}"}
     
     mock_logs = [
-        # Compliance Log (PECA/FBR)
-        {"event_id": 4663, "message": "Object Access - Read Invoice.pdf"},
-        # Security Log (Process Injection)
-        {"event_id": 8, "message": "CreateRemoteThread into lsass.exe"}
+        {
+            "event_id": 4688,
+            "message": "New process created: powershell.exe -enc ZABlAG0AbwA=",
+            "raw_event_data": {"channel": "Security", "NewProcessName": "powershell.exe"},
+        },
+        {
+            "event_id": 1102,
+            "message": "The audit log was cleared",
+            "raw_event_data": {"channel": "Security"},
+        },
     ]
     
     pulse_payload = {
@@ -74,47 +80,17 @@ async def test_full_user_and_agent_journey(async_client: AsyncClient, db, redis_
     
     resp = await async_client.post("/api/v1/ingest/pulse", json=pulse_payload, headers=agent_headers)
     assert resp.status_code in [200, 202], f"Pulse failed: {resp.text}"
-    print("[+] NXLog POV: Streamed Sysmon Event 8 and Audit Event 4663 successfully through Replay Blockade.")
+    print("[+] Agent POV: Streamed native Windows Events 4688 and 1102 through replay protection.")
 
     # ---------------------------------------------------------
-    # Phase 4: SIEM Processing & Dashboard Verification
+    # Phase 4: Durable Queue Handoff
     # ---------------------------------------------------------
     
     # Check that logs landed in the queue
     q_len = await redis_client.xlen("raw_logs_queue")
     assert q_len > 0
-    print("[+] Backend POV: Logs successfully queued in Redis Stream for SIEM/FBR Workers.")
-    
-    # To mock the SIEM worker, we manually insert the alerts into DB (since worker doesn't run in pytest)
-    await db["security_alerts"].insert_one({
-        "tenant_id": tenant_id,
-        "agent_id": agent_id,
-        "event_id": 8,
-        "severity": "CRITICAL",
-        "description": "Process Injection Detected (CreateRemoteThread)",
-        "timestamp": time.time()
-    })
-    
-    await db["fbr_pos_logs"].insert_one({
-         "tenant_id": tenant_id,
-         "agent_id": agent_id,
-         "event_id": 4663,
-         "timestamp": time.time(),
-         "message": "FBR Invoice Accessed"
-    })
-    print("[+] Worker POV: SIEM & FBR workers consumed stream and generated incidents.")
-
-    # 4A. User checks Dashboard for Alerts
-    # Using ingest_pulse's history endpoint which is mapped for the tenant
-    resp = await async_client.get(f"/api/v1/ingest/alerts/history", headers=user_headers)
-    assert resp.status_code == 200, f"History failed: {resp.text}"
-    alerts = resp.json()
-    
-    # Since the route might filter differently, we check our raw DB just in case the route expects specific schema
-    db_alerts = await db["security_alerts"].find({"tenant_id": tenant_id}).to_list(100)
-    assert len(db_alerts) > 0
-    print("[+] User POV: Refreshed dashboard. Process Injection Alert is blinking RED.")
+    print("[+] Backend POV: Native events are durably queued for SIEM and PECA workers.")
 
     print("="*60)
-    print("[OK] FULL USER JOURNEY SUCCESSFUL: Signup -> Deployment -> Detection -> Alerting")
+    print("[OK] ROUTE JOURNEY SUCCESSFUL: Provisioning -> Login -> Activation -> Native Ingest Queue")
     print("="*60 + "\n")

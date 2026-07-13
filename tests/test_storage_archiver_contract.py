@@ -138,7 +138,7 @@ def test_production_archiver_is_scheduled_and_requires_azure_secret():
     assert "ARCHIVE_INTERVAL_SECONDS" in service
 
 
-def test_retention_ttl_ownership_is_centralized_on_expire_at():
+def test_archive_managed_collections_have_no_independent_ttl_deletion():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
@@ -148,11 +148,17 @@ def test_retention_ttl_ownership_is_centralized_on_expire_at():
     assert 'await _ensure_ttl("fbr_pos_logs"' not in database_text
     assert 'await _ensure_ttl("peca_forensic_logs"' not in database_text
     assert 'await _ensure_ttl("security_alerts"' not in database_text
-    assert "_drop_ttl_indexes_except(db.fbr_pos_logs" in init_text
-    assert "_drop_ttl_indexes_except(db.peca_forensic_logs" in init_text
-    assert "_drop_ttl_indexes_except(db.security_alerts" in init_text
-    assert '_drop_ttl_indexes(db.siem_cold_vault, "siem_cold_vault")' in init_text
-    assert 'index_name="siem_cold_vault_expire_at"' not in init_text
+    for collection_name in (
+        "logs",
+        "siem_cold_vault",
+        "security_alerts",
+        "fbr_pos_logs",
+        "peca_forensic_logs",
+        "csv_uploads",
+        "analysis_results",
+    ):
+        assert f'_drop_ttl_indexes(db.{collection_name}, "{collection_name}")' in init_text
+    assert "expireAfterSeconds=" not in init_text
 
 
 @pytest.mark.asyncio

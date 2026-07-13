@@ -704,6 +704,24 @@ class CorrelationEngine:
             return None
 
         if unique_count >= spray_threshold:
+            alert_key = f"warsoc:corr:alerted:spray:{tenant_id}:{source_ip}"
+            try:
+                first_alert = await self.redis.set(
+                    alert_key,
+                    "1",
+                    nx=True,
+                    ex=spray_window,
+                )
+            except Exception as e:
+                corr_logger.warning(f"[CORR][SPRAY] Alert claim failed: {e}")
+                return None
+
+            if not first_alert:
+                corr_logger.debug(
+                    f"[CORR][SPRAY] Suppressed duplicate alert for {source_ip} within active window"
+                )
+                return None
+
             corr_logger.critical(f"[CORR][SPRAY] TRIGGERED: {source_ip} sprayed {unique_count} users!")
             # Enforce immediate network-level containment for spray source IPs.
             await self._trigger_auto_revocation(tenant_id, source_ip)

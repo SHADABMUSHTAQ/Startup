@@ -89,7 +89,7 @@ async def test_scenario_agent_quota_blocks_over_provisioning(async_client: Async
     )
     
     assert gen_resp.status_code == 403
-    assert "Agent license limit (1) reached" in gen_resp.text
+    assert "Agent contract limit (1) reached" in gen_resp.text
 
 
 async def test_scenario_rate_limiting_blocks_brute_force(async_client: AsyncClient):

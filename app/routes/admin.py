@@ -115,6 +115,7 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
         "username": admin_username,
         "email": req.admin_email,
         "full_name": req.admin_name,
+        "company": req.company_name,
         "hashed_password": hashed_password,
         "tenant_id": tenant_id,
         "plan_type": req.plan_type,

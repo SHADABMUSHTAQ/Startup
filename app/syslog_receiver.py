@@ -53,11 +53,10 @@ class UDPTokenBucketProtocol(asyncio.DatagramProtocol):
                 
         try:
             queue_name = getattr(settings, 'raw_logs_queue', 'raw_logs_queue')
-            maxlen = int(getattr(settings, 'raw_logs_maxlen', 100000))
             await self.redis.xadd(queue_name, {
                 "payload": data.decode(errors="ignore"),
                 "tenant_id": tenant_id or "WARSOC_NETWORK"
-            }, maxlen=maxlen)
+            })
         except Exception as e:
             logger.error(f"Failed to push syslog payload to Redis: {e}")
 
@@ -86,8 +85,7 @@ async def handle_tcp_client(reader: asyncio.StreamReader, writer: asyncio.Stream
                 break
             payload = line.decode(errors='ignore').strip()
             queue_name = getattr(settings, 'raw_logs_queue', 'raw_logs_queue')
-            maxlen = int(getattr(settings, 'raw_logs_maxlen', 100000))
-            await redis.xadd(queue_name, {"payload": payload}, maxlen=maxlen)
+            await redis.xadd(queue_name, {"payload": payload})
     except asyncio.TimeoutError:
         logger.warning(f"TCP connection from {src_ip} timed out (Slowloris protection).")
     except Exception as e:

@@ -13,7 +13,6 @@ logger = logging.getLogger("fbr_pos")
 router = APIRouter()
 
 RAW_LOGS_QUEUE = "raw_logs_queue"
-RAW_LOGS_QUEUE_MAXLEN = 100000
 MAX_INGEST_BODY_BYTES = 5 * 1024 * 1024
 MAX_POS_EVENTS_PER_REQUEST = 500
 
@@ -130,8 +129,6 @@ async def ingest_pos_logs(
                 await pipe.xadd(
                     RAW_LOGS_QUEUE,
                     payload_to_stream,
-                    maxlen=RAW_LOGS_QUEUE_MAXLEN,
-                    approximate=True,
                 )
                 queued_count += 1
 

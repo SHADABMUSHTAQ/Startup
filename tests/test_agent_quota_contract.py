@@ -85,7 +85,7 @@ async def test_50_agent_tenant_allows_final_seat_and_blocks_51st(
     )
 
     assert over_limit.status_code == 403, over_limit.text
-    assert "license limit (50)" in over_limit.json()["detail"]
+    assert "contract limit (50)" in over_limit.json()["detail"]
     assert await redis_client.get(f"tenant:{tenant_id}:active_count") == "50"
     assert await db["agents"].count_documents({"tenant_id": tenant_id, "status": "active"}) == 1
 
@@ -228,6 +228,6 @@ async def test_database_count_prevents_redis_restart_from_bypassing_50_agent_cap
     )
 
     assert response.status_code == 403
-    assert "license limit (50)" in response.json()["detail"]
+    assert "contract limit (50)" in response.json()["detail"]
     assert await redis_client.get(f"tenant:{tenant_id}:active_count") == "50"
     assert await db["agents"].count_documents({"tenant_id": tenant_id}) == 50

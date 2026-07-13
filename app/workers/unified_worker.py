@@ -12,6 +12,7 @@ from app.workers.siem_worker import siem_worker
 from app.workers.fbr_worker import fbr_worker
 from app.workers.peca_worker import peca_worker
 from app.workers.email_daemon import run_email_daemon
+from app.workers.stream_retention import stream_retention_worker
 
 load_dotenv()
 
@@ -50,6 +51,7 @@ async def unified_worker_main():
         safe_worker_runner(fbr_worker, "FBR Archiver"),
         safe_worker_runner(peca_worker, "PECA Forensic"),
         safe_worker_runner(run_email_daemon, "Email Daemon"),
+        safe_worker_runner(stream_retention_worker, "Redis Stream Retention"),
         return_exceptions=True
     )
 
