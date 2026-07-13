@@ -8,6 +8,7 @@ from passlib.context import CryptContext
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+import json
 import jwt
 import logging
 import uuid
@@ -829,6 +830,7 @@ async def upgrade_plan(
 @router.post("/invite", status_code=status.HTTP_201_CREATED)
 @audit_log("Team Provisioning")
 async def invite_user(
+    request: Request,
     payload: InviteUserRequest,
     db=Depends(get_db),
     current_user=Depends(get_current_user),
@@ -840,7 +842,8 @@ async def invite_user(
     if not invite_password:
         raise HTTPException(status_code=400, detail="Password is required")
 
-    if payload.role not in ["admin", "manager", "analyst", "auditor"]:
+    role = payload.role.strip().lower()
+    if role not in ["admin", "manager", "analyst", "auditor"]:
         raise HTTPException(status_code=400, detail="Invalid role specified. Must be admin, manager, analyst, or auditor.")
 
     # Login accepts an email without tenant context, so email identity must
@@ -854,7 +857,7 @@ async def invite_user(
     if not tenant_id:
         raise HTTPException(status_code=500, detail="Current admin lacks a valid tenant context.")
 
-    packs = payload.allowed_packs if payload.role == "auditor" else ["internal_full"]
+    packs = payload.allowed_packs if role == "auditor" else ["internal_full"]
     packs = resolve_compliance_packs(current_user.get("plan_type", "Customized"), packs)
 
     new_user = {
@@ -864,13 +867,45 @@ async def invite_user(
         "hashed_password": hashed_password,
         "tenant_id": tenant_id,
         "plan_type": current_user.get("plan_type", "Customized"),
-        "role": payload.role,
+        "role": role,
         "compliance_packs": packs,
         "has_active_plan": True,
         "created_at": datetime.now(timezone.utc)
     }
     await db["users"].insert_one(new_user)
-    return {"message": f"User provisioned successfully as {payload.role}", "role": payload.role}
+
+    email_queued = False
+    redis = getattr(request.app.state, "redis", None)
+    if redis:
+        try:
+            frontend_url = "https://warsoc.tech"
+            allowed_origins = [origin.strip().rstrip("/") for origin in settings.allowed_origins.split(",") if origin.strip()]
+            for origin in allowed_origins:
+                if origin.startswith("https://") and "localhost" not in origin and "127.0.0.1" not in origin:
+                    frontend_url = origin
+                    break
+            invite_job = {
+                "type": "team_invite",
+                "recipient": str(payload.email),
+                "payload": {
+                    "email": str(payload.email),
+                    "temporary_password": str(invite_password),
+                    "role": role,
+                    "tenant_id": tenant_id,
+                    "login_url": frontend_url,
+                    "invited_by": current_user.get("email") or current_user.get("username") or "WarSOC administrator",
+                },
+            }
+            await redis.lpush("email_alert_queue", json.dumps(invite_job))
+            email_queued = True
+        except Exception as exc:
+            logger.error("Failed to queue team invite email for %s: %s", payload.email, exc)
+
+    return {
+        "message": f"User provisioned successfully as {role}",
+        "role": role,
+        "email_queued": email_queued,
+    }
 
 
 @router.get("/team")

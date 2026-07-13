@@ -189,6 +189,60 @@ def _build_message(job: dict) -> EmailMessage:
         message["Subject"] = subject
         message.set_content("Thank you for contacting WarSOC. Our team will contact you shortly.")
         message.add_alternative(html_body, subtype="html")
+    elif job_type == "team_invite":
+        invite_email = escape(str(payload.get("email") or recipient))
+        role = escape(str(payload.get("role") or "user").title())
+        tenant_id = escape(str(payload.get("tenant_id") or "your tenant"))
+        login_url_raw = str(payload.get("login_url") or "https://warsoc.tech").rstrip("/")
+        login_url = escape(login_url_raw)
+        invited_by = escape(str(payload.get("invited_by") or "WarSOC administrator"))
+        temporary_password = str(payload.get("temporary_password") or "")
+        subject = f"Your WarSOC access is ready - {role}"
+
+        plain_password_block = (
+            f"Temporary password: {temporary_password}\n"
+            if temporary_password
+            else "Temporary password: Contact your WarSOC administrator.\n"
+        )
+        html_password_block = (
+            f"<li><strong>Temporary password:</strong> <code>{escape(temporary_password)}</code></li>"
+            if temporary_password
+            else "<li><strong>Temporary password:</strong> Contact your WarSOC administrator.</li>"
+        )
+
+        body = (
+            f"Hello,\n\n"
+            f"{invited_by} created WarSOC access for tenant {tenant_id}.\n\n"
+            f"Login URL: {login_url_raw}\n"
+            f"Email: {payload.get('email') or recipient}\n"
+            f"Role: {payload.get('role') or 'user'}\n"
+            f"{plain_password_block}\n"
+            f"Use the credentials above to sign in. Keep this message private.\n\n"
+            f"Regards,\nWarSOC Security Operations"
+        )
+        html_body = f"""
+        <html>
+            <body style="font-family: Arial, sans-serif; color: #333;">
+                <h2 style="color: #0056b3;">WarSOC Security Operations</h2>
+                <p>{invited_by} created WarSOC access for tenant <strong>{tenant_id}</strong>.</p>
+                <ul>
+                    <li><strong>Login URL:</strong> <a href="{login_url}">{login_url}</a></li>
+                    <li><strong>Email:</strong> {invite_email}</li>
+                    <li><strong>Role:</strong> {role}</li>
+                    {html_password_block}
+                </ul>
+                <p>Keep this message private.</p>
+                <br/>
+                <p>Regards,<br/><strong>WarSOC Security Operations</strong></p>
+            </body>
+        </html>
+        """
+        message = EmailMessage()
+        message["From"] = DEFAULT_FROM_ADDRESS
+        message["To"] = str(recipient)
+        message["Subject"] = subject
+        message.set_content(body)
+        message.add_alternative(html_body, subtype="html")
     else:
         tenant_id = str(job.get("tenant_id") or payload.get("tenant_id") or "unknown")
         severity = str(payload.get("severity") or "HIGH").upper()
