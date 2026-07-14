@@ -1297,48 +1297,59 @@ def resolve_web_log_files():
 # 4. THREADS
 # ==========================================
 def heartbeat_thread():
-    signing_key = _load_or_create_signing_key()
+    signing_key = None
     while True:
-        with CHANNEL_STATUS_LOCK:
-            channel_status = copy.deepcopy(CHANNEL_STATUS)
-            sensor_counters = dict(SENSOR_COUNTERS)
-        pos_audit_configured = any(
-            os.path.basename(str(path)).lower() == "pos_audit.log"
-            for path in WEB_LOG_PATHS
-        )
-        deployment_evidence = {}
+        retry_delay = HEARTBEAT_INTERVAL
         try:
-            if TELEMETRY_DEPLOY_EVIDENCE_PATH.exists():
-                deployment_evidence = json.loads(
-                    TELEMETRY_DEPLOY_EVIDENCE_PATH.read_text(encoding="utf-8-sig")
-                )
-        except Exception:
+            if signing_key is None:
+                signing_key = _load_or_create_signing_key()
+
+            with CHANNEL_STATUS_LOCK:
+                channel_status = copy.deepcopy(CHANNEL_STATUS)
+                sensor_counters = dict(SENSOR_COUNTERS)
+            pos_audit_configured = any(
+                os.path.basename(str(path)).lower() == "pos_audit.log"
+                for path in WEB_LOG_PATHS
+            )
             deployment_evidence = {}
-        payload = {
-            "agent_id": AGENT_ID,
-            "current_version": "4.2-Native",
-            "timestamp": time.time(),
-            "sensor_status": {
-                "telemetry_config_version": TELEMETRY_CONFIG_VERSION,
-                "audit_policy_status": deployment_evidence.get("status", "unknown"),
-                "pos_sacl_path_count": int(deployment_evidence.get("pos_path_count", 0) or 0),
-                "channels": channel_status,
-                "counters": sensor_counters,
-                "pos_audit_log": {
-                    "configured": pos_audit_configured,
-                    "present": any(
-                        os.path.basename(str(path)).lower() == "pos_audit.log" and os.path.exists(path)
-                        for path in WEB_LOG_PATHS
-                    ),
+            try:
+                if TELEMETRY_DEPLOY_EVIDENCE_PATH.exists():
+                    deployment_evidence = json.loads(
+                        TELEMETRY_DEPLOY_EVIDENCE_PATH.read_text(encoding="utf-8-sig")
+                    )
+            except Exception:
+                deployment_evidence = {}
+            payload = {
+                "agent_id": AGENT_ID,
+                "current_version": "4.2-Native",
+                "timestamp": time.time(),
+                "sensor_status": {
+                    "telemetry_config_version": TELEMETRY_CONFIG_VERSION,
+                    "audit_policy_status": deployment_evidence.get("status", "unknown"),
+                    "pos_sacl_path_count": int(deployment_evidence.get("pos_path_count", 0) or 0),
+                    "channels": channel_status,
+                    "counters": sensor_counters,
+                    "pos_audit_log": {
+                        "configured": pos_audit_configured,
+                        "present": any(
+                            os.path.basename(str(path)).lower() == "pos_audit.log" and os.path.exists(path)
+                            for path in WEB_LOG_PATHS
+                        ),
+                    },
                 },
-            },
-        }
-        resp = _signed_agent_post("/api/v1/agent/heartbeat", payload, signing_key, timeout=10)
-        if resp and resp.status_code == 200:
-            data = resp.json()
-            for bad_ip in data.get("enforce_bans", []):
-                enforce_block(bad_ip)
-        time.sleep(HEARTBEAT_INTERVAL)
+            }
+            resp = _signed_agent_post("/api/v1/agent/heartbeat", payload, signing_key, timeout=10)
+            if resp and resp.status_code == 200:
+                data = resp.json()
+                for bad_ip in data.get("enforce_bans", []):
+                    enforce_block(bad_ip)
+            elif resp is not None:
+                print(f"[WARN] Heartbeat rejected with HTTP {resp.status_code}; retrying later.")
+                retry_delay = min(30, HEARTBEAT_INTERVAL)
+        except Exception as exc:
+            print(f"[WARN] Heartbeat delivery failed; retrying later: {exc}")
+            retry_delay = min(30, HEARTBEAT_INTERVAL)
+        time.sleep(retry_delay)
 
 # NEW: WEB LOG HUNTER (Monitors text files live)
 def web_hunter_thread():
