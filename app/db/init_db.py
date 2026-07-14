@@ -250,6 +250,23 @@ async def init_compliance_db(db):
             sparse=True,
             name="uq_storage_archive_key",
         )
+        await _aggressive_create_index(
+            db.user_activation_tokens,
+            [("token_hash", 1)],
+            unique=True,
+            name="uq_user_activation_token_hash",
+        )
+        await _aggressive_create_index(
+            db.user_activation_tokens,
+            [("expires_at", 1)],
+            expireAfterSeconds=0,
+            name="ttl_user_activation_tokens",
+        )
+        await _aggressive_create_index(
+            db.user_activation_tokens,
+            [("user_id", 1), ("purpose", 1), ("used_at", 1)],
+            name="idx_user_activation_lifecycle",
+        )
 
         logger.info(" 7-Tier Database Layer Hardened: Capacity TTL active and audit-veto enforced.")
         

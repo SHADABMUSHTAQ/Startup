@@ -448,6 +448,9 @@ def test_native_catalog_has_no_sysmon_dependency_and_contextual_alerts():
     assert event_map["1100"]["alert_on_event"] is True
     assert event_map["7045"]["severity"] == "CRITICAL"
 
+    assert event_map["5156"]["event_type"] == "network_connection_permitted"
+    assert event_map["5156"]["alert_on_event"] is False
+    assert event_map["5156"]["frameworks"] == []
     assert event_map["5157"]["event_type"] == "network_connection_blocked"
     for evidence_only in {"4624", "4625", "4672", "4688"}:
         assert event_map[evidence_only]["alert_on_event"] is False
@@ -527,6 +530,8 @@ def test_native_xml_and_jsonl_parsers(monkeypatch, tmp_path):
         ("4769", "Security", {"TargetUserName": "alice", "ServiceName": "cifs/POS-SERVER", "IpAddress": "10.0.0.9"}, "service_name"),
         ("4776", "Security", {"TargetUserName": "alice", "Workstation": "POS-02", "Status": "0xC000006A"}, "workstation"),
         ("5140", "Security", {"SubjectUserName": "alice", "IpAddress": "10.0.0.9", "ShareName": r"\\*\POS"}, "share_name"),
+        ("5156", "Security", {"Application": r"C:\POS\pos.exe", "SourceAddress": "10.0.0.9", "DestAddress": "10.0.0.10", "DestPort": "443"}, "destination_address"),
+        ("5157", "Security", {"Application": r"C:\Temp\unknown.exe", "SourceAddress": "10.0.0.9", "DestAddress": "10.0.0.10", "DestPort": "445"}, "destination_address"),
     ]
     for event_id, channel, fields, expected_field in native_cases:
         native = agent.parse_windows_event_xml(xml_event(event_id, channel, fields))
@@ -585,6 +590,28 @@ def test_native_spool_failure_cannot_advance_watermark(monkeypatch, tmp_path):
             previous_watermark,
         )
     assert previous_watermark == 99
+
+
+def test_native_spool_hard_limit_blocks_without_deleting_unacknowledged_data(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    spooler = agent.DiskSpooler(
+        tmp_path / "bounded-spool",
+        max_bytes=180,
+        resume_bytes=80,
+        min_free_bytes=0,
+    )
+    first = {"event_id": "4688", "event_uid": "Security:100", "message": "x" * 60}
+    second = {"event_id": "4688", "event_uid": "Security:101", "message": "y" * 60}
+
+    assert spooler.append(first)
+    original = spooler.pending_file.read_text(encoding="utf-8")
+    with pytest.raises(agent.SpoolWriteError):
+        spooler.append(second)
+
+    assert spooler.pending_file.read_text(encoding="utf-8") == original
+    status = spooler.status()
+    assert status["blocked"] is True
+    assert status["usage_bytes"] <= status["max_bytes"]
 
 
 def test_malformed_spool_lines_are_quarantined_before_processing_file_cleanup(monkeypatch, tmp_path):

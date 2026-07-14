@@ -249,6 +249,7 @@ SIEM_RULES = {
         "4776": {"event_type": "ntlm_authentication", "severity": "HIGH", "frameworks": [], "alert_on_event": False},
         "4798": {"event_type": "user_enumeration", "severity": "LOW", "frameworks": ["peca_forensic"], "alert_on_event": False},
         "5140": {"event_type": "network_share_accessed", "severity": "MEDIUM", "frameworks": [], "alert_on_event": False},
+        "5156": {"event_type": "network_connection_permitted", "severity": "INFO", "frameworks": [], "alert_on_event": False},
         "5157": {"event_type": "network_connection_blocked", "severity": "HIGH", "frameworks": ["peca_forensic"], "alert_on_event": True},
         "7045": {"event_type": "service_installed", "severity": "CRITICAL", "frameworks": ["peca_forensic"], "alert_on_event": True},
         "FBR-INV-DEL": {"event_type": "invoice_deleted", "severity": "WARNING", "frameworks": ["fbr_pos"], "alert_on_event": False},
@@ -615,7 +616,8 @@ SIEM_RULES = {
                 "event_filter": "successful_login"
             },
             "new_location_access": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "Requires a trusted GeoIP enrichment and location-baseline contract",
                 "mitre_id": "T1078",
                 "severity": "MEDIUM",
                 "description": "Login from new geographic location",
@@ -777,7 +779,8 @@ SIEM_RULES = {
                 ]
             },
             "data_exfiltration_volume": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "Requires byte-counted upload telemetry not collected by the Windows pilot agent",
                 "threshold_bytes": 104857600,
                 "window_seconds": 300,
                 "mitre_id": "T1041",
@@ -824,7 +827,8 @@ SIEM_RULES = {
                 "event_filter": "network_connection"
             },
             "beaconing_c2": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "Requires ordered network-flow intervals not collected by the Windows pilot agent",
                 "threshold": 10,
                 "variance_seconds": 1,
                 "mitre_id": "T1071",
@@ -834,7 +838,8 @@ SIEM_RULES = {
                 "event_filter": "network_connection"
             },
             "long_duration_connection": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "Requires connection start/end or duration telemetry",
                 "threshold_hours": 24,
                 "mitre_id": "T1572",
                 "severity": "MEDIUM",
@@ -842,7 +847,8 @@ SIEM_RULES = {
                 "event_filter": "network_connection"
             },
             "rare_port_usage": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "Requires a tenant port baseline and complete network-flow telemetry",
                 "mitre_id": "T1571",
                 "severity": "MEDIUM",
                 "description": "Rare port usage detected",

@@ -56,7 +56,6 @@ def test_all_new_account_models_share_strong_password_policy():
     )
     InviteUserRequest(
         email="analyst@example.com",
-        password=STRONG_PASSWORD,
         role="analyst",
     )
 

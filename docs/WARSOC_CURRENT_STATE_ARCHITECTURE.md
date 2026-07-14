@@ -20,9 +20,9 @@ WarSOC currently has a coherent end-to-end architecture for a maximum of 50 Wind
 8. MongoDB holds seven days of operational SIEM, PECA, and FBR data.
 9. The storage archiver uploads expired hot records to immutable Azure Blob storage, verifies integrity and immutability, writes a Mongo archive ledger, and only then removes the Mongo copies.
 10. Compliance views, search, CSV exports, and PDF reports can merge Mongo hot records with verified Azure archive records.
-11. The dashboard intentionally separates normal agent telemetry from actual security alerts.
+11. The dashboard intentionally separates normal agent telemetry from actual security alerts and groups repeated detections into operator incidents.
 
-The architecture is implemented and the primary local end-to-end validator is green. Production acceptance is not complete until the current backend and frontend changes are redeployed and the production proof obligations in Section 22 are captured.
+The architecture is implemented. The current local release candidate adds bounded agent spooling, strict telemetry-family routing, fresh-heartbeat health, Redis ingest admission control, incident-wide workflow updates, and one-time team activation links. Public production preflight, live agent/PECA processing, and the archive-before-delete transaction were verified against the previously deployed release. Full acceptance of this release candidate remains conditional on the outstanding proof obligations in Section 22; this document does not convert unexecuted native-VM, soak, production-email, retrieval, or restore tests into production claims.
 
 ## 2. Product Boundary
 
@@ -53,6 +53,7 @@ The architecture is implemented and the primary local end-to-end validator is gr
 - It does not require customers to disable Windows Defender.
 - It does not use Safepay or self-service payment for the current commercial flow.
 - It does not use Sysmon.
+- It does not currently ingest Linux or network-device syslog. The receiver remains a disabled future profile and is outside the Windows SMB pilot contract.
 - It does not guarantee that every normal Windows event becomes an alert. Normal events are evidence and correlation inputs; only dangerous or contextually suspicious activity alerts.
 - It does not make a PDF cryptographically signed. The PECA source records contain the forensic signatures; the PDF is a human-readable summary.
 - It does not automatically email an agent installer link to analysts. Agent activation and download are tenant-admin actions.
@@ -139,10 +140,13 @@ The frontend exposes the Compliance workspace to admin and auditor roles. The ba
 
 ### 5.3 Team management
 
-- Invite/create team member: `POST /api/v1/auth/invite`, admin only.
+- Create or resend a pending team invitation: `POST /api/v1/auth/invite`, admin only.
+- Activate an invitation and choose a password: `POST /api/v1/auth/activate-invite`, public one-time-token endpoint.
 - List team: `GET /api/v1/auth/team`, admin only.
 - Remove team member: `DELETE /api/v1/auth/team/{user_id}`, admin only.
 - Roles are assigned by the tenant admin within the backend's allowed-role policy.
+- The invite email contains a 24-hour single-use HTTPS activation link. It never contains a temporary password.
+- Invited users remain `pending` and cannot log in until the token is atomically consumed and a policy-compliant password is stored.
 - Analysts do not receive agent enrollment authority merely because they can investigate alerts.
 - New and changed passwords must contain at least 16 characters, an uppercase letter, a lowercase letter, a number, and a symbol; bcrypt-compatible input is capped at 72 UTF-8 bytes.
 
@@ -166,7 +170,7 @@ The frontend exposes the Compliance workspace to admin and auditor roles. The ba
 1. The admin selects Download Agent in the dashboard.
 2. The frontend requests `GET /api/v1/agent/download`.
 3. The backend returns a redirect to `AGENT_CDN_URL`.
-4. Azure public artifact storage serves `warsoc_installer-4.2.0.exe`.
+4. Azure public artifact storage serves the currently approved versioned installer. The local release candidate is `warsoc_installer-4.2.1.exe`; Azure must not be switched until its hash is approved.
 5. The installer asks for the activation code, confirms `https://api.warsoc.tech`, and optionally accepts local POS directories.
 6. The installer validates the activation code before making the installation operational.
 7. The native telemetry script configures auditing and optional POS SACLs.
@@ -230,13 +234,14 @@ Signed heartbeat data reports:
 - POS SACL path count.
 - POS audit-log state.
 - Last-seen and sensor state.
+- Local spool usage, hard limit, free-disk reserve, backpressure state, and limit-hit count.
 
 The backend stores the state on the agent record and exposes it through `GET /api/v1/data/status`.
 
 Dashboard health means:
 
 - `Active`: enrolled agent is reporting and required telemetry is healthy.
-- `Degraded`: the agent is reporting but a channel, audit policy, POS contract, or related sensor requirement is incomplete.
+- `Degraded`: the agent is reporting but a channel/audit requirement is incomplete or local spool backpressure is active. An unconfigured optional POS feed is reported separately and does not invent FBR coverage.
 - `Not Configured` or offline: no healthy enrolled reporting agent is available for the requested coverage.
 
 ## 8. Durable Agent Delivery
@@ -248,6 +253,8 @@ Dashboard health means:
 5. Transient failures leave records in the local spool for retry.
 6. Malformed POS JSONL records are quarantined locally and are not guessed, relabelled, or sent as valid evidence.
 7. `event_uid` is preserved across retries for backend idempotency.
+8. The spool has a 500 MiB hard boundary, a 400 MiB recovery boundary, and a 2 GiB free-disk reserve by default.
+9. Reaching either disk boundary pauses new durable collection, leaves existing unacknowledged records intact, and reports the endpoint as Degraded.
 
 This is at-least-once delivery with event-level duplicate suppression, not fire-and-forget delivery.
 
@@ -259,6 +266,7 @@ This is at-least-once delivery with event-level duplicate suppression, not fire-
 - Requires valid agent authentication.
 - Tenant and agent identity are taken from the authenticated token, not trusted from client payload fields.
 - Enforces request-size, event-count, rate, and tenant daily-ingest controls.
+- Rejects new batches with HTTP 503 when `raw_logs_queue` reaches the configured admission boundary; the agent retains and retries them.
 - Rejects banned sources according to the active mitigation state.
 - Accepted events enter Redis Streams.
 
@@ -302,6 +310,7 @@ This is at-least-once delivery with event-level duplicate suppression, not fire-
 - SIEM DLQ: `raw_logs_queue_dlq`.
 - FBR/PECA DLQ: `warsoc:dlq:{tenant_id}`.
 - Stream trimming runs only when all required consumer groups exist and their pending state permits safe progress.
+- The raw stream is never blindly trimmed to enforce memory. `RAW_STREAM_MAX_ENTRIES` applies admission backpressure while acknowledged-entry retention performs safe trimming.
 
 ### 10.4 Unified worker
 
@@ -325,9 +334,9 @@ This prevents a normal Windows endpoint from producing thousands of meaningless 
 
 The current engine understands these core native IDs and custom FBR IDs:
 
-`1100`, `1102`, `4616`, `4624`, `4625`, `4648`, `4657`, `4660`, `4663`, `4670`, `4672`, `4688`, `4697`, `4698`, `4719`, `4720`, `4726`, `4732`, `4768`, `4769`, `4776`, `4798`, `5140`, `5157`, `7045`, `FBR-INV-DEL`, `FBR-INV-MOD`, and `FIM-DB-MOD`.
+`1100`, `1102`, `4616`, `4624`, `4625`, `4648`, `4657`, `4660`, `4663`, `4670`, `4672`, `4688`, `4697`, `4698`, `4719`, `4720`, `4726`, `4732`, `4768`, `4769`, `4776`, `4798`, `5140`, `5156`, `5157`, `7045`, `FBR-INV-DEL`, `FBR-INV-MOD`, and `FIM-DB-MOD`.
 
-Event 5157 is treated as a blocked connection. Event 5156 is permitted-connection evidence and is not mislabelled as a block.
+Event 5157 is treated as a blocked connection. Event 5156, when supplied by a reviewed source, is permitted-connection evidence and must never be mislabelled as a block. The default Windows SMB audit policy collects Filtering Platform failures (5157), not every permitted connection, to prevent a high-volume 5156 flood.
 
 ### 11.3 Stateless/signature coverage
 
@@ -353,21 +362,22 @@ Current rule families include:
 - Credential dumping.
 - Defender evasion.
 - LOLBin download behavior.
-- Linux timestamp manipulation for uploaded/network log sources.
 - Firewall blocking.
 
-Web rules require web/HTTP context. Process command-line rules use normalized Event 4688 input.
+Web rules require structured HTTP log-file context. Windows keyword/EDR rules require native Security/System XML context, so ordinary Windows text cannot enter Web-WAF classification. Process command-line rules use normalized Event 4688 `process_create` input.
 
 ### 11.4 Stateful/contextual coverage
 
-Current stateful categories include:
+Current executable stateful categories include:
 
-- Identity/authentication correlation: phishing chain, high-velocity brute force, low-and-slow brute force, five-user password spraying, impossible travel, new location, concurrent sessions, after-hours login, account storm, privilege spike, dormant-account activation, ghost-admin behavior, SMB lateral movement, share enumeration, and registry persistence.
+- Identity/authentication correlation: phishing chain, high-velocity brute force, low-and-slow brute force, five-user password spraying, impossible travel when trusted coordinates exist, concurrent sessions, after-hours login, account storm, privilege spike, dormant-account activation, ghost-admin behavior, SMB lateral movement, share enumeration, and registry persistence.
 - File/ransomware correlation: six file-system/ransomware behavior families.
-- Network/lateral correlation: eight network behavior families.
+- Network/lateral correlation definitions consume structured flow fields when such telemetry is supplied. The Windows SMB pilot directly supplies blocked-connection Event 5157 plus SMB/authentication events; it does not claim full flow analytics without a reviewed flow source.
 - Web-application correlation: six contextual web behavior families.
 
-Contextual detectors reduce false positives by requiring sequences, thresholds, distinct-user counts, time windows, or event-type context.
+Contextual detectors reduce false positives by requiring sequences, thresholds, distinct-user counts, time windows, or event-type context. Five catalog entries are explicitly disabled for the Windows pilot because their required telemetry is not collected: new-location baseline, byte-counted exfiltration, interval-based C2 beaconing, connection duration, and rare-port baseline. They are not production capability claims.
+
+Linux/syslog rule definitions are retained only as future design inventory. They have no enabled production intake profile and are not part of current detection coverage.
 
 ### 11.5 SIEM persistence and notification
 
@@ -695,7 +705,7 @@ flowchart LR
 | `mongodb` | Required/private | Hot operational data and archive ledger. |
 | `redis` | Required/private | Streams, correlation, sessions/tickets, cache, mitigation. |
 | `nginx` | Required/public 80/443 | TLS termination and reverse proxy. |
-| `syslog-receiver` | Optional profile | UDP network-device logs; not required for Windows HTTPS agents. |
+| `syslog-receiver` | Disabled future profile | Reserved for a separately reviewed Linux/network-device intake; not part of the Windows SMB pilot. |
 | `threat-hunter` | Legacy optional profile | Legacy detector, not the primary unified SIEM path. |
 
 ### 21.2 Infrastructure controls
@@ -714,60 +724,68 @@ flowchart LR
 
 ## 22. Verification State
 
-### 22.1 Verified in the latest local acceptance cycle
+### 22.1 Verified for the current release-candidate code
 
-- Backend health.
-- Public signup blocked.
-- Quote request and homepage contact request.
-- Payment webhook absent/fails closed.
-- Tenant provisioning and login.
-- Auth context hydration.
-- Activation generation and agent registration.
-- Attacker-IP mitigation and heartbeat ban delivery.
-- Active-agent/self-lockout guard.
-- Agent telemetry ingest.
-- Authenticated POS ingestion.
-- SIEM evidence and alert visibility.
-- FBR correlated tamper evidence.
-- FBR invoice evidence.
-- PECA evidence.
-- WebSocket alert delivery.
-- Auditor RBAC.
-- CSV export.
-- PDF report.
-- Focused backend regression set: 13 passed.
+- Focused release-candidate backend checks: 122 passed across native SIEM/FBR/PECA behavior, spool durability, telemetry routing, stream retention, archive contracts, platform policy, incidents, RBAC/hardening, and secure invitation activation.
+- Python compilation for the modified backend modules passed.
 - Frontend lint passed.
-- Frontend production build passed; only a non-blocking large-chunk warning remained.
+- Frontend production build passed with 2,851 modules; only a non-blocking large-chunk warning remained.
+- Local Windows agent and installer build passed for version 4.2.1.
+- Local `warsoc_installer-4.2.1.exe`: 17,417,288 bytes, SHA-256 `B3F861086B0DE4C02B1D11506A77781268A5C0F2BD803B252BEAE720F596B857`.
+- The generated manifest also records the agent, NSSM, native telemetry script, and tenant policy hashes.
 
-Latest local launch-readiness result: zero failures and two warnings. The warnings were skipped CDN verification and missing SMTP metrics-token proof in that local run.
+### 22.2 Verified for the previously deployed public release
 
-### 22.2 Verified directly against Azure
+- Production Compose configuration validation passed.
+- Backend release `81db420` is deployed on DigitalOcean and reports healthy.
+- Frontend release `fdae9ce` is deployed on Vercel and is bound to `https://api.warsoc.tech/api/v1` with no localhost API binding.
+- Live frontend assets request up to 500 raw alerts; 279 raw alert records were verified as 13 grouped incidents rather than 279 duplicate rows.
+- A production endpoint returned to Active after service restart, and new PECA evidence was signed and vaulted by the live worker.
+- Production preflight run `136bf34e0c` passed every check on 2026-07-14:
+  - `warsoc.tech` and `api.warsoc.tech` resolve to separate Vercel and DigitalOcean addresses.
+  - Frontend and backend TLS, HTTPS, CORS, HSTS, clickjacking protection, MIME protection, health, and blocked public API docs passed.
+  - MongoDB `27017`, Redis `6379`, and API `8000` were closed externally.
+  - The live `warsoc_installer-4.2.0.exe` was 17,415,025 bytes and matched the local manifest SHA-256 `89507E72BD885D9DD61E321F2215AD55E29915C39B964048A3BE58E4831E1A9B`.
 
-- Private evidence container reachable with configured credentials.
-- Immutability capability/policy reported active.
-- Sample archived FBR, SIEM evidence, and security-alert blobs downloaded.
-- Sample JSON parsed successfully.
-- Blob SHA metadata matched recomputed content hash.
-- Sample FBR archive metadata reported 2,190-day retention.
-- Sample SIEM/security archive metadata reported tenant retention of 90 days.
+### 22.3 Verified directly in the production archive pipeline
 
-### 22.3 Not yet equivalent to production proof
+- Private Azure evidence storage is reachable with the configured production identity.
+- The evidence container reports a locked immutability policy sufficient for the required retention window.
+- The production archiver is configured for container-scoped immutability verification.
+- Expired records from `siem_cold_vault`, `security_alerts`, `fbr_pos_logs`, and `peca_forensic_logs` were uploaded successfully.
+- JSON payloads and SHA-256 sidecars were written and verified before deletion.
+- Archive-ledger entries were committed and the corresponding expired Mongo records were deleted only after successful verification.
+- A controlled archiver restart produced no duplicate archive for the already committed records.
+- PECA archival has now been observed in production; it is no longer only a code-path claim.
+- Historical duplicate blobs created by failed pre-fix attempts remain immutable until their retention expires. They are storage-cleanup debt, not evidence loss, and the deterministic-key/ledger fix prevents new copies for the same committed batch.
 
-- Current code must be rebuilt/redeployed on DigitalOcean and Vercel before production behavior reflects this snapshot.
-- A PECA record naturally aging past the new seven-day window has not yet been observed end-to-end in production Azure; code path and other collection archives are verified.
-- SMTP delivery and bounce/queue metrics were not proven in the latest local validator run.
-- A real 50-agent production-volume soak is not established by the latest local acceptance run.
-- Real Windows VM generation of every native PECA control remains the strongest final detection proof.
-- The unsigned installer remains dependent on customer IT hash allowlisting until code signing is added.
+### 22.4 Remaining release proof
+
+Focused, contract-aligned checks are green. The legacy broad suite was intentionally not used as a launch claim because some fixtures encode pre-hardening behavior and must be classified before their results are used as a release gate.
+
+| Remaining proof | Current state | Completion condition |
+|---|---|---|
+| Contract-aligned backend regression suite | 122 focused cases passed. | Run the production acceptance phases after deployment and explicitly quarantine/delete stale pre-hardening tests. |
+| Production Platform phase | Not rerun against the latest release. | Platform acceptance exits `0`, including provisioning, auth, agent, SIEM, FBR, PECA, WebSocket, RBAC, mitigation, CSV/PDF, and SMTP metric checks. |
+| Latest Windows installer | Local 4.2.1 build and manifest are complete; Azure still serves the previously approved artifact until operator upload. | Upload 4.2.1, set `AGENT_CDN_URL`, verify the CDN hash, then rerun Preflight. |
+| Native Windows proof | Individual live telemetry and PECA processing are visible; the complete matrix is not captured. | Disposable Windows VM produces all 11 PECA controls plus FBR delete/permission scenarios with a passing NativeVerify JSON artifact. |
+| Fifty-agent capacity | Not proven for this release. | Soak phase exits `0` within latency targets without Redis eviction, DLQ growth, or unexpected restarts. |
+| Cold-only retrieval and reports | Upload, immutability, ledger, hot deletion, and direct integrity checks passed. | Records no longer in Mongo are retrieved through the authorized API and appear correctly in CSV and PDF output. |
+| Email delivery | Worker path exists; final mailbox delivery is not captured for this release. | Invite and high/critical alert emails arrive in the intended inbox with no unexpected DLQ entries. |
+| Independent backup recovery | Archive is working; backup is not a restore proof. | Restore a Mongo backup into an isolated environment and record the result. |
+
+The unsigned installer remains dependent on customer IT hash allowlisting until code signing is added. Defender must remain enabled.
 
 ## 23. Failure Map
 
 | Failure | Expected behavior | Operational signal |
 |---|---|---|
 | Agent cannot reach API | Keep local spool; retry; do not advance undurable watermark. | Agent/service log and stale heartbeat. |
+| Spool reaches 500 MiB or disk reserve | Pause new durable collection; retain existing evidence; report Degraded. | `/data/status`, spool metrics, agent log. |
 | Security/System channel fails | Continue reporting heartbeat as degraded. | `/data/status` and dashboard Degraded. |
 | Malformed POS JSONL | Quarantine locally; do not invent evidence. | Agent quarantine/parse metric. |
 | Redis unavailable at ingest | Reject/fail request; agent retries from spool. | API error, Redis health, ingest metrics. |
+| Raw stream reaches admission limit | Return HTTP 503; never trim unacknowledged events; agent retries. | `warsoc_raw_stream_depth`, API log, endpoint spool growth. |
 | Worker cannot write Mongo | Leave stream message pending for reclaim. | Worker error/pending count. |
 | Poison stream event | Copy to DLQ after delivery threshold, then acknowledge. | DLQ metric and security signal. |
 | FIM Redis correlation misses | No false FIM alert; keep unmatched event as SIEM evidence. | Correlation-miss metric. |

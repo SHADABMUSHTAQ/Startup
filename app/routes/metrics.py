@@ -76,6 +76,10 @@ async def metrics(request: Request):
     email_dead_letter_depth = 0
     agent_parse_failures = 0
     agent_channel_failures = 0
+    agent_spool_limit_hits = 0
+    agent_spool_blocked = 0
+    agent_spool_usage_bytes = 0
+    raw_stream_depth = 0
     detection_latency_seconds = 0.0
     if redis_client:
         try:
@@ -98,6 +102,7 @@ async def metrics(request: Request):
                 .llen("email_alert_queue:dead")
                 .execute()
             ]
+            raw_stream_depth = int(await redis_client.xlen("raw_logs_queue"))
         except Exception:
             pass
         try:
@@ -132,6 +137,10 @@ async def metrics(request: Request):
                         agent_parse_failures += int(counters.get("windows_parse_failures") or 0)
                         agent_parse_failures += int(counters.get("pos_jsonl_rejections") or 0)
                         agent_channel_failures += int(counters.get("channel_failures") or 0)
+                        agent_spool_limit_hits += int(counters.get("spool_limit_hits") or 0)
+                        spool = status.get("spool") or {}
+                        agent_spool_usage_bytes += int(spool.get("usage_bytes") or 0)
+                        agent_spool_blocked += 1 if spool.get("blocked") else 0
                 if cursor == 0:
                     break
         except Exception:
@@ -193,6 +202,18 @@ async def metrics(request: Request):
             "# HELP warsoc_agent_channel_failures_total Native Windows channel read failures.",
             "# TYPE warsoc_agent_channel_failures_total gauge",
             f"warsoc_agent_channel_failures_total {agent_channel_failures}",
+            "# HELP warsoc_agent_spool_limit_hits_total Agent spool admission failures reported by active agents.",
+            "# TYPE warsoc_agent_spool_limit_hits_total gauge",
+            f"warsoc_agent_spool_limit_hits_total {agent_spool_limit_hits}",
+            "# HELP warsoc_agent_spool_blocked Active agents currently paused by spool or disk boundaries.",
+            "# TYPE warsoc_agent_spool_blocked gauge",
+            f"warsoc_agent_spool_blocked {agent_spool_blocked}",
+            "# HELP warsoc_agent_spool_usage_bytes Total durable spool bytes reported by active agents.",
+            "# TYPE warsoc_agent_spool_usage_bytes gauge",
+            f"warsoc_agent_spool_usage_bytes {agent_spool_usage_bytes}",
+            "# HELP warsoc_raw_stream_depth Current entries in the shared raw ingest stream.",
+            "# TYPE warsoc_raw_stream_depth gauge",
+            f"warsoc_raw_stream_depth {raw_stream_depth}",
             "# HELP warsoc_detection_latency_seconds Last observed event-to-alert latency.",
             "# TYPE warsoc_detection_latency_seconds gauge",
             f"warsoc_detection_latency_seconds {detection_latency_seconds}",

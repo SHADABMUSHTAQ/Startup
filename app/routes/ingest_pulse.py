@@ -28,12 +28,13 @@ RAW_LOGS_QUEUE = "raw_logs_queue"
 SIEM_HOT_QUEUE = "siem_hot_queue"
 RAW_RETENTION_ANCHOR_FIELD = "_retention_ts"
 STATUS_KEY_PREFIX = "status"
-STATUS_TTL_SECONDS = 86400
+STATUS_TTL_SECONDS = 600
 MAX_INGEST_BODY_BYTES = 5 * 1024 * 1024
 DEFAULT_AGENT_LIMIT_FOR_QUOTA = 10
 DEFAULT_DAILY_INGEST_BYTES_PER_AGENT = int(os.getenv("INGEST_DAILY_BYTES_PER_AGENT", str(250 * 1024 * 1024)))
 DEFAULT_DAILY_INGEST_BYTES_FLOOR = int(os.getenv("INGEST_DAILY_BYTES_FLOOR", str(1024 * 1024 * 1024)))
 INGEST_DAILY_QUOTA_TTL_SECONDS = int(os.getenv("INGEST_DAILY_QUOTA_TTL_SECONDS", str(3 * 24 * 60 * 60)))
+RAW_STREAM_MAX_ENTRIES = int(os.getenv("RAW_STREAM_MAX_ENTRIES", "500000"))
 
 _GENERIC_HIGH_SIGNAL_KEYWORDS = {
     "../",
@@ -294,6 +295,26 @@ return {1, updated, limit}
         )
 
 
+async def _enforce_raw_stream_capacity(redis_client) -> None:
+    if RAW_STREAM_MAX_ENTRIES <= 0:
+        return
+    try:
+        stream_length = int(await redis_client.xlen(RAW_LOGS_QUEUE))
+    except Exception as exc:
+        logger.error("Raw ingest stream capacity check failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Ingest queue capacity check unavailable") from exc
+    if stream_length >= RAW_STREAM_MAX_ENTRIES:
+        logger.error(
+            "Raw ingest stream reached its admission limit: length=%s limit=%s",
+            stream_length,
+            RAW_STREAM_MAX_ENTRIES,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Ingest queue is under pressure. Agent must retain and retry the batch.",
+        )
+
+
 def _classify_clock_integrity(
     timestamp_str: str,
     skew_warning_seconds: int,
@@ -463,6 +484,8 @@ async def ingest_pulse_logs(
 
         raw_payload = await _read_json_body_with_limit(request)
         raw_payload_bytes = len(orjson.dumps(raw_payload))
+
+        await _enforce_raw_stream_capacity(redis_client)
 
         raw_events = await _consume_agent_ingest_envelope(
             raw_payload,

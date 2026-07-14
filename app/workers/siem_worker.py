@@ -188,6 +188,43 @@ def _has_generic_detection_signal(raw_msg: str, config: dict) -> bool:
     return any(keyword in msg for keyword in _generic_interest_keywords(config))
 
 
+def _native_windows_channel(log_data: dict) -> str:
+    for field_name in ("raw_event_data", "raw_data"):
+        raw_event = log_data.get(field_name)
+        if not isinstance(raw_event, dict):
+            continue
+        system = raw_event.get("system")
+        if isinstance(system, dict):
+            channel = str(system.get("channel") or "").strip()
+            if channel:
+                return channel
+    return ""
+
+
+def _trusted_telemetry_family(log_data: dict, event_id: str, event_type: str) -> str:
+    """Classify only from structured producer metadata, never message keywords."""
+    channel = _native_windows_channel(log_data).lower()
+    if channel in {"security", "system"} and str(event_id or "").isdigit():
+        return "windows"
+
+    event_type = str(event_type or "").strip().lower()
+    raw_data = log_data.get("raw_data")
+    has_file_origin = isinstance(raw_data, dict) and bool(raw_data.get("web_log_file"))
+    if event_type in {"http_request", "http_404", "http_500"} and has_file_origin:
+        return "web"
+    if event_type == "firewall" and has_file_origin:
+        return "network"
+    return "unknown"
+
+
+def _keyword_sources_for_family(family: str) -> tuple[str, ...]:
+    return {
+        "windows": ("Windows-Sec", "Endpoint-EDR"),
+        "web": ("Web-WAF",),
+        "network": ("Network-IDS",),
+    }.get(family, ())
+
+
 def _extract_tenant_id_from_raw_payload(raw_payload) -> str | None:
     match = _TENANT_ID_PATTERN.search(str(raw_payload or ""))
     if not match:
@@ -583,8 +620,10 @@ async def siem_worker():
                             _normalize_document_timestamps(log_data)
                             event_id = str(log_data.get("event_id", ""))
                             event_id_meaning = _resolve_event_id_meaning(config, event_id)
+                            reported_event_type = str(log_data.get("event_type") or "").strip()
                             event_type_slug = str(
                                 config.get("event_id_map", {}).get(event_id, {}).get("event_type", "")
+                                or reported_event_type
                             ).strip()
                             raw_message = str(log_data.get("message") or "").strip() or "Unknown Event"
                             raw_msg = str(raw_payload).lower()
@@ -593,6 +632,12 @@ async def siem_worker():
                                 log_data["event_id_meaning"] = event_id_meaning
                             if event_type_slug:
                                 log_data["event_type"] = event_type_slug
+                            telemetry_family = _trusted_telemetry_family(
+                                log_data,
+                                event_id,
+                                event_type_slug,
+                            )
+                            log_data["telemetry_family"] = telemetry_family
 
                             event_uid = log_data.get("event_uid") or str(uuid.uuid4())
                             log_data["event_uid"] = event_uid
@@ -709,7 +754,9 @@ async def siem_worker():
 
                             # 🔍 MANDATE 2: DYNAMIC KEYWORD SCANNER (WAF/LINUX/EDR)
                             if not alert_triggered and not is_basic_plan:
-                                for source_type, s_config in config.get("source_classification", {}).items():
+                                source_configs = config.get("source_classification", {})
+                                for source_type in _keyword_sources_for_family(telemetry_family):
+                                    s_config = source_configs.get(source_type, {})
                                     severity_map = s_config.get("severity_by_keyword", {})
                                     for keyword, mapped_sev in severity_map.items():
                                         if keyword.lower() in raw_msg:

@@ -48,6 +48,7 @@ if not env_loaded:
     print(f"[WARN] .env not found in any standard location. Using system environment variables.")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
+AGENT_VERSION = "4.2.1-Native"
 TENANT_ID = os.getenv("TENANT_ID", "provision").strip() or "provision"
 PROGRAM_DATA_DIR = Path(os.getenv("PROGRAMDATA", str(_AGENT_DIR))) / "WarSOC"
 JWT_TOKEN_PATH = PROGRAM_DATA_DIR / ".agent_jwt"
@@ -108,6 +109,7 @@ SENSOR_COUNTERS = {
     "pos_jsonl_rejections": 0,
     "channel_failures": 0,
     "spool_write_failures": 0,
+    "spool_limit_hits": 0,
 }
 POS_AUDIT_REQUIRED_FIELDS = {
     "event_id",
@@ -540,21 +542,108 @@ class DiskSpooler:
     MASTER BUILD: Atomic 'Rotate & Drain' Spooler.
     Ensures zero-loss resilience via OS-level renames (Renaming is atomic).
     """
-    def __init__(self, spool_dir="spool"):
+    def __init__(
+        self,
+        spool_dir="spool",
+        max_bytes=None,
+        resume_bytes=None,
+        min_free_bytes=None,
+    ):
         self.spool_dir = Path(spool_dir)
         self.pending_file = self.spool_dir / "pending_logs.jsonl"
         self.dead_letter_file = self.spool_dir / "rejected_logs.jsonl"
         self.lock = threading.Lock()
+        self.max_bytes = int(max_bytes or os.getenv("AGENT_SPOOL_MAX_BYTES", str(500 * 1024 * 1024)))
+        self.resume_bytes = int(resume_bytes or os.getenv("AGENT_SPOOL_RESUME_BYTES", str(400 * 1024 * 1024)))
+        self.min_free_bytes = int(min_free_bytes or os.getenv("AGENT_MIN_FREE_DISK_BYTES", str(2 * 1024 * 1024 * 1024)))
+        if self.max_bytes <= 0:
+            raise ValueError("AGENT_SPOOL_MAX_BYTES must be positive")
+        if not 0 <= self.resume_bytes < self.max_bytes:
+            raise ValueError("AGENT_SPOOL_RESUME_BYTES must be lower than AGENT_SPOOL_MAX_BYTES")
+        if self.min_free_bytes < 0:
+            raise ValueError("AGENT_MIN_FREE_DISK_BYTES cannot be negative")
+        self.backpressure_active = False
+        self.backpressure_reason = ""
 
         # Ensure spool environment exists
         self.spool_dir.mkdir(parents=True, exist_ok=True)
         print(f"[*] DiskSpooler Active: {self.pending_file}")
 
+    def _usage_bytes_unlocked(self):
+        total = 0
+        for path in self.spool_dir.glob("*.jsonl"):
+            try:
+                if path.is_file():
+                    total += path.stat().st_size
+            except OSError:
+                continue
+        return total
+
+    def _capacity_snapshot_unlocked(self):
+        usage_bytes = self._usage_bytes_unlocked()
+        try:
+            free_bytes = shutil.disk_usage(self.spool_dir).free
+        except OSError:
+            free_bytes = 0
+        return usage_bytes, free_bytes
+
+    def _raise_backpressure_unlocked(self, reason):
+        self.backpressure_active = True
+        self.backpressure_reason = reason
+        with CHANNEL_STATUS_LOCK:
+            SENSOR_COUNTERS["spool_limit_hits"] += 1
+        raise SpoolWriteError(reason)
+
+    def _ensure_capacity_unlocked(self, additional_bytes):
+        usage_bytes, free_bytes = self._capacity_snapshot_unlocked()
+        projected_usage = usage_bytes + max(0, int(additional_bytes))
+        projected_free = free_bytes - max(0, int(additional_bytes))
+
+        if self.backpressure_active:
+            recovered = usage_bytes <= self.resume_bytes and projected_free >= self.min_free_bytes
+            if not recovered:
+                self._raise_backpressure_unlocked(
+                    self.backpressure_reason or "Agent spool remains above its safe resume boundary"
+                )
+            self.backpressure_active = False
+            self.backpressure_reason = ""
+
+        if projected_usage > self.max_bytes:
+            self._raise_backpressure_unlocked(
+                f"Agent spool hard limit reached ({projected_usage} > {self.max_bytes} bytes)"
+            )
+        if projected_free < self.min_free_bytes:
+            self._raise_backpressure_unlocked(
+                f"Agent disk reserve reached ({projected_free} < {self.min_free_bytes} free bytes)"
+            )
+
+    def status(self):
+        with self.lock:
+            usage_bytes, free_bytes = self._capacity_snapshot_unlocked()
+            if (
+                self.backpressure_active
+                and usage_bytes <= self.resume_bytes
+                and free_bytes >= self.min_free_bytes
+            ):
+                self.backpressure_active = False
+                self.backpressure_reason = ""
+            return {
+                "usage_bytes": usage_bytes,
+                "max_bytes": self.max_bytes,
+                "resume_bytes": self.resume_bytes,
+                "min_free_bytes": self.min_free_bytes,
+                "free_bytes": free_bytes,
+                "blocked": self.backpressure_active,
+                "reason": self.backpressure_reason or None,
+            }
+
     def append(self, log_dict):
         """Thread-safe append-only write to the pending buffer."""
         try:
             line = json.dumps(log_dict, default=str) + "\n"
+            encoded_size = len(line.encode("utf-8"))
             with self.lock:
+                self._ensure_capacity_unlocked(encoded_size)
                 with open(self.pending_file, "a", encoding="utf-8") as f:
                     f.write(line)
                     f.flush()
@@ -576,6 +665,7 @@ class DiskSpooler:
         line = json.dumps(entry, ensure_ascii=False, default=str) + "\n"
         try:
             with self.lock:
+                self._ensure_capacity_unlocked(len(line.encode("utf-8")))
                 with open(self.dead_letter_file, "a", encoding="utf-8") as f:
                     f.write(line)
                     f.flush()
@@ -875,7 +965,7 @@ def parse_windows_event_xml(xml_text):
             "share_path": fields.get("ShareLocalPath"),
             "access_mask": fields.get("AccessMask"),
         })
-    elif event_id == "5157":
+    elif event_id in {"5156", "5157"}:
         processed.update({
             "user": fields.get("Application"),
             "application": fields.get("Application"),
@@ -965,14 +1055,15 @@ def build_windows_event_message(parsed):
     if event_id == "4719":
         change = processed.get("audit_policy_changes") or "audit policy changed"
         return f"Windows audit policy changed by {user}: {change}"
-    if event_id == "5157":
+    if event_id in {"5156", "5157"}:
         destination = processed.get("destination_address") or "unknown destination"
         if processed.get("destination_port"):
             destination = f"{destination}:{processed['destination_port']}"
         source = source_ip
         if processed.get("source_port"):
             source = f"{source}:{processed['source_port']}"
-        return f"Windows Firewall blocked connection from {source} to {destination}"
+        action = "permitted" if event_id == "5156" else "blocked"
+        return f"Windows Firewall {action} connection from {source} to {destination}"
     if event_id == "4663":
         target = processed.get("object_name") or "protected object"
         return f"Delete access requested for {target} by {user}"
@@ -1154,6 +1245,7 @@ def ingest_sender_thread():
                 continue
 
             all_success = True
+            retain_original = False
 
             # CHUNK THE BATCH (dynamically uses updated OUTBOUND_BATCH_SIZE)
             for i in range(0, len(batch), OUTBOUND_BATCH_SIZE):
@@ -1165,17 +1257,12 @@ def ingest_sender_thread():
                     if len(chunk) > 1:
                         OUTBOUND_BATCH_SIZE = max(1, len(chunk) // 2)
                         print(f"[INFO] Preflight split: {len(chunk)} logs ({chunk_bytes} bytes) -> batch size {OUTBOUND_BATCH_SIZE}")
-                        for log in chunk:
-                            SPOOLER.append(log)
+                        retain_original = True
+                        all_success = False
+                        break
                     else:
                         print(f"[WARN] Preflight single-log trim: {chunk_bytes} bytes > {MAX_OUTBOUND_BYTES} bytes")
-                        SPOOLER.append(_truncate_single_log_payload(chunk[0]))
-
-                    for remaining_log in batch[i + len(chunk):]:
-                        SPOOLER.append(remaining_log)
-
-                    all_success = False
-                    break
+                        chunk = [_truncate_single_log_payload(chunk[0])]
 
                 # TRANSMISSION
                 resp = secure_request("POST", INGEST_URL, json=_build_ingest_envelope(chunk), timeout=20)
@@ -1230,42 +1317,37 @@ def ingest_sender_thread():
                         if len(chunk) > 1:
                             OUTBOUND_BATCH_SIZE = max(1, len(chunk) // 2)
                             print(f"[INFO] Halving OUTBOUND_BATCH_SIZE to {OUTBOUND_BATCH_SIZE} to respect 1MB limit...")
-
-                            # Re-spool the chunk so it is processed in smaller pieces on the next loop
-                            for log in chunk:
-                                SPOOLER.append(log)
+                            retain_original = True
 
                         # -- STRATEGY 2: SINGLE-LOG TRUNCATION --
                         else:
-                            print(f"[WARN] Single log exceeds 1MB! Truncating to maintain compliance...")
+                            print(f"[WARN] Single log exceeds backend limit. Truncating and re-queuing it.")
                             SPOOLER.append(_truncate_single_log_payload(chunk[0]))
-                            # Blockage explicitly cleared via truncation, restore max speed
+                            for remaining_log in batch[i + len(chunk):]:
+                                SPOOLER.append(remaining_log)
                             OUTBOUND_BATCH_SIZE = ORIGINAL_BATCH_SIZE
-
-                        # Re-spool the rest of the original unattempted batch elements
-                        for remaining_log in batch[i + len(chunk):]:
-                            SPOOLER.append(remaining_log)
 
                     else:
                         if resp and resp.status_code == 429:
                             print("[WARN] Backend rate limited (429). Backing off for 10s...")
-                            for remaining_log in batch[i:]:
-                                SPOOLER.append(remaining_log)
+                            retain_original = True
                             all_success = False
                             time.sleep(10)
                             break
 
                         # STANDARD UNAVAILABLE / TIMEOUT ERROR
                         print(f"[WARN] Backend Unavailable ({code}). Retrying in 5s...")
-                        for remaining_log in batch[i:]:
-                            SPOOLER.append(remaining_log)
+                        retain_original = True
 
                     all_success = False
                     time.sleep(5)
                     break
 
-            # Clean up the original spool file (since remaining items were re-spooled or success)
-            SPOOLER.clear_batch(filename)
+            # Keep the original artifact during transient failures. Re-reading may
+            # redeliver an already accepted chunk, so backend event_uid idempotency
+            # remains the final duplicate-suppression boundary.
+            if not retain_original:
+                SPOOLER.clear_batch(filename)
 
         except Exception as e:
             print(f"[!] Bulk Sender Crash: {e}")
@@ -1307,6 +1389,7 @@ def heartbeat_thread():
             with CHANNEL_STATUS_LOCK:
                 channel_status = copy.deepcopy(CHANNEL_STATUS)
                 sensor_counters = dict(SENSOR_COUNTERS)
+            spool_status = SPOOLER.status()
             pos_audit_configured = any(
                 os.path.basename(str(path)).lower() == "pos_audit.log"
                 for path in WEB_LOG_PATHS
@@ -1321,7 +1404,7 @@ def heartbeat_thread():
                 deployment_evidence = {}
             payload = {
                 "agent_id": AGENT_ID,
-                "current_version": "4.2-Native",
+                "current_version": AGENT_VERSION,
                 "timestamp": time.time(),
                 "sensor_status": {
                     "telemetry_config_version": TELEMETRY_CONFIG_VERSION,
@@ -1329,6 +1412,7 @@ def heartbeat_thread():
                     "pos_sacl_path_count": int(deployment_evidence.get("pos_path_count", 0) or 0),
                     "channels": channel_status,
                     "counters": sensor_counters,
+                    "spool": spool_status,
                     "pos_audit_log": {
                         "configured": pos_audit_configured,
                         "present": any(
@@ -1430,7 +1514,7 @@ def web_hunter_thread():
                                 "raw_data": record,
                                 "raw_event_data": record,
                                 "processed_data": processed_data,
-                                "agent_version": "4.2-Native",
+                                "agent_version": AGENT_VERSION,
                             }
                             enqueue_payload(payload)
                             continue
@@ -1451,7 +1535,7 @@ def web_hunter_thread():
                             "raw_data": {"raw": line, "web_log_file": file_path},
                             "raw_event_data": {"raw": line, "web_log_file": file_path},
                             "processed_data": {},
-                            "agent_version": "4.2-Native",
+                            "agent_version": AGENT_VERSION,
                         }
                         enqueue_payload(payload)
 
@@ -1599,7 +1683,7 @@ def native_log_hunter_thread():
                                 "timestamp": parsed["timestamp"],
                                 "processed_data": parsed["processed_data"],
                                 "raw_event_data": parsed["raw_event_data"],
-                                "agent_version": "4.2-Native",
+                                "agent_version": AGENT_VERSION,
                             }
                             current_batch_highest = _durably_enqueue_native_event(
                                 payload,
@@ -1652,7 +1736,7 @@ def native_log_hunter_thread():
 
 if __name__ == "__main__":
     print("==========================================")
-    print("   WarSOC OMNI AGENT v4.2 Native")
+    print(f"   WarSOC Windows Agent v{AGENT_VERSION}")
     print(f"   Tenant ID: {TENANT_ID}")
     print("==========================================")
 

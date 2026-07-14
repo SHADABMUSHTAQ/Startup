@@ -12,6 +12,7 @@ import os
 import secrets
 import zipfile
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
@@ -1083,7 +1084,7 @@ async def test_admin_tenant_listing_redacts_secret_fields(client, db, monkeypatc
         assert field not in tenant
 
 
-async def test_invite_accepts_temp_password_and_normalizes_legacy_packs(client, db):
+async def test_invite_creates_pending_user_and_normalizes_legacy_packs(client, db):
     headers, _, _ = await _signup_and_login(
         client,
         "hardening_team_inviter",
@@ -1093,7 +1094,6 @@ async def test_invite_accepts_temp_password_and_normalizes_legacy_packs(client, 
 
     invite_payload = {
         "email": "auditor_bridge@example.com",
-        "temp_password": "TempPassword123!",
         "role": "auditor",
         "allowed_packs": ["fbr_pos_shield", "peca_vault"],
     }
@@ -1103,7 +1103,13 @@ async def test_invite_accepts_temp_password_and_normalizes_legacy_packs(client, 
     user = await db["users"].find_one({"email": invite_payload["email"]})
     assert user is not None
     assert user["role"] == "auditor"
+    assert user["status"] == "pending"
+    assert user["must_set_password"] is True
     assert set(user["compliance_packs"]) == {"fbr_pos", "peca_forensic"}
+    token = await db["user_activation_tokens"].find_one({"user_id": user["_id"]})
+    assert token is not None
+    assert token["used_at"] is None
+    assert token["expires_at"] > token["created_at"]
 
 
 async def test_invite_email_remains_globally_unique_until_login_is_tenant_qualified(client, db):
@@ -1114,7 +1120,6 @@ async def test_invite_email_remains_globally_unique_until_login_is_tenant_qualif
     )
     shared_payload = {
         "email": "shared-operator@example.com",
-        "temp_password": "SharedOperatorPassword123!",
         "role": "analyst",
     }
 
@@ -1143,6 +1148,51 @@ async def test_invite_email_remains_globally_unique_until_login_is_tenant_qualif
     assert second.status_code == 400, second.text
     assert "already exists" in second.json()["detail"].lower()
     assert await db["users"].count_documents({"email": shared_payload["email"]}) == 1
+
+
+async def test_team_invite_uses_single_use_password_setup_link(client, db):
+    headers, _, _ = await _signup_and_login(
+        client,
+        "hardening_secure_inviter",
+        plan_type="Professional",
+        role="admin",
+    )
+    invited_email = "secure-invite@example.com"
+    response = await client.post(
+        "/api/v1/auth/invite",
+        json={"email": invited_email, "role": "analyst", "allowed_packs": []},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "pending"
+
+    queued = await fastapi_app.state.redis.lpop("email_alert_queue")
+    job = json.loads(queued)
+    assert "temporary_password" not in job["payload"]
+    activation_url = job["payload"]["activation_url"]
+    token = parse_qs(urlparse(activation_url).fragment)["token"][0]
+    chosen_password = "Secure-Invite-Password-2026!"
+
+    activated = await client.post(
+        "/api/v1/auth/activate-invite",
+        json={"token": token, "password": chosen_password},
+    )
+    assert activated.status_code == 200, activated.text
+    user = await db["users"].find_one({"email": invited_email})
+    assert user["status"] == "active"
+    assert "must_set_password" not in user
+
+    replay = await client.post(
+        "/api/v1/auth/activate-invite",
+        json={"token": token, "password": chosen_password},
+    )
+    assert replay.status_code == 400
+
+    login = await client.post(
+        "/api/v1/auth/login",
+        json={"username": invited_email, "password": chosen_password},
+    )
+    assert login.status_code == 200, login.text
 
 
 async def test_auditor_cannot_bypass_alert_rbac_through_logs_gateway(client, db):

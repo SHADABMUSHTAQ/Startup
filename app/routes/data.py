@@ -10,6 +10,7 @@ from app.utils.security_policy import effective_agent_limit
 
 router = APIRouter()
 RAW_RETENTION_ANCHOR_FIELD = "_retention_ts"
+AGENT_ONLINE_WINDOW_SECONDS = 600
 
 
 def _serialize_docs(docs: list[dict]) -> list[dict]:
@@ -32,6 +33,15 @@ def _coerce_dt(value):
         except ValueError:
             return None
     return None
+
+
+def _is_fresh_agent_timestamp(value, now=None, max_age_seconds=AGENT_ONLINE_WINDOW_SECONDS):
+    parsed = _coerce_dt(value)
+    if parsed is None:
+        return False
+    reference = now or datetime.now(timezone.utc)
+    age_seconds = (reference - parsed.astimezone(timezone.utc)).total_seconds()
+    return -30 <= age_seconds <= max_age_seconds
 
 
 def _sort_key(doc: dict):
@@ -237,12 +247,19 @@ async def agent_status(
                 for channel in ("Security", "System")
             )
             audit_configured = str(sensor_status.get("audit_policy_status") or "").lower() == "configured"
-            online = bool(live_last_seen)
+            online = _is_fresh_agent_timestamp(live_last_seen)
+            spool_status = sensor_status.get("spool") if isinstance(sensor_status, dict) else {}
+            spool_status = spool_status if isinstance(spool_status, dict) else {}
+            spool_blocked = bool(spool_status.get("blocked", False))
             health = "offline"
             if online:
-                health = "active" if required_channels_ok and audit_configured else "degraded"
+                health = (
+                    "active"
+                    if required_channels_ok and audit_configured and not spool_blocked
+                    else "degraded"
+                )
 
-            last_seen = live_last_seen or agent.get("last_seen")
+            last_seen = live_last_seen if online else agent.get("last_seen")
             if isinstance(last_seen, datetime):
                 last_seen = last_seen.astimezone(timezone.utc).isoformat()
             data.append(

@@ -258,7 +258,7 @@ class SIEMEngine:
                 score += int(self.phishing_weights.get("risky_attachment", 30))
                 break
 
-        if event_type in {"process_creation", "unknown"} and self.phishing_lolbins:
+        if event_type in {"process_create", "process_creation", "unknown"} and self.phishing_lolbins:
             if any(ind in msg_lower for ind in self.phishing_lolbins):
                 signals.append("lolbin_execution")
                 score += int(self.phishing_weights.get("lolbin_execution", 35))

@@ -1,6 +1,6 @@
 [Setup]
 AppName=WarSOC Agent
-AppVersion=4.2.0
+AppVersion=4.2.1
 DefaultDirName={commonpf}\WarSOC
 DefaultGroupName=WarSOC
 OutputBaseFilename=warsoc_installer

@@ -193,45 +193,35 @@ def _build_message(job: dict) -> EmailMessage:
         invite_email = escape(str(payload.get("email") or recipient))
         role = escape(str(payload.get("role") or "user").title())
         tenant_id = escape(str(payload.get("tenant_id") or "your tenant"))
-        login_url_raw = str(payload.get("login_url") or "https://warsoc.tech").rstrip("/")
-        login_url = escape(login_url_raw)
+        activation_url_raw = str(payload.get("activation_url") or "").strip()
+        activation_url = escape(activation_url_raw)
+        expires_in_hours = int(payload.get("expires_in_hours") or 24)
         invited_by = escape(str(payload.get("invited_by") or "WarSOC administrator"))
-        temporary_password = str(payload.get("temporary_password") or "")
-        subject = f"Your WarSOC access is ready - {role}"
-
-        plain_password_block = (
-            f"Temporary password: {temporary_password}\n"
-            if temporary_password
-            else "Temporary password: Contact your WarSOC administrator.\n"
-        )
-        html_password_block = (
-            f"<li><strong>Temporary password:</strong> <code>{escape(temporary_password)}</code></li>"
-            if temporary_password
-            else "<li><strong>Temporary password:</strong> Contact your WarSOC administrator.</li>"
-        )
+        if not activation_url_raw.startswith("https://"):
+            raise ValueError("team_invite requires an HTTPS activation_url")
+        subject = f"Activate your WarSOC access - {role}"
 
         body = (
             f"Hello,\n\n"
-            f"{invited_by} created WarSOC access for tenant {tenant_id}.\n\n"
-            f"Login URL: {login_url_raw}\n"
+            f"{invited_by} invited you to WarSOC tenant {tenant_id}.\n\n"
+            f"Set your password: {activation_url_raw}\n"
             f"Email: {payload.get('email') or recipient}\n"
             f"Role: {payload.get('role') or 'user'}\n"
-            f"{plain_password_block}\n"
-            f"Use the credentials above to sign in. Keep this message private.\n\n"
+            f"This one-time link expires in {expires_in_hours} hours.\n"
+            f"If you did not expect this invitation, do not open the link.\n\n"
             f"Regards,\nWarSOC Security Operations"
         )
         html_body = f"""
         <html>
             <body style="font-family: Arial, sans-serif; color: #333;">
                 <h2 style="color: #0056b3;">WarSOC Security Operations</h2>
-                <p>{invited_by} created WarSOC access for tenant <strong>{tenant_id}</strong>.</p>
+                <p>{invited_by} invited you to WarSOC tenant <strong>{tenant_id}</strong>.</p>
                 <ul>
-                    <li><strong>Login URL:</strong> <a href="{login_url}">{login_url}</a></li>
                     <li><strong>Email:</strong> {invite_email}</li>
                     <li><strong>Role:</strong> {role}</li>
-                    {html_password_block}
                 </ul>
-                <p>Keep this message private.</p>
+                <p><a href="{activation_url}">Set your password and activate access</a></p>
+                <p>This one-time link expires in {expires_in_hours} hours. If you did not expect this invitation, ignore this email.</p>
                 <br/>
                 <p>Regards,<br/><strong>WarSOC Security Operations</strong></p>
             </body>

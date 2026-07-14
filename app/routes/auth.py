@@ -8,9 +8,11 @@ from passlib.context import CryptContext
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+import hashlib
 import json
 import jwt
 import logging
+import secrets
 import uuid
 
 from app.config.config import get_settings
@@ -61,10 +63,13 @@ class UpgradePlan(BaseModel):
 
 class InviteUserRequest(BaseModel):
     email: EmailStr
-    password: Optional[StrongPassword] = None
-    temp_password: Optional[StrongPassword] = None
     role: str
-    allowed_packs: Optional[list[str]] = []
+    allowed_packs: list[str] = Field(default_factory=list)
+
+
+class ActivateInviteRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
+    password: StrongPassword
 
 # --- HELPER FUNCTIONS ---
 def verify_password(plain_password, hashed_password):
@@ -546,8 +551,10 @@ class LoginSchema(BaseModel):
 @limiter.limit("5/minute")
 async def login(request: Request, user_data: LoginSchema, db=Depends(get_db)):
     db_user = await db["users"].find_one({"$or": [{"username": user_data.username}, {"email": user_data.username}]})
-    if not db_user or not verify_password(user_data.password, db_user["hashed_password"]):
+    if not db_user or not verify_password(user_data.password, db_user.get("hashed_password")):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    if str(db_user.get("status") or "active").strip().lower() != "active":
+        raise HTTPException(status_code=403, detail="Account activation is required")
 
     await _require_active_paid_tenant(db, db_user)
 
@@ -869,41 +876,66 @@ async def invite_user(
 ):
     await _ensure_users_tenant_index(db)
 
-    invite_password = payload.password or payload.temp_password
-    if not invite_password:
-        raise HTTPException(status_code=400, detail="Password is required")
-
     role = payload.role.strip().lower()
     if role not in ["admin", "manager", "analyst", "auditor"]:
         raise HTTPException(status_code=400, detail="Invalid role specified. Must be admin, manager, analyst, or auditor.")
 
     # Login accepts an email without tenant context, so email identity must
     # remain globally unique until the login contract includes a tenant slug.
-    existing_user = await db["users"].find_one({"email": payload.email})
-    if existing_user:
-        raise HTTPException(status_code=400, detail="User with this email already exists")
-
-    hashed_password = get_password_hash(invite_password)
     tenant_id = current_user.get("tenant_id")
     if not tenant_id:
         raise HTTPException(status_code=500, detail="Current admin lacks a valid tenant context.")
 
     packs = payload.allowed_packs if role == "auditor" else ["internal_full"]
     packs = resolve_compliance_packs(current_user.get("plan_type", "Customized"), packs)
+    now = datetime.now(timezone.utc)
+    existing_user = await db["users"].find_one({"email": payload.email})
+    if existing_user:
+        existing_status = str(existing_user.get("status") or "active").strip().lower()
+        if existing_status != "pending" or existing_user.get("tenant_id") != tenant_id:
+            raise HTTPException(status_code=400, detail="User with this email already exists")
+        user_id = existing_user["_id"]
+        await db["users"].update_one(
+            {"_id": user_id, "tenant_id": tenant_id, "status": "pending"},
+            {"$set": {"role": role, "compliance_packs": packs, "invited_at": now}},
+        )
+    else:
+        new_user = {
+            "username": f'{payload.email.split("@")[0]}-{str(uuid.uuid4())[:8]}',
+            "email": payload.email,
+            "full_name": payload.email.split("@")[0],
+            "hashed_password": get_password_hash(secrets.token_urlsafe(48)),
+            "tenant_id": tenant_id,
+            "plan_type": current_user.get("plan_type", "Customized"),
+            "role": role,
+            "compliance_packs": packs,
+            "has_active_plan": True,
+            "status": "pending",
+            "must_set_password": True,
+            "created_at": now,
+            "invited_at": now,
+        }
+        insert_result = await db["users"].insert_one(new_user)
+        user_id = insert_result.inserted_id
 
-    new_user = {
-        "username": f'{payload.email.split("@")[0]}-{str(uuid.uuid4())[:4]}',
-        "email": payload.email,
-        "full_name": payload.email.split("@")[0],
-        "hashed_password": hashed_password,
-        "tenant_id": tenant_id,
-        "plan_type": current_user.get("plan_type", "Customized"),
-        "role": role,
-        "compliance_packs": packs,
-        "has_active_plan": True,
-        "created_at": datetime.now(timezone.utc)
-    }
-    await db["users"].insert_one(new_user)
+    raw_token = secrets.token_urlsafe(48)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    expires_at = now + timedelta(hours=24)
+    await db["user_activation_tokens"].update_many(
+        {"user_id": user_id, "purpose": "team_invite", "used_at": None},
+        {"$set": {"used_at": now, "invalidated_reason": "superseded"}},
+    )
+    await db["user_activation_tokens"].insert_one(
+        {
+            "token_hash": token_hash,
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+            "purpose": "team_invite",
+            "created_at": now,
+            "expires_at": expires_at,
+            "used_at": None,
+        }
+    )
 
     email_queued = False
     redis = getattr(request.app.state, "redis", None)
@@ -915,15 +947,16 @@ async def invite_user(
                 if origin.startswith("https://") and "localhost" not in origin and "127.0.0.1" not in origin:
                     frontend_url = origin
                     break
+            activation_url = f"{frontend_url}/set-password#token={raw_token}"
             invite_job = {
                 "type": "team_invite",
                 "recipient": str(payload.email),
                 "payload": {
                     "email": str(payload.email),
-                    "temporary_password": str(invite_password),
                     "role": role,
                     "tenant_id": tenant_id,
-                    "login_url": frontend_url,
+                    "activation_url": activation_url,
+                    "expires_in_hours": 24,
                     "invited_by": current_user.get("email") or current_user.get("username") or "WarSOC administrator",
                 },
             }
@@ -933,10 +966,68 @@ async def invite_user(
             logger.error("Failed to queue team invite email for %s: %s", payload.email, exc)
 
     return {
-        "message": f"User provisioned successfully as {role}",
+        "message": f"Secure invitation created successfully for {role}",
         "role": role,
         "email_queued": email_queued,
+        "status": "pending",
     }
+
+
+@router.post("/activate-invite")
+@limiter.limit("10/minute")
+async def activate_invite(request: Request, payload: ActivateInviteRequest, db=Depends(get_db)):
+    now = datetime.now(timezone.utc)
+    token_hash = hashlib.sha256(payload.token.encode("utf-8")).hexdigest()
+    claim_id = uuid.uuid4().hex
+    from pymongo import ReturnDocument
+
+    token_doc = await db["user_activation_tokens"].find_one_and_update(
+        {
+            "token_hash": token_hash,
+            "purpose": "team_invite",
+            "used_at": None,
+            "expires_at": {"$gt": now},
+        },
+        {"$set": {"used_at": now, "claim_id": claim_id}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not token_doc:
+        raise HTTPException(status_code=400, detail="Invitation link is invalid, expired, or already used")
+
+    try:
+        result = await db["users"].update_one(
+            {
+                "_id": token_doc["user_id"],
+                "tenant_id": token_doc["tenant_id"],
+                "status": "pending",
+            },
+            {
+                "$set": {
+                    "hashed_password": get_password_hash(payload.password),
+                    "status": "active",
+                    "activated_at": now,
+                },
+                "$unset": {"must_set_password": ""},
+            },
+        )
+        if result.modified_count != 1:
+            raise RuntimeError("Pending invited user was not found")
+    except Exception:
+        await db["user_activation_tokens"].update_one(
+            {"_id": token_doc["_id"], "claim_id": claim_id},
+            {"$set": {"used_at": None}, "$unset": {"claim_id": ""}},
+        )
+        raise HTTPException(status_code=409, detail="Invitation could not be activated")
+
+    await db["user_activation_tokens"].update_many(
+        {
+            "user_id": token_doc["user_id"],
+            "_id": {"$ne": token_doc["_id"]},
+            "used_at": None,
+        },
+        {"$set": {"used_at": now, "invalidated_reason": "account_activated"}},
+    )
+    return {"status": "success", "message": "Password set. You can now sign in."}
 
 
 @router.get("/team")

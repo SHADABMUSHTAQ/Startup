@@ -109,17 +109,35 @@ def _sanitize_sensor_status(raw_status: dict[str, Any] | None) -> dict[str, Any]
         "pos_jsonl_rejections",
         "channel_failures",
         "spool_write_failures",
+        "spool_limit_hits",
     ):
         try:
             counters[counter_name] = max(0, int(raw_counters.get(counter_name) or 0))
         except (TypeError, ValueError):
             counters[counter_name] = 0
+    raw_spool = raw_status.get("spool") if isinstance(raw_status.get("spool"), dict) else {}
+
+    def _bounded_non_negative_int(name: str, maximum: int = 10 * 1024 * 1024 * 1024 * 1024) -> int:
+        try:
+            return max(0, min(int(raw_spool.get(name) or 0), maximum))
+        except (TypeError, ValueError):
+            return 0
+
     return {
         "telemetry_config_version": str(raw_status.get("telemetry_config_version") or "unknown")[:64],
         "audit_policy_status": str(raw_status.get("audit_policy_status") or "unknown")[:32],
         "pos_sacl_path_count": max(0, min(pos_sacl_path_count, 1000)),
         "channels": channels,
         "counters": counters,
+        "spool": {
+            "usage_bytes": _bounded_non_negative_int("usage_bytes"),
+            "max_bytes": _bounded_non_negative_int("max_bytes"),
+            "resume_bytes": _bounded_non_negative_int("resume_bytes"),
+            "min_free_bytes": _bounded_non_negative_int("min_free_bytes"),
+            "free_bytes": _bounded_non_negative_int("free_bytes"),
+            "blocked": bool(raw_spool.get("blocked", False)),
+            "reason": str(raw_spool.get("reason") or "")[:500] or None,
+        },
         "pos_audit_log": {
             "configured": bool(pos_audit.get("configured", False)),
             "present": bool(pos_audit.get("present", False)),

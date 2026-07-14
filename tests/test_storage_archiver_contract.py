@@ -314,7 +314,8 @@ def test_archive_managed_collections_have_no_independent_ttl_deletion():
         "analysis_results",
     ):
         assert f'_drop_ttl_indexes(db.{collection_name}, "{collection_name}")' in init_text
-    assert "expireAfterSeconds=" not in init_text
+    assert 'name="ttl_user_activation_tokens"' in init_text
+    assert init_text.count("expireAfterSeconds=") == 1
 
 
 @pytest.mark.asyncio
