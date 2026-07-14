@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -103,3 +105,14 @@ def test_every_commercial_contract_rejects_51_endpoints():
             compliance_packs=[],
             billing_cycle="monthly",
         )
+
+
+def test_fifty_seat_enrollment_rate_limits_are_not_ten_per_minute():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "routes"
+        / "agent_orchestration.py"
+    ).read_text(encoding="utf-8")
+    assert source.count('@limiter.limit("60/minute")') >= 2
+    assert '@limiter.limit("120/minute")' in source

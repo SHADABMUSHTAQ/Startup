@@ -191,7 +191,7 @@ async def _get_tenant_enforce_bans(redis_client, tenant_id: str) -> list[str]:
     return sorted(set(banned_ips))
 
 @router.post("/generate-activation", response_model=ActivationResponse)
-@limiter.limit("10/minute")
+@limiter.limit("60/minute")
 async def generate_activation(
     request: Request,
     current_user: dict = Depends(get_current_user),
@@ -240,7 +240,7 @@ async def generate_activation(
     return ActivationResponse(activation_code=code, expires_in_seconds=ttl)
 
 @router.post("/validate-activation")
-@limiter.limit("20/minute")
+@limiter.limit("120/minute")
 async def validate_activation(
     request: Request,
     body: ActivationValidateRequest,
@@ -275,7 +275,7 @@ async def validate_activation(
     }
 
 @router.post("/register")
-@limiter.limit("10/minute")
+@limiter.limit("60/minute")
 async def register_agent(
     request: Request,
     body: AgentRegisterRequest,

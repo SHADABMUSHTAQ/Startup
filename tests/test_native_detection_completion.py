@@ -678,6 +678,8 @@ def test_installer_configures_native_telemetry_before_nssm_run_entries():
     assert 'DiskSpooler(PROGRAM_DATA_DIR / "spool")' in agent_source
     assert 'Path(_AGENT_DIR) / "spool"' not in agent_source
     assert "_consume_activation_secret()" in agent_source
+    assert "while not JWT_TOKEN:" in agent_source
+    assert "retry_delay = min(retry_delay * 2, 60)" in agent_source
 
     telemetry = (ROOT / "agent" / "deploy_warsoc_telemetry.ps1").read_text(encoding="utf-8")
     assert "added_rights" in telemetry

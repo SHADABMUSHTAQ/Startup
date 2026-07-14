@@ -7,13 +7,14 @@ older `run_launch_e2e.ps1`; that script contains a pre-hardening FBR fixture.
 
 | Phase | Latest status | Remaining action |
 |---|---|---|
-| Preflight | Passed as run `136bf34e0c` against the deployed site, API, and Azure `warsoc_installer-4.2.0.exe`. | Upload and rerun against local release candidate `warsoc_installer-4.2.1.exe` SHA-256 `B3F861086B0DE4C02B1D11506A77781268A5C0F2BD803B252BEAE720F596B857`. |
-| Platform | Outstanding for the current deployed release. | Run with disposable production QA data and verify the sales mailbox. |
+| Preflight | Passed as run `5699139aa0` against the deployed site, API, and Azure `warsoc_installer-4.2.1.exe`. | Upload and rerun against local release candidate `warsoc_installer-4.2.2.exe` SHA-256 `FDF008750DD7A8BE0778106C1A2A15BECD6FB64EE7A0DA4D0CC71845B927CC1E`. |
+| Platform | Core live pipeline passed in run `49f0fe4193`; the stale plaintext-password auditor fixture was replaced with the secure pending-invite contract. | Deploy 4.2.2, rerun Platform, complete one mailbox activation, and verify activated-auditor RBAC manually. |
 | Native Windows | Outstanding as a complete 11-control/FBR proof artifact. | Run Generate and Verify on a snapshot-based disposable Windows VM. |
-| Fifty-agent soak | Outstanding for the current release. | Run in a quiet window and inspect workers, Redis, DLQ, and latency. |
+| Fifty-agent soak | Run `9bb4bb94a2` exposed a 10/minute shared-IP enrollment boundary after 10/50 agents. Local 4.2.2 raises only one-time enrollment limits and retries registration with bounded backoff. | Deploy 4.2.2 and rerun in a quiet window; inspect workers, Redis, DLQ, and latency. |
 
 Pytest collection currently reports 251 backend cases. The latest archive and
-incident and runtime-safety changes have 122 focused passing cases; remaining legacy tests
+incident and runtime-safety changes have 122 focused passing cases; the 4.2.2
+enrollment correction has an additional focused 73-case green run. Remaining legacy tests
 have not all been rerun in the current release cycle. Production acceptance
 still requires the contract-aligned regression suites to pass.
 
@@ -54,7 +55,10 @@ $env:METRICS_BEARER_TOKEN = "<production metrics token>"
 The test sends sales messages whose company and subject contain a unique run
 identifier. Confirm one of those messages is visible in the WarSOC sales
 mailbox; the automated metric proves SMTP acceptance, while the mailbox check
-proves final inbox delivery.
+proves final inbox delivery. Team invitations deliberately do not return their
+one-time token through the API. Complete one invitation from the mailbox and
+verify the activated auditor receives HTTP 403 from team, operational-alert,
+and agent-activation APIs while entitled compliance evidence returns HTTP 200.
 
 ## 3. Native Windows VM
 

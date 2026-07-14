@@ -659,29 +659,34 @@ class Validator:
         auditor_email = self.unique_email("auditor")
         invite = self.admin.request("POST", "/api/v1/auth/invite", {
             "email": auditor_email,
-            "temp_password": admin_password,
             "role": "auditor",
             "allowed_packs": ["fbr_pos", "peca_forensic"],
         })
-        self.record("Auditor provisioning", invite.status == 201, f"HTTP {invite.status}")
+        invite_body = invite.body if isinstance(invite.body, dict) else {}
+        invite_ok = (
+            invite.status == 201
+            and invite_body.get("status") == "pending"
+            and invite_body.get("email_queued") is True
+        )
+        self.record(
+            "Auditor secure invitation",
+            invite_ok,
+            f"HTTP {invite.status}; status={invite_body.get('status')}; email_queued={invite_body.get('email_queued')}",
+        )
         if invite.status != 201:
             return
 
         auditor = ApiClient(self.args.base_url)
         login = auditor.login(auditor_email, admin_password)
-        self.record("Auditor login", login.status == 200, f"HTTP {login.status}")
-
-        team = auditor.request("GET", "/api/v1/auth/team")
-        self.record("Auditor denied team management", team.status == 403, f"HTTP {team.status}")
-
-        alerts = auditor.request("GET", "/api/v1/alerts")
-        self.record("Auditor denied operational alerts API", alerts.status == 403, f"HTTP {alerts.status}")
-
-        activation = auditor.request("POST", "/api/v1/agent/generate-activation", {})
-        self.record("Auditor denied agent activation API", activation.status == 403, f"HTTP {activation.status}")
-
-        evidence = auditor.request("GET", "/api/v1/compliance/evidence/fbr_pos?limit=10")
-        self.record("Auditor entitled FBR evidence access", evidence.status == 200, f"HTTP {evidence.status}")
+        self.record(
+            "Pending auditor cannot log in",
+            login.status in {401, 403},
+            f"HTTP {login.status}",
+        )
+        self.warn(
+            "Activated auditor RBAC",
+            "Complete the emailed one-time link, then verify team/alerts/agent APIs return 403 and entitled compliance evidence returns 200.",
+        )
 
     def export_checks(self):
         csv_resp = self.admin.request("GET", "/api/v1/export/csv?data_type=alerts&limit=100", timeout=60)

@@ -170,7 +170,7 @@ The frontend exposes the Compliance workspace to admin and auditor roles. The ba
 1. The admin selects Download Agent in the dashboard.
 2. The frontend requests `GET /api/v1/agent/download`.
 3. The backend returns a redirect to `AGENT_CDN_URL`.
-4. Azure public artifact storage serves the currently approved versioned installer. The local release candidate is `warsoc_installer-4.2.1.exe`; Azure must not be switched until its hash is approved.
+4. Azure public artifact storage serves the currently approved versioned installer. The local release candidate is `warsoc_installer-4.2.2.exe`; Azure must not be switched until its hash is approved.
 5. The installer asks for the activation code, confirms `https://api.warsoc.tech`, and optionally accepts local POS directories.
 6. The installer validates the activation code before making the installation operational.
 7. The native telemetry script configures auditing and optional POS SACLs.
@@ -730,8 +730,8 @@ flowchart LR
 - Python compilation for the modified backend modules passed.
 - Frontend lint passed.
 - Frontend production build passed with 2,851 modules; only a non-blocking large-chunk warning remained.
-- Local Windows agent and installer build passed for version 4.2.1.
-- Local `warsoc_installer-4.2.1.exe`: 17,417,288 bytes, SHA-256 `B3F861086B0DE4C02B1D11506A77781268A5C0F2BD803B252BEAE720F596B857`.
+- Local Windows agent and installer build passed for version 4.2.2.
+- Local `warsoc_installer-4.2.2.exe`: 17,415,232 bytes, SHA-256 `FDF008750DD7A8BE0778106C1A2A15BECD6FB64EE7A0DA4D0CC71845B927CC1E`.
 - The generated manifest also records the agent, NSSM, native telemetry script, and tenant policy hashes.
 
 ### 22.2 Verified for the previously deployed public release
@@ -767,7 +767,7 @@ Focused, contract-aligned checks are green. The legacy broad suite was intention
 |---|---|---|
 | Contract-aligned backend regression suite | 122 focused cases passed. | Run the production acceptance phases after deployment and explicitly quarantine/delete stale pre-hardening tests. |
 | Production Platform phase | Not rerun against the latest release. | Platform acceptance exits `0`, including provisioning, auth, agent, SIEM, FBR, PECA, WebSocket, RBAC, mitigation, CSV/PDF, and SMTP metric checks. |
-| Latest Windows installer | Local 4.2.1 build and manifest are complete; Azure still serves the previously approved artifact until operator upload. | Upload 4.2.1, set `AGENT_CDN_URL`, verify the CDN hash, then rerun Preflight. |
+| Latest Windows installer | Local 4.2.2 build and manifest are complete; Azure still serves the previously approved artifact until operator upload. | Upload 4.2.2, set `AGENT_CDN_URL`, verify the CDN hash, then rerun Preflight. |
 | Native Windows proof | Individual live telemetry and PECA processing are visible; the complete matrix is not captured. | Disposable Windows VM produces all 11 PECA controls plus FBR delete/permission scenarios with a passing NativeVerify JSON artifact. |
 | Fifty-agent capacity | Not proven for this release. | Soak phase exits `0` within latency targets without Redis eviction, DLQ growth, or unexpected restarts. |
 | Cold-only retrieval and reports | Upload, immutability, ledger, hot deletion, and direct integrity checks passed. | Records no longer in Mongo are retrieved through the authorized API and appear correctly in CSV and PDF output. |

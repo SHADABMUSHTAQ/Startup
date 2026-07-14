@@ -48,7 +48,7 @@ if not env_loaded:
     print(f"[WARN] .env not found in any standard location. Using system environment variables.")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-AGENT_VERSION = "4.2.1-Native"
+AGENT_VERSION = "4.2.2-Native"
 TENANT_ID = os.getenv("TENANT_ID", "provision").strip() or "provision"
 PROGRAM_DATA_DIR = Path(os.getenv("PROGRAMDATA", str(_AGENT_DIR))) / "WarSOC"
 JWT_TOKEN_PATH = PROGRAM_DATA_DIR / ".agent_jwt"
@@ -482,13 +482,26 @@ def authenticate_agent():
     if JWT_TOKEN:
         return True
 
-    signing_key = _load_or_create_signing_key()
-    print("[INFO] Registering agent with WarSOC activation service...")
-    try:
-        return register_agent(signing_key)
-    except Exception as e:
-        print(f"[!] Backbone Unreachable: {e}")
+    activation_code = ACTIVATION_CODE or os.getenv("ACTIVATION_CODE", "").strip()
+    if not activation_code:
+        print("[!] No ACTIVATION_CODE present. Agent cannot enroll automatically.")
         return False
+
+    signing_key = _load_or_create_signing_key()
+    retry_delay = 5
+    while not JWT_TOKEN:
+        print("[INFO] Registering agent with WarSOC activation service...")
+        try:
+            if register_agent(signing_key):
+                return True
+        except Exception as e:
+            print(f"[!] Enrollment service unavailable: {e}")
+
+        print(f"[WARN] Agent enrollment was not completed. Retrying in {retry_delay}s...")
+        time.sleep(retry_delay)
+        retry_delay = min(retry_delay * 2, 60)
+
+    return True
 
 def secure_request(method, url, **kwargs):
     global JWT_TOKEN
