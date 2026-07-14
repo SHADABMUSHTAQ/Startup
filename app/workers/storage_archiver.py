@@ -6,6 +6,7 @@ import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from azure.core.exceptions import ResourceExistsError
 from azure.storage.blob.aio import BlobServiceClient
 from bson import ObjectId
 from dotenv import load_dotenv
@@ -102,18 +103,61 @@ async def _verify_blob_immutability(blob_client, required_until: datetime) -> di
     return status
 
 
-async def _verify_container_immutability_capability(container_client) -> None:
+async def _verify_container_immutability_capability(container_client) -> dict:
     properties = await container_client.get_container_properties()
-    capable = bool(
-        getattr(properties, "has_immutability_policy", False)
-        or getattr(properties, "has_legal_hold", False)
-        or getattr(properties, "immutable_storage_with_versioning_enabled", False)
+    has_policy = bool(getattr(properties, "has_immutability_policy", False))
+    has_legal_hold = bool(getattr(properties, "has_legal_hold", False))
+    version_immutability = bool(
+        getattr(properties, "immutable_storage_with_versioning_enabled", False)
     )
+    capable = has_policy or has_legal_hold or version_immutability
     if not capable:
         raise RuntimeError(
             "Azure evidence container has no immutable-storage capability or policy. "
             "Hot records will not be deleted."
         )
+    try:
+        configured_days = int(os.getenv("AZURE_CONTAINER_IMMUTABILITY_DAYS", "0"))
+    except ValueError as exc:
+        raise RuntimeError("AZURE_CONTAINER_IMMUTABILITY_DAYS must be an integer") from exc
+    return {
+        "has_immutability_policy": has_policy,
+        "has_legal_hold": has_legal_hold,
+        "immutable_storage_with_versioning_enabled": version_immutability,
+        "declared_locked": _environment_flag(
+            "AZURE_CONTAINER_IMMUTABILITY_LOCKED",
+            default=False,
+        ),
+        "configured_days": configured_days,
+    }
+
+
+def _verify_container_immutability_for_retention(
+    container_status: dict | None,
+    required_days: int,
+) -> dict:
+    status = dict(container_status or {})
+    legal_hold = bool(status.get("has_legal_hold"))
+    policy_verified = bool(
+        status.get("has_immutability_policy")
+        and status.get("declared_locked")
+        and int(status.get("configured_days") or 0) >= required_days
+    )
+    if not legal_hold and not policy_verified:
+        raise RuntimeError(
+            "Azure container-scoped immutability is not verified for the required "
+            f"{required_days}-day retention period. Confirm the policy is locked and "
+            "set AZURE_CONTAINER_IMMUTABILITY_LOCKED=true plus "
+            "AZURE_CONTAINER_IMMUTABILITY_DAYS to the actual Azure policy duration."
+        )
+    return {
+        "verified": True,
+        "scope": "container",
+        "legal_hold": legal_hold,
+        "declared_locked": bool(status.get("declared_locked")),
+        "configured_days": int(status.get("configured_days") or 0),
+        "verification_source": "azure-container-properties-and-operator-declaration",
+    }
 
 
 def _parse_archive_collections() -> tuple[str, ...]:
@@ -181,12 +225,25 @@ def _archive_query(tenant_id: str, collection_name: str, retention_cutoff: datet
     return {"tenant_id": tenant_id, "$or": clauses}
 
 
-def _blob_base_name(tenant_id: str, collection_name: str, run_id: str, batch_number: int) -> str:
-    now = datetime.now(timezone.utc)
+def _archive_partition_time(docs: list[dict]) -> datetime:
+    timestamps = [
+        doc.get("timestamp") or doc.get("ingested_at") or doc.get("uploaded_at")
+        for doc in docs
+    ]
+    parsed = [timestamp for timestamp in map(_coerce_archive_datetime, timestamps) if timestamp]
+    return min(parsed) if parsed else datetime.now(timezone.utc)
+
+
+def _blob_base_name(
+    tenant_id: str,
+    collection_name: str,
+    archive_key: str,
+    partition_time: datetime,
+) -> str:
     return (
         f"{tenant_id}/{collection_name}/"
-        f"year={now:%Y}/month={now:%m}/day={now:%d}/"
-        f"archive_{collection_name}_{run_id}_batch_{batch_number:04d}"
+        f"year={partition_time:%Y}/month={partition_time:%m}/day={partition_time:%d}/"
+        f"archive_{collection_name}_{archive_key}"
     )
 
 
@@ -206,6 +263,7 @@ async def _archive_batch(
     run_id: str,
     batch_number: int,
     tenant_retention_days: int,
+    container_immutability: dict | None = None,
 ):
     document_ids = [doc["_id"] for doc in docs if "_id" in doc]
     if not document_ids:
@@ -213,8 +271,22 @@ async def _archive_batch(
 
     json_dump = json.dumps(docs, indent=2, default=_json_default).encode("utf-8")
     sha256_hash = hashlib.sha256(json_dump).hexdigest()
+    identity = "|".join(
+        (
+            tenant_id,
+            collection_name,
+            sha256_hash,
+            *(str(document_id) for document_id in document_ids),
+        )
+    )
+    archive_key = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
 
-    base_name = _blob_base_name(tenant_id, collection_name, run_id, batch_number)
+    base_name = _blob_base_name(
+        tenant_id,
+        collection_name,
+        archive_key,
+        _archive_partition_time(docs),
+    )
     json_blob_name = f"{base_name}.json"
     hash_blob_name = f"{base_name}.sha256"
     vault_retention_days = _effective_vault_retention_days(collection_name, tenant_retention_days)
@@ -225,29 +297,50 @@ async def _archive_batch(
     )
 
     json_blob = container_client.get_blob_client(json_blob_name)
-    await json_blob.upload_blob(
-        json_dump,
-        overwrite=False,
-        metadata={
-            "sha256": sha256_hash,
-            "collection": collection_name,
-            "retention_days": str(vault_retention_days or 0),
-        },
-    )
+    try:
+        await json_blob.upload_blob(
+            json_dump,
+            overwrite=False,
+            metadata={
+                "sha256": sha256_hash,
+                "collection": collection_name,
+                "retention_days": str(vault_retention_days or 0),
+            },
+        )
+    except ResourceExistsError:
+        existing = await (await json_blob.download_blob()).readall()
+        if hashlib.sha256(existing).hexdigest() != sha256_hash:
+            raise RuntimeError(f"Existing archive blob failed integrity check: {json_blob_name}")
 
     hash_blob = container_client.get_blob_client(hash_blob_name)
-    await hash_blob.upload_blob(sha256_hash.encode("utf-8"), overwrite=False)
+    hash_payload = sha256_hash.encode("utf-8")
+    try:
+        await hash_blob.upload_blob(hash_payload, overwrite=False)
+    except ResourceExistsError:
+        existing_hash = await (await hash_blob.download_blob()).readall()
+        if existing_hash.strip().lower() != hash_payload:
+            raise RuntimeError(f"Existing archive hash blob is invalid: {hash_blob_name}")
 
     immutability_required = _environment_flag("AZURE_IMMUTABILITY_REQUIRED", default=False)
     immutability_status = None
     if immutability_required:
-        json_status = await _verify_blob_immutability(json_blob, retain_until)
-        hash_status = await _verify_blob_immutability(hash_blob, retain_until)
-        immutability_status = {
-            "verified": True,
-            "json": json_status,
-            "sha256": hash_status,
-        }
+        scope = os.getenv("AZURE_IMMUTABILITY_SCOPE", "blob").strip().lower()
+        if scope == "container":
+            immutability_status = _verify_container_immutability_for_retention(
+                container_immutability,
+                vault_retention_days,
+            )
+        elif scope == "blob":
+            json_status = await _verify_blob_immutability(json_blob, retain_until)
+            hash_status = await _verify_blob_immutability(hash_blob, retain_until)
+            immutability_status = {
+                "verified": True,
+                "scope": "blob",
+                "json": json_status,
+                "sha256": hash_status,
+            }
+        else:
+            raise RuntimeError("AZURE_IMMUTABILITY_SCOPE must be 'blob' or 'container'")
 
     timestamps = [doc.get("timestamp") or doc.get("ingested_at") or doc.get("uploaded_at") for doc in docs]
     parsed_timestamps = [timestamp for timestamp in map(_coerce_archive_datetime, timestamps) if timestamp]
@@ -259,6 +352,9 @@ async def _archive_batch(
         "collection": collection_name,
         "blob_name": json_blob_name,
         "hash_blob_name": hash_blob_name,
+        "archive_key": archive_key,
+        "run_id": run_id,
+        "batch_number": batch_number,
         "sha256": sha256_hash,
         "document_count": len(document_ids),
         "first_document_id": str(document_ids[0]),
@@ -276,7 +372,15 @@ async def _archive_batch(
         "created_at": datetime.now(timezone.utc),
         "status": "archived",
     }
-    await db["storage_archives"].insert_one(archive_doc)
+    await db["storage_archives"].update_one(
+        {
+            "tenant_id": tenant_id,
+            "collection": collection_name,
+            "archive_key": archive_key,
+        },
+        {"$setOnInsert": archive_doc},
+        upsert=True,
+    )
 
     delete_result = await db[collection_name].delete_many({
         "tenant_id": tenant_id,
@@ -320,8 +424,11 @@ async def run_archiver():
         if not await container_client.exists():
             await container_client.create_container()
             logger.info("Created Azure container: %s", container_name)
+        container_immutability = None
         if _environment_flag("AZURE_IMMUTABILITY_REQUIRED", default=False):
-            await _verify_container_immutability_capability(container_client)
+            container_immutability = await _verify_container_immutability_capability(
+                container_client
+            )
 
         cursor = db.tenants.find({})
         async for tenant in cursor:
@@ -361,6 +468,7 @@ async def run_archiver():
                             run_id,
                             batch_number,
                             retention_days,
+                            container_immutability,
                         )
                     except Exception as exc:
                         logger.error(

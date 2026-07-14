@@ -243,6 +243,13 @@ async def init_compliance_db(db):
         await _aggressive_create_index(db.storage_archives, [("tenant_id", 1), ("collection", 1), ("newest_at", -1)])
         await _aggressive_create_index(db.storage_archives, [("tenant_id", 1), ("collection", 1), ("event_ids", 1)])
         await _aggressive_create_index(db.storage_archives, [("tenant_id", 1), ("collection", 1), ("event_uids", 1)])
+        await _aggressive_create_index(
+            db.storage_archives,
+            [("tenant_id", 1), ("collection", 1), ("archive_key", 1)],
+            unique=True,
+            sparse=True,
+            name="uq_storage_archive_key",
+        )
 
         logger.info(" 7-Tier Database Layer Hardened: Capacity TTL active and audit-veto enforced.")
         

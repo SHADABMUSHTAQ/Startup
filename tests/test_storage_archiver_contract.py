@@ -91,7 +91,7 @@ async def test_archive_never_deletes_hot_records_without_verified_immutability(m
     class FakeCollection:
         def __init__(self):
             self.delete_many = AsyncMock()
-            self.insert_one = AsyncMock()
+            self.update_one = AsyncMock()
 
     collections = {
         "storage_archives": FakeCollection(),
@@ -115,7 +115,153 @@ async def test_archive_never_deletes_hot_records_without_verified_immutability(m
             90,
         )
     collections["fbr_pos_logs"].delete_many.assert_not_awaited()
-    collections["storage_archives"].insert_one.assert_not_awaited()
+    collections["storage_archives"].update_one.assert_not_awaited()
+
+
+def test_container_scope_requires_locked_policy_for_full_retention(monkeypatch):
+    monkeypatch.setenv("AZURE_CONTAINER_IMMUTABILITY_LOCKED", "true")
+    monkeypatch.setenv("AZURE_CONTAINER_IMMUTABILITY_DAYS", "2190")
+    status = {
+        "has_immutability_policy": True,
+        "has_legal_hold": False,
+        "declared_locked": True,
+        "configured_days": 2190,
+    }
+
+    verified = storage_archiver._verify_container_immutability_for_retention(
+        status,
+        required_days=2190,
+    )
+
+    assert verified["verified"] is True
+    assert verified["scope"] == "container"
+
+
+def test_container_scope_rejects_retention_shorter_than_collection_requirement():
+    status = {
+        "has_immutability_policy": True,
+        "has_legal_hold": False,
+        "declared_locked": True,
+        "configured_days": 365,
+    }
+
+    with pytest.raises(RuntimeError, match="2190-day"):
+        storage_archiver._verify_container_immutability_for_retention(
+            status,
+            required_days=2190,
+        )
+
+
+@pytest.mark.asyncio
+async def test_container_scope_archives_then_deletes_hot_records(monkeypatch):
+    class FakeBlob:
+        async def upload_blob(self, *_args, **_kwargs):
+            return None
+
+    class FakeContainer:
+        def get_blob_client(self, _name):
+            return FakeBlob()
+
+    class FakeCollection:
+        def __init__(self):
+            self.update_one = AsyncMock()
+            self.delete_many = AsyncMock(return_value=SimpleNamespace(deleted_count=1))
+
+    collections = {
+        "storage_archives": FakeCollection(),
+        "fbr_pos_logs": FakeCollection(),
+    }
+
+    class FakeDb:
+        def __getitem__(self, name):
+            return collections[name]
+
+    monkeypatch.setenv("AZURE_IMMUTABILITY_REQUIRED", "true")
+    monkeypatch.setenv("AZURE_IMMUTABILITY_SCOPE", "container")
+    deleted = await storage_archiver._archive_batch(
+        FakeContainer(),
+        FakeDb(),
+        "TENANT-A",
+        "fbr_pos_logs",
+        [{"_id": "doc-1", "timestamp": datetime(2026, 7, 1, tzinfo=timezone.utc)}],
+        "run-1",
+        1,
+        90,
+        {
+            "has_immutability_policy": True,
+            "has_legal_hold": False,
+            "declared_locked": True,
+            "configured_days": 2190,
+        },
+    )
+
+    assert deleted == 1
+    collections["storage_archives"].update_one.assert_awaited_once()
+    collections["fbr_pos_logs"].delete_many.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_archive_retry_reuses_the_same_verified_blobs(monkeypatch):
+    class FakeDownloader:
+        def __init__(self, payload):
+            self.payload = payload
+
+        async def readall(self):
+            return self.payload
+
+    class FakeBlob:
+        def __init__(self, name, payloads):
+            self.name = name
+            self.payloads = payloads
+
+        async def upload_blob(self, payload, **_kwargs):
+            if self.name in self.payloads:
+                raise storage_archiver.ResourceExistsError("already exists")
+            self.payloads[self.name] = payload
+
+        async def download_blob(self):
+            return FakeDownloader(self.payloads[self.name])
+
+    class FakeContainer:
+        def __init__(self):
+            self.payloads = {}
+
+        def get_blob_client(self, name):
+            return FakeBlob(name, self.payloads)
+
+    class FakeCollection:
+        def __init__(self):
+            self.update_one = AsyncMock()
+            self.delete_many = AsyncMock(return_value=SimpleNamespace(deleted_count=1))
+
+    collections = {
+        "storage_archives": FakeCollection(),
+        "siem_cold_vault": FakeCollection(),
+    }
+
+    class FakeDb:
+        def __getitem__(self, name):
+            return collections[name]
+
+    monkeypatch.setenv("AZURE_IMMUTABILITY_REQUIRED", "false")
+    container = FakeContainer()
+    docs = [{"_id": "doc-1", "timestamp": "2026-07-01T00:00:00+00:00"}]
+
+    for run_id in ("run-1", "run-2"):
+        await storage_archiver._archive_batch(
+            container,
+            FakeDb(),
+            "TENANT-A",
+            "siem_cold_vault",
+            docs,
+            run_id,
+            1,
+            90,
+        )
+
+    assert len(container.payloads) == 2
+    assert sum(name.endswith(".json") for name in container.payloads) == 1
+    assert sum(name.endswith(".sha256") for name in container.payloads) == 1
 
 
 @pytest.mark.asyncio
