@@ -1,4 +1,6 @@
 # 🋯 ENDPOINT VISIBILITY & DETECTION COVERAGE AUDIT
+> **HISTORICAL - DO NOT USE FOR CURRENT DEPLOYMENT OR CUSTOMER CLAIMS.** This file predates the native Windows telemetry architecture and contains retired Sysmon assumptions. Current sources of truth are `WARSOC_CURRENT_STATE_ARCHITECTURE.md` and `WARSOC_END_TO_END_PRODUCT_AND_OPERATOR_GUIDE.md`.
+
 ## A Gemini/Claude AI Analysis of WarSOC Agent vs Backend Capability Gap
 
 ---

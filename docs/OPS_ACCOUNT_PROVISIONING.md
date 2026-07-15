@@ -1,6 +1,6 @@
 # WarSOC Account Provisioning Runbook
 
-This is the minimal operator flow for creating customer accounts after a sale closes.
+This is the minimal operator flow for creating customer accounts after a sale closes. It is current as of 2026-07-15 and is intended for customized contracts, not named pricing tiers.
 
 ## Account Types
 
@@ -44,6 +44,8 @@ Allowed roles:
 
 Do not create normal team users with the super-admin provision route. That route is only for creating a tenant and its first admin.
 
+The invite is not an active account immediately. The backend creates a pending user, emails a single-use activation link, and denies login until activation completes. The recipient must open the link before expiry, choose a password that meets policy, and then sign in. The tenant admin should verify the resulting role from Team & Access.
+
 ## Minimal Ops GUI
 
 Run this on the WarSOC operator machine:
@@ -74,6 +76,8 @@ Retention days is the custom tenant default/archive setting. Compliance vault re
 
 - FBR POS evidence: 2190 days
 - PECA forensic evidence: 365 days
+
+Mongo hot storage for SIEM, FBR, and PECA is seven days. Production currently uses one Azure evidence container locked for 2190 days, so PECA and shorter 3/6/9/12-month general contracts are physically over-retained in Azure. Do not promise exact physical deletion at the shorter date until retention-class container routing is implemented.
 
 The tool does not store the super-admin key or customer password on disk.
 
@@ -111,7 +115,7 @@ Daily quota GiB: contract value, or 0 for backend default
 
 - Never put `SUPER_ADMIN_API_KEY` in Vercel.
 - Never add this operator GUI to the public frontend.
-- Never email passwords in plain text if the customer has a secure handover channel.
+- Never email a reusable plaintext password. Deliver the first tenant-admin credential through an approved secure handover channel and require rotation; team users must use the single-use invitation activation flow.
 - Passwords must be at least 16 characters and include uppercase, lowercase, number, and symbol.
 - Keep public self-signup disabled for production.
 
@@ -121,7 +125,7 @@ After provisioning, give the customer:
 
 - login URL: `https://warsoc.tech`
 - admin email
-- temporary admin password
+- initial admin credential through the approved secure handover channel
 - installer download instructions
 - installer SHA-256 hash manifest
 - tenant onboarding instructions

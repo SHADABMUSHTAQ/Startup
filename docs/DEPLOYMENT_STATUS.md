@@ -1,5 +1,7 @@
 # ✅ LEVEL 4 ENDPOINT VISIBILITY - DEPLOYMENT READY
 
+> **HISTORICAL - DO NOT USE FOR CURRENT DEPLOYMENT OR CUSTOMER CLAIMS.** This file describes the retired Sysmon design and superseded retention assumptions. Current sources of truth are `WARSOC_CURRENT_STATE_ARCHITECTURE.md`, `WARSOC_END_TO_END_PRODUCT_AND_OPERATOR_GUIDE.md`, and `PRODUCTION_ACCEPTANCE_TEST.md`.
+
 ## Executive Summary
 Level 4 endpoint visibility upgrade is **COMPLETE and READY FOR ACTIVATION**.
 

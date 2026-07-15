@@ -1,8 +1,8 @@
 # WarSOC End-to-End Product, Architecture, and Operator Guide
 
-**Document status:** As-built review of the backend, Windows agent, frontend, production Compose topology, and live preflight on 2026-07-10.
+**Document status:** Authoritative operator summary of the backend, Windows agent, frontend, production Compose topology, and production proof as of 2026-07-15. For the detailed implementation map and evidence ledger, use `WARSOC_CURRENT_STATE_ARCHITECTURE.md` and `PRODUCTION_ACCEPTANCE_TEST.md`.
 
-**Launch status:** Conditional. The API, Vercel build, Azure installer artifact, private database ports, tenant provisioning, and direct login are working. Apex DNS separation, Azure evidence immutability, and the disposable Windows acceptance run remain required before customer onboarding.
+**Launch status:** Approved for a controlled Windows SMB pilot at a maximum of 50 active agents per tenant. Production preflight, platform flow, browser integration, real native Windows detection, 50-agent capacity, immutable archival, cold retrieval, and CSV/PDF exports have passed. Remaining obligations are a customer-style mailbox invitation activation, an independent MongoDB restore drill, physical Azure retention segmentation, archive-source visibility, and production code signing.
 
 ## 1. Product boundary
 
@@ -93,7 +93,7 @@ MongoDB, Redis, and API port 8000 are not exposed publicly. Only Nginx ports 80/
 ### Installation flow
 
 1. Customer admin generates an activation code from the dashboard.
-2. `GET /api/v1/agent/download` returns a redirect to the configured Azure installer URL.
+2. `GET /api/v1/agent/download` returns a redirect to the approved Azure `warsoc_installer-4.2.4.exe` artifact.
 3. The unsigned pilot installer hash is supplied separately to customer IT for an explicit WDAC/Intune/Defender allow rule. Defender remains enabled.
 4. The installer runs with administrator rights and receives the activation code, API URL, and optional `/POS_PATHS` directories.
 5. The telemetry deployment script records existing audit settings, enables required native Windows auditing, configures inheritable SACL entries on supplied POS paths, and verifies the changes.
@@ -212,22 +212,26 @@ Each PECA evidence record is canonicalized and signed with RSA-PSS-SHA256 using 
 | SIEM evidence vault | 7 days | Tenant general archive | `SIEM_HOT_RETENTION_DAYS` and tenant contract |
 | Raw/general logs | 7 days | Tenant general archive | `RAW_LOG_HOT_RETENTION_DAYS` and tenant contract |
 | FBR evidence | 7 days | 2190 days / 6 years | Compliance catalog |
-| PECA evidence | 30 days | 365 days | Compliance catalog |
+| PECA evidence | 7 days | 365 days | Compliance catalog |
 | CSV uploads/results | Tenant/general policy, with TTL safeguards | Tenant general archive if selected | Tenant contract and database indexes |
 
 General archive options in the UI are 3, 6, 9, or 12 months. They do not shorten FBR or PECA compliance retention.
+
+Production currently uses one private Azure evidence container with a locked, container-scoped 2190-day immutability policy. That lock satisfies the six-year FBR floor, but it physically over-retains PECA and shorter SIEM/general contracts. A 3/6/9/12-month contract controls WarSOC metadata and retrieval expectations; it does not make the underlying blob deletable before the locked container policy expires. Exact physical deletion dates require separate future containers or storage accounts by retention class. The existing locked policy cannot be shortened.
 
 The archiver runs continuously on a daily interval in production Compose. Production requires verified Azure immutability. It:
 
 1. Selects records reaching the applicable hot-storage cutoff.
 2. Uploads a JSON batch to the private Azure container.
 3. Uploads a `.sha256` sidecar and records the same digest in blob metadata.
-4. Verifies that both the JSON blob and SHA-256 sidecar have a legal hold or a locked immutability policy through the required retention date.
+4. Verifies the configured immutability scope. Production uses container-scope verification and requires the locked container period to satisfy the record's minimum retention before Mongo deletion is permitted.
 5. Inserts a `storage_archives` ledger entry with collection, tenant, time range, IDs, hash, retention, and immutability evidence.
 6. Deletes only the exact successfully archived MongoDB records.
 7. Leaves records in MongoDB when upload, immutability, or ledger verification fails.
 
 Archive reads are tenant scoped, hash verified, deduplicated, and capped by `ARCHIVE_READ_MAX_BLOBS` (currently 100). This is suitable for targeted evidence retrieval, not unrestricted data-lake analytics.
+
+The internal reader marks cold records as archived and retains source-blob metadata while verifying integrity. The current curated compliance response does not expose that internal marker, so the browser cannot yet label a row as Mongo hot versus Azure cold. Retrieval remains correct; a safe `storage_tier` response field is a remaining presentation improvement.
 
 ## 12. Optional network syslog path
 
@@ -281,72 +285,46 @@ The production Compose service is disabled by default behind the `network-syslog
 - Guaranteed prevention of every attack; detections depend on configured audit policy and available telemetry.
 - Broad OS compatibility beyond the Windows versions and architecture proven by the final disposable-VM acceptance run.
 
-## 15. Verified gaps before customer launch
+## 15. Current verification and remaining obligations
 
-### P0-1: Apex DNS collision - still active
+### Verified in production
 
-Cloudflare, Google, and the local resolver still return both `216.198.79.1` and `143.198.201.185` for `warsoc.tech`. `api.warsoc.tech` resolves to `143.198.201.185`. Customers can therefore still reach the API server while requesting the frontend hostname and receive a certificate mismatch.
+- Backend commit `443939d`, frontend production binding, and agent `4.2.4-Native` are deployed.
+- Preflight run `0ab1c87a9f` passed DNS separation, TLS, security headers, CORS, health, private ports, frontend binding, and exact installer hash verification.
+- Platform run `18282be9f1` completed with zero failures across provisioning, authentication, agent enrollment, ingest, SIEM, FBR, PECA, WebSocket, mitigation, RBAC, email, CSV, and PDF.
+- The real Windows endpoint produced all 11 PECA controls and the approved FBR invoice/FIM scenarios. An ordinary database write did not produce a FIM alert.
+- The 50-agent soak registered and ingested 50 agents, rejected seat 51, produced SIEM in 5.18 seconds, and completed in 7.22 seconds without pending Redis work.
+- Azure immutability, archive-before-delete, SHA-256 verification, cold retrieval, and cold-backed FBR/PECA CSV/PDF exports passed.
+- A real browser loaded login, dashboard, compliance, team access, and activation-code flows without console errors.
 
-**Required action:** Remove the apex A record `warsoc.tech -> 143.198.201.185`. Keep the Vercel apex record and `api.warsoc.tech -> 143.198.201.185`. Require Cloudflare, Google, and the production preflight to return no shared address before launch.
+### Remaining controlled-pilot obligations
 
-### P0-2: Daily ledger/report claim mismatch - corrected in current source
-
-PECA records remain individually RSA signed. The current source now computes a deterministic SHA-256 evidence digest and daily root linked to the prior verified root. Reports recompute every root, check continuity, and label results `VERIFIED`, `VERIFIED_WITH_RESET`, or `UNVERIFIED`.
-
-**Required action:** Deploy the current backend and regenerate reports. Legacy `sealed-disabled` ledgers remain unverified; reports now disclose that state instead of claiming legal admissibility.
-
-### P0-3: Azure immutability guard implemented; infrastructure policy still required
-
-Production now sets `AZURE_IMMUTABILITY_REQUIRED=true`. The archiver verifies container capability and requires each JSON blob and hash sidecar to have a legal hold or locked policy through the calculated retention date before deleting Mongo data.
-
-**Verified external state:** A read-only check on 2026-07-11 returned `has_immutability_policy=false`, `has_legal_hold=false`, and `immutable_storage_with_versioning_enabled=false` for `warsoc-cold-storage`.
-
-**Required action:** Configure and lock version-level immutability/time-based retention on the private evidence account. Until that is done, archival fails closed and Mongo records remain hot. Test that an FBR blob cannot be deleted before expiry.
-
-### P0-4: Real Windows acceptance is still required for the deployed build
-
-Local unit/integration tests and synthetic ingest prove the software paths, but they do not prove that the current Azure installer enables the exact native audit events on every target Windows image.
-
-**Required action:** On a disposable Windows VM, install the exact Azure artifact, generate all 11 PECA controls plus FBR delete/permission scenarios, and save the validator JSON, dashboard screenshots, event IDs, and timing evidence.
-
-### P1-1: Frontend live severity divergence - corrected in current source
-
-The dashboard now treats a supplied backend severity as authoritative. Browser fallback applies only to legacy/unclassified messages, and account create/delete fallback is High.
-
-**Improvement:** Treat backend alert severity/title as authoritative. Use browser fallback only for explicitly unclassified legacy events.
-
-### P1-2: CSV upload history endpoint - corrected in current source
-
-The dashboard history loader now calls `/upload/results`. `/logs?source=uploads` remains the parsed-row source.
-
-**Improvement:** Load history from `/upload/results`; reserve `/logs?source=uploads` for viewing parsed rows.
-
-### P1-3: Optional syslog trust boundary - hardened in current source
-
-UDP syslog remains an unauthenticated transport, but its production service is now opt-in, requires an explicit tenant/source allowlist, and drops unauthorized source addresses before parsing.
+1. Complete one invitation from an actual recipient mailbox by opening the single-use link, setting a compliant password, logging in, and confirming role restrictions.
+2. Restore a current MongoDB backup into an isolated database and record the result. Azure evidence storage is not a database backup.
+3. Route future evidence to separate immutable containers by retention class before promising exact 3/6/9/12-month physical blob deletion.
+4. Add a non-secret `storage_tier` marker so operators can distinguish Mongo-hot records from Azure-cold records in the UI.
+5. Obtain a production code-signing certificate. During the controlled pilot, keep Defender enabled and use the approved SHA-256 allowlist process.
+6. Use clean customer tenants for pilots; do not present an engineering/demo tenant containing synthetic or historical test data.
 
 ## 16. Deployment acceptance sequence
 
-1. Fix the apex DNS record and wait for propagation.
-2. Confirm Vercel is serving the expected frontend commit.
-3. Confirm DigitalOcean is running the expected backend commit and all production services are healthy.
-4. Rerun `run_production_acceptance.ps1 -Phase Preflight` and require zero failures.
-5. Run the platform phase using an isolated test tenant; verify login, `/auth/me`, profile, RBAC, agent activation, ingest, SIEM, FBR, PECA, alert persistence, email, CSV, PDF, and archive retrieval.
-6. Run the native disposable-Windows-VM phase against the exact Azure installer artifact.
-7. Run the 50-agent soak and require detection within the agreed latency window without Redis backlog, DLQ growth, or quota corruption.
-8. Verify Azure immutable retention and a restore/read of one archived batch.
-9. Verify daily MongoDB backup and an actual restore into an isolated database.
-10. Rotate temporary demo credentials and any secrets exposed during deployment work.
+1. Confirm Vercel and DigitalOcean are running the approved commits and all production services are healthy.
+2. Run `run_production_acceptance.ps1 -Phase Preflight` and require zero failures after every installer, DNS, TLS, or frontend binding change.
+3. Provision each new customer as a separate tenant with a unique admin email, custom entitlements, contract retention, daily quota, and no more than 50 active agents.
+4. Complete the customer admin handover through an approved secure channel; do not email a reusable plaintext password.
+5. Complete one team invitation through the recipient mailbox and verify the intended role.
+6. Install the exact manifest-approved Azure artifact and confirm Active health, Security/System channels, and required POS SACL state.
+7. Generate a small approved detection proof and confirm SIEM/FBR/PECA, WebSocket, alert workflow, email, CSV/PDF, and archive retrieval.
+8. Confirm daily MongoDB backup health and periodically restore into an isolated database.
 
 ## 17. Improvement priorities without product expansion
 
 ### Immediate reliability improvements
 
-- Resolve DNS and keep the new DNS-isolation check in the production validator.
-- Resolve the PDF/daily-chain truth mismatch.
-- Enforce Azure immutability and test archive restore.
 - Add alarms for Redis stream lag, DLQ growth, archive age, archive failure, disk use, daily quota use, email queue age, and agent degradation.
 - Keep per-pilot allowlists and suppression rules so noisy native events do not hide high-value alerts.
+- Complete and record the invitation-link and Mongo restore proofs.
+- Add explicit hot/cold provenance without exposing private blob details.
 
 ### Next operational hardening
 

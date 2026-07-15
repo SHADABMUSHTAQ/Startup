@@ -1,5 +1,7 @@
 # WarSOC Launch Security Review
 
+> **HISTORICAL - DO NOT USE AS THE CURRENT LAUNCH VERDICT.** This file contains pre-native-agent and pre-production findings, including retired Sysmon assumptions. Current sources of truth are `WARSOC_CURRENT_STATE_ARCHITECTURE.md`, `WARSOC_END_TO_END_PRODUCT_AND_OPERATOR_GUIDE.md`, and `PRODUCTION_ACCEPTANCE_TEST.md`.
+
 Review date: 2026-05-11
 
 ## Launch Verdict

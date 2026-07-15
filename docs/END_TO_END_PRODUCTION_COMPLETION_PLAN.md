@@ -1,5 +1,7 @@
 # WarSOC End-to-End Production Completion Plan
 
+> **HISTORICAL IMPLEMENTATION PLAN.** Most items in this plan were executed before the 2026-07-15 production proof. Do not use its baseline or remaining-work statements as current status. Use `WARSOC_CURRENT_STATE_ARCHITECTURE.md`, `WARSOC_END_TO_END_PRODUCT_AND_OPERATOR_GUIDE.md`, and `PRODUCTION_ACCEPTANCE_TEST.md`.
+
 ## Purpose
 
 This document defines the remaining changes required to move WarSOC from its

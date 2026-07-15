@@ -1,5 +1,7 @@
 # Complete System Architecture and Detection Deep Dive
 
+> **HISTORICAL IMPLEMENTATION REVIEW.** Use `WARSOC_CURRENT_STATE_ARCHITECTURE.md` for the current as-built architecture and `PRODUCTION_ACCEPTANCE_TEST.md` for current proof. This file is retained only for engineering history.
+
 This document consolidates the two previous walkthroughs into one place:
 - full system architecture and file relationships
 - SIEM / FBR / PECA detection pipeline and telemetry inventory

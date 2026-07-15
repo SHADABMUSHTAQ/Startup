@@ -7,10 +7,11 @@ older `run_launch_e2e.ps1`; that script contains a pre-hardening FBR fixture.
 
 | Phase | Latest status | Remaining action |
 |---|---|---|
-| Preflight | Run `a9216bdb7d` passed against the deployed Vercel site, DigitalOcean API, and Azure `warsoc_installer-4.2.2.exe`. The remote artifact matched SHA-256 `FDF008750DD7A8BE0778106C1A2A15BECD6FB64EE7A0DA4D0CC71845B927CC1E`. | No public-infrastructure defect is open from this phase. |
-| Platform | Run `a9216bdb7d` / validator `6f5476d9b4` completed with zero failures. Quote/contact, auth, CDN, enrollment, signed heartbeat, mitigation, SIEM, FBR, PECA, WebSocket, secure pending invite, exports, and SMTP delivery passed. | Activate one real mailbox invitation and prove activated-auditor RBAC. Complete the separately gated DB-backed self-lockout proof. |
-| Native Windows | Outstanding as a complete 11-control/FBR proof artifact. | Run Generate and Verify on a snapshot-based disposable Windows VM. |
+| Preflight | Run `0ab1c87a9f` passed against Vercel, DigitalOcean, and Azure `warsoc_installer-4.2.4.exe`. The 17,417,877-byte remote artifact matched SHA-256 `D7B2541FB0447697D3DE76812A785913FF63D2688CDE26A48EF1660E4F34E41B`. | No public-infrastructure defect is open from this phase. |
+| Platform | Validator `18282be9f1` completed with zero failures. Quote/contact, auth, CDN, enrollment, mitigation, SIEM, FBR, PECA, WebSocket, secure pending invite, exports, and SMTP delivery passed. Separate live checks closed the self-lockout, alert-lifecycle, and active-auditor RBAC warnings. | Complete one current invitation through the actual mailbox link; the backend and delivery paths are already proven. |
+| Native Windows | Real host proof captured all 11 PECA controls plus FBR invoice modification/deletion and native database deletion/permission events. Ordinary database writes produced no FIM alert. The live agent is `4.2.4-Native`, Active, with both channels healthy and zero agent error counters. | Repeat once on a clean snapshot-based disposable VM only to create a formal isolated JSON/EVTX audit artifact. |
 | Fifty-agent soak | Run `2053d97832` passed: 50/50 agents registered, seat 51 returned HTTP 403, all 50 concurrent ingests returned HTTP 200, SIEM latency was 5.18s, PECA vaulted all 50 events, FBR correlation passed, and the pipeline completed in 7.22s. | No capacity defect is open at the current 50-agent product limit. Continue operational monitoring. |
+| Azure cold retrieval | Archive ledger, locked immutability, SHA-256 readback, and authenticated retrieval passed for SIEM, alerts, FBR, and PECA. Cold-backed CSV and PDF exports were valid. | Add explicit hot/cold provenance labeling and segment future containers by physical retention class. |
 
 The current Windows-only launch regression completed with `247 passed`,
 `3 skipped`, and zero failures in 90.68 seconds. The excluded files are the
@@ -29,12 +30,17 @@ phases listed in the table above.
 
 ### Open production proofs
 
-1. Complete the native Windows snapshot-VM proof for all 11 PECA controls and
-   the FBR deletion/permission scenarios.
-2. Activate one real mailbox invitation and verify activated-auditor RBAC.
-3. Complete the separately gated DB-backed active-agent self-lockout proof.
-4. Preserve an Azure archive/readback artifact demonstrating immutable upload,
-   successful authorized retrieval, and archive-before-hot-delete ordering.
+1. Complete one current mailbox invitation by clicking the single-use link,
+   choosing a policy-compliant password, and confirming the intended role view.
+2. Restore a current Mongo backup into an isolated environment. Azure evidence
+   archival is not a substitute for an operational database restore.
+3. Repeat the already-passing native proof on a snapshot-based disposable VM
+   if a formal isolated JSON/EVTX acceptance artifact is required.
+4. Implement physical Azure retention segmentation before promising exact blob
+   deletion at three, six, nine, or twelve months. The current evidence
+   container is locked for 2,190 days and therefore over-retains shorter classes.
+5. Expose a safe archived/storage-tier marker in compliance API responses so
+   operators can distinguish Mongo-hot results from Azure-cold results.
 
 ### 2026-07-15 Redis recovery
 
@@ -58,7 +64,7 @@ documentation, closed database ports, and the local installer manifest.
 ```powershell
 .\scripts\run_production_acceptance.ps1 `
   -Phase Preflight `
-  -ManifestPath ".\Output\pilot_hash_manifest.json" `
+  -ManifestPath ".\Output\pilot_hash_manifest-4.2.4.json" `
   -InstallerPath ".\Output\warsoc_installer-<version>.exe" `
   -ArtifactUrl "https://<artifact-account>.blob.core.windows.net/<container>/warsoc_installer-<version>.exe"
 ```

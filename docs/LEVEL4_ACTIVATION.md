@@ -1,5 +1,7 @@
 # 🚀 LEVEL 4 ENDPOINT VISIBILITY - ACTIVATION GUIDE
 
+> **HISTORICAL - DO NOT EXECUTE THIS GUIDE.** It describes the retired Sysmon deployment. The shipped agent uses native Windows Security and System telemetry. Use `WARSOC_END_TO_END_PRODUCT_AND_OPERATOR_GUIDE.md` and `WARSOC_CURRENT_STATE_ARCHITECTURE.md`.
+
 ## Status: READY FOR DEPLOYMENT
 All backend services running. All config changes in place.
 

@@ -1,7 +1,7 @@
 # WarSOC Current-State Architecture and Operational Contract
 
-**Document status:** Authoritative as-built map  
-**Snapshot date:** 2026-07-14  
+**Document status:** Authoritative as-built map
+**Snapshot date:** 2026-07-15
 **Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, and launch proof.
 
 This document describes what the current source code does. It is not a sales claim and it does not treat an implemented path as production-proven unless verification evidence exists.
@@ -22,7 +22,7 @@ WarSOC currently has a coherent end-to-end architecture for a maximum of 50 Wind
 10. Compliance views, search, CSV exports, and PDF reports can merge Mongo hot records with verified Azure archive records.
 11. The dashboard intentionally separates normal agent telemetry from actual security alerts and groups repeated detections into operator incidents.
 
-The architecture is implemented. The current local release candidate adds bounded agent spooling, strict telemetry-family routing, fresh-heartbeat health, Redis ingest admission control, incident-wide workflow updates, and one-time team activation links. Public production preflight, live agent/PECA processing, and the archive-before-delete transaction were verified against the previously deployed release. Full acceptance of this release candidate remains conditional on the outstanding proof obligations in Section 22; this document does not convert unexecuted native-VM, soak, production-email, retrieval, or restore tests into production claims.
+The architecture is implemented and deployed at backend commit `443939d` with Windows agent `4.2.4-Native`. Production preflight, platform pipeline, 50-agent capacity, real native Windows detection, live browser integration, alert workflow, mitigation, SMTP delivery, immutable archival, authorized cold retrieval, and cold-backed CSV/PDF exports have been verified. WarSOC is suitable for a controlled Windows SMB pilot. The remaining obligations are explicitly recorded in Section 22; most importantly, a customer-style mailbox invitation activation, an independent Mongo backup restoration, physical Azure retention segmentation, and explicit hot-versus-cold provenance in API responses are not represented as completed work.
 
 ## 2. Product Boundary
 
@@ -170,7 +170,7 @@ The frontend exposes the Compliance workspace to admin and auditor roles. The ba
 1. The admin selects Download Agent in the dashboard.
 2. The frontend requests `GET /api/v1/agent/download`.
 3. The backend returns a redirect to `AGENT_CDN_URL`.
-4. Azure public artifact storage serves the currently approved versioned installer. The local release candidate is `warsoc_installer-4.2.2.exe`; Azure must not be switched until its hash is approved.
+4. Azure public artifact storage serves the approved `warsoc_installer-4.2.4.exe` artifact. Production preflight verified 17,417,877 bytes and SHA-256 `D7B2541FB0447697D3DE76812A785913FF63D2688CDE26A48EF1660E4F34E41B` against `pilot_hash_manifest-4.2.4.json`.
 5. The installer asks for the activation code, confirms `https://api.warsoc.tech`, and optionally accepts local POS directories.
 6. The installer validates the activation code before making the installation operational.
 7. The native telemetry script configures auditing and optional POS SACLs.
@@ -494,16 +494,18 @@ Sensitive FBR fields, including message, raw event, raw data, raw event data, an
 
 ### 14.2 Seven-day hot-storage policy
 
-| Data class | Hot-policy threshold | Azure vault window |
+| Data class | Mongo hot-policy threshold | Logical vault requirement |
 |---|---:|---:|
-| Raw/general logs | 7 days | Tenant retention, normally 90 days. |
-| SIEM evidence (`siem_cold_vault`) | 7 days | Tenant retention, normally 90 days. |
-| SIEM alerts (`security_alerts`) | 7 days | Tenant retention, normally 90 days. |
+| Raw/general logs | 7 days | Tenant contract, normally 90 days. |
+| SIEM evidence (`siem_cold_vault`) | 7 days | Tenant contract, normally 90 days. |
+| SIEM alerts (`security_alerts`) | 7 days | Tenant contract, normally 90 days. |
 | FBR evidence | 7 days | 2,190 days. |
 | PECA evidence | 7 days | 365 days. |
 | Uploads/results | Tenant retention | Tenant retention. |
 
 There is no end-user retention button for PECA or FBR because these values are compliance policy, not an arbitrary UI preference. SIEM archive retention follows the tenant contract. All three core live data classes use a seven-day Mongo archival threshold.
+
+The production Azure evidence container is currently protected by one locked 2,190-day container-scoped immutability policy. This is stronger than the logical SIEM and PECA minimums, but it also means every blob written to that container is physically non-deletable for the container policy period. A three-, six-, nine-, or twelve-month general archive selection therefore controls WarSOC metadata and retrieval expectations but does **not** currently make the Azure blob deletable at that shorter date. Exact physical retention requires future archives to be routed to separate containers or storage accounts by retention class. A locked Azure policy cannot be shortened for blobs already governed by it.
 
 The threshold and the physical move time are not identical:
 
@@ -560,6 +562,15 @@ Archive paths use tenant and collection partitions:
 
 The public agent-artifact account/container must remain separate from the private immutable evidence account/container.
 
+### 15.4 Production immutability scope
+
+- Container: `warsoc-cold-storage` in the private evidence account.
+- Verification mode: `AZURE_IMMUTABILITY_SCOPE=container`.
+- Operator declaration: locked for 2,190 days.
+- The archiver verifies Azure container immutability capability and the declared locked period before deleting hot Mongo records.
+- The current single-container design satisfies the six-year FBR floor but physically over-retains PECA and shorter general/SIEM contracts.
+- Correct future segmentation is: FBR six-year evidence, PECA one-year evidence, and separate general/SIEM containers for each supported contract window. That change requires code/config support for collection-to-container routing and must not attempt to weaken the existing locked container.
+
 ## 16. Cold Archive Retrieval
 
 ### 16.1 Reader safety
@@ -574,6 +585,8 @@ The archive reader:
 6. Applies date/event/search filters.
 7. Marks records as archived and records their source collection/blob.
 8. Deduplicates hot and cold identities and sorts newest first.
+
+The internal reader preserves `_archived`, source collection, and blob identity while verifying the payload. The current compliance response curation removes that internal marker and labels `data_origin` with the logical collection name. Evidence retrieval and integrity are correct, but the browser cannot yet distinguish a Mongo-hot row from an Azure-cold row. The required presentation fix is an explicit non-secret field such as `storage_tier: "mongodb_hot" | "azure_archive"`; internal blob paths should remain hidden unless an authorized audit-detail contract requires them.
 
 ### 16.2 Routes that read hot plus cold
 
@@ -728,57 +741,74 @@ flowchart LR
 
 ## 22. Verification State
 
-### 22.1 Verified for the current release-candidate code
+### 22.1 Release identity and regression evidence
 
-- Focused release-candidate backend checks: 122 passed across native SIEM/FBR/PECA behavior, spool durability, telemetry routing, stream retention, archive contracts, platform policy, incidents, RBAC/hardening, and secure invitation activation.
-- Python compilation for the modified backend modules passed.
-- Frontend lint passed.
-- Frontend production build passed with 2,851 modules; only a non-blocking large-chunk warning remained.
-- Local Windows agent and installer build passed for version 4.2.2.
-- Local `warsoc_installer-4.2.2.exe`: 17,415,232 bytes, SHA-256 `FDF008750DD7A8BE0778106C1A2A15BECD6FB64EE7A0DA4D0CC71845B927CC1E`.
-- The generated manifest also records the agent, NSSM, native telemetry script, and tenant policy hashes.
+- Backend commit `443939d` is the clean local and DigitalOcean checkout.
+- The Windows-only launch regression completed with `247 passed`, `3 skipped`, and zero failures. The skips are explicitly environment/Git-metadata gated rather than runtime feature failures.
+- A separate reliability group covering dependency-aware health, provisioning rollback, consumer-safe stream retention, and worker metrics completed with `8 passed` and zero failures.
+- Frontend lint and production Vite build passed; the deployed frontend contains no localhost, ngrok, or Web3Forms production binding.
+- Approved installer: `warsoc_installer-4.2.4.exe`, 17,417,877 bytes, SHA-256 `D7B2541FB0447697D3DE76812A785913FF63D2688CDE26A48EF1660E4F34E41B`.
+- The versioned manifest is `pilot_hash_manifest-4.2.4.json` and also covers the packaged agent, NSSM, native telemetry script, and tenant policy.
 
-### 22.2 Verified for the previously deployed public release
+### 22.2 Production preflight
 
-- Production Compose configuration validation passed.
-- Backend release `81db420` is deployed on DigitalOcean and reports healthy.
-- Frontend release `fdae9ce` is deployed on Vercel and is bound to `https://api.warsoc.tech/api/v1` with no localhost API binding.
-- Live frontend assets request up to 500 raw alerts; 279 raw alert records were verified as 13 grouped incidents rather than 279 duplicate rows.
-- A production endpoint returned to Active after service restart, and new PECA evidence was signed and vaulted by the live worker.
-- Production preflight run `136bf34e0c` passed every check on 2026-07-14:
-  - `warsoc.tech` and `api.warsoc.tech` resolve to separate Vercel and DigitalOcean addresses.
-  - Frontend and backend TLS, HTTPS, CORS, HSTS, clickjacking protection, MIME protection, health, and blocked public API docs passed.
-  - MongoDB `27017`, Redis `6379`, and API `8000` were closed externally.
-  - The live `warsoc_installer-4.2.0.exe` was 17,415,025 bytes and matched the local manifest SHA-256 `89507E72BD885D9DD61E321F2215AD55E29915C39B964048A3BE58E4831E1A9B`.
+Production preflight run `0ab1c87a9f` passed on 2026-07-15:
 
-### 22.3 Verified directly in the production archive pipeline
+- `warsoc.tech` resolves to Vercel and `api.warsoc.tech` resolves to DigitalOcean `143.198.201.185`; the frontend and backend do not share an address.
+- Frontend/API TLS, HTTPS, HSTS, clickjacking protection, MIME protection, CORS with credentials, backend dependency health, and blocked public API docs passed.
+- MongoDB `27017`, Redis `6379`, and API `8000` are closed externally.
+- The deployed frontend is bound to `https://api.warsoc.tech/api/v1` and its contact form uses the WarSOC backend.
+- The authenticated agent download returns HTTP 307 to the versioned Azure `4.2.4` artifact, whose size and SHA-256 match the local manifest exactly.
 
-- Private Azure evidence storage is reachable with the configured production identity.
-- The evidence container reports a locked immutability policy sufficient for the required retention window.
-- The production archiver is configured for container-scoped immutability verification.
-- Expired records from `siem_cold_vault`, `security_alerts`, `fbr_pos_logs`, and `peca_forensic_logs` were uploaded successfully.
-- JSON payloads and SHA-256 sidecars were written and verified before deletion.
-- Archive-ledger entries were committed and the corresponding expired Mongo records were deleted only after successful verification.
-- A controlled archiver restart produced no duplicate archive for the already committed records.
-- PECA archival has now been observed in production; it is no longer only a code-path claim.
-- Historical duplicate blobs created by failed pre-fix attempts remain immutable until their retention expires. They are storage-cleanup debt, not evidence loss, and the deterministic-key/ledger fix prevents new copies for the same committed batch.
+### 22.3 Production platform pipeline
 
-### 22.4 Remaining release proof
+Validator run `18282be9f1` completed with zero failures:
 
-Focused, contract-aligned checks are green. The legacy broad suite was intentionally not used as a launch claim because some fixtures encode pre-hardening behavior and must be classified before their results are used as a release gate.
+- Health, blocked signup, quote, contact, absent legacy payment webhook, tenant provisioning, login, and auth hydration passed.
+- Agent activation, Ed25519 registration, attacker-IP mitigation, heartbeat blacklist delivery, telemetry ingest, and authenticated POS ingest passed.
+- Run-specific SIEM alerting, Redis-correlated FBR tamper evidence, FBR invoice evidence, PECA evidence, and authenticated WebSocket delivery passed.
+- Secure invitation creation returned pending with `email_queued=true`; the pending account could not log in.
+- CSV, PDF, and SMTP delivery passed; the delivered counter increased by eight and all email queues were empty afterward.
 
-| Remaining proof | Current state | Completion condition |
+The validator's two environment/human warnings were closed separately:
+
+- A controlled database-assisted self-lockout check returned HTTP 409 for an active enrolled-agent IP and restored the temporary agent state.
+- An active disposable auditor received HTTP 200 for auth/compliance and HTTP 403 for team management, operational alerts, and agent activation.
+- A disposable alert accepted acknowledgement, rejected close-without-notes with HTTP 400, accepted close-with-notes, and returned the persisted `CLOSED` state after reread.
+
+### 22.4 Native agent, detection, capacity, and frontend proof
+
+- The live endpoint reports `4.2.4-Native`, online/Active, native audit policy configured, Security and System channels `ok`, one POS SACL path, strict POS log present, zero parse/channel/spool failures, and an unblocked empty 500 MiB spool.
+- Real Windows telemetry produced all 11 PECA controls: `4624`, `4625`, `4672`, `4688`, `4697`, `4720`, `4726`, `4732`, `7045`, `1102`, and `1100`.
+- Native FBR proof produced one invoice modification, one invoice deletion, one correlated database-file deletion, and one database permission-change event. The ordinary database write produced no additional FIM alert.
+- Production metric sampling showed Redis healthy, DLQ depth zero, required workers healthy, email queues empty, and detection latency approximately 0.87 seconds.
+- The final Redis snapshot showed `siem_group`, `fbr_group`, `eto_group`, and `siem_hot_group` at the current stream tail with zero pending messages. Redis's large historical `lag` counters reflect earlier trimmed history and are not current unread entries; operational checks must use tail position plus pending count.
+- Fifty-agent soak run `2053d97832` registered 50/50 agents, rejected seat 51 with HTTP 403, accepted 50/50 concurrent ingests, produced SIEM in 5.18 seconds, vaulted all 50 PECA events, produced the FBR correlation, and completed in 7.22 seconds.
+- A real browser login loaded the production dashboard, Active agent state, grouped threat feed, compliance catalog, team list, and activation-code dialog without frontend console errors.
+
+### 22.5 Production archive and report proof
+
+- The private Azure evidence container is reachable and declares locked container-scoped immutability for 2,190 days.
+- The archive ledger contains committed entries for `siem_cold_vault`, `security_alerts`, `fbr_pos_logs`, and `peca_forensic_logs`, each with verified immutability metadata and SHA-256.
+- A cold-only tenant read returned four SIEM evidence rows, two alert rows, two FBR rows, and one PECA row from four verified Azure blobs.
+- The production reader downloaded each blob, recomputed SHA-256, rejected no records, and marked every returned row archived internally.
+- Public authenticated FBR and PECA evidence routes returned the archived tenant's records.
+- Cold-backed exports returned valid CSV and `%PDF-` documents for both FBR and PECA.
+- The latest archiver cycle completed without errors; when no records are eligible it performs no deletion.
+
+### 22.6 Remaining controlled-pilot obligations
+
+| Remaining item | Current state | Completion condition |
 |---|---|---|
-| Contract-aligned backend regression suite | 122 focused cases passed. | Run the production acceptance phases after deployment and explicitly quarantine/delete stale pre-hardening tests. |
-| Production Platform phase | Not rerun against the latest release. | Platform acceptance exits `0`, including provisioning, auth, agent, SIEM, FBR, PECA, WebSocket, RBAC, mitigation, CSV/PDF, and SMTP metric checks. |
-| Latest Windows installer | Local 4.2.2 build and manifest are complete; Azure still serves the previously approved artifact until operator upload. | Upload 4.2.2, set `AGENT_CDN_URL`, verify the CDN hash, then rerun Preflight. |
-| Native Windows proof | Individual live telemetry and PECA processing are visible; the complete matrix is not captured. | Disposable Windows VM produces all 11 PECA controls plus FBR delete/permission scenarios with a passing NativeVerify JSON artifact. |
-| Fifty-agent capacity | Not proven for this release. | Soak phase exits `0` within latency targets without Redis eviction, DLQ growth, or unexpected restarts. |
-| Cold-only retrieval and reports | Upload, immutability, ledger, hot deletion, and direct integrity checks passed. | Records no longer in Mongo are retrieved through the authorized API and appear correctly in CSV and PDF output. |
-| Email delivery | Worker path exists; final mailbox delivery is not captured for this release. | Invite and high/critical alert emails arrive in the intended inbox with no unexpected DLQ entries. |
-| Independent backup recovery | Archive is working; backup is not a restore proof. | Restore a Mongo backup into an isolated environment and record the result. |
+| Customer-style invitation activation | SMTP delivery, pending-login denial, activation contract tests, and active-auditor RBAC are proven. The latest emailed token was not clicked through manually. | Open one real invitation email, choose a policy-compliant password, log in, and confirm the intended role view. |
+| Independent backup recovery | Azure evidence archival is not a Mongo operational backup. | Restore a current Mongo backup into an isolated environment and record collection counts plus login/search checks. |
+| Physical retention segmentation | One locked 2,190-day container currently governs all evidence blobs. | Route future FBR, PECA, and general/SIEM archives to containers whose locked policy matches the promised retention class. |
+| Archive provenance presentation | Cold retrieval is correct, but compliance responses label rows by collection rather than physical tier. | Expose a safe `storage_tier`/`archived` field without leaking credentials or unrestricted blob paths. |
+| Formal disposable-VM artifact | Real native Windows functional proof passed on the test host. | Repeat on a clean snapshot-based VM and preserve the generated JSON/EVTX evidence bundle for formal audit records. |
+| Pilot data hygiene | The current demo tenant contains intentional detection-test history. | Provision clean customer tenants and do not demonstrate the contaminated engineering tenant as customer production data. |
+| Installer trust | The pilot installer remains unsigned. | Keep Defender enabled, verify the manifest, use approved hash allowlisting, and complete code signing when available. |
 
-The unsigned installer remains dependent on customer IT hash allowlisting until code signing is added. Defender must remain enabled.
+These items do not invalidate the verified processing pipeline. They define the remaining operational, audit-evidence, and data-lifecycle work that must not be hidden from pilot customers.
 
 ## 23. Failure Map
 

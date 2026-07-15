@@ -1,5 +1,7 @@
 # WarSOC 15-Agent FBR and PECA Launch Handoff
 
+> **HISTORICAL - DO NOT USE FOR CURRENT DEPLOYMENT, PRICING, FRONTEND INTEGRATION, OR CUSTOMER CLAIMS.** This file contains retired Sysmon, Safepay, fixed-package, and storage assumptions. Current sources of truth are `WARSOC_CURRENT_STATE_ARCHITECTURE.md`, `WARSOC_END_TO_END_PRODUCT_AND_OPERATOR_GUIDE.md`, `OPS_ACCOUNT_PROVISIONING.md`, and `PRODUCTION_ACCEPTANCE_TEST.md`.
+
 Date: 2026-06-18
 
 Audience: frontend engineer, implementation lead, sales/ops handoff
