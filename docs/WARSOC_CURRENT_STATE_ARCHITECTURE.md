@@ -313,6 +313,7 @@ This is at-least-once delivery with event-level duplicate suppression, not fire-
 - The trim boundary considers only the active required groups: `siem_group`, `fbr_group`, and `eto_group`. Historical/profile-gated groups such as `threat_hunters` cannot pin the active pipeline.
 - The raw stream is never blindly trimmed to enforce memory. `RAW_STREAM_MAX_ENTRIES` applies admission backpressure while acknowledged-entry retention performs safe trimming.
 - Metrics expose raw depth, cumulative safe trims, and the stream-retention worker heartbeat so retention can be proven rather than inferred.
+- Production Redis uses a 640 MB `noeviction` dataset ceiling inside a 1 GB container, leaving allocator/AOF headroom while preserving fail-closed admission behavior.
 
 ### 10.4 Unified worker
 
@@ -325,6 +326,7 @@ The production unified worker supervises SIEM, FBR, PECA, email, and stream-rete
 This distinction is intentional:
 
 - `siem_cold_vault` stores normalized native events for investigation and correlation.
+- `siem_cold_vault` indexes `(tenant_id,event_uid)` for idempotent writes and `(tenant_id,timestamp)` for newest-first tenant dashboard reads.
 - `security_alerts` stores detections that require action.
 - Normal Events 4624, 4625, 4672, and 4688 do not automatically create one alert per event.
 - They feed stateful correlation and signature logic.

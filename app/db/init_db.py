@@ -164,6 +164,20 @@ async def init_compliance_db(db):
         # could delete evidence during an Azure outage before archival succeeds.
         await _drop_ttl_indexes(db.siem_cold_vault, "siem_cold_vault")
         await _backfill_expire_at(db.siem_cold_vault, retention_days=SIEM_HOT_RETENTION_DAYS)
+        # SIEM writes are idempotent by tenant/event UID, and dashboard reads
+        # are tenant-scoped and newest-first. Without these indexes every
+        # upsert/search degrades to a collection scan as the vault grows.
+        await _aggressive_create_index(
+            db.siem_cold_vault,
+            [("tenant_id", 1), ("event_uid", 1)],
+            name="idx_siem_vault_tenant_event_uid",
+            unique=False,
+        )
+        await _aggressive_create_index(
+            db.siem_cold_vault,
+            [("tenant_id", 1), ("timestamp", -1)],
+            name="idx_siem_vault_tenant_timestamp",
+        )
 
         # 4. Raw uploads/results are also archive-managed. Remove every legacy
         # TTL so an Azure outage causes visible hot-storage growth, not data loss.

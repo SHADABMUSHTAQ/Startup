@@ -40,9 +40,11 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 5s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
+      timeout: 5s
+      retries: 12
+      # Lifespan permits up to 45s for schema startup plus bounded cache
+      # hydration. Do not fail the deployment before that window completes.
+      start_period: 75s
     # Notice: NO PORTS EXPOSED. Traffic must route through Nginx.
     deploy:
       resources:
@@ -219,7 +221,7 @@ services:
     container_name: warsoc-redis-prod
     restart: always
     logging: *warsoc-logging
-    command: redis-server --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy noeviction --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required}
+    command: redis-server --appendonly yes --appendfsync everysec --maxmemory ${REDIS_MAXMEMORY:-640mb} --maxmemory-policy noeviction --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required}
     volumes:
       - redis_data_prod:/data
     networks:
@@ -228,7 +230,7 @@ services:
       resources:
         limits:
           cpus: '0.5'
-          memory: 768M
+          memory: ${REDIS_CONTAINER_MEMORY_LIMIT:-1G}
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD required}", "ping"]
       interval: 10s

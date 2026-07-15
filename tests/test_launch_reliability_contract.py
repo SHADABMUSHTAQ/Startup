@@ -5,6 +5,7 @@ import uuid
 
 import pytest
 
+from app.db.init_db import init_compliance_db
 from app.main import app as fastapi_app
 
 
@@ -77,3 +78,13 @@ async def test_provisioning_rolls_back_tenant_and_genesis_when_user_insert_fails
     assert await db["daily_forensic_ledgers"].count_documents(
         {"worker_id": "admin_provisioning", "tenant_id": captured["tenant_id"]}
     ) == 0
+
+
+@pytest.mark.asyncio
+async def test_siem_vault_has_write_and_dashboard_indexes(db):
+    await init_compliance_db(db)
+    indexes = await db["siem_cold_vault"].index_information()
+    index_keys = {tuple(details.get("key", [])) for details in indexes.values()}
+
+    assert (("tenant_id", 1), ("event_uid", 1)) in index_keys
+    assert (("tenant_id", 1), ("timestamp", -1)) in index_keys

@@ -3,14 +3,14 @@
 Run these phases from the hardened release checkout. Do not substitute the
 older `run_launch_e2e.ps1`; that script contains a pre-hardening FBR fixture.
 
-## Current Status (2026-07-14)
+## Current Status (2026-07-15)
 
 | Phase | Latest status | Remaining action |
 |---|---|---|
-| Preflight | Passed as run `4665bcb57e` against the deployed site, API, and Azure `warsoc_installer-4.2.2.exe`. The remote artifact matched SHA-256 `FDF008750DD7A8BE0778106C1A2A15BECD6FB64EE7A0DA4D0CC71845B927CC1E`. | No public-infrastructure defect is open from this phase. Rerun after the backend reliability patch is deployed. |
-| Platform | Run `c78aff40aa` completed with zero failures. Quote/contact, auth, CDN, enrollment, signed heartbeat, mitigation, SIEM, FBR, PECA, WebSocket, secure pending invite, exports, and SMTP activity passed. | Activate one real mailbox invitation and prove activated-auditor RBAC. Rerun after provisioning reliability is deployed. |
+| Preflight | Run `a9216bdb7d` passed against the deployed Vercel site, DigitalOcean API, and Azure `warsoc_installer-4.2.2.exe`. The remote artifact matched SHA-256 `FDF008750DD7A8BE0778106C1A2A15BECD6FB64EE7A0DA4D0CC71845B927CC1E`. | No public-infrastructure defect is open from this phase. |
+| Platform | Run `a9216bdb7d` / validator `6f5476d9b4` completed with zero failures. Quote/contact, auth, CDN, enrollment, signed heartbeat, mitigation, SIEM, FBR, PECA, WebSocket, secure pending invite, exports, and SMTP delivery passed. | Activate one real mailbox invitation and prove activated-auditor RBAC. Complete the separately gated DB-backed self-lockout proof. |
 | Native Windows | Outstanding as a complete 11-control/FBR proof artifact. | Run Generate and Verify on a snapshot-based disposable Windows VM. |
-| Fifty-agent soak | Run `8cc3b67a18` proved 50/50 enrollment and blocked seat 51. Only 29/50 burst requests were accepted. Live metrics then proved `raw_logs_queue=482465` against the 500000 admission ceiling. A stale profile-gated consumer group was incorrectly pinning acknowledged-entry retention. | Deploy the consumer-safe retention correction, verify the stream depth falls without DLQ growth, then rerun the instrumented soak. |
+| Fifty-agent soak | Run `2053d97832` passed: 50/50 agents registered, seat 51 returned HTTP 403, all 50 concurrent ingests returned HTTP 200, SIEM latency was 5.18s, PECA vaulted all 50 events, FBR correlation passed, and the pipeline completed in 7.22s. | No capacity defect is open at the current 50-agent product limit. Continue operational monitoring. |
 
 The current Windows-only launch regression completed with `247 passed`,
 `3 skipped`, and zero failures in 90.68 seconds. The excluded files are the
@@ -27,20 +27,27 @@ Vite build successfully. Its production API binding remains
 binding was found. These local results do not replace the live production
 phases listed in the table above.
 
-### Open production blockers
+### Open production proofs
 
-1. Deploy the safe-retention correction. It calculates the trim boundary from
-   `siem_group`, `fbr_group`, and PECA's legacy internal `eto_group` only. An
-   unrelated disabled `threat_hunters` group must not pin the active pipeline.
-2. Investigate repeatable provisioning HTTP 500 responses from acceptance runs
-   `60769581ec` and `532ce2f502`. Neither attempt inserted a partial tenant.
-   The release candidate now exposes real Mongo/Redis health and compensates
-   tenant/genesis/user writes on failure, but the DigitalOcean API traceback is
-   still required to identify the deployed failure.
-3. After deployment, require a recent
-   `warsoc_stream_retention_worker_age_seconds`, a rising
-   `warsoc_raw_stream_trimmed_total`, a falling `warsoc_raw_stream_depth`, and
-   zero unexpected `warsoc_dlq_depth` before rerunning the soak.
+1. Complete the native Windows snapshot-VM proof for all 11 PECA controls and
+   the FBR deletion/permission scenarios.
+2. Activate one real mailbox invitation and verify activated-auditor RBAC.
+3. Complete the separately gated DB-backed active-agent self-lockout proof.
+4. Preserve an Azure archive/readback artifact demonstrating immutable upload,
+   successful authorized retrieval, and archive-before-hot-delete ordering.
+
+### 2026-07-15 Redis recovery
+
+The deployed stream reached Redis's 512 MB no-eviction ceiling because 78,965
+SIEM entries remained pending and an unrelated stale consumer group had
+previously pinned acknowledged-entry retention. Recovery preserved every
+pending event: Redis received temporary headroom, SIEM-only consumers drained
+the normal detection/persistence path, and consumer-safe retention reclaimed
+acknowledged entries. Final production state was `raw_logs_queue=1`, all
+SIEM/FBR/PECA/hot pending counts `0`, DLQ `0`, and Redis dataset memory 2.78 MB.
+Two missing `siem_cold_vault` indexes were created for `(tenant_id,event_uid)`
+upserts and `(tenant_id,timestamp)` dashboard reads. The release configuration
+now uses a 640 MB Redis no-eviction ceiling within a 1 GB container.
 
 ## 1. Public Infrastructure
 
