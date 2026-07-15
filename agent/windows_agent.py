@@ -48,7 +48,7 @@ if not env_loaded:
     print(f"[WARN] .env not found in any standard location. Using system environment variables.")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-AGENT_VERSION = "4.2.2-Native"
+AGENT_VERSION = "4.2.3-Native"
 TENANT_ID = os.getenv("TENANT_ID", "provision").strip() or "provision"
 PROGRAM_DATA_DIR = Path(os.getenv("PROGRAMDATA", str(_AGENT_DIR))) / "WarSOC"
 JWT_TOKEN_PATH = PROGRAM_DATA_DIR / ".agent_jwt"
@@ -82,7 +82,23 @@ def _read_state_text(primary_path, legacy_path):
 
 _STORED_AGENT_ID = _read_state_text(AGENT_ID_PATH, LEGACY_AGENT_ID_PATH)
 
-AGENT_ID = os.getenv("AGENT_ID", _STORED_AGENT_ID or TENANT_ID).strip() or TENANT_ID
+def _select_agent_id(stored_agent_id, configured_agent_id, tenant_id):
+    """Prefer the enrolled identity over installer bootstrap placeholders."""
+    stored_value = str(stored_agent_id or "").strip()
+    if stored_value:
+        return stored_value
+
+    configured_value = str(configured_agent_id or "").strip()
+    if configured_value.lower() not in {"", "auto", "provision"}:
+        return configured_value
+    return str(tenant_id or "provision").strip() or "provision"
+
+
+AGENT_ID = _select_agent_id(
+    _STORED_AGENT_ID,
+    os.getenv("AGENT_ID", ""),
+    TENANT_ID,
+)
 ACTIVATION_CODE = os.getenv("ACTIVATION_CODE", "").strip()
 
 # NEW: Web Server Log File Path (You can change this to your Apache/Nginx path later)

@@ -473,6 +473,14 @@ def _load_windows_agent_with_stubs(monkeypatch, tmp_path):
     return module
 
 
+def test_enrolled_agent_id_wins_over_installer_bootstrap_placeholder(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+
+    assert agent._select_agent_id("WARSOC_AGENT_REAL", "auto", "provision") == "WARSOC_AGENT_REAL"
+    assert agent._select_agent_id("", "WARSOC_AGENT_CONFIGURED", "provision") == "WARSOC_AGENT_CONFIGURED"
+    assert agent._select_agent_id("", "auto", "WARSOC_TENANT") == "WARSOC_TENANT"
+
+
 def test_native_xml_and_jsonl_parsers(monkeypatch, tmp_path):
     agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
     xml = """<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">

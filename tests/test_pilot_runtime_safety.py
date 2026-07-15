@@ -6,7 +6,11 @@ from fastapi import HTTPException
 from app.routes.data import _is_fresh_agent_timestamp
 from app.routes.ingest_pulse import _enforce_raw_stream_capacity
 from app.utils.siem_catalog import SIEM_RULES
-from app.workers.siem_worker import _keyword_sources_for_family, _trusted_telemetry_family
+from app.workers.siem_worker import (
+    _keyword_sources_for_event,
+    _keyword_sources_for_family,
+    _trusted_telemetry_family,
+)
 
 
 def _windows_event(event_id="4798", message="Administrator was enumerated"):
@@ -23,6 +27,7 @@ def test_windows_event_cannot_enter_web_keyword_rules():
     assert family == "windows"
     assert "Web-WAF" not in _keyword_sources_for_family(family)
     assert "Windows-Sec" in _keyword_sources_for_family(family)
+    assert _keyword_sources_for_event(family, "4798", {"event_id_map": {"4798": {}}}) == ()
 
 
 def test_web_rules_require_structured_http_file_origin():

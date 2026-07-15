@@ -1,6 +1,6 @@
 [Setup]
 AppName=WarSOC Agent
-AppVersion=4.2.2
+AppVersion=4.2.3
 DefaultDirName={commonpf}\WarSOC
 DefaultGroupName=WarSOC
 OutputBaseFilename=warsoc_installer
@@ -82,6 +82,16 @@ begin
   ActivationPage.Add('Backend URL:', False);
   ActivationPage.Add('POS directories (optional, comma or semicolon separated):', False);
   ActivationPage.Values[1] := 'https://api.warsoc.tech';
+
+  { Pre-fill unattended deployment values before NextButtonClick validates the page. }
+  if ExpandConstant('{param:ACTIVATION_CODE}') <> '' then
+    ActivationPage.Values[0] := ExpandConstant('{param:ACTIVATION_CODE}');
+  if ExpandConstant('{param:TOKEN}') <> '' then
+    ActivationPage.Values[0] := ExpandConstant('{param:TOKEN}');
+  if ExpandConstant('{param:BACKEND_URL}') <> '' then
+    ActivationPage.Values[1] := ExpandConstant('{param:BACKEND_URL}');
+  if ExpandConstant('{param:POS_PATHS}') <> '' then
+    ActivationPage.Values[2] := ExpandConstant('{param:POS_PATHS}');
 end;
 
 function TrimTrailingSlash(Value: String): String;

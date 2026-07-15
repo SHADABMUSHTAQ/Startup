@@ -228,6 +228,17 @@ def _keyword_sources_for_family(family: str) -> tuple[str, ...]:
     }.get(family, ())
 
 
+def _keyword_sources_for_event(
+    family: str,
+    event_id: str,
+    config: dict,
+) -> tuple[str, ...]:
+    """Use generic keyword dictionaries only when no native event rule exists."""
+    if family == "windows" and str(event_id or "") in (config.get("event_id_map", {}) or {}):
+        return ()
+    return _keyword_sources_for_family(family)
+
+
 def _extract_tenant_id_from_raw_payload(raw_payload) -> str | None:
     match = _TENANT_ID_PATTERN.search(str(raw_payload or ""))
     if not match:
@@ -758,7 +769,11 @@ async def siem_worker():
                             # 🔍 MANDATE 2: DYNAMIC KEYWORD SCANNER (WAF/LINUX/EDR)
                             if not alert_triggered and not is_basic_plan:
                                 source_configs = config.get("source_classification", {})
-                                for source_type in _keyword_sources_for_family(telemetry_family):
+                                for source_type in _keyword_sources_for_event(
+                                    telemetry_family,
+                                    event_id,
+                                    config,
+                                ):
                                     s_config = source_configs.get(source_type, {})
                                     severity_map = s_config.get("severity_by_keyword", {})
                                     for keyword, mapped_sev in severity_map.items():
