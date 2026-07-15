@@ -600,6 +600,16 @@ def test_native_spool_failure_cannot_advance_watermark(monkeypatch, tmp_path):
     assert previous_watermark == 99
 
 
+def test_native_watermark_resets_when_windows_channel_is_cleared(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+
+    assert agent._watermark_after_channel_probe(1469039, 1) == 0
+    assert agent._watermark_after_channel_probe(1469039, 1469040) == 1469039
+    assert agent._watermark_after_channel_probe(0, 0) == 0
+    assert agent._latest_record_id_from_log_bounds(58493, 40251) == 98743
+    assert agent._latest_record_id_from_log_bounds(0, 0) == 0
+
+
 def test_native_spool_hard_limit_blocks_without_deleting_unacknowledged_data(monkeypatch, tmp_path):
     agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
     spooler = agent.DiskSpooler(

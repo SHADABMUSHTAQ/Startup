@@ -48,7 +48,7 @@ if not env_loaded:
     print(f"[WARN] .env not found in any standard location. Using system environment variables.")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-AGENT_VERSION = "4.2.3-Native"
+AGENT_VERSION = "4.2.4-Native"
 TENANT_ID = os.getenv("TENANT_ID", "provision").strip() or "provision"
 PROGRAM_DATA_DIR = Path(os.getenv("PROGRAMDATA", str(_AGENT_DIR))) / "WarSOC"
 JWT_TOKEN_PATH = PROGRAM_DATA_DIR / ".agent_jwt"
@@ -1600,6 +1600,22 @@ def _persist_watermarks(watermark_file, watermarks):
     os.replace(temporary_file, watermark_file)
 
 
+def _watermark_after_channel_probe(current_watermark, latest_record_id):
+    """Reset a stale cursor when Windows recreates or clears an event channel."""
+    current = max(0, int(current_watermark or 0))
+    latest = max(0, int(latest_record_id or 0))
+    if latest and current > latest:
+        return 0
+    return current
+
+
+def _latest_record_id_from_log_bounds(oldest_record_id, record_count):
+    count = max(0, int(record_count or 0))
+    if not count:
+        return 0
+    return max(0, int(oldest_record_id or 0)) + count - 1
+
+
 def _durably_enqueue_native_event(payload, record_id, current_watermark):
     """Advance a source cursor only after the event is durable in the spool."""
     enqueue_payload(payload)
@@ -1638,22 +1654,15 @@ def native_log_hunter_thread():
             pass
 
     def latest_record_id(channel):
-        query_handle = None
-        event_handles = []
+        log_handle = None
         try:
-            flags = win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryReverseDirection
-            query_handle = win32evtlog.EvtQuery(channel, flags, "*")
-            event_handles = win32evtlog.EvtNext(query_handle, 1)
-            if not event_handles:
-                return 0
-            xml_text = win32evtlog.EvtRender(event_handles[0], win32evtlog.EvtRenderEventXml)
-            parsed = parse_windows_event_xml(xml_text)
-            return int(parsed["raw_event_data"]["system"].get("event_record_id") or 0)
+            log_handle = win32evtlog.OpenEventLog(None, channel)
+            record_count = win32evtlog.GetNumberOfEventLogRecords(log_handle)
+            oldest_record_id = win32evtlog.GetOldestEventLogRecord(log_handle)
+            return _latest_record_id_from_log_bounds(oldest_record_id, record_count)
         finally:
-            for event_handle in event_handles:
-                close_handle(event_handle)
-            if query_handle:
-                close_handle(query_handle)
+            if log_handle:
+                win32evtlog.CloseEventLog(log_handle)
 
     for channel in WINDOWS_CHANNELS:
         if channel in highest_record_seen:
@@ -1673,6 +1682,19 @@ def native_log_hunter_thread():
             event_handles = []
             try:
                 channel_watermark = int(highest_record_seen.get(channel, 0) or 0)
+                probed_latest_record_id = latest_record_id(channel)
+                normalized_watermark = _watermark_after_channel_probe(
+                    channel_watermark,
+                    probed_latest_record_id,
+                )
+                if normalized_watermark != channel_watermark:
+                    print(
+                        f"[WARN] Native channel '{channel}' record IDs reset "
+                        f"({channel_watermark} -> {probed_latest_record_id}); replaying surviving events."
+                    )
+                    channel_watermark = normalized_watermark
+                    highest_record_seen[channel] = normalized_watermark
+                    _persist_watermarks(watermark_file, highest_record_seen)
                 current_batch_highest = channel_watermark
                 query = f"*[System[EventRecordID > {channel_watermark}]]"
                 flags = win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryForwardDirection
