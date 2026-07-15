@@ -1,0 +1,93 @@
+================================================================================
+                        WARSOC: PILOT HANDOVER & PLAYBOOK
+================================================================================
+
+Welcome to the WarSOC Pilot Program! 
+
+WarSOC is a high-speed Security Information and Event Management (SIEM) 
+platform designed for real-time threat detection, correlation, and compliance 
+archiving. It uses a fast-lane (Redis) and cold-vault (PostgreSQL) architecture 
+to process endpoint telemetry.
+
+This document serves as your operational playbook and explicitly outlines the 
+current technical limitations of the platform so you know exactly what to expect.
+
+--------------------------------------------------------------------------------
+1. HOW TO USE WARSOC (DAILY OPERATIONS)
+--------------------------------------------------------------------------------
+
+A. Starting the System
+1. Backend (API): Navigate to `Startup-backend` and run: 
+   `uvicorn app.main:app --reload --port 8000`
+2. SIEM Worker (Engine): In `Startup-backend`, run: 
+   `python -m app.workers.siem_worker`
+3. Frontend (UI): In `Startup-main`, run: 
+   `npm run dev`
+
+B. Logging In & Deploying Agents
+1. Access the dashboard at http://localhost:5173
+2. Log in using your designated tenant admin credentials.
+3. Navigate to the "Agents" tab to generate a Windows installer.
+4. Run the installer on target endpoints. Within 60 seconds, the endpoints will 
+   appear as "Online" in the dashboard.
+
+C. Monitoring Alerts
+- Alerts automatically populate in the "Alerts" tab.
+- You can filter by severity (Medium, High, Critical) or by rule type.
+- Click any alert to view the offending IP address, the user involved, and the 
+  Mitre ATT&CK classification.
+
+D. Investigating Raw Telemetry (Compliance)
+- Navigate to the "Archive" or "Compliance" tab.
+- Search raw data by IP, User, or Event ID to trace an attacker's steps before 
+  or after an alert fired.
+
+--------------------------------------------------------------------------------
+2. SYSTEM CAPABILITIES (WHAT IT DETECTS)
+--------------------------------------------------------------------------------
+- Authentication Abuse: Impossible Travel, Password Spraying.
+- Privilege Escalation: Ghost Admin sequences (Group membership changes followed 
+  by log clearing).
+- Network Attacks: Port Scanning (Horizontal and Vertical).
+- Web Attacks: High-volume SQL injection and web shell activity.
+- Lateral Movement: Excessive SMB file share access and Kerberos abuse.
+
+--------------------------------------------------------------------------------
+3. KNOWN LIMITATIONS (WHAT TO EXPECT IN PILOT)
+--------------------------------------------------------------------------------
+To ensure you have accurate expectations during this pilot phase, please be 
+aware of the following technical limitations:
+
+1. Web Log Formatting Constraints:
+   The web log collector does not currently emit structured HTTP status codes. 
+   Therefore, alerts cannot be triggered based solely on HTTP 403 or 404 error 
+   spikes (e.g., Directory Brute Force rules are currently limited).
+
+2. SQL Injection Rule Strictness:
+   The built-in SQL injection detection requires HTTP context (it will ignore 
+   random SQL strings in Windows logs) and specifically looks for payloads that 
+   utilize leading quote escapes (e.g., `'`, `%27`, `%22`). Bare string SQL 
+   probes may not trigger the alert.
+
+3. Native Windows Log Variability:
+   Certain native Windows events omit standard XML fields depending on the auth 
+   provider. For example, some Kerberos pre-auth failures omit the `LogonType` 
+   field. The SIEM will drop these events if a rule strictly requires a 
+   specific Logon Type (like Type 10 for RDP).
+
+4. Port Scan Visibility:
+   Port scan detection relies on Windows Filtering Platform (WFP) Event ID 5157. 
+   If WFP drops a connection early at the IP layer before resolving a port, the 
+   `destination_port` field will be empty, and the SIEM will skip the correlation 
+   for that specific packet.
+
+5. Redis Connectivity Tolerance:
+   Stateful alerts (like Password Spray and Impossible Travel) rely heavily on 
+   Redis. If the Redis cache experiences transient connection drops under heavy 
+   load, the correlation engine is designed to silently skip tracking those 
+   specific events rather than crashing the entire pipeline. This means a small 
+   percentage of stateful events could be missed during network blips.
+
+================================================================================
+Please report any unexpected behavior or false positives during the pilot so we 
+can continue tuning the correlation rules!

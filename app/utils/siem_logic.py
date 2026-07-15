@@ -290,6 +290,45 @@ class SIEMEngine:
         sev = "HIGH" if score < 90 else "CRITICAL"
         return self._create_alert("PHISHING_PATTERN", sev, "Possible phishing activity detected", log_entry, "T1566")
 
+    def _detect_elevated_powershell(self, log_entry: dict, event_id: str):
+        native_cfg = self.config.get("detection", {}).get("native_windows_detection", {})
+        cfg = native_cfg.get("elevated_powershell", {})
+        if not cfg.get("enabled", False) or event_id != "4688":
+            return None
+
+        processed = log_entry.get("processed_data") if isinstance(log_entry.get("processed_data"), dict) else {}
+        raw_data = log_entry.get("raw_data") if isinstance(log_entry.get("raw_data"), dict) else {}
+        process_name = str(
+            processed.get("new_process_name")
+            or raw_data.get("NewProcessName")
+            or raw_data.get("new_process_name")
+            or ""
+        ).strip().lower()
+        if not re.search(r"(?:^|[\\/])(powershell|pwsh)(?:\.exe)?$", process_name):
+            return None
+
+        token_elevation = str(
+            processed.get("token_elevation_type")
+            or raw_data.get("TokenElevationType")
+            or raw_data.get("token_elevation_type")
+            or ""
+        ).strip().lower()
+        full_token_values = {
+            str(value).strip().lower()
+            for value in cfg.get("full_token_values", [])
+            if str(value).strip()
+        }
+        if token_elevation not in full_token_values:
+            return None
+
+        return self._create_alert(
+            "WINDOWS_ELEVATED_POWERSHELL",
+            cfg.get("severity", "MEDIUM"),
+            "Elevated PowerShell launched",
+            log_entry,
+            cfg.get("mitre_id", "T1059.001"),
+        )
+
     def _fallback_summary(self, rule_name: str) -> str:
         #  FIX: Dumb generic string format, no custom dict mapping
         readable = str(rule_name or "suspicious").replace("_", " ").strip().lower()
