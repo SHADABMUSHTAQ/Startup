@@ -7,16 +7,40 @@ older `run_launch_e2e.ps1`; that script contains a pre-hardening FBR fixture.
 
 | Phase | Latest status | Remaining action |
 |---|---|---|
-| Preflight | Passed as run `5699139aa0` against the deployed site, API, and Azure `warsoc_installer-4.2.1.exe`. | Upload and rerun against local release candidate `warsoc_installer-4.2.2.exe` SHA-256 `FDF008750DD7A8BE0778106C1A2A15BECD6FB64EE7A0DA4D0CC71845B927CC1E`. |
-| Platform | Core live pipeline passed in run `49f0fe4193`; the stale plaintext-password auditor fixture was replaced with the secure pending-invite contract. | Deploy 4.2.2, rerun Platform, complete one mailbox activation, and verify activated-auditor RBAC manually. |
+| Preflight | Passed as run `4665bcb57e` against the deployed site, API, and Azure `warsoc_installer-4.2.2.exe`. The remote artifact matched SHA-256 `FDF008750DD7A8BE0778106C1A2A15BECD6FB64EE7A0DA4D0CC71845B927CC1E`. | No public-infrastructure defect is open from this phase. Rerun after the backend reliability patch is deployed. |
+| Platform | Run `c78aff40aa` completed with zero failures. Quote/contact, auth, CDN, enrollment, signed heartbeat, mitigation, SIEM, FBR, PECA, WebSocket, secure pending invite, exports, and SMTP activity passed. | Activate one real mailbox invitation and prove activated-auditor RBAC. Rerun after provisioning reliability is deployed. |
 | Native Windows | Outstanding as a complete 11-control/FBR proof artifact. | Run Generate and Verify on a snapshot-based disposable Windows VM. |
-| Fifty-agent soak | Run `9bb4bb94a2` exposed a 10/minute shared-IP enrollment boundary after 10/50 agents. Local 4.2.2 raises only one-time enrollment limits and retries registration with bounded backoff. | Deploy 4.2.2 and rerun in a quiet window; inspect workers, Redis, DLQ, and latency. |
+| Fifty-agent soak | Run `8cc3b67a18` proved 50/50 enrollment and blocked seat 51. Only 29/50 burst requests were accepted. Live metrics then proved `raw_logs_queue=482465` against the 500000 admission ceiling. A stale profile-gated consumer group was incorrectly pinning acknowledged-entry retention. | Deploy the consumer-safe retention correction, verify the stream depth falls without DLQ growth, then rerun the instrumented soak. |
 
-Pytest collection currently reports 251 backend cases. The latest archive and
-incident and runtime-safety changes have 122 focused passing cases; the 4.2.2
-enrollment correction has an additional focused 73-case green run. Remaining legacy tests
-have not all been rerun in the current release cycle. Production acceptance
-still requires the contract-aligned regression suites to pass.
+The current Windows-only launch regression completed with `247 passed`,
+`3 skipped`, and zero failures in 90.68 seconds. The excluded files are the
+explicitly deferred Linux/syslog suites plus obsolete mega-suite duplicates.
+The three skips are one environment-gated all-rules E2E case and two Git
+metadata checks that cannot run inside the API test image; they are not runtime
+feature failures. A separate reliability run covering dependency-aware health,
+provisioning rollback, consumer-safe stream retention, and worker metrics
+completed with `8 passed` and zero failures.
+
+The current frontend checkout also completed `npm run lint` and a production
+Vite build successfully. Its production API binding remains
+`https://api.warsoc.tech/api/v1`; no localhost, ngrok, or Web3Forms production
+binding was found. These local results do not replace the live production
+phases listed in the table above.
+
+### Open production blockers
+
+1. Deploy the safe-retention correction. It calculates the trim boundary from
+   `siem_group`, `fbr_group`, and PECA's legacy internal `eto_group` only. An
+   unrelated disabled `threat_hunters` group must not pin the active pipeline.
+2. Investigate repeatable provisioning HTTP 500 responses from acceptance runs
+   `60769581ec` and `532ce2f502`. Neither attempt inserted a partial tenant.
+   The release candidate now exposes real Mongo/Redis health and compensates
+   tenant/genesis/user writes on failure, but the DigitalOcean API traceback is
+   still required to identify the deployed failure.
+3. After deployment, require a recent
+   `warsoc_stream_retention_worker_age_seconds`, a rising
+   `warsoc_raw_stream_trimmed_total`, a falling `warsoc_raw_stream_depth`, and
+   zero unexpected `warsoc_dlq_depth` before rerunning the soak.
 
 ## 1. Public Infrastructure
 
@@ -98,6 +122,11 @@ Run once during a quiet production window:
   -ConfirmProductionDataCreation `
   -SoakTimeoutSeconds 60
 ```
+
+The soak output includes an HTTP response distribution and one sanitized
+sample body for each failed status. Do not classify a partial burst as a
+worker-latency issue until this distribution identifies whether the boundary
+is API admission, gateway timeout, memory pressure, or client transport.
 
 ## Acceptance
 

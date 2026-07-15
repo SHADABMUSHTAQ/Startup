@@ -84,7 +84,7 @@ async def test_peca_deep_dive():
         except Exception:
             pass
         try:
-            await redis_client.xgroup_create("raw_logs_queue", "peca_group", id="0", mkstream=True)
+            await redis_client.xgroup_create("raw_logs_queue", "eto_group", id="0", mkstream=True)
         except Exception:
             pass
             

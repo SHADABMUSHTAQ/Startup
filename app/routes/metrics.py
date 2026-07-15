@@ -58,6 +58,7 @@ async def metrics(request: Request):
         "siem_worker": None,
         "fbr_worker": None,
         "peca_worker": None,
+        "stream_retention_worker": None,
     }
 
     dlq_ejections_total = 0
@@ -70,6 +71,8 @@ async def metrics(request: Request):
         "warsoc_email_delivered_total": 0,
         "warsoc_email_retries_total": 0,
         "warsoc_email_dlq_total": 0,
+        "warsoc_raw_stream_trimmed_total": 0,
+        "warsoc_siem_hot_stream_trimmed_total": 0,
     }
     email_queue_depth = 0
     email_processing_depth = 0
@@ -147,6 +150,11 @@ async def metrics(request: Request):
             pass
     observed_ages = [age for age in worker_ages.values() if age is not None]
     worker_staleness_seconds = max(observed_ages) if observed_ages else 0.0
+    worker_up = {
+        worker_name: int(age is not None and age <= 120)
+        for worker_name, age in worker_ages.items()
+    }
+    required_workers_healthy = int(all(worker_up.values()))
 
     base_metrics = generate_latest().decode("utf-8", errors="replace")
     custom_metrics = "\n".join(
@@ -214,21 +222,45 @@ async def metrics(request: Request):
             "# HELP warsoc_raw_stream_depth Current entries in the shared raw ingest stream.",
             "# TYPE warsoc_raw_stream_depth gauge",
             f"warsoc_raw_stream_depth {raw_stream_depth}",
+            "# HELP warsoc_raw_stream_trimmed_total Fully acknowledged raw-stream entries safely reclaimed.",
+            "# TYPE warsoc_raw_stream_trimmed_total counter",
+            f"warsoc_raw_stream_trimmed_total {redis_counters['warsoc_raw_stream_trimmed_total']}",
+            "# HELP warsoc_siem_hot_stream_trimmed_total Fully acknowledged SIEM hot-stream entries safely reclaimed.",
+            "# TYPE warsoc_siem_hot_stream_trimmed_total counter",
+            f"warsoc_siem_hot_stream_trimmed_total {redis_counters['warsoc_siem_hot_stream_trimmed_total']}",
             "# HELP warsoc_detection_latency_seconds Last observed event-to-alert latency.",
             "# TYPE warsoc_detection_latency_seconds gauge",
             f"warsoc_detection_latency_seconds {detection_latency_seconds}",
             "# HELP warsoc_worker_staleness_seconds Age of the oldest registered worker heartbeat.",
             "# TYPE warsoc_worker_staleness_seconds gauge",
             f"warsoc_worker_staleness_seconds {worker_staleness_seconds}",
+            "# HELP warsoc_required_workers_healthy All required SIEM/FBR/PECA/retention workers have a recent heartbeat.",
+            "# TYPE warsoc_required_workers_healthy gauge",
+            f"warsoc_required_workers_healthy {required_workers_healthy}",
             "# HELP warsoc_siem_worker_age_seconds Age in seconds since the SIEM worker heartbeat.",
             "# TYPE warsoc_siem_worker_age_seconds gauge",
             f"warsoc_siem_worker_age_seconds {worker_ages['siem_worker'] if worker_ages['siem_worker'] is not None else 0}",
+            "# HELP warsoc_siem_worker_up SIEM worker heartbeat is present and no older than 120 seconds.",
+            "# TYPE warsoc_siem_worker_up gauge",
+            f"warsoc_siem_worker_up {worker_up['siem_worker']}",
             "# HELP warsoc_fbr_worker_age_seconds Age in seconds since the FBR worker heartbeat.",
             "# TYPE warsoc_fbr_worker_age_seconds gauge",
             f"warsoc_fbr_worker_age_seconds {worker_ages['fbr_worker'] if worker_ages['fbr_worker'] is not None else 0}",
+            "# HELP warsoc_fbr_worker_up FBR worker heartbeat is present and no older than 120 seconds.",
+            "# TYPE warsoc_fbr_worker_up gauge",
+            f"warsoc_fbr_worker_up {worker_up['fbr_worker']}",
             "# HELP warsoc_peca_worker_age_seconds Age in seconds since the PECA worker heartbeat.",
             "# TYPE warsoc_peca_worker_age_seconds gauge",
             f"warsoc_peca_worker_age_seconds {worker_ages['peca_worker'] if worker_ages['peca_worker'] is not None else 0}",
+            "# HELP warsoc_peca_worker_up PECA worker heartbeat is present and no older than 120 seconds.",
+            "# TYPE warsoc_peca_worker_up gauge",
+            f"warsoc_peca_worker_up {worker_up['peca_worker']}",
+            "# HELP warsoc_stream_retention_worker_age_seconds Age in seconds since the safe stream-retention heartbeat.",
+            "# TYPE warsoc_stream_retention_worker_age_seconds gauge",
+            f"warsoc_stream_retention_worker_age_seconds {worker_ages['stream_retention_worker'] if worker_ages['stream_retention_worker'] is not None else 0}",
+            "# HELP warsoc_stream_retention_worker_up Safe stream-retention heartbeat is present and no older than 120 seconds.",
+            "# TYPE warsoc_stream_retention_worker_up gauge",
+            f"warsoc_stream_retention_worker_up {worker_up['stream_retention_worker']}",
             "",
         ]
     )

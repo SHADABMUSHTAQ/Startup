@@ -481,8 +481,29 @@ app.include_router(data.router, prefix="/api/v1/data", tags=["Data Engine"])
 
 
 @app.get("/health", tags=["System Health"])
-async def health_check():
-    return {"status": "healthy"}
+async def health_check(request: Request):
+    dependencies = {"mongodb": "unavailable", "redis": "unavailable"}
+
+    try:
+        if db_manager.db is not None:
+            await db_manager.db.command("ping")
+            dependencies["mongodb"] = "healthy"
+    except Exception:
+        logger.exception("MongoDB readiness check failed")
+
+    try:
+        redis_client = getattr(request.app.state, "redis", None)
+        if redis_client is not None and await redis_client.ping():
+            dependencies["redis"] = "healthy"
+    except Exception:
+        logger.exception("Redis readiness check failed")
+
+    if any(value != "healthy" for value in dependencies.values()):
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "dependencies": dependencies},
+        )
+    return {"status": "healthy", "dependencies": dependencies}
 
 
 @app.post("/api/v1/ws/ticket")

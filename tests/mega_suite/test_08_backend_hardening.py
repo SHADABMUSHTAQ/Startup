@@ -1041,14 +1041,13 @@ async def test_metrics_endpoint_requires_allowlisted_ip_or_bearer_token(client, 
     assert "warsoc_redis_health" in allowed.text
 
 
-async def test_metrics_endpoint_exposes_worker_heartbeat_and_staleness(client, monkeypatch):
+async def test_metrics_endpoint_exposes_worker_heartbeat_and_staleness(client, redis_client, monkeypatch):
     monkeypatch.setattr(metrics_module.settings, "metrics_allowlist_ips", "203.0.113.10")
     monkeypatch.setattr(metrics_module.settings, "metrics_bearer_token", "metrics-test-token")
 
-    from app.utils.observability import record_worker_heartbeat
-
-    record_worker_heartbeat("peca_worker")
-    record_worker_heartbeat("siem_worker")
+    heartbeat_at = datetime.now(timezone.utc).timestamp()
+    for worker_name in ("siem_worker", "fbr_worker", "peca_worker", "stream_retention_worker"):
+        await redis_client.set(f"warsoc:worker_heartbeat:{worker_name}", heartbeat_at)
 
     resp = await client.get("/metrics", headers={"Authorization": "Bearer metrics-test-token"})
 
@@ -1056,6 +1055,10 @@ async def test_metrics_endpoint_exposes_worker_heartbeat_and_staleness(client, m
     assert "warsoc_worker_staleness_seconds" in resp.text
     assert "warsoc_peca_worker_age_seconds" in resp.text
     assert "warsoc_siem_worker_age_seconds" in resp.text
+    assert "warsoc_stream_retention_worker_age_seconds" in resp.text
+    assert "warsoc_raw_stream_trimmed_total" in resp.text
+    assert "warsoc_required_workers_healthy 1" in resp.text
+    assert "warsoc_stream_retention_worker_up 1" in resp.text
 
 
 async def test_admin_tenant_listing_redacts_secret_fields(client, db, monkeypatch):

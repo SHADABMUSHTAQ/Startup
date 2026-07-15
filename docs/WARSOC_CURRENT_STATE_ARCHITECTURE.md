@@ -310,7 +310,9 @@ This is at-least-once delivery with event-level duplicate suppression, not fire-
 - SIEM DLQ: `raw_logs_queue_dlq`.
 - FBR/PECA DLQ: `warsoc:dlq:{tenant_id}`.
 - Stream trimming runs only when all required consumer groups exist and their pending state permits safe progress.
+- The trim boundary considers only the active required groups: `siem_group`, `fbr_group`, and `eto_group`. Historical/profile-gated groups such as `threat_hunters` cannot pin the active pipeline.
 - The raw stream is never blindly trimmed to enforce memory. `RAW_STREAM_MAX_ENTRIES` applies admission backpressure while acknowledged-entry retention performs safe trimming.
+- Metrics expose raw depth, cumulative safe trims, and the stream-retention worker heartbeat so retention can be proven rather than inferred.
 
 ### 10.4 Unified worker
 

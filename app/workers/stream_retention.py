@@ -8,7 +8,7 @@ from typing import Any, Iterable
 from redis.exceptions import ResponseError
 
 from app.config.config import get_settings
-from app.utils.observability import record_worker_heartbeat_with_client
+from app.utils.observability import increment_redis_counter, record_worker_heartbeat_with_client
 from app.utils.redis_client import create_redis_client
 
 logger = logging.getLogger("stream-retention")
@@ -43,7 +43,7 @@ async def trim_acknowledged_stream(
     stream_name: str,
     required_groups: Iterable[str],
 ) -> int:
-    """Trim only entries already delivered or acknowledged by every consumer group."""
+    """Trim only entries safe for every explicitly required consumer group."""
     try:
         group_rows = await redis_client.xinfo_groups(stream_name)
     except ResponseError as exc:
@@ -52,11 +52,16 @@ async def trim_acknowledged_stream(
         raise
 
     groups = {_text(_field(row, "name")): row for row in group_rows}
-    if not set(required_groups).issubset(groups):
+    required_group_names = {_text(group_name) for group_name in required_groups}
+    if not required_group_names.issubset(groups):
         return 0
 
     boundaries: list[str] = []
-    for group_name, group in groups.items():
+    # Historical or profile-gated groups must not pin the active pipeline
+    # forever. Only the explicitly required consumers participate in the
+    # acknowledgement boundary.
+    for group_name in sorted(required_group_names):
+        group = groups[group_name]
         pending = await redis_client.xpending(stream_name, group_name)
         pending_count = int(_field(pending, "pending", 0) or 0)
         boundary = _field(pending, "min") if pending_count else _field(group, "last-delivered-id")
@@ -87,6 +92,18 @@ async def stream_retention_worker() -> None:
                     redis_client, SIEM_HOT_QUEUE, HOT_REQUIRED_GROUPS
                 )
                 if raw_trimmed or hot_trimmed:
+                    if raw_trimmed:
+                        await increment_redis_counter(
+                            redis_client,
+                            "warsoc_raw_stream_trimmed_total",
+                            raw_trimmed,
+                        )
+                    if hot_trimmed:
+                        await increment_redis_counter(
+                            redis_client,
+                            "warsoc_siem_hot_stream_trimmed_total",
+                            hot_trimmed,
+                        )
                     logger.info(
                         "Safely trimmed acknowledged stream entries: raw=%s hot=%s",
                         raw_trimmed,

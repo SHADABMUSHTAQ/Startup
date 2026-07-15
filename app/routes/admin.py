@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Security, Request
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field, EmailStr
+from bson import ObjectId
 import asyncio
 import logging
 import uuid
@@ -65,10 +66,19 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
     Full B2B Onboarding: Creates the tenant, genesis block, agent identity,
     AND the admin user account so the client can log into the dashboard.
     """
+    admin_email = str(req.admin_email).strip().lower()
+
     # 0. Prevent duplicate provisioning
-    existing_user = await db["users"].find_one({"email": req.admin_email})
+    try:
+        existing_user = await db["users"].find_one({"email": admin_email})
+    except Exception as exc:
+        logger.exception("Tenant provisioning preflight failed for %s", admin_email)
+        raise HTTPException(
+            status_code=503,
+            detail="Tenant provisioning is temporarily unavailable.",
+        ) from exc
     if existing_user:
-        raise HTTPException(status_code=400, detail=f"User with email {req.admin_email} already exists.")
+        raise HTTPException(status_code=400, detail=f"User with email {admin_email} already exists.")
 
     tenant_id = f"WARSOC_{uuid.uuid4().hex[:8].upper()}"
     compliance_packs = sorted({normalize_pack_id(pack) for pack in req.compliance_packs if normalize_pack_id(pack)})
@@ -76,6 +86,7 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
     
     # 1. Establish the Tenant Record
     tenant_doc = {
+        "_id": ObjectId(),
         "tenant_id": tenant_id,
         "company_name": req.company_name,
         "plan_type": req.plan_type,
@@ -90,12 +101,11 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
         "status": "active",
         "has_active_plan": True,
     }
-    await db["tenants"].insert_one(tenant_doc)
-    
     # 2. The Genesis Block (Zero-Day Forensic Anchor)
     genesis_root = hashlib.sha256(f"GENESIS:{tenant_id}".encode("utf-8")).hexdigest()
     
     genesis_block = {
+        "_id": ObjectId(),
         "tenant_id": tenant_id,
         "date": "GENESIS",
         "daily_root_hash": genesis_root,
@@ -105,15 +115,14 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
         "computed_at": datetime.now(timezone.utc).isoformat(),
         "worker_id": "admin_provisioning",
     }
-    await db["daily_forensic_ledgers"].insert_one(genesis_block)
-
     # 3. Create the Admin User Account
     hashed_password = pwd_context.hash(req.admin_password)
-    admin_username = req.admin_email.split("@")[0]
+    admin_username = admin_email.split("@")[0]
 
     admin_user = {
+        "_id": ObjectId(),
         "username": admin_username,
-        "email": req.admin_email,
+        "email": admin_email,
         "full_name": req.admin_name,
         "company": req.company_name,
         "hashed_password": hashed_password,
@@ -128,7 +137,38 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
         "has_active_plan": True,
         "created_at": datetime.now(timezone.utc)
     }
-    await db["users"].insert_one(admin_user)
+    try:
+        await db["tenants"].insert_one(tenant_doc)
+        await db["daily_forensic_ledgers"].insert_one(genesis_block)
+        await db["users"].insert_one(admin_user)
+    except Exception as exc:
+        logger.exception(
+            "Tenant provisioning write failed; rolling back tenant=%s admin=%s",
+            tenant_id,
+            admin_email,
+        )
+        rollback_failures = []
+        # Client-generated document IDs make ambiguous write cleanup exact:
+        # an older tenant can never be removed by a rare tenant-ID collision.
+        for collection, query in (
+            ("users", {"_id": admin_user["_id"]}),
+            ("daily_forensic_ledgers", {"_id": genesis_block["_id"]}),
+            ("tenants", {"_id": tenant_doc["_id"]}),
+        ):
+            try:
+                await db[collection].delete_many(query)
+            except Exception as rollback_exc:
+                rollback_failures.append(f"{collection}: {rollback_exc!r}")
+        if rollback_failures:
+            logger.critical(
+                "Tenant provisioning rollback incomplete tenant=%s failures=%s",
+                tenant_id,
+                "; ".join(rollback_failures),
+            )
+        raise HTTPException(
+            status_code=500,
+            detail="Tenant provisioning failed; no account was created.",
+        ) from exc
 
     # 4. Sync plan to Redis cache for instant worker entitlement checks
     redis = getattr(request.app.state, "redis", None)
@@ -153,8 +193,8 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
         tenant_id=tenant_id,
         company_name=req.company_name,
         plan_type=req.plan_type,
-        admin_email=req.admin_email,
-        message=f"Tenant provisioned. Admin account created for {req.admin_email}. Client can now log in at the dashboard."
+        admin_email=admin_email,
+        message=f"Tenant provisioned. Admin account created for {admin_email}. Client can now log in at the dashboard."
     )
 
 @router.get("/tenants")

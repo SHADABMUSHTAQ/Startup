@@ -36,6 +36,28 @@ async def test_stream_trim_does_nothing_until_all_required_groups_exist(redis_cl
     assert await redis_client.xlen(stream) == 1
 
 
+@pytest.mark.asyncio
+async def test_stream_trim_ignores_unrelated_stale_consumer_groups(redis_client):
+    stream = "stream-retention-stale-group"
+    message_ids = [await redis_client.xadd(stream, {"payload": str(index)}) for index in range(4)]
+
+    for group in RAW_REQUIRED_GROUPS:
+        await redis_client.xgroup_create(stream, group, id="0-0")
+        rows = await redis_client.xreadgroup(group, f"{group}-consumer", {stream: ">"}, count=10)
+        delivered_ids = [message_id for _, messages in rows for message_id, _ in messages]
+        await redis_client.xack(stream, group, *delivered_ids)
+
+    # This profile-gated legacy consumer has never read the stream. It must
+    # not prevent the active SIEM/FBR/PECA pipeline from reclaiming entries.
+    await redis_client.xgroup_create(stream, "threat_hunters", id="0-0")
+
+    trimmed = await trim_acknowledged_stream(redis_client, stream, RAW_REQUIRED_GROUPS)
+    remaining_ids = [message_id for message_id, _ in await redis_client.xrange(stream)]
+
+    assert trimmed == 3
+    assert remaining_ids == message_ids[-1:]
+
+
 def test_ingest_producers_do_not_use_unsafe_maxlen_trimming():
     from pathlib import Path
 

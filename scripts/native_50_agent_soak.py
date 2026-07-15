@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import concurrent.futures
 import os
 import sys
@@ -186,6 +187,15 @@ def main() -> int:
             )
         )
     accepted = sum(1 for status, _ in results if status in {200, 202})
+    status_counts = Counter(status for status, _ in results)
+    print(
+        "[INFO] Burst response distribution: "
+        + ", ".join(f"HTTP {status}={count}" for status, count in sorted(status_counts.items()))
+    )
+    for failed_status in sorted(status for status in status_counts if status not in {200, 202}):
+        sample_body = next(body for status, body in results if status == failed_status)
+        sample_text = str(sample_body).replace("\r", " ").replace("\n", " ")[:300]
+        print(f"[INFO] Burst failure sample HTTP {failed_status}: {sample_text}")
     print(f"[{'PASS' if accepted == 50 else 'FAIL'}] Burst accepted: {accepted}/50 requests")
     if accepted != 50:
         failures.append(f"only {accepted}/50 burst requests accepted")
