@@ -98,22 +98,23 @@ def _exact_search_query(tenant_id: str, term: str) -> dict:
     }
 
 
-def _prefix_search_query(tenant_id: str, term: str) -> dict:
-    prefix = f"^{_re.escape(term)}"
+def _text_search_query(tenant_id: str, term: str) -> dict:
+    contains = _re.escape(term)
     return {
         "tenant_id": tenant_id,
         "$or": [
-            {"event_uid": {"$regex": prefix, "$options": "i"}},
-            {"alert_uid": {"$regex": prefix, "$options": "i"}},
-            {"event_id": {"$regex": prefix, "$options": "i"}},
-            {"source_ip": {"$regex": prefix, "$options": "i"}},
-            {"ip": {"$regex": prefix, "$options": "i"}},
-            {"user": {"$regex": prefix, "$options": "i"}},
-            {"message": {"$regex": prefix, "$options": "i"}},
-            {"raw_message": {"$regex": prefix, "$options": "i"}},
-            {"event_id_meaning": {"$regex": prefix, "$options": "i"}},
-            {"engine_source": {"$regex": prefix, "$options": "i"}},
-            {"severity": {"$regex": prefix, "$options": "i"}},
+            {"event_uid": {"$regex": contains, "$options": "i"}},
+            {"alert_uid": {"$regex": contains, "$options": "i"}},
+            {"event_id": {"$regex": contains, "$options": "i"}},
+            {"source_ip": {"$regex": contains, "$options": "i"}},
+            {"ip": {"$regex": contains, "$options": "i"}},
+            {"user": {"$regex": contains, "$options": "i"}},
+            {"title": {"$regex": contains, "$options": "i"}},
+            {"message": {"$regex": contains, "$options": "i"}},
+            {"raw_message": {"$regex": contains, "$options": "i"}},
+            {"event_id_meaning": {"$regex": contains, "$options": "i"}},
+            {"engine_source": {"$regex": contains, "$options": "i"}},
+            {"severity": {"$regex": contains, "$options": "i"}},
         ],
     }
 
@@ -130,7 +131,9 @@ async def _run_safe_global_search(db, tenant_id: str, q: str, days: str, skip: i
 
     time_clause = _time_filter(days)
     docs = []
-    collections = ("security_alerts", "siem_cold_vault", "fbr_pos_logs", "peca_forensic_logs", "csv_uploads")
+    # This is the operational dashboard search. Compliance evidence stays
+    # behind the dedicated compliance routes and their stricter RBAC contract.
+    collections = ("security_alerts", "siem_cold_vault", "csv_uploads")
     for coll_name in collections:
         if search_term:
             exact_query = _exact_search_query(tenant_id, search_term)
@@ -140,10 +143,10 @@ async def _run_safe_global_search(db, tenant_id: str, q: str, days: str, skip: i
             docs.extend(await cursor.to_list(length=limit))
 
             if len(search_term) >= 3:
-                prefix_query = _prefix_search_query(tenant_id, search_term)
+                text_query = _text_search_query(tenant_id, search_term)
                 if time_clause:
-                    prefix_query = {"$and": [prefix_query, time_clause]}
-                cursor = db[coll_name].find(prefix_query).sort([("timestamp", -1), ("_id", -1)]).limit(limit)
+                    text_query = {"$and": [text_query, time_clause]}
+                cursor = db[coll_name].find(text_query).sort([("timestamp", -1), ("_id", -1)]).limit(limit)
                 docs.extend(await cursor.to_list(length=limit))
         else:
             latest_query = {"tenant_id": tenant_id}
@@ -155,7 +158,7 @@ async def _run_safe_global_search(db, tenant_id: str, q: str, days: str, skip: i
     archived_docs, _ = await fetch_archived_documents(
         db,
         tenant_id=tenant_id,
-        collections=("security_alerts", "siem_cold_vault", "fbr_pos_logs", "peca_forensic_logs"),
+        collections=("security_alerts", "siem_cold_vault"),
         start_dt=_archive_start(days),
         event_id=search_term if search_term.isdigit() else None,
         search_term=search_term or None,

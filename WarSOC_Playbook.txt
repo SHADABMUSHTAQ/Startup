@@ -1,0 +1,75 @@
+================================================================================
+                        HOW TO USE WARSOC (PRACTICAL GUIDE)
+================================================================================
+
+This guide explains exactly how to run, use, and test WarSOC step-by-step.
+
+--------------------------------------------------------------------------------
+STEP 1: START THE SYSTEM
+--------------------------------------------------------------------------------
+1. Open a terminal, go to the backend folder, and start the backend:
+   cd C:\Users\Lenovo\Desktop\Startup-backend
+   uvicorn app.main:app --reload --port 8000
+
+2. Open another terminal, go to the backend folder, and start the SIEM Worker:
+   cd C:\Users\Lenovo\Desktop\Startup-backend
+   python -m app.workers.siem_worker
+
+3. Open a third terminal, go to the frontend folder, and start the UI:
+   cd C:\Users\Lenovo\Desktop\Startup-main
+   npm run dev
+
+--------------------------------------------------------------------------------
+STEP 2: LOG IN TO THE DASHBOARD
+--------------------------------------------------------------------------------
+1. Open your browser and go to: http://localhost:5173
+2. Log in using one of the existing test accounts:
+   - Email: ceo@brandivemedsols.com
+   - Email: abdullah@cyberzeusglobal.com
+   (Use the passwords you created for these accounts)
+
+--------------------------------------------------------------------------------
+STEP 3: DEPLOY AN AGENT TO A WINDOWS MACHINE
+--------------------------------------------------------------------------------
+1. In the Dashboard, go to the "Agents" tab.
+2. Click "Deploy New Agent" or "Generate Installer".
+3. The system will give you a PowerShell command or an installer executable.
+4. Run that installer on the Windows machine you want to monitor.
+5. Wait 60 seconds. Refresh the "Agents" tab in the dashboard. You will see the 
+   new Windows machine listed as "Online".
+
+--------------------------------------------------------------------------------
+STEP 4: TRIGGER A TEST ALERT
+--------------------------------------------------------------------------------
+To prove the SIEM is working, you can trigger a real alert from the monitored 
+Windows machine:
+
+Test 1: Brute Force / Password Spray
+- On the Windows machine where the agent is installed, try logging in with the 
+  wrong password 5 times in a row.
+- Wait a few moments.
+
+Test 2: Ransomware / File Deletion
+- Open PowerShell as Administrator on the monitored machine.
+- Run this command to clear the Windows Event Logs (this triggers the 
+  "Ghost Admin" or "Log Clearing" alert):
+  wevtutil cl Security
+
+--------------------------------------------------------------------------------
+STEP 5: VIEW THE ALERTS
+--------------------------------------------------------------------------------
+1. Go back to your WarSOC Dashboard (http://localhost:5173).
+2. Click on the "Alerts" tab.
+3. You will see the alerts you just triggered (e.g., "Failed Login Anomaly" or 
+   "Log Cleared").
+4. Click on an alert to see exactly which IP address caused it, the time it 
+   happened, and the Mitre ATT&CK tactic used.
+
+--------------------------------------------------------------------------------
+STEP 6: VIEW RAW LOGS (ARCHIVE)
+--------------------------------------------------------------------------------
+1. In the Dashboard, go to the "Compliance" or "Archive" tab.
+2. Here you can search through all the raw data the agent sent, even if it 
+   didn't trigger an alert. 
+3. This is used by analysts to investigate what else a hacker did before or 
+   after the alert fired.

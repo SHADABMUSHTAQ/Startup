@@ -27,7 +27,7 @@ from app.utils.agent_crypto import (
     build_signable_event_payload,
 )
 
-def _http_event(event_id, event_uid, tenant_id, agent_id, message, source_ip, private_key_pem, user="SYSTEM"):
+def _http_event(event_id, event_uid, tenant_id, agent_id, message, source_ip, private_key_pem, user="SYSTEM", event_type=None):
     event = {
         "event_uid": event_uid,
         "event_id": event_id,
@@ -42,6 +42,8 @@ def _http_event(event_id, event_uid, tenant_id, agent_id, message, source_ip, pr
         "processed_data": {},
         "agent_version": "grand-master-hammer",
     }
+    if event_type:
+        event["event_type"] = event_type
     signable = build_signable_event_payload(event)
     payload_hash = build_payload_hash(signable)
     canonical = build_event_signature_string(agent_id, event["timestamp"], event_uid, payload_hash)
@@ -126,8 +128,8 @@ async def test_all_catalog_rules_e2e(clean_slate, mock_tenant_a, mongo_client, r
         stateful_events = []
         
         # 1. Phishing Kill Chain (needs 2 stages)
-        stateful_events.append(_http_event(2, str(uuid.uuid4()), mock_tenant_a["tenant_id"], mock_tenant_a["agent_id"], "verify your account via http://evil.com", "10.0.0.99", mock_tenant_a["private_key_pem"], user="victim"))
-        stateful_events.append(_http_event(3, str(uuid.uuid4()), mock_tenant_a["tenant_id"], mock_tenant_a["agent_id"], "wscript.exe executed payload", "10.0.0.99", mock_tenant_a["private_key_pem"], user="victim"))
+        stateful_events.append(_http_event(2, str(uuid.uuid4()), mock_tenant_a["tenant_id"], mock_tenant_a["agent_id"], "verify your account via http://evil.com", "10.0.0.99", mock_tenant_a["private_key_pem"], user="victim", event_type="email_message"))
+        stateful_events.append(_http_event(4688, str(uuid.uuid4()), mock_tenant_a["tenant_id"], mock_tenant_a["agent_id"], "wscript.exe C:\\Users\\victim\\Downloads\\invoice.js", "10.0.0.99", mock_tenant_a["private_key_pem"], user="victim", event_type="process_create"))
         
         # 2. Horizontal Port Scan (10 events, unique destination IP)
         for i in range(11):

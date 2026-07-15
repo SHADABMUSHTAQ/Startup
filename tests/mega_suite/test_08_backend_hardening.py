@@ -530,13 +530,37 @@ async def test_data_search_does_not_leak_cross_tenant_logs(client, db):
         ]
     )
 
-    resp = await client.get("/api/v1/data/search?q=PowerShell", headers=tenant_a_headers)
+    # Operators should not need to know the beginning of the stored message.
+    resp = await client.get("/api/v1/data/search?q=encoded", headers=tenant_a_headers)
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["pagination"]["count"] == 1
     assert body["data"][0]["tenant_id"] == tenant_a["tenant_id"]
     assert body["data"][0]["source_ip"] == "10.0.0.10"
+
+
+async def test_data_search_matches_alert_title_substrings(client, db):
+    headers, tenant, _ = await _signup_and_login(client, "hardening_search_title")
+    await db["security_alerts"].insert_one(
+        {
+            "tenant_id": tenant["tenant_id"],
+            "timestamp": "2026-06-06T12:02:00+00:00",
+            "title": "Potential command injection activity detected",
+            "source_ip": "10.0.0.30",
+            "severity": "CRITICAL",
+        }
+    )
+
+    resp = await client.get(
+        "/api/v1/data/search?q=command%20injection",
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["pagination"]["count"] == 1
+    assert body["data"][0]["title"] == "Potential command injection activity detected"
 
 
 async def test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches(client, db):

@@ -7,7 +7,7 @@ import json
 import re
 import uuid
 import time
-from urllib.parse import urlparse
+from urllib.parse import unquote_plus, urlparse
 from datetime import datetime, timedelta, timezone
 import redis.asyncio as aioredis
 from app.utils.siem_catalog import SIEM_RULES
@@ -72,6 +72,8 @@ class SIEMEngine:
         self.rules = {}
         rules_data = self.config.get("detection", {}).get("rules", {})
         for rule_name, rule_meta in rules_data.items():
+            if not rule_meta.get("enabled", True):
+                continue
             try:
                 self.rules[rule_name] = {
                     "pattern": re.compile(rule_meta["regex"]),
@@ -105,6 +107,10 @@ class SIEMEngine:
         event_type = str(log_entry.get("event_type", "unknown")).lower()
         
         event_id = str(log_entry.get("event_id", ""))
+        raw_data = log_entry.get("raw_data") if isinstance(log_entry.get("raw_data"), dict) else {}
+        # Web rules may only inspect records produced by the reviewed web-log
+        # collector. A caller-provided event_type alone is not trusted context.
+        trusted_web_origin = bool(raw_data.get("web_log_file"))
 
         # Tenant-aware SOAR whitelist: check per-tenant whitelist in Redis (if available)
         tenant_id = log_entry.get("tenant_id")
@@ -158,6 +164,10 @@ class SIEMEngine:
         if self.global_suppress_tokens and any(token in msg_lower for token in self.global_suppress_tokens):
             return findings
 
+        elevated_powershell_alert = self._detect_elevated_powershell(log_entry, event_id)
+        if elevated_powershell_alert:
+            findings.append(elevated_powershell_alert)
+
         phishing_alert = self._detect_phishing(log_entry, msg_lower, event_type)
         if phishing_alert:
             findings.append(phishing_alert)
@@ -168,6 +178,8 @@ class SIEMEngine:
 
             required_context = rule.get("requires_context", set())
             if required_context and event_type not in required_context:
+                continue
+            if required_context.intersection({"http_request", "http_404", "http_500"}) and not trusted_web_origin:
                 continue
 
             if len(msg) < rule.get("min_message_length", self.default_min_message_length):
@@ -409,7 +421,15 @@ class CorrelationEngine:
         if not isinstance(log_entry, dict):
             return not any(
                 rule.get(field)
-                for field in ("ransomware_extensions", "sensitive_keywords", "keywords")
+                for field in (
+                    "ransomware_extensions",
+                    "sensitive_keywords",
+                    "keywords",
+                    "sql_patterns",
+                    "xss_patterns",
+                    "target_path_prefix",
+                    "logon_types",
+                )
             )
 
         searchable_fields = (
@@ -425,7 +445,50 @@ class CorrelationEngine:
             str(self._extract_field(log_entry, field) or "").strip().lower()
             for field in searchable_fields
         ]
-        searchable_text = " ".join(value for value in searchable_values if value)
+        searchable_text = unquote_plus(" ".join(value for value in searchable_values if value))
+
+        allowed_logon_types = {
+            str(logon_type).strip()
+            for logon_type in rule.get("logon_types", [])
+            if str(logon_type).strip()
+        }
+        if allowed_logon_types:
+            actual_logon_type = str(self._extract_field(log_entry, "logon_type") or "").strip()
+            if actual_logon_type not in allowed_logon_types:
+                return False
+
+        sql_patterns = {
+            str(pattern).strip().lower()
+            for pattern in rule.get("sql_patterns", [])
+            if len(str(pattern).strip()) > 1
+        }
+        if sql_patterns:
+            structural_sql = (
+                re.search(r"\bunion(?:\s+all)?\s+select\b", searchable_text)
+                or re.search(r"\bselect\b.{0,80}\bfrom\b", searchable_text)
+                or re.search(r"\binsert\b.{0,80}\binto\b", searchable_text)
+                or re.search(r"\bdelete\b.{0,80}\bfrom\b", searchable_text)
+                or re.search(r"\bdrop\b.{0,40}\b(?:table|database)\b", searchable_text)
+                or re.search(r"(?:'|\")\s*(?:or|and)\s+[^\s]+\s*=\s*[^\s]+", searchable_text)
+                or "information_schema" in searchable_text
+                or "benchmark(" in searchable_text
+                or "sleep(" in searchable_text
+            )
+            matched_tokens = sum(pattern in searchable_text for pattern in sql_patterns)
+            if not structural_sql and matched_tokens < 2:
+                return False
+
+        xss_patterns = {
+            str(pattern).strip().lower()
+            for pattern in rule.get("xss_patterns", [])
+            if str(pattern).strip()
+        }
+        if xss_patterns and not any(pattern in searchable_text for pattern in xss_patterns):
+            return False
+
+        target_path_prefix = str(rule.get("target_path_prefix") or "").strip().lower()
+        if target_path_prefix and target_path_prefix not in searchable_text:
+            return False
 
         configured_extensions = {
             str(extension).strip().lower()
@@ -482,7 +545,7 @@ class CorrelationEngine:
             return event_id in {"4732", "1102"} or event_type in {"group_membership_change", "log_cleared"}
 
         if token in ("smb_lateral_movement", "smb_lateral"):
-            return event_id in {"4648", "4776", "4768", "4769"}
+            return event_id in {"4648", "4769"}
 
         if token in ("smb_enumeration", "smb-enumeration"):
             return event_id == "5140" or event_type == "network_share_accessed"
@@ -517,6 +580,7 @@ class CorrelationEngine:
         normalized = str(field_name).strip().lower()
         processed = log_entry.get("processed_data") if isinstance(log_entry.get("processed_data"), dict) else {}
         raw_event = log_entry.get("raw_event_data") if isinstance(log_entry.get("raw_event_data"), dict) else {}
+        raw_system = raw_event.get("system") if isinstance(raw_event.get("system"), dict) else {}
         raw_data = log_entry.get("raw_data") if isinstance(log_entry.get("raw_data"), dict) else {}
 
         candidate_groups = {
@@ -524,12 +588,14 @@ class CorrelationEngine:
             "user": [log_entry.get("user"), log_entry.get("username"), processed.get("user"), processed.get("username"), raw_event.get("user"), raw_event.get("username"), raw_data.get("user"), raw_data.get("username")],
             "source_ip": [log_entry.get("source_ip"), log_entry.get("ip"), processed.get("source_network_address"), processed.get("source_ip"), raw_event.get("source_ip"), raw_event.get("ip"), raw_data.get("source_ip"), raw_data.get("ip")],
             "src_ip": [log_entry.get("source_ip"), log_entry.get("ip"), processed.get("source_network_address"), processed.get("source_ip"), raw_event.get("source_ip"), raw_event.get("ip"), raw_data.get("source_ip"), raw_data.get("ip")],
-            "destination_ip": [log_entry.get("destination_ip"), processed.get("destination_ip"), raw_event.get("destination_ip"), raw_data.get("destination_ip")],
-            "dest_ip": [log_entry.get("destination_ip"), processed.get("destination_ip"), raw_event.get("destination_ip"), raw_data.get("destination_ip")],
+            "destination_ip": [log_entry.get("destination_ip"), log_entry.get("destination_address"), processed.get("destination_ip"), processed.get("destination_address"), raw_event.get("destination_ip"), raw_event.get("destination_address"), raw_data.get("destination_ip"), raw_data.get("destination_address")],
+            "dest_ip": [log_entry.get("destination_ip"), log_entry.get("destination_address"), processed.get("destination_ip"), processed.get("destination_address"), raw_event.get("destination_ip"), raw_event.get("destination_address"), raw_data.get("destination_ip"), raw_data.get("destination_address")],
             "destination_port": [log_entry.get("destination_port"), processed.get("destination_port"), raw_event.get("destination_port"), raw_data.get("destination_port")],
             "dest_port": [log_entry.get("destination_port"), processed.get("destination_port"), raw_event.get("destination_port"), raw_data.get("destination_port")],
             "timestamp": [log_entry.get("timestamp"), log_entry.get("ingested_at")],
             "event_type": [log_entry.get("event_type"), log_entry.get("event_id_meaning")],
+            "agent_id": [log_entry.get("agent_id"), processed.get("agent_id"), raw_event.get("agent_id"), raw_data.get("agent_id")],
+            "computer": [log_entry.get("computer"), processed.get("computer"), raw_system.get("computer"), raw_event.get("computer"), raw_data.get("computer")],
         }
 
         candidates = candidate_groups.get(normalized, [log_entry.get(field_name), processed.get(field_name), raw_event.get(field_name), raw_data.get(field_name)])
@@ -727,8 +793,6 @@ class CorrelationEngine:
                 return None
 
             corr_logger.critical(f"[CORR][SPRAY] TRIGGERED: {source_ip} sprayed {unique_count} users!")
-            # Enforce immediate network-level containment for spray source IPs.
-            await self._trigger_auto_revocation(tenant_id, source_ip)
             return self._alert(
                 alert_type="Password spraying attack detected",
                 severity="HIGH",
@@ -741,7 +805,11 @@ class CorrelationEngine:
                 user=target_user,
                 event_id=int(event_id) if str(event_id).isdigit() else event_id,
                 mitre="T1110.003",
-                extra={"unique_targets": unique_count, "window_minutes": spray_window // 60},
+                extra={
+                    "unique_targets": unique_count,
+                    "window_minutes": spray_window // 60,
+                    "recommended_action": "Review the source and use the guarded Block action if containment is approved.",
+                },
             )
         return None
 
@@ -820,9 +888,6 @@ class CorrelationEngine:
                 f"{distance_km:.0f}km in {elapsed_hours:.2f}h = {required_speed:.0f}km/h"
             )
 
-            # ⚡ AUTOMATED SOAR: Kill the compromised session
-            await self._trigger_auto_revocation(tenant_id, source_ip)
-
             return self._alert(
                 alert_type="Impossible travel detected",
                 severity="CRITICAL",
@@ -843,6 +908,7 @@ class CorrelationEngine:
                     "prev_ip":         prev_ip,
                     "prev_location":   {"lat": prev_lat, "lon": prev_lon},
                     "curr_location":   {"lat": lat, "lon": lon},
+                    "recommended_action": "Validate identity and location before using the guarded Block action.",
                 },
             )
         except Exception as e:
@@ -853,7 +919,13 @@ class CorrelationEngine:
     # CORRELATION 3 — Ghost Admin Sequence (T1548 + T1070)
     # ==========================================================
     async def check_ghost_admin(
-        self, tenant_id: str, source_ip: str, user: str, event_id: str, window_seconds: int | None = None
+        self,
+        tenant_id: str,
+        source_ip: str,
+        user: str,
+        event_id: str,
+        window_seconds: int | None = None,
+        log_entry: dict | None = None,
     ) -> dict | None:
         """
         Pattern: EventID 4732 (Added to Administrators) followed by
@@ -864,7 +936,8 @@ class CorrelationEngine:
         On 1102: If the 4732 marker exists for that IP → CRITICAL active breach.
         """
         ghost_window = int(window_seconds or self.GHOST_WINDOW)
-        ghost_key = f"warsoc:state:4732:{tenant_id}:{user}"
+        endpoint_subject = self._extract_field(log_entry, "agent_id") or source_ip or "unknown"
+        ghost_key = f"warsoc:state:4732:{tenant_id}:{endpoint_subject}"
         try:
             if event_id == "4732":
                 # Stage 1: Admin grant detected — arm the trigger
@@ -884,10 +957,7 @@ class CorrelationEngine:
                         f"[CORR][GHOST] T1548+T1070 — GHOST ADMIN SEQUENCE CONFIRMED: "
                         f"{source_ip} escalated then cleared logs within {ghost_window}s for {tenant_id}"
                     )
-                    
-                    # ⚡ AUTOMATED SOAR: Kill the attacker's connection
-                    await self._trigger_auto_revocation(tenant_id, source_ip)
-                    
+
                     return self._alert(
                         alert_type="Ghost Admin Sequence Detected",
                         severity="CRITICAL",
@@ -905,6 +975,8 @@ class CorrelationEngine:
                             "stage_1_event": "4732 — Member Added to Administrators",
                             "stage_2_event": "1102 — Security Audit Log Cleared",
                             "window_seconds": ghost_window,
+                            "agent_id": endpoint_subject,
+                            "recommended_action": "Isolate the endpoint and review the admin-group change before blocking any IP.",
                         },
                     )
         except Exception as e:
@@ -924,29 +996,38 @@ class CorrelationEngine:
         window_seconds: int | None = None,
         log_entry: dict | None = None,
     ) -> dict | None:
-        """Detect credential-use and ticket activity that fans out across SMB targets."""
-        if event_id not in {"4648", "4776", "4768", "4769"}:
+        """Detect explicit credentials or CIFS tickets fanning out across SMB hosts."""
+        if event_id not in {"4648", "4769"}:
             return None
 
-        if not source_ip:
+        agent_id = self._extract_field(log_entry, "agent_id")
+        actor_subject = agent_id or source_ip or user
+        if not actor_subject:
             return None
 
         lateral_window = int(window_seconds or 7200)
         lateral_threshold = int(threshold_users or 2)
-        target_identity = (
-            self._extract_field(log_entry, "target_user")
-            or self._extract_field(log_entry, "share_name")
-            or self._extract_field(log_entry, "service_name")
-            or self._extract_field(log_entry, "account_name")
-            or user
-            or "unknown"
-        )
-        target_marker = f"{event_id}:{target_identity}"
-        lateral_key = f"warsoc:corr:smb_lateral:{tenant_id}:{source_ip}"
+        if event_id == "4769":
+            service_name = str(self._extract_field(log_entry, "service_name") or "").strip()
+            if not service_name.lower().startswith("cifs/"):
+                return None
+            target_host = service_name.split("/", 1)[1].split(":", 1)[0]
+        else:
+            target_host = str(self._extract_field(log_entry, "target_server") or "").strip()
+
+        normalized_target = target_host.rstrip(".").lower()
+        computer = str(self._extract_field(log_entry, "computer") or "").rstrip(".").lower()
+        local_names = {"", "-", "localhost", "127.0.0.1", "::1"}
+        if normalized_target in local_names:
+            return None
+        if computer and normalized_target.split(".", 1)[0] == computer.split(".", 1)[0]:
+            return None
+
+        lateral_key = f"warsoc:corr:smb_lateral:{tenant_id}:{actor_subject}"
 
         try:
             pipe = self.redis.pipeline()
-            pipe.sadd(lateral_key, target_marker)
+            pipe.sadd(lateral_key, normalized_target)
             pipe.sadd(f"{lateral_key}:events", event_id)
             pipe.expire(lateral_key, lateral_window)
             pipe.expire(f"{lateral_key}:events", lateral_window)
@@ -960,10 +1041,17 @@ class CorrelationEngine:
         if unique_targets < lateral_threshold:
             return None
 
+        alert_key = f"warsoc:corr:alerted:smb_lateral:{tenant_id}:{actor_subject}"
+        try:
+            if not await self.redis.set(alert_key, "1", nx=True, ex=lateral_window):
+                return None
+        except Exception as e:
+            corr_logger.warning(f"[CORR][SMB-LM] Alert claim failed: {e}")
+            return None
+
         corr_logger.critical(
             f"[CORR][SMB-LM] Lateral movement pattern confirmed for {source_ip}; targets={unique_targets}"
         )
-        await self._trigger_auto_revocation(tenant_id, source_ip)
         return self._alert(
             alert_type="SMB lateral movement detected",
             severity="HIGH",
@@ -976,7 +1064,11 @@ class CorrelationEngine:
             user=user,
             event_id=int(event_id) if str(event_id).isdigit() else event_id,
             mitre="T1021.002",
-            extra={"unique_targets": unique_targets, "window_minutes": lateral_window // 60},
+            extra={
+                "unique_targets": unique_targets,
+                "window_minutes": lateral_window // 60,
+                "recommended_action": "Validate the SMB targets, then isolate the endpoint or use guarded IP blocking.",
+            },
         )
 
     # ==========================================================
@@ -1326,54 +1418,156 @@ class CorrelationEngine:
         user: str,
         event_id: str,
         log_entry: dict,
+        event_type: str = "",
         window_seconds: int = 900
     ) -> dict | None:
-        message = log_entry.get("message", "").lower()
-        if not message:
+        log_entry = log_entry or {}
+        message = str(log_entry.get("message") or "").lower()
+        actor = str(user or "").strip()
+        actor_token = actor.lower()
+        if not message or not actor:
             return None
 
-        # Check for execution phase keywords
-        execution_keywords = ["cmd.exe", "powershell.exe", "wscript.exe", "cscript.exe", "mshta.exe"]
-        is_execution = any(k in message for k in execution_keywords)
-
-        # Check for lure/click phase keywords
-        lure_keywords = ["verify your account", "invoice attached", "urgent payment", "http://", "https://"]
-        is_lure = any(k in message for k in lure_keywords)
-
-        if not (is_execution or is_lure):
+        rule_cfg = (
+            self.stateful_rules.get("auth_identity", {}).get("phishing_kill_chain", {})
+            if isinstance(self.stateful_rules.get("auth_identity"), dict)
+            else {}
+        )
+        ignored_identities = {
+            str(value).strip().lower()
+            for value in rule_cfg.get(
+                "ignored_identities",
+                ["system", "local service", "network service", "anonymous logon", "unknown"],
+            )
+            if str(value).strip()
+        }
+        if actor_token in ignored_identities or actor_token.endswith("$"):
             return None
 
-        redis_key = f"warsoc:dyn:phish_kill_chain:{tenant_id}:{user}"
-        
+        processed = log_entry.get("processed_data") if isinstance(log_entry.get("processed_data"), dict) else {}
+        raw_event_data = log_entry.get("raw_event_data") if isinstance(log_entry.get("raw_event_data"), dict) else {}
+        raw_system = raw_event_data.get("system") if isinstance(raw_event_data.get("system"), dict) else {}
+        raw_data = log_entry.get("raw_data") if isinstance(log_entry.get("raw_data"), dict) else {}
+        agent_scope = str(
+            log_entry.get("agent_id")
+            or processed.get("computer")
+            or raw_system.get("computer")
+            or ""
+        ).strip()
+        if not agent_scope:
+            return None
+
+        event_type_token = self._normalize_token(event_type or log_entry.get("event_type"))
+        delivery_event_types = {
+            self._normalize_token(value)
+            for value in rule_cfg.get(
+                "delivery_event_types",
+                ["email", "email_gateway", "email_message", "browser_download", "url_click", "web_proxy", "http_request"],
+            )
+            if str(value).strip()
+        }
+        lure_keywords = [
+            str(value).strip().lower()
+            for value in rule_cfg.get(
+                "lure_keywords",
+                ["verify your account", "password expired", "invoice attached", "urgent action required", "security alert"],
+            )
+            if str(value).strip()
+        ]
+        risky_attachments = (".hta", ".js", ".jse", ".vbs", ".vbe", ".lnk", ".iso", ".img")
+        has_url = "http://" in message or "https://" in message
+        has_lure_language = any(keyword in message for keyword in lure_keywords)
+        has_risky_attachment = any(extension in message for extension in risky_attachments)
+        trusted_web_origin = bool(raw_data.get("web_log_file"))
+        is_delivery = (
+            event_type_token in delivery_event_types
+            and (event_type_token != "http_request" or trusted_web_origin)
+            and ((has_lure_language and has_url) or (has_risky_attachment and (has_lure_language or has_url)))
+        )
+
+        execution_keywords = [
+            str(value).strip().lower()
+            for value in rule_cfg.get(
+                "execution_keywords",
+                ["powershell", "mshta", "wscript", "cscript", "rundll32", "regsvr32", "certutil", "bitsadmin"],
+            )
+            if str(value).strip()
+        ]
+        suspicious_markers = [
+            str(value).strip().lower()
+            for value in rule_cfg.get(
+                "suspicious_execution_markers",
+                ["-enc", "-encodedcommand", "downloadstring", "invoke-webrequest", "frombase64string", "-windowstyle hidden", "http://", "https://", ".js", ".jse", ".vbs", ".vbe", ".hta", "javascript:"],
+            )
+            if str(value).strip()
+        ]
+        parent_process = str(processed.get("parent_process_name") or "").lower()
+        suspicious_parents = [
+            str(value).strip().lower()
+            for value in rule_cfg.get("suspicious_parent_processes", [])
+            if str(value).strip()
+        ]
+        is_process_event = str(event_id or "") == "4688" or event_type_token in {
+            "process_create",
+            "process_creation",
+            "command_line",
+            "powershell",
+        }
+        is_execution = (
+            is_process_event
+            and any(keyword in message for keyword in execution_keywords)
+            and (
+                any(marker in message for marker in suspicious_markers)
+                or any(parent.endswith(parent_name) for parent_name in suspicious_parents for parent in [parent_process])
+            )
+        )
+        if not is_delivery and not is_execution:
+            return None
+
+        scope_digest = hashlib.sha256(
+            f"{tenant_id}\x00{agent_scope}\x00{actor_token}".encode("utf-8")
+        ).hexdigest()[:32]
+        delivery_key = f"warsoc:dyn:phish_delivery:{scope_digest}"
+        alert_key = f"warsoc:dyn:alerted:phishing:{scope_digest}"
+
         try:
-            stage = "execution" if is_execution else "lure"
-            async with self.redis.pipeline(transaction=True) as pipe:
-                pipe.sadd(redis_key, stage)
-                pipe.expire(redis_key, window_seconds)
-                pipe.scard(redis_key)
-                res = await pipe.execute()
-                stages_count = int(res[2])
+            if is_delivery:
+                delivery_context = json.dumps(
+                    {
+                        "event_uid": log_entry.get("event_uid"),
+                        "timestamp": log_entry.get("timestamp") or log_entry.get("ingested_at"),
+                    },
+                    separators=(",", ":"),
+                )
+                await self.redis.set(delivery_key, delivery_context, ex=window_seconds)
+                return None
+
+            delivery_context = await self.redis.get(delivery_key)
+            if delivery_context is None:
+                return None
         except Exception as e:
             corr_logger.error(f"[CORR][PHISHING] Redis error: {e}")
             return None
 
-        if stages_count >= 2:
-            alert_key = f"warsoc:dyn:alerted:phishing:{tenant_id}:{user}"
-            try:
-                if await self.redis.set(alert_key, "1", nx=True, ex=window_seconds):
-                    return self._alert(
-                        alert_type="Correlated phishing kill-chain detected",
-                        severity="CRITICAL",
-                        summary=f"Phishing kill-chain completed by {user}",
-                        tenant_id=tenant_id,
-                        source_ip=source_ip,
-                        user=user,
-                        event_id=int(event_id) if str(event_id).isdigit() else event_id,
-                        mitre="T1566",
-                        extra={"dynamic_rule": "phishing_kill_chain", "stages": stages_count}
-                    )
-            except Exception:
-                pass
+        try:
+            if await self.redis.set(alert_key, "1", nx=True, ex=window_seconds):
+                return self._alert(
+                    alert_type="Correlated phishing kill-chain detected",
+                    severity="CRITICAL",
+                    summary=f"Phishing delivery followed by suspicious execution for {actor}",
+                    tenant_id=tenant_id,
+                    source_ip=source_ip,
+                    user=actor,
+                    event_id=int(event_id) if str(event_id).isdigit() else event_id,
+                    mitre="T1566",
+                    extra={
+                        "dynamic_rule": "phishing_kill_chain",
+                        "stages": 2,
+                        "agent_id": agent_scope,
+                    },
+                )
+        except Exception as e:
+            corr_logger.error(f"[CORR][PHISHING] Redis alert deduplication error: {e}")
 
         return None
 
@@ -1454,6 +1648,10 @@ class CorrelationEngine:
             event_filter = rule.get("event_filter")
             if not self._event_filter_matches(event_filter, event_id, event_type):
                 continue
+            if str(event_filter or "").lower().startswith("http"):
+                raw_data = log_entry.get("raw_data") if isinstance(log_entry, dict) and isinstance(log_entry.get("raw_data"), dict) else {}
+                if not raw_data.get("web_log_file"):
+                    continue
             if not self._dynamic_rule_payload_matches(rule_name, rule, log_entry):
                 continue
 
@@ -1512,6 +1710,7 @@ class CorrelationEngine:
                             user,
                             event_id,
                             window_seconds=int(window or self.GHOST_WINDOW),
+                            log_entry=log_entry,
                         )
                         if alert:
                             triggered.append(alert)
@@ -1578,6 +1777,7 @@ class CorrelationEngine:
                             user,
                             event_id,
                             log_entry=log_entry,
+                            event_type=event_type,
                             window_seconds=int(window or 900),
                         )
                         if alert:
@@ -1619,7 +1819,17 @@ class CorrelationEngine:
                 group_by = "source_ip"
             
             if (threshold or threshold_users or unique_field) and window:
-                subject = tenant_id if group_by == "tenant" else (source_ip if group_by == "source_ip" else user)
+                agent_id = self._extract_field(log_entry, "agent_id") or "unknown-agent"
+                if group_by == "tenant":
+                    subject = tenant_id
+                elif group_by == "source_ip":
+                    subject = source_ip
+                elif group_by in {"agent", "agent_id"}:
+                    subject = agent_id
+                elif group_by == "agent_user":
+                    subject = f"{agent_id}:{user}"
+                else:
+                    subject = user
                 alert_key = f"warsoc:dyn:alerted:{rule_name}:{tenant_id}:{subject}"
 
                 if threshold_users or unique_field:

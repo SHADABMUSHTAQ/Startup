@@ -63,12 +63,15 @@ def _search_matches(doc: dict, search_term: Optional[str]) -> bool:
         doc.get("source_ip"),
         doc.get("ip"),
         doc.get("user"),
+        doc.get("title"),
+        doc.get("message"),
+        doc.get("raw_message"),
         doc.get("event_id_meaning"),
         doc.get("engine_source"),
         doc.get("severity"),
         processed.get("source_network_address"),
     )
-    return any(str(candidate or "").lower().startswith(expected) for candidate in candidates)
+    return any(expected in str(candidate or "").lower() for candidate in candidates)
 
 
 def _document_identity(doc: dict) -> str:

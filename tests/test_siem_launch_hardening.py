@@ -1,5 +1,6 @@
 import pytest
 
+from app.utils.siem_catalog import SIEM_RULES
 from app.utils.siem_logic import SIEMEngine
 from app.workers.siem_worker import (
     _extract_tenant_id_from_raw_payload,
@@ -97,3 +98,68 @@ def test_dlq_tenant_extraction_handles_malformed_payload():
     raw_payload = """{"tenant_id": "TENANT-A", "message": "mimikatz payload", broken"""
     assert _extract_tenant_id_from_raw_payload(raw_payload) == "TENANT-A"
     assert _extract_tenant_id_from_raw_payload("no tenant here") is None
+
+
+@pytest.mark.asyncio
+async def test_full_token_powershell_creates_a_precise_elevation_alert():
+    engine = SIEMEngine(SIEM_RULES)
+    findings = await engine.analyze_single_log(
+        {
+            "tenant_id": "TENANT-ELEVATION",
+            "agent_id": "AGENT-1",
+            "event_id": "4688",
+            "event_type": "process_create",
+            "source_ip": "192.168.1.10",
+            "user": "alice",
+            "message": r"Process started by alice: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "processed_data": {
+                "new_process_name": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                "token_elevation_type": "%%1937",
+            },
+        }
+    )
+
+    alert = next(finding for finding in findings if finding["type"] == "WINDOWS_ELEVATED_POWERSHELL")
+    assert alert["summary"] == "Elevated PowerShell launched"
+    assert alert["severity"] == "MEDIUM"
+    assert alert["mitre"] == "T1059.001"
+
+
+@pytest.mark.asyncio
+async def test_limited_token_powershell_is_evidence_not_an_elevation_alert():
+    engine = SIEMEngine(SIEM_RULES)
+    findings = await engine.analyze_single_log(
+        {
+            "tenant_id": "TENANT-ELEVATION",
+            "agent_id": "AGENT-1",
+            "event_id": "4688",
+            "event_type": "process_create",
+            "source_ip": "192.168.1.10",
+            "user": "alice",
+            "message": r"Process started by alice: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "processed_data": {
+                "new_process_name": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                "token_elevation_type": "%%1938",
+            },
+        }
+    )
+
+    assert not any(finding["type"] == "WINDOWS_ELEVATED_POWERSHELL" for finding in findings)
+
+
+@pytest.mark.asyncio
+async def test_native_process_telemetry_cannot_be_labelled_as_phishing_by_itself():
+    engine = SIEMEngine(SIEM_RULES)
+    findings = await engine.analyze_single_log(
+        {
+            "tenant_id": "TENANT-PHISH",
+            "agent_id": "AGENT-1",
+            "event_id": "4688",
+            "event_type": "process_create",
+            "source_ip": "192.168.1.10",
+            "user": "alice",
+            "message": "powershell.exe Invoke-WebRequest https://example.test/tool.ps1",
+        }
+    )
+
+    assert not any(finding["type"] == "PHISHING_PATTERN" for finding in findings)

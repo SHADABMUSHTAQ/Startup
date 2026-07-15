@@ -288,10 +288,32 @@ SIEM_RULES = {
                 "windows update"
             ]
         },
+        "native_windows_detection": {
+            "elevated_powershell": {
+                "enabled": True,
+                "severity": "MEDIUM",
+                "mitre_id": "T1059.001",
+                "full_token_values": [
+                    "%%1937",
+                    "token elevation type full",
+                    "tokenelevationtypefull",
+                    "full"
+                ]
+            }
+        },
         "phishing_detection": {
             "enabled": True,
             "score_threshold": 40,
             "minimum_signals": 2,
+            "delivery_event_types": [
+                "email",
+                "email_gateway",
+                "email_message",
+                "browser_download",
+                "url_click",
+                "web_proxy",
+                "http_request"
+            ],
             "credential_lure_keywords": [
                 "verify your account",
                 "password expired",
@@ -379,6 +401,8 @@ SIEM_RULES = {
                 "cooldown_seconds": 60
             },
             "SIEM-FW-001": {
+                "enabled": False,
+                "disabled_reason": "Event 5157 is owned by the native event map; a regex alert would duplicate it",
                 "regex": "(?i)\\b(firewall|connection blocked)\\b",
                 "sev": "MEDIUM",
                 "mitre": "N/A",
@@ -412,57 +436,68 @@ SIEM_RULES = {
             "COMMAND_INJECTION": {
                 "regex": "(?i)(;\\s*(whoami|cat|id|ls|dir|uname|curl|wget|bash|sh|nc|python|perl|ruby|chmod|chown|rm\\s)\\b|\\|\\s*nc|\\$\\s*\\(|`[a-z]+`)",
                 "sev": "CRITICAL",
-                "mitre": "T1059"
+                "mitre": "T1059",
+                "requires_context": ["process_create", "command_line", "http_request"]
             },
             "PATH_TRAVERSAL": {
                 "regex": "(?i)(\\.\\.\\/|\\.\\.\\\\|etc/passwd|win.ini)",
                 "sev": "HIGH",
-                "mitre": "T1083"
+                "mitre": "T1083",
+                "requires_context": ["http_request"]
             },
             "POWERSHELL_OBFUSCATION": {
                 "regex": "(?i)powershell[\\s+.\\-]*(\\-e(nc)?(odedcommand)?|\\-w(indowstyle)?[\\s+]+h(idden)?)[\\s+]+[A-Za-z0-9+/=]{10,}",
                 "sev": "CRITICAL",
-                "mitre": "T1027"
+                "mitre": "T1027",
+                "requires_context": ["process_create", "command_line", "powershell"]
             },
             "PRIVILEGE_ESCALATION": {
                 "regex": "(?i)(sudo\\s+su\\s+\\-|nopasswd:\\s+all|net\\s+localgroup\\s+administrators\\s+.*\\s+/add|passwd\\s+\\-d)",
                 "sev": "HIGH",
-                "mitre": "T1068"
+                "mitre": "T1068",
+                "requires_context": ["process_create", "command_line"]
             },
             "LATERAL_MOVEMENT": {
                 "regex": "(?i)(net\\s+use\\s+\\\\\\\\[a-z0-9.]+\\\\c\\$|wmic\\s+/node:.*process\\s+call\\s+create|winrm\\s+invoke|enter-pssession)",
                 "sev": "HIGH",
-                "mitre": "T1021"
+                "mitre": "T1021",
+                "requires_context": ["process_create", "command_line"]
             },
             "LOG_EVASION": {
                 "regex": "(?i)(wevtutil\\s+cl\\s+|history\\s+\\-c|rm\\s+.*\\.log|shred\\s+|clear-eventlog|set-mppreference\\s+-disablerealtime)",
                 "sev": "HIGH",
-                "mitre": "T1070"
+                "mitre": "T1070",
+                "requires_context": ["process_create", "command_line"]
             },
             "REVERSE_SHELL": {
                 "regex": "(?i)(bash\\s+\\-i\\s+>\\&\\s+/dev/tcp/|python.*\\-c.*socket|perl\\s+\\-e.*socket|nc\\s+-e\\s+/bin/sh)",
                 "sev": "CRITICAL",
-                "mitre": "T1059.004"
+                "mitre": "T1059.004",
+                "requires_context": ["process_create", "command_line"]
             },
             "RECON_COMMANDS": {
                 "regex": "(?i)(whoami|ipconfig|netstat|enum4linux|nmap|arp -a)",
                 "sev": "MEDIUM",
-                "mitre": "T1592"
+                "mitre": "T1592",
+                "requires_context": ["process_create", "command_line"]
             },
             "PERSISTENCE": {
                 "regex": "(?i)(crontab -e|authorized_keys|registry run keys|schtasks /create)",
                 "sev": "HIGH",
-                "mitre": "T1053"
+                "mitre": "T1053",
+                "requires_context": ["process_create", "command_line"]
             },
             "DATA_EXFILTRATION": {
                 "regex": "(?i)(wget\\s+.*(-O|--output|http)|curl\\s+.*(-d|--data|-F|--upload|POST)|nc\\s+-w\\s+\\d+|sftp\\s+.*@|scp\\s+.*:)",
                 "sev": "HIGH",
-                "mitre": "T1041"
+                "mitre": "T1041",
+                "requires_context": ["process_create", "command_line"]
             },
             "STAGING": {
                 "regex": "(?i)(7z\\s+a|zip\\s+\\-r|tar\\s+\\-czf)\\s+.*(/tmp/|/windows/temp/|/appdata/|/var/tmp/)",
                 "sev": "MEDIUM",
-                "mitre": "T1074"
+                "mitre": "T1074",
+                "requires_context": ["process_create", "command_line"]
             },
             "BRUTE_FORCE_PATTERN": {
                 "regex": "(?i)(failed password|authentication failure|login failed|access denied)",
@@ -481,12 +516,14 @@ SIEM_RULES = {
             "XXE_INJECTION": {
                 "regex": "(?i)(<!ENTITY\\s+|<!DOCTYPE\\s+.*SYSTEM\\s+|SYSTEM\\s+[\"']\\s*(?:file|https?|ftp)://|file:///)",
                 "sev": "CRITICAL",
-                "mitre": "T1190"
+                "mitre": "T1190",
+                "requires_context": ["http_request"]
             },
             "MALWARE_EXECUTION": {
                 "regex": "(?i)(mimikatz|hashcat|psexec\\.exe|lazagne|rubeus|sharphound|bloodhound|cobalt\\s*strike|meterpreter)",
                 "sev": "CRITICAL",
-                "mitre": "T1059"
+                "mitre": "T1059",
+                "requires_context": ["process_create", "command_line"]
             },
             "SIGMA_RANSOMWARE_SHADOW_DELETE": {
                 "regex": "(?i)(vssadmin.*delete.*shadows|bcdedit.*recoveryenabled.*no|wmic.*shadowcopy.*delete)",
@@ -517,6 +554,8 @@ SIEM_RULES = {
                 "summary": "Suspicious Download via LOLBin"
             },
             "LINUX_SYSTEM_TIMESTOMPING": {
+                "enabled": False,
+                "disabled_reason": "Linux/syslog intake is not enabled for the Windows SMB pilot",
                 "regex": "(?i)(touch\\s+-t\\s+\\d+|touch\\s+-m\\s+-d)",
                 "sev": "MEDIUM",
                 "mitre": "T1070.006",
@@ -527,7 +566,7 @@ SIEM_RULES = {
                 "regex": "(?i)(cmd\\.exe\\s+/c|powershell(?:\\.exe)?).*?\\s+HTTP/",
                 "sev": "HIGH",
                 "mitre": "T1505.003",
-                "requires_context": ["process_create", "http_request"],
+                "requires_context": ["http_request"],
                 "summary": "Web Shell Activity: Shell spawned from web context"
             }
         }
@@ -540,9 +579,25 @@ SIEM_RULES = {
                 "mitre_id": "T1566",
                 "severity": "CRITICAL",
                 "description": "Correlated phishing kill-chain detected",
-                "group_by": "user",
+                "group_by": "tenant_agent_user",
                 "event_filter": "all",
                 "minimum_stages": 2,
+                "delivery_event_types": [
+                    "email",
+                    "email_gateway",
+                    "email_message",
+                    "browser_download",
+                    "url_click",
+                    "web_proxy",
+                    "http_request"
+                ],
+                "ignored_identities": [
+                    "system",
+                    "local service",
+                    "network service",
+                    "anonymous logon",
+                    "unknown"
+                ],
                 "lure_keywords": [
                     "verify your account",
                     "password expired",
@@ -569,6 +624,32 @@ SIEM_RULES = {
                     "certutil",
                     "bitsadmin",
                     "macro"
+                ],
+                "suspicious_execution_markers": [
+                    "-enc",
+                    "-encodedcommand",
+                    "downloadstring",
+                    "invoke-webrequest",
+                    "frombase64string",
+                    "-windowstyle hidden",
+                    "http://",
+                    "https://",
+                    ".js",
+                    ".jse",
+                    ".vbs",
+                    ".vbe",
+                    ".hta",
+                    "javascript:"
+                ],
+                "suspicious_parent_processes": [
+                    "winword.exe",
+                    "excel.exe",
+                    "outlook.exe",
+                    "powerpnt.exe",
+                    "acrord32.exe",
+                    "chrome.exe",
+                    "msedge.exe",
+                    "firefox.exe"
                 ]
             },
             "high_velocity_brute_force": {
@@ -605,7 +686,8 @@ SIEM_RULES = {
                 "event_filter": "failed_login"
             },
             "impossible_travel": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "No trusted GeoIP enrichment populates native Windows login coordinates in the pilot pipeline",
                 "handler": "impossible_travel",
                 "max_travel_time_hours": 2,
                 "min_distance_km": 500,
@@ -632,10 +714,12 @@ SIEM_RULES = {
                 "description": "Concurrent sessions from multiple IPs",
                 "group_by": "username",
                 "unique_field": "source_ip",
-                "event_filter": "successful_login"
+                "event_filter": "successful_login",
+                "logon_types": ["3", "10"]
             },
             "after_hours_activity": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "Requires tenant timezone and approved business-hours policy; fixed UTC hours create false positives",
                 "handler": "after_hours_activity",
                 "start_hour": 2,
                 "end_hour": 5,
@@ -655,7 +739,8 @@ SIEM_RULES = {
                 "event_filter": "account_created"
             },
             "privilege_escalation_spike": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "No native event emits the generic privilege_escalation type; precise 4688 and 4732 detections remain active",
                 "threshold": 5,
                 "window_seconds": 60,
                 "mitre_id": "T1548",
@@ -723,7 +808,8 @@ SIEM_RULES = {
         },
         "filesystem_ransomware": {
             "mass_file_modification": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "The pilot SACL audits delete and permission rights, not ordinary write operations",
                 "threshold": 50,
                 "window_seconds": 60,
                 "mitre_id": "T1486",
@@ -739,11 +825,12 @@ SIEM_RULES = {
                 "mitre_id": "T1485",
                 "severity": "CRITICAL",
                 "description": "Mass file deletion detected",
-                "group_by": "username",
+                "group_by": "agent_user",
                 "event_filter": "file_delete"
             },
             "sensitive_file_touch": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "The pilot SACL does not audit ordinary read access",
                 "threshold": 5,
                 "window_seconds": 60,
                 "mitre_id": "T1005",
@@ -760,7 +847,8 @@ SIEM_RULES = {
                 ]
             },
             "ransomware_extensions": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "The pilot SACL does not collect reliable file-write/rename telemetry",
                 "threshold": 1,
                 "window_seconds": 60,
                 "mitre_id": "T1486",
@@ -790,7 +878,8 @@ SIEM_RULES = {
                 "event_filter": "data_upload"
             },
             "log_clearing_sequence": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "Events 1100 and 1102 alert directly; the ghost-admin handler implements 4732 followed by 1102, not this declared sequence",
                 "handler": "ghost_admin_sequence",
                 "window_seconds": 60,
                 "mitre_id": "T1070",
@@ -813,7 +902,7 @@ SIEM_RULES = {
                 "description": "Vertical port scan detected",
                 "group_by": "source_ip",
                 "unique_field": "destination_port",
-                "event_filter": "network_connection"
+                "event_filter": "network_connection_blocked"
             },
             "horizontal_port_scan": {
                 "enabled": True,
@@ -824,7 +913,7 @@ SIEM_RULES = {
                 "description": "Horizontal port scan detected",
                 "group_by": "source_ip",
                 "unique_field": "destination_ip",
-                "event_filter": "network_connection"
+                "event_filter": "network_connection_blocked"
             },
             "beaconing_c2": {
                 "enabled": False,
@@ -863,7 +952,8 @@ SIEM_RULES = {
                 ]
             },
             "dns_tunneling": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "Native Windows DNS query telemetry is not collected by the pilot agent",
                 "threshold": 50,
                 "window_seconds": 60,
                 "subdomain_min_length": 50,
@@ -881,8 +971,8 @@ SIEM_RULES = {
                 "severity": "HIGH",
                 "description": "RDP brute force detected",
                 "group_by": "source_ip",
-                "event_filter": "rdp_failed",
-                "target_port": 3389
+                "event_filter": "failed_login",
+                "logon_types": ["10"]
             },
             "smb_storm": {
                 "enabled": True,
@@ -892,8 +982,7 @@ SIEM_RULES = {
                 "severity": "HIGH",
                 "description": "SMB access storm detected",
                 "group_by": "source_ip",
-                "event_filter": "smb_access",
-                "target_port": 445
+                "event_filter": "network_share_accessed"
             }
         },
         "web_application": {
@@ -918,7 +1007,8 @@ SIEM_RULES = {
                 ]
             },
             "directory_brute_force": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "Web log collector does not yet emit a structured HTTP status code",
                 "threshold": 20,
                 "window_seconds": 60,
                 "mitre_id": "T1083",
@@ -928,7 +1018,8 @@ SIEM_RULES = {
                 "event_filter": "http_404"
             },
             "waf_evasion_flood": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "Web log collector does not emit structured header or request-body sizes",
                 "threshold": 50,
                 "window_seconds": 60,
                 "max_header_size": 8192,
@@ -967,7 +1058,8 @@ SIEM_RULES = {
                 "target_path_prefix": "/product"
             },
             "error_storm": {
-                "enabled": True,
+                "enabled": False,
+                "disabled_reason": "Web log collector does not yet emit a structured HTTP status code",
                 "threshold": 50,
                 "window_seconds": 60,
                 "mitre_id": "T1499",

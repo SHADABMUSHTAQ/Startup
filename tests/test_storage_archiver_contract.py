@@ -10,6 +10,21 @@ from app.workers import storage_archiver
 from app.utils import archive_reader
 
 
+def test_archive_reader_search_matches_title_and_message_substrings():
+    assert archive_reader._search_matches(
+        {"title": "Potential command injection activity detected"},
+        "command injection",
+    )
+    assert archive_reader._search_matches(
+        {"message": "Security Event: Network Connection Blocked"},
+        "connection blocked",
+    )
+    assert not archive_reader._search_matches(
+        {"title": "Successful login"},
+        "command injection",
+    )
+
+
 def test_compliance_hot_retention_is_separate_from_vault_retention():
     assert storage_archiver._effective_retention_days("fbr_pos_logs", 90) == 7
     assert storage_archiver._effective_retention_days("peca_forensic_logs", 90) == 7
