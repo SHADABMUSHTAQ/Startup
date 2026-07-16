@@ -85,3 +85,4 @@ scripts/*
 !scripts/wait_for_redis.py
 !scripts/migrate_fbr_encryption.py
 !scripts/launch_readiness_validator.py
+!scripts/measure_dashboard_reads.py

@@ -22,7 +22,9 @@ WarSOC currently has a coherent end-to-end architecture for a maximum of 50 Wind
 10. Compliance views, search, CSV exports, and PDF reports can merge Mongo hot records with verified Azure archive records.
 11. The dashboard intentionally separates normal agent telemetry from actual security alerts and groups repeated detections into operator incidents.
 
-The current release candidate is the working tree based on backend commit `6029298` and frontend commit `51c0c3c`, with Windows agent `4.2.4-Native`. It adds the bounded dashboard read architecture described in Sections 14 and 17 without changing SIEM, FBR, PECA, retention, encryption, evidence, or alert-lifecycle semantics. The complete backend suite passes with `285 passed`, `3 skipped`, and zero failures; frontend lint and the production Vite build also pass. The three skips are the explicit `E2E=1` external run and two Git-metadata checks unavailable inside the mounted test container. Historical production proof recorded below remains valid for those runs, but it is not proof that this working tree is live. The candidate must be committed, rebuilt, deployed, measured, and smoke-tested before it replaces the deployed release.
+The production backend is deployed from commit `526c55b` with Windows agent `4.2.4-Native`. Its bounded live-read API, database indexes, ingestion, workers, compliance pipelines, archive reader and reports were verified directly on DigitalOcean on 2026-07-16. The complete backend suite passes with `285 passed`, `3 skipped`, and zero failures; the three skips are the explicit `E2E=1` external run and two Git-metadata checks unavailable inside the mounted test container.
+
+The production frontend is **not yet aligned with that backend contract**. The Vercel asset `/assets/index-BVowvCgg.js`, served from the forced-updated GitHub `main` line ending at `bae3905`, does not contain `/logs/live`; it polls historical `/api/v1/logs` every 1.5 seconds and refreshes again on WebSocket messages. A surgical repair exists locally on `codex/restore-live-dashboard`, based on the exact current `origin/main` design. It passes frontend lint and the production Vite build, preserves the visual design, separates SIEM evidence from alerts and restores bounded request scheduling. It is not production truth until committed, pushed and redeployed to Vercel. Therefore the backend processing platform is production-verified, while the complete browser-to-backend system remains conditionally accepted pending that frontend redeploy and post-deploy traffic check.
 
 ## 2. Product Boundary
 
@@ -535,7 +537,9 @@ The operational read indexes are part of the fast database startup phase, not on
 
 The same index names/options are used by core and compliance startup. An existing equivalent index is accepted even when its legacy name differs; WarSOC does not drop and rebuild a large index merely to rename it. An incompatible unique, sparse, TTL, or partial index is still repaired according to the collection contract.
 
-Read-only execution-plan proof is available through `scripts/measure_dashboard_reads.py`. On the 2026-07-16 local production-shaped dataset, the unindexed SIEM query scanned 156,257 documents. After the guaranteed index was created, a populated-tenant page returned 501 rows while examining exactly 501 keys and 501 documents, used `IXSCAN`, and reported 2 ms Mongo execution time. This is source-candidate proof; production must be measured again after deployment.
+Read-only execution-plan proof is available through `scripts/measure_dashboard_reads.py`. On the 2026-07-16 local production-shaped dataset, the unindexed SIEM query scanned 156,257 documents. After the guaranteed index was created, a populated-tenant page returned 501 rows while examining exactly 501 keys and 501 documents and used `IXSCAN`.
+
+Production was measured again on 2026-07-16 for an active tenant. Both `security_alerts` and `siem_cold_vault` returned 501 documents while examining exactly 501 keys and 501 documents. Both plans used `IXSCAN`, neither performed `COLLSCAN`, and wall times were 7.739 ms and 8.590 ms respectively. The diagnostic is now explicitly tracked and copied into the API image so later releases can run the same proof without an ad hoc file transfer.
 
 ## 15. Azure Cold Archive Transaction
 
@@ -777,37 +781,44 @@ flowchart LR
 
 ### 22.1 Release identity and regression evidence
 
-- The current source candidate is the working tree based on backend commit `6029298` and frontend commit `51c0c3c`; it is not represented as deployed until both working trees are committed and rebuilt/redeployed.
+- DigitalOcean is running backend commit `526c55b`. The production API container reported healthy MongoDB and Redis dependencies and all Compose services were running at verification time.
+- GitHub `main` is `bae3905`, but its deployed Vercel bundle is functionally behind the backend contract because it lacks `/logs/live`. The corrected source is local on `codex/restore-live-dashboard` and still requires commit, push and Vercel redeploy.
 - The complete backend regression completed on 2026-07-16 with `285 passed`, `3 skipped`, and zero failures. The skips are the explicit external `E2E=1` run and two Git-metadata checks unavailable inside the mounted test container.
 - SIEM source routing now requires trusted web-log provenance for web and phishing signatures while preserving native Event `4688` command-line detection. This prevents Windows events from being mislabeled as Web-WAF or phishing detections.
 - The `security_alerts` unique index now applies only to documents with a string `alert_uid`; the startup migration handles both Mongo index options and key-spec conflicts, while legacy rows without `alert_uid` remain readable.
 - Compliance evidence responses expose safe hot/cold provenance, and the frontend evidence tab no longer treats an API/archive failure as a valid empty vault.
-- Frontend lint and production Vite build passed. The candidate bundle contains the production API binding `https://api.warsoc.tech/api/v1` and no localhost API binding. The main JavaScript chunk remains a performance warning at approximately 1.67 MB minified / 530 KB gzip.
+- Frontend lint and the production Vite build pass on the repaired latest-design branch. The candidate bundle contains the production API binding `https://api.warsoc.tech/api/v1`, contains `/logs/live`, and has no localhost API binding. The main JavaScript chunk remains a performance warning at approximately 1.67 MB minified / 530 KB gzip.
 - Python compilation passed for the changed API, database, worker, launch-validator, and measurement modules. Both repositories pass `git diff --check`.
 - Approved installer: `warsoc_installer-4.2.4.exe`, 17,417,877 bytes, SHA-256 `D7B2541FB0447697D3DE76812A785913FF63D2688CDE26A48EF1660E4F34E41B`.
 - The versioned manifest is `pilot_hash_manifest-4.2.4.json` and also covers the packaged agent, NSSM, native telemetry script, and tenant policy.
 
 ### 22.2 Production preflight
 
-Production preflight run `0ab1c87a9f` passed on 2026-07-15:
+Production preflight run `15545d8ce7` passed on 2026-07-16:
 
 - `warsoc.tech` resolves to Vercel and `api.warsoc.tech` resolves to DigitalOcean `143.198.201.185`; the frontend and backend do not share an address.
 - Frontend/API TLS, HTTPS, HSTS, clickjacking protection, MIME protection, CORS with credentials, backend dependency health, and blocked public API docs passed.
 - MongoDB `27017`, Redis `6379`, and API `8000` are closed externally.
-- The deployed frontend is bound to `https://api.warsoc.tech/api/v1` and its contact form uses the WarSOC backend.
+- The deployed frontend is bound to `https://api.warsoc.tech/api/v1`, its same-origin API proxy returns the expected unauthenticated 401, and its contact form uses the WarSOC backend.
 - The authenticated agent download returns HTTP 307 to the versioned Azure `4.2.4` artifact, whose size and SHA-256 match the local manifest exactly.
 
 ### 22.3 Production platform pipeline
 
-Validator run `18282be9f1` completed with zero failures:
+Current deployed validator run `b87116c8af` completed on 2026-07-16 with zero failures and two explicit warnings:
 
 - Health, blocked signup, quote, contact, absent legacy payment webhook, tenant provisioning, login, and auth hydration passed.
 - Agent activation, Ed25519 registration, attacker-IP mitigation, heartbeat blacklist delivery, telemetry ingest, and authenticated POS ingest passed.
 - Run-specific SIEM alerting, Redis-correlated FBR tamper evidence, FBR invoice evidence, PECA evidence, and authenticated WebSocket delivery passed.
+- Both bounded live dashboard sources passed inside the deployed API in 9-10 ms for the disposable validation tenant.
 - Secure invitation creation returned pending with `email_queued=true`; the pending account could not log in.
-- CSV, PDF, and SMTP delivery passed; the delivered counter increased by eight and all email queues were empty afterward.
+- CSV, PDF, and SMTP delivery passed; the delivered counter increased by six and all email queues were empty afterward.
 
-The validator's two environment/human warnings were closed separately:
+The current warnings are not hidden:
+
+- The validator did not receive a manifest path inside the container. Independent public preflight `15545d8ce7` verified the exact Azure artifact hash.
+- The emailed auditor invitation was not activated manually during this run. Invitation queuing and pending-login denial passed; active auditor RBAC remains supported by the regression suite and earlier production-assisted proof, but a current human click-through is still an acceptance obligation.
+
+Additional production-assisted lifecycle proof remains recorded:
 
 - A controlled database-assisted self-lockout check returned HTTP 409 for an active enrolled-agent IP and restored the temporary agent state.
 - An active disposable auditor received HTTP 200 for auth/compliance and HTTP 403 for team management, operational alerts, and agent activation.
@@ -818,10 +829,10 @@ The validator's two environment/human warnings were closed separately:
 - The live endpoint reports `4.2.4-Native`, online/Active, native audit policy configured, Security and System channels `ok`, one POS SACL path, strict POS log present, zero parse/channel/spool failures, and an unblocked empty 500 MiB spool.
 - Real Windows telemetry produced all 11 PECA controls: `4624`, `4625`, `4672`, `4688`, `4697`, `4720`, `4726`, `4732`, `7045`, `1102`, and `1100`.
 - Native FBR proof produced one invoice modification, one invoice deletion, one correlated database-file deletion, and one database permission-change event. The ordinary database write produced no additional FIM alert.
-- Production metric sampling showed Redis healthy, DLQ depth zero, required workers healthy, email queues empty, and detection latency approximately 0.87 seconds.
-- The final Redis snapshot showed `siem_group`, `fbr_group`, `eto_group`, and `siem_hot_group` at the current stream tail with zero pending messages. Redis's large historical `lag` counters reflect earlier trimmed history and are not current unread entries; operational checks must use tail position plus pending count.
+- Current production metrics showed Redis healthy, DLQ depth/ejections zero, all required SIEM/FBR/PECA/retention workers healthy, email queue/processing/DLQ depth zero, 285 delivered emails, zero agent parse/channel/spool failures, an unblocked empty spool and last-observed detection latency of 0.018385 seconds.
+- The current Redis snapshot showed `siem_group`, `fbr_group`, `eto_group`, and `siem_hot_group` at the current stream tail with zero pending messages. Redis's large historical `lag` counters reflect trimmed history and are not current unread entries; operational checks use tail position plus pending count.
 - Fifty-agent soak run `2053d97832` registered 50/50 agents, rejected seat 51 with HTTP 403, accepted 50/50 concurrent ingests, produced SIEM in 5.18 seconds, vaulted all 50 PECA events, produced the FBR correlation, and completed in 7.22 seconds.
-- A real browser login loaded the production dashboard, Active agent state, grouped threat feed, compliance catalog, team list, and activation-code dialog without frontend console errors.
+- A real browser login can load the production dashboard and Active agent state, but the currently deployed Vercel bundle still uses the historical `/logs` polling contract. Visual availability is therefore not accepted as proof of correct dashboard integration until the repaired bundle is deployed and its network traffic shows `/logs/live` for both feeds.
 
 ### 22.5 Production archive and report proof
 
@@ -829,6 +840,7 @@ The validator's two environment/human warnings were closed separately:
 - The archive ledger contains committed entries for `siem_cold_vault`, `security_alerts`, `fbr_pos_logs`, and `peca_forensic_logs`, each with verified immutability metadata and SHA-256.
 - A cold-only tenant read returned four SIEM evidence rows, two alert rows, two FBR rows, and one PECA row from four verified Azure blobs.
 - The production reader downloaded each blob, recomputed SHA-256, rejected no records, and marked every returned row archived internally.
+- A fresh 2026-07-16 runtime probe repeated that path for all four collections. It retrieved 4 SIEM rows, 2 alert rows, 2 FBR rows and 1 PECA row; every ledger had a 64-character SHA-256, verified immutability and an Azure-returned sample marked archived.
 - Public authenticated FBR and PECA evidence routes returned the archived tenant's records.
 - Cold-backed exports returned valid CSV and `%PDF-` documents for both FBR and PECA.
 - The latest archiver cycle completed without errors; when no records are eligible it performs no deletion.
@@ -840,14 +852,68 @@ The validator's two environment/human warnings were closed separately:
 | Customer-style invitation activation | SMTP delivery, pending-login denial, activation contract tests, and active-auditor RBAC are proven. The latest emailed token was not clicked through manually. | Open one real invitation email, choose a policy-compliant password, log in, and confirm the intended role view. |
 | Independent backup recovery | Azure evidence archival is not a Mongo operational backup. | Restore a current Mongo backup into an isolated environment and record collection counts plus login/search checks. |
 | Physical retention segmentation | One locked 2,190-day container currently governs all evidence blobs. | Route future FBR, PECA, and general/SIEM archives to containers whose locked policy matches the promised retention class. |
-| Archive provenance presentation | Implemented and regression-tested in the current source candidate with safe `storage_tier`/`archived` fields and explicit frontend retrieval errors. | Deploy the candidate and confirm one hot row, one cold row, and one simulated reader failure in the production browser. |
-| Dashboard read candidate | Production previously showed repeated HTTP 499 cancellations and Mongo at 152.84% CPU while ingestion/detection remained active. The source candidate has bounded reads, request coalescing, startup indexes, and metrics. | Deploy both candidates; run `measure_dashboard_reads.py` for an active tenant; confirm both plans use `IXSCAN`, no fresh dashboard 499 responses occur, and live-read p95 remains below two seconds. |
-| Intermittent ingest exception | The old production log emitted `Bulk ingestion error:` without exception type or traceback while surrounding ingests continued returning 200. The candidate logs `repr` plus the stack. | After deployment, monitor one real-agent cycle. If the error recurs, preserve the complete traceback and resolve that exact failure before declaring the incident closed. |
+| Archive provenance presentation | Backend hot/cold provenance, Azure retrieval and explicit reader failures are implemented. Runtime cold retrieval passed. | After the repaired Vercel bundle is deployed, confirm one hot row, one cold row and one simulated reader failure in the production browser. |
+| Dashboard frontend redeploy | Backend `/logs/live` and both indexes are deployed and measured at 7.739-8.590 ms. The live Vercel bundle still polls audited historical `/logs` every 1.5 seconds and refetches on WebSocket messages. The repaired latest-design branch passes lint/build. | Commit/push `codex/restore-live-dashboard`, redeploy Vercel, verify the served asset contains `/logs/live`, and observe browser requests at the 30-second alert/10-second evidence schedule with no legacy automatic `/logs` polling. |
+| Dashboard post-deploy resources | Before the frontend redeploy, Mongo used approximately 55.91% CPU and 1.639 GiB of its 2 GiB container limit; two legacy HTTP 499 cancellations occurred around the backend restart. Direct bounded live reads returned in 493-519 ms over the public network with no new 499. | Measure Mongo CPU/memory and Nginx status codes for at least 15 minutes after the frontend redeploy; require no live-read 499s and p95 below two seconds. |
+| Ingest request buffering | Real agent ingestion is returning HTTP 200, but Nginx reports that some request bodies spill to its temporary request-body files. This is bounded buffering, not evidence loss, but it creates disk I/O. | Record agent batch sizes and temporary-file/disk growth during the 50-agent pilot; tune `client_body_buffer_size` or request batching only from measured data. |
+| Intermittent ingest exception | The deployed API logs `repr` plus traceback. No recurrence appeared during the current real-agent and acceptance windows; surrounding ingestion remained HTTP 200. | If it recurs, preserve the complete traceback and resolve that exact failure before declaring the incident closed. |
 | Formal disposable-VM artifact | Real native Windows functional proof passed on the test host. | Repeat on a clean snapshot-based VM and preserve the generated JSON/EVTX evidence bundle for formal audit records. |
 | Pilot data hygiene | The current demo tenant contains intentional detection-test history. | Provision clean customer tenants and do not demonstrate the contaminated engineering tenant as customer production data. |
 | Installer trust | The pilot installer remains unsigned. | Keep Defender enabled, verify the manifest, use approved hash allowlisting, and complete code signing when available. |
 
 These items do not invalidate the verified processing pipeline. They define the remaining operational, audit-evidence, and data-lifecycle work that must not be hidden from pilot customers.
+
+### 22.7 Production component truth matrix
+
+Status meanings:
+
+- **PROVEN:** exercised against the currently deployed production backend or exact public artifact.
+- **PARTIAL:** implemented and partly proven, but a named production acceptance step remains.
+- **BLOCKED:** deployed behavior contradicts the current contract and must be corrected before complete system acceptance.
+- **UNPROVEN:** configured or implemented but not demonstrated with current production evidence.
+- **OUT OF SCOPE:** deliberately excluded from the Windows SMB pilot.
+
+| Component | Responsibility and data path | Status | Current production truth |
+|---|---|---|---|
+| DNS and TLS | `warsoc.tech` to Vercel; `api.warsoc.tech` to DigitalOcean/Nginx | PROVEN | DNS separation, HTTPS certificates, HSTS and certificate validity passed preflight `15545d8ce7`. |
+| Vercel frontend | Browser UI, auth hydration, dashboard, compliance and team workflows | BLOCKED | Site and assets load and bind to the correct API, but the deployed bundle lacks `/logs/live` and uses the legacy 1.5-second `/logs` loop. The repaired latest-design branch is local and passes lint/build but is not deployed. |
+| Nginx gateway | TLS termination, security headers and reverse proxy | PROVEN with observation | Public headers/CORS/private-port checks pass. Real ingest returns 200. Some request bodies are buffered to temporary files; disk impact needs pilot measurement. |
+| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | PROVEN | Backend commit `526c55b` is deployed; health reports Mongo and Redis healthy. Current platform validator completed with zero failures. |
+| Authentication/session | Login, HttpOnly access cookie, CSRF double-submit and `/auth/me` | PROVEN | Existing tenant login, auth context and profile returned 200. Public signup returned 403. |
+| Manual sales flow | Quote/contact to operator follow-up; no automatic payment | PROVEN | Quote and contact requests returned 200; legacy payment webhook returned 404. No Safepay dependency is required. |
+| Tenant provisioning | Super-admin creates tenant, admin, packs and seat limit | PROVEN | Disposable production tenant provisioning and login passed in run `b87116c8af`. |
+| Team invitation | Admin queues role-specific one-time activation email | PARTIAL | Secure invitation returned 201, `pending`, and `email_queued=true`; pending login was denied and SMTP delivered. The latest real email link was not manually completed. |
+| RBAC | Admin/manager/analyst/auditor route restrictions | PARTIAL | Regression and earlier production-assisted checks cover route denial/allow rules. A current invited auditor click-through remains required. |
+| Azure agent artifact | Public versioned installer delivery outside DigitalOcean | PROVEN | `warsoc_installer-4.2.4.exe` returned 17,417,877 bytes and matched SHA-256 `D7B2541F...F34E41B`; backend download redirected with HTTP 307. |
+| Installer and Windows service | Validate activation, configure telemetry and run agent under NSSM | PROVEN | Current real endpoint reports agent `4.2.4-Native`, Active, with fresh heartbeats and continuous ingestion. |
+| Native Windows telemetry | Security/System XML collection without Sysmon | PROVEN | Audit policy is configured; Security and System channels report `ok`; current native Event 4688 evidence continues to arrive. |
+| Agent durability boundary | Local spool, retry, disk reserve and 500 MiB cap | PROVEN for current agent state | Metrics report zero spool bytes, zero blocked agents and zero spool-limit hits. Failure/recovery behavior remains covered by regression and prior native tests. |
+| Agent ingestion | Signed authenticated batches to `/api/v1/ingest/pulse` | PROVEN | Real agent batches and run-specific validation batches returned HTTP 200; zero parse/channel failures are reported. |
+| POS invoice ingestion | Strict JSONL or authenticated `/api/v1/fbr/pos/ingest` | PROVEN | Authenticated production POS ingest returned 202 and produced run-specific FBR invoice evidence. Proprietary databases are not read automatically. |
+| Redis Streams | Buffer and fan out accepted events to independent consumers | PROVEN | Redis health is 1. All four consumer groups are at the current stream tail with zero pending messages; DLQ depth/ejections are zero. |
+| Unified worker supervision | Run SIEM, FBR, PECA, email and stream-retention loops | PROVEN | Required-worker health is 1; SIEM, FBR, PECA and stream-retention heartbeat gauges are all 1. |
+| SIEM evidence | Store bounded hot operational evidence in `siem_cold_vault` | PROVEN | Fresh evidence is visible; bounded production query uses `IXSCAN`; current dashboard API returned 100 rows in 519 ms publicly. |
+| SIEM detection | Contextual/stateless detection and `security_alerts` creation | PROVEN | Run-specific SIEM alert, current high/critical alerts and 0.018385-second last-observed detection latency were recorded. Frontend must not recalculate severity. |
+| PECA pipeline | Entitled 11-control signed/encrypted forensic vault | PROVEN | Current worker continuously vaults PECA evidence; coverage is Active 1/1 and run-specific evidence was visible. Prior native proof covers all 11 controls. |
+| FBR file-integrity pipeline | Redis 4663/4660 correlation and 4670 permission evidence | PROVEN | Run-specific correlated tamper evidence passed; current FBR coverage is Active 1/1. Normal database writes remain non-alert context by contract. |
+| FBR invoice pipeline | Invoice modification/deletion evidence from strict source contract | PROVEN | Run-specific invoice evidence passed and current hot `FBR-INV-MOD` evidence is retrievable. |
+| WebSocket alerts | Ticket-bound tenant-scoped alert delivery | PROVEN | Run-specific production SIEM alert was received over the authenticated WebSocket. Browser repair coalesces messages instead of refetching per message. |
+| Alert lifecycle | Acknowledge, close-with-notes and incident-related IDs | PROVEN in backend; frontend pending redeploy | Backend lifecycle and persistence are regression/production-assisted proven. The repaired frontend restores all related alert IDs; deployed bundle has not received that repair. |
+| IP mitigation | Block/unblock with active-agent self-lockout prevention | PROVEN | Attacker-IP mitigation returned 200, heartbeat delivered the ban, and active-agent self-lockout returned 409. |
+| MongoDB hot tier | Seven-day operational store and tenant-scoped indexes | PROVEN with capacity watch | Both live queries use `IXSCAN` and examine only requested rows. Before frontend repair deployment, Mongo used about 55.91% CPU and 1.639/2 GiB. |
+| Daily storage archiver | Archive-before-delete transaction from Mongo to Azure | PROVEN | Service is running; latest cycle completed without errors. It verifies upload/hash/immutability/ledger before exact Mongo deletion. |
+| Azure immutable evidence | Private blob storage, SHA companion and locked retention | PROVEN | Runtime probe verified ledger, SHA-256, immutability and actual Azure retrieval for SIEM, alerts, FBR and PECA. |
+| Hot-plus-cold retrieval | Merge Mongo and SHA-verified Azure records | PROVEN in API; browser presentation pending | Current authenticated FBR/PECA reads return data; runtime cold samples were returned and marked archived. Repaired frontend deployment still needs visual verification. |
+| CSV export | Bounded detailed export from hot and cold sources | PROVEN | Current production CSV returned HTTP 200 and 204,350 bytes; validator CSV also passed. |
+| PDF report | Human-readable compliance summary | PROVEN | Current PECA PDF returned HTTP 200 and a valid PDF payload. The PDF itself is not cryptographically signed. |
+| Email daemon | Queue, retry, SMTP delivery and DLQ | PROVEN | Current metrics show 285 delivered, zero queued/processing/dead-letter/retries; validator increased delivery by six. |
+| Metrics and health | Worker, queue, agent, DLQ, detection and dashboard telemetry | PROVEN | Protected production metrics were read successfully. Dashboard live-read histograms are deployed on the backend. |
+| Independent Mongo backup | Operational disaster recovery separate from evidence archive | UNPROVEN | Backup configuration is not equivalent to a tested restore. A dated isolated restore remains mandatory. |
+| Physical retention classes | Match actual Azure lock duration to commercial 3/6/9/12-month or compliance terms | PARTIAL | One locked 2,190-day container protects all current evidence; it is safe from early deletion but cannot honor shorter physical deletion dates. |
+| Installer code signing | Publisher reputation and Defender trust | PARTIAL | Exact hash allowlisting supports the pilot while Defender stays enabled; the binary remains unsigned. |
+| Capacity ceiling | Maximum 50 active agents per tenant | PROVEN for synthetic soak | Prior production soak registered 50/50, rejected seat 51 and met latency. Real customer mix must still be monitored because event volume per endpoint varies. |
+| Linux/syslog | Linux and network-device telemetry | OUT OF SCOPE | The syslog receiver is bound only to loopback and is not part of the Windows SMB pilot contract. Preserve it only as future work. |
+| External threat-intelligence enrichment | Third-party reputation/provider lookups | OUT OF SCOPE | No live provider integration is claimed for the current pilot. Native SIEM/FBR/PECA operation does not depend on it. |
 
 ## 23. Failure Map
 
