@@ -166,7 +166,7 @@ async def test_native_process_telemetry_cannot_be_labelled_as_phishing_by_itself
 
 
 @pytest.mark.asyncio
-async def test_native_command_line_rule_is_not_forced_through_web_provenance():
+async def test_native_command_line_does_not_fire_web_command_injection_rule():
     engine = SIEMEngine(SIEM_RULES)
     findings = await engine.analyze_single_log(
         {
@@ -180,7 +180,8 @@ async def test_native_command_line_rule_is_not_forced_through_web_provenance():
         }
     )
 
-    assert any(finding["type"] == "COMMAND_INJECTION" for finding in findings)
+    assert not any(finding["type"] == "COMMAND_INJECTION" for finding in findings)
+    assert any(finding["type"] == "RECON_COMMANDS" for finding in findings)
 
 
 @pytest.mark.asyncio

@@ -179,7 +179,6 @@ def test_direct_peca_control_severities_have_one_source_of_truth():
         "4720": "HIGH",
         "4726": "HIGH",
         "4732": "HIGH",
-        "5157": "HIGH",
     }
     for event_id, severity in expected.items():
         rule = SIEM_RULES["event_id_map"][event_id]
@@ -190,3 +189,7 @@ def test_direct_peca_control_severities_have_one_source_of_truth():
             SIEM_RULES["source_classification"]["Windows-Sec"],
             event_id,
         ) == severity
+
+    firewall_block = SIEM_RULES["event_id_map"]["5157"]
+    assert firewall_block["frameworks"] == ["peca_forensic"]
+    assert firewall_block["alert_on_event"] is False

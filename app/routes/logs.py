@@ -10,6 +10,7 @@ from cryptography.fernet import Fernet
 from app.config.config import get_settings
 from app.utils.archive_reader import fetch_archived_documents
 from app.utils.alert_incidents import aggregate_security_alerts
+from app.utils.alert_context import operator_alert_document
 
 # 📊 MASTER BUILD: Logs Gateway
 # Strictly Decoupled, Paginated, and Tenant-Isolated
@@ -211,6 +212,9 @@ async def get_logs_master(
     logs_data = await asyncio.to_thread(
         lambda: json.loads(json.dumps(logs_raw, default=json_serializer))
     )
+
+    if source == "security_alerts":
+        logs_data = [operator_alert_document(log) for log in logs_data]
 
     new_cursor = logs_data[-1]["_id"] if logs_data else None
     incident_count = len(logs_data)

@@ -129,6 +129,11 @@ async def init_compliance_db(db):
 
         await _aggressive_create_index(db.peca_forensic_logs, [("event_id", 1)], name="event_id_1", unique=False)
         await _aggressive_create_index(db.peca_forensic_logs, [("tenant_id", 1), ("timestamp", -1)])
+        await _aggressive_create_index(
+            db.peca_forensic_logs,
+            [("tenant_id", 1), ("timestamp", -1), ("ingested_at", -1), ("_id", -1)],
+            name="idx_peca_operator_page",
+        )
         #  LEGAL PHYSICS: Hard engine-level block on cross-tenant overwrites
         await _aggressive_create_index(db.peca_forensic_logs, [("tenant_id", 1), ("event_uid", 1)], unique=True, name="idx_peca_tenant_event_uid")
 
@@ -136,6 +141,11 @@ async def init_compliance_db(db):
         await _drop_ttl_indexes(db.fbr_pos_logs, "fbr_pos_logs")
         await _backfill_expire_at(db.fbr_pos_logs, retention_days=365 * 6)
         await _aggressive_create_index(db.fbr_pos_logs, [("tenant_id", 1), ("timestamp", -1)])
+        await _aggressive_create_index(
+            db.fbr_pos_logs,
+            [("tenant_id", 1), ("timestamp", -1), ("ingested_at", -1), ("_id", -1)],
+            name="idx_fbr_operator_page",
+        )
         await _aggressive_create_index(db.fbr_pos_logs, [("fbr_invoice_id", 1)])
         #  LEGAL PHYSICS: Hard engine-level block on cross-tenant overwrites
         await _aggressive_create_index(db.fbr_pos_logs, [("tenant_id", 1), ("event_uid", 1)], unique=True, name="idx_fbr_tenant_event_uid")

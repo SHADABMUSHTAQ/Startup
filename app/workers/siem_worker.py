@@ -22,6 +22,7 @@ from app.utils.compliance_catalog import COMPLIANCE_CATALOG
 from app.utils.observability import increment_redis_counter, record_worker_heartbeat_with_client
 from app.utils.custom_json import dumps as json_dumps
 from app.utils.alert_incidents import operator_message
+from app.utils.alert_context import build_alert_context, operator_alert_document
 from app.actions.alerting import dispatch_alert_if_entitled, is_email_trigger_severity
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [SIEM-Worker] %(message)s")
@@ -488,15 +489,17 @@ async def siem_worker():
                         "_expire_at": datetime.now(timezone.utc) + timedelta(days=7),
                     }
                     _normalize_document_timestamps(alert_payload)
+                    alert_payload["context"] = build_alert_context(alert_payload)
                     try:
                         await db.security_alerts.update_one(
                             {"tenant_id": tenant_id, "alert_uid": alert_payload["alert_uid"]},
                             {"$set": alert_payload},
                             upsert=True,
                         )
-                        await redis.publish("security_alerts", json_dumps(alert_payload))
+                        operator_alert = operator_alert_document(alert_payload)
+                        await redis.publish("security_alerts", json_dumps(operator_alert))
                         if is_email_trigger_severity(alert_payload.get("severity")):
-                            await dispatch_alert_if_entitled(db, redis, tenant_id, alert_payload, "SIEM")
+                            await dispatch_alert_if_entitled(db, redis, tenant_id, operator_alert, "SIEM")
                     except Exception as alert_err:
                         logger.error(f"[DLQ] Failed to persist security-signal alert for {message_id}: {alert_err}")
 
@@ -863,13 +866,15 @@ async def siem_worker():
                                             c_alert.get("type") or c_alert.get("summary") or event_id,
                                         )
                                         c_alert["alert_uid"] = alert_uid
+                                        c_alert["context"] = build_alert_context(c_alert, log_data)
                                         try:
                                             await db.security_alerts.update_one({"tenant_id": tenant_id, "alert_uid": alert_uid}, {"$set": c_alert}, upsert=True)
-                                            await redis.publish("security_alerts", json_dumps(c_alert))
+                                            operator_alert = operator_alert_document(c_alert, log_data)
+                                            await redis.publish("security_alerts", json_dumps(operator_alert))
                                             await _record_detection_latency(redis, log_data.get("timestamp"))
                                             logger.info(f"[CORR ALERT] {c_alert['severity']}: {c_alert['summary']}")
                                             if is_email_trigger_severity(c_alert.get("severity")):
-                                                await dispatch_alert_if_entitled(db, redis, tenant_id, c_alert, "SIEM")
+                                                await dispatch_alert_if_entitled(db, redis, tenant_id, operator_alert, "SIEM")
                                         except Exception as corr_db_err:
                                             logger.error(f"[CORR][DB] Failed to persist correlation alert: {corr_db_err}")
                                             raise
@@ -935,6 +940,7 @@ async def siem_worker():
                                     "timestamp": log_data["ingested_at"],
                                     "_expire_at": datetime.now(timezone.utc) + timedelta(days=7),
                                 }
+                                alert_payload["context"] = build_alert_context(alert_payload, log_data)
                                 _normalize_document_timestamps(alert_payload)
                                 # Save to security_alerts collection
                                 try:
@@ -944,11 +950,12 @@ async def siem_worker():
                                     raise
 
                                 # Publish to redis for live websocket dashboard
-                                await redis.publish("security_alerts", json_dumps(alert_payload))
+                                operator_alert = operator_alert_document(alert_payload, log_data)
+                                await redis.publish("security_alerts", json_dumps(operator_alert))
                                 await _record_detection_latency(redis, log_data.get("timestamp"))
                                 logger.info(f"[!] ALERT: {display_title} for {tenant_id}")
                                 if is_email_trigger_severity(alert_payload.get("severity")):
-                                    await dispatch_alert_if_entitled(db, redis, tenant_id, alert_payload, "SIEM")
+                                    await dispatch_alert_if_entitled(db, redis, tenant_id, operator_alert, "SIEM")
 
                             # 🧠 ADVANCED SIEM ENGINE (Regex, Phishing, Event Map)
                             if not is_basic_plan:
@@ -992,13 +999,15 @@ async def siem_worker():
                                         finding.get("event_uid") or log_data.get("event_uid") or message_id,
                                         finding.get("type") or finding.get("summary") or event_id,
                                     )
+                                    finding["context"] = build_alert_context(finding, log_data)
                                     try:
                                         await db.security_alerts.update_one({"tenant_id": tenant_id, "alert_uid": finding["alert_uid"]}, {"$set": finding}, upsert=True)
-                                        await redis.publish("security_alerts", json_dumps(finding))
+                                        operator_alert = operator_alert_document(finding, log_data)
+                                        await redis.publish("security_alerts", json_dumps(operator_alert))
                                         await _record_detection_latency(redis, log_data.get("timestamp"))
                                         logger.info(f"[!] ADVANCED ALERT: {finding['summary']} for {tenant_id}")
                                         if is_email_trigger_severity(finding.get("severity")):
-                                            await dispatch_alert_if_entitled(db, redis, tenant_id, finding, "SIEM")
+                                            await dispatch_alert_if_entitled(db, redis, tenant_id, operator_alert, "SIEM")
                                     except Exception as e:
                                         logger.error(f"[SIEM][DB] finding insert failed for {message_id}: {e}")
                                         raise
@@ -1030,13 +1039,15 @@ async def siem_worker():
                                         corr_alert.get("event_uid") or log_data.get("event_uid") or message_id,
                                         corr_alert.get("type") or corr_alert.get("summary") or event_id,
                                     )
+                                    corr_alert["context"] = build_alert_context(corr_alert, log_data)
                                     try:
                                         await db.security_alerts.update_one({"tenant_id": tenant_id, "alert_uid": corr_alert["alert_uid"]}, {"$set": corr_alert}, upsert=True)
-                                        await redis.publish("security_alerts", json_dumps(corr_alert))
+                                        operator_alert = operator_alert_document(corr_alert, log_data)
+                                        await redis.publish("security_alerts", json_dumps(operator_alert))
                                         await _record_detection_latency(redis, log_data.get("timestamp"))
                                         logger.info(f"[CORR] ALERT: {corr_alert['type']} | {corr_alert['severity']} | {tenant_id}")
                                         if is_email_trigger_severity(corr_alert.get("severity")):
-                                            await dispatch_alert_if_entitled(db, redis, tenant_id, corr_alert, "SIEM")
+                                            await dispatch_alert_if_entitled(db, redis, tenant_id, operator_alert, "SIEM")
                                     except Exception as corr_err:
                                         logger.error(f"[CORR] Failed to save correlation alert: {corr_err}")
                                         raise

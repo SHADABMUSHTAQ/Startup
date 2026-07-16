@@ -16,6 +16,7 @@ from app.utils.limiter import limiter
 from app.utils.rbac import RoleChecker
 from app.utils.archive_reader import fetch_archived_documents
 from app.utils.alert_incidents import aggregate_security_alerts
+from app.utils.alert_context import operator_alert_document
 from bson import ObjectId
 import json
 
@@ -78,7 +79,7 @@ def _serialize_alert(doc: dict) -> dict:
     doc.pop("_retention_ts", None)
     doc.pop("_expire_at", None)
 
-    return doc
+    return operator_alert_document(doc)
 
 
 # ---------------------------------------------------------

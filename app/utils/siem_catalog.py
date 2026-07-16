@@ -250,7 +250,7 @@ SIEM_RULES = {
         "4798": {"event_type": "user_enumeration", "severity": "LOW", "frameworks": ["peca_forensic"], "alert_on_event": False},
         "5140": {"event_type": "network_share_accessed", "severity": "MEDIUM", "frameworks": [], "alert_on_event": False},
         "5156": {"event_type": "network_connection_permitted", "severity": "INFO", "frameworks": [], "alert_on_event": False},
-        "5157": {"event_type": "network_connection_blocked", "severity": "HIGH", "frameworks": ["peca_forensic"], "alert_on_event": True},
+        "5157": {"event_type": "network_connection_blocked", "severity": "HIGH", "frameworks": ["peca_forensic"], "alert_on_event": False},
         "7045": {"event_type": "service_installed", "severity": "CRITICAL", "frameworks": ["peca_forensic"], "alert_on_event": True},
         "FBR-INV-DEL": {"event_type": "invoice_deleted", "severity": "WARNING", "frameworks": ["fbr_pos"], "alert_on_event": False},
         "FBR-INV-MOD": {"event_type": "invoice_modified", "severity": "CRITICAL", "frameworks": ["fbr_pos"], "alert_on_event": False},
@@ -437,7 +437,7 @@ SIEM_RULES = {
                 "regex": "(?i)(;\\s*(whoami|cat|id|ls|dir|uname|curl|wget|bash|sh|nc|python|perl|ruby|chmod|chown|rm\\s)\\b|\\|\\s*nc|\\$\\s*\\(|`[a-z]+`)",
                 "sev": "CRITICAL",
                 "mitre": "T1059",
-                "requires_context": ["process_create", "command_line", "http_request"]
+                "requires_context": ["http_request"]
             },
             "PATH_TRAVERSAL": {
                 "regex": "(?i)(\\.\\.\\/|\\.\\.\\\\|etc/passwd|win.ini)",
