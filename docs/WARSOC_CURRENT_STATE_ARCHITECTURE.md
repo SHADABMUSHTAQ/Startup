@@ -22,7 +22,7 @@ WarSOC currently has a coherent end-to-end architecture for a maximum of 50 Wind
 10. Compliance views, search, CSV exports, and PDF reports can merge Mongo hot records with verified Azure archive records.
 11. The dashboard intentionally separates normal agent telemetry from actual security alerts and groups repeated detections into operator incidents.
 
-The current release candidate is the working tree based on backend commit `67ee741` with Windows agent `4.2.4-Native`. The complete backend suite passes with `273 passed`, `4 skipped`, and zero failures; frontend lint and the production Vite build also pass. Historical production proof recorded below was gathered from the previously deployed release and remains valid evidence for those runs, but it is not proof that this newer candidate is live. The candidate must be committed, rebuilt, deployed, and smoke-tested before it replaces the deployed release. WarSOC remains suitable for a controlled Windows SMB pilot once that deployment gate is completed. Remaining obligations are explicitly recorded in Section 22.
+The current release candidate is the working tree based on backend commit `a5e1616` with Windows agent `4.2.4-Native`, plus the hot-first compliance retrieval optimization described in Section 16. The complete backend suite passes with `278 passed`, `4 skipped`, and zero failures; frontend lint and the production Vite build also pass. Historical production proof recorded below was gathered from the previously deployed release and remains valid evidence for those runs, but it is not proof that this newer candidate is live. The candidate must be committed, rebuilt, deployed, and smoke-tested before it replaces the deployed release. WarSOC remains suitable for a controlled Windows SMB pilot once that deployment gate is completed. Remaining obligations are explicitly recorded in Section 22.
 
 ## 2. Product Boundary
 
@@ -588,6 +588,10 @@ The archive reader:
 
 The internal reader preserves `_archived`, source collection, and blob identity while verifying the payload. Compliance response curation now exposes only `storage_tier: "hot" | "cold_archive"` and `archived: true | false`; internal blob names, paths, and credentials remain hidden. The evidence tab renders these fields in the curated record and now distinguishes a retrieval failure from a valid empty vault instead of silently displaying "No forensic evidence" for both conditions. Production proof of this presentation change is required after the current candidate is deployed.
 
+Compliance list routes use hot-first pagination. They read the requested Mongo page first and obtain an unfiltered archive count from the local `storage_archives` ledger. When Mongo completely satisfies the requested page, no Azure blob is downloaded. Azure is read only when the page crosses beyond the available hot rows or a filtered request cannot be satisfied from hot data. This removes private-blob network latency from normal dashboard loads without changing archive integrity verification, exports, or retention behavior.
+
+Responses expose `meta.archive_read_performed`, `meta.archive_rows`, and `meta.total_is_exact`. An unfiltered ledger count is exact when every archive ledger row contains `document_count`. A filtered request that is satisfied entirely from hot storage deliberately reports `total_is_exact: false` rather than claiming a count for archive blobs that were not scanned.
+
 ### 16.2 Routes that read hot plus cold
 
 - Compliance evidence detail/list routes.
@@ -602,6 +606,8 @@ The dashboard's live SIEM feed intentionally reads Mongo hot data only. It is an
 - Default archive-ledger scan: 100 blobs.
 - Hard code cap: 500 blobs.
 - API result limits still apply.
+- Normal first-page compliance reads do not open Azure when the hot tier fills the page.
+- A page that crosses the hot/cold boundary requests only the missing cold slice and applies the correct archive offset.
 - CSV default: 5,000 rows; maximum: 50,000 rows.
 - PDF considers the newest 500 matching records and prints a 50-row evidence preview.
 

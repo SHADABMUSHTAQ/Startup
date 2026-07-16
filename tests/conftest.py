@@ -128,6 +128,7 @@ async def db(mongo_client, settings):
         "peca_forensic_logs",
         "security_alerts",
         "siem_cold_vault",
+        "storage_archives",
         "system_audit",
         "tenants",
         "used_provisioning_tokens",

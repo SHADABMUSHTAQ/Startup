@@ -12,7 +12,7 @@ from app.config.config import get_settings
 from app.database import get_db
 from app.routes.auth import get_current_user, require_premium_plan
 from app.utils.rbac import RoleChecker
-from app.utils.archive_reader import fetch_archived_documents
+from app.utils.archive_reader import count_archived_documents, fetch_archived_documents
 
 settings = get_settings()
 try:
@@ -291,6 +291,63 @@ async def _fetch_archived_page(
         limit=skip + limit,
     )
     return archived_docs[skip: skip + limit], archived_total
+
+
+async def _resolve_archive_page(
+    db,
+    *,
+    tenant_id: str,
+    collection_names: list[str],
+    hot_total: int,
+    hot_docs: list[dict],
+    skip: int,
+    limit: int,
+    start_dt: Optional[datetime],
+    end_dt: Optional[datetime],
+    event_id: Optional[str],
+) -> tuple[list[dict], int, dict]:
+    """Fill a page from cold storage only after the hot tier is exhausted."""
+    unfiltered = event_id is None and start_dt is None and end_dt is None
+    archived_total = 0
+    total_is_exact = False
+
+    if unfiltered:
+        archived_total, total_is_exact = await count_archived_documents(
+            db,
+            tenant_id=tenant_id,
+            collections=collection_names,
+        )
+
+    remaining = max(0, limit - len(hot_docs))
+    archive_skip = max(0, skip - hot_total)
+    archive_read_performed = False
+    archived_docs: list[dict] = []
+    should_read_archive = remaining > 0
+    if unfiltered and total_is_exact:
+        should_read_archive = should_read_archive and archive_skip < archived_total
+
+    if should_read_archive:
+        archived_docs, scanned_total = await _fetch_archived_page(
+            db,
+            tenant_id,
+            collection_names,
+            start_dt,
+            end_dt,
+            event_id,
+            skip=archive_skip,
+            limit=remaining,
+        )
+        archive_read_performed = True
+        if not total_is_exact:
+            archived_total = scanned_total
+            # A bounded blob scan cannot prove a global filtered total.
+            total_is_exact = False
+
+    return archived_docs, hot_total + archived_total, {
+        "archive_read_performed": archive_read_performed,
+        "archive_rows": archived_total,
+        "total_is_exact": total_is_exact,
+    }
 
 
 def _paginate(items: list, skip: int, limit: int):
@@ -682,27 +739,30 @@ async def get_compliance_evidence(
         for c in cursors:
             await c["cursor"].close()
 
-    curated = []
-    for doc in docs:
-        origin = doc.pop("_source_collection", "unknown")
-        source = "peca_forensic" if origin == "peca_forensic_logs" else "fbr_pos"
-        curated_doc = _curate_evidence_record(doc, source, origin)
-        curated.append(curated_doc)
+    archive_collections = []
+    if "peca_forensic" in entitled_packs:
+        archive_collections.append("peca_forensic_logs")
+    if "fbr_pos" in entitled_packs:
+        archive_collections.append("fbr_pos_logs")
 
-    archived_docs, archived_total = await fetch_archived_documents(
+    archived_docs, total, archive_meta = await _resolve_archive_page(
         db,
         tenant_id=tenant_id,
-        collections=collections_to_query,
+        collection_names=archive_collections,
+        hot_total=total,
+        hot_docs=docs,
+        skip=skip,
+        limit=limit,
         start_dt=start_dt,
         end_dt=end_dt,
         event_id=event_id,
-        limit=limit,
     )
-    for doc in archived_docs:
-        origin = doc.get("_source_collection") or doc.get("_archive_collection") or "archived"
+
+    curated = []
+    for doc in [*docs, *archived_docs]:
+        origin = doc.get("_source_collection") or doc.get("_archive_collection") or "unknown"
         source = "peca_forensic" if origin == "peca_forensic_logs" else "fbr_pos"
         curated.append(_curate_evidence_record(doc, source, origin))
-    total += archived_total
     curated = sorted(curated, key=_event_sort_key, reverse=True)[:limit]
 
     response = {
@@ -712,7 +772,8 @@ async def get_compliance_evidence(
             "total": total,
             "skip": skip,
             "limit": limit
-        }
+        },
+        "meta": archive_meta,
     }
     if info_message:
         response["info"] = info_message
@@ -780,21 +841,24 @@ async def get_compliance_evidence_by_pack(
         )
 
     archived_collection = "peca_forensic_logs" if normalized_pack == "peca_forensic" else "fbr_pos_logs"
-    archived_docs, archived_total = await _fetch_archived_page(
+    archived_docs, total, archive_meta = await _resolve_archive_page(
         db,
-        tenant_id,
-        [archived_collection],
-        start_dt,
-        end_dt,
-        event_id,
-        skip=0,
+        tenant_id=tenant_id,
+        collection_names=[archived_collection],
+        hot_total=total,
+        hot_docs=docs,
+        skip=skip,
         limit=limit,
+        start_dt=start_dt,
+        end_dt=end_dt,
+        event_id=event_id,
     )
-    if archived_docs:
-        docs = sorted([*docs, *archived_docs], key=_event_sort_key, reverse=True)[:limit]
-        total += archived_total
 
-    curated = _apply_pack_curation(docs, normalized_pack, origin)
+    curated = []
+    for doc in [*docs, *archived_docs]:
+        doc_origin = doc.get("_source_collection") or doc.get("_archive_collection") or origin
+        curated.extend(_apply_pack_curation([doc], normalized_pack, doc_origin))
+    curated = sorted(curated, key=_event_sort_key, reverse=True)[:limit]
 
     response = {
         "status": "success",
@@ -807,7 +871,8 @@ async def get_compliance_evidence_by_pack(
         },
         "meta": {
             "fbr_fallback_used": fallback_used,
-            "active_collection": origin
+            "active_collection": origin,
+            **archive_meta,
         }
     }
     if info_message:

@@ -101,6 +101,46 @@ def _sort_key(doc: dict) -> datetime:
     return _coerce_dt(doc.get("timestamp") or doc.get("ingested_at")) or datetime.min.replace(tzinfo=timezone.utc)
 
 
+async def count_archived_documents(
+    db,
+    *,
+    tenant_id: str,
+    collections: Iterable[str],
+) -> tuple[int, bool]:
+    """Count archived rows from the local ledger without downloading Azure blobs.
+
+    The count is exact only when every matching archive ledger entry has the
+    ``document_count`` field written by the current archiver.
+    """
+    collection_list = [str(name) for name in collections if name]
+    if not tenant_id or not collection_list:
+        return 0, True
+
+    ledger = db["storage_archives"]
+    base_query = {
+        "tenant_id": tenant_id,
+        "collection": {"$in": collection_list},
+        "status": "archived",
+    }
+    try:
+        missing_count = await ledger.count_documents(
+            {**base_query, "document_count": {"$exists": False}}
+        )
+        cursor = ledger.aggregate(
+            [
+                {"$match": base_query},
+                {"$group": {"_id": None, "total": {"$sum": "$document_count"}}},
+            ]
+        )
+        rows = await cursor.to_list(length=1)
+    except Exception as exc:
+        logger.warning("Unable to count archived documents from the ledger: %s", exc)
+        return 0, False
+
+    total = int(rows[0].get("total") or 0) if rows else 0
+    return total, missing_count == 0
+
+
 async def fetch_archived_documents(
     db,
     *,

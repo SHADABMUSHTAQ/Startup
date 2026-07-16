@@ -263,6 +263,11 @@ async def init_compliance_db(db):
         await _aggressive_create_index(db.fbr_pos_logs, [("data.store_id", 1), ("timestamp", -1)])
         await _aggressive_create_index(db.peca_forensic_logs, [("forensic_seal", 1)])
         await _aggressive_create_index(db.storage_archives, [("tenant_id", 1), ("collection", 1), ("created_at", -1)])
+        await _aggressive_create_index(
+            db.storage_archives,
+            [("tenant_id", 1), ("collection", 1), ("status", 1), ("created_at", -1)],
+            name="idx_archive_tenant_collection_status_created",
+        )
         await _aggressive_create_index(db.storage_archives, [("tenant_id", 1), ("collection", 1), ("newest_at", -1)])
         await _aggressive_create_index(db.storage_archives, [("tenant_id", 1), ("collection", 1), ("event_ids", 1)])
         await _aggressive_create_index(db.storage_archives, [("tenant_id", 1), ("collection", 1), ("event_uids", 1)])

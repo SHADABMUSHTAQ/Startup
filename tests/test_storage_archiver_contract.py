@@ -8,6 +8,7 @@ import pytest
 
 from app.workers import storage_archiver
 from app.utils import archive_reader
+from app.routes import compliance
 from app.routes.compliance import _curate_evidence_record
 
 
@@ -43,6 +44,150 @@ def test_archive_reader_search_matches_title_and_message_substrings():
         {"title": "Successful login"},
         "command injection",
     )
+
+
+@pytest.mark.asyncio
+async def test_archive_ledger_count_does_not_download_blobs():
+    class FakeAggregateCursor:
+        async def to_list(self, length):
+            return [{"_id": None, "total": 125}][:length]
+
+    class FakeLedger:
+        def __init__(self):
+            self.count_documents = AsyncMock(return_value=0)
+
+        def aggregate(self, pipeline):
+            self.pipeline = pipeline
+            return FakeAggregateCursor()
+
+    ledger = FakeLedger()
+    total, exact = await archive_reader.count_archived_documents(
+        {"storage_archives": ledger},
+        tenant_id="TENANT-A",
+        collections=["peca_forensic_logs"],
+    )
+
+    assert total == 125
+    assert exact is True
+    ledger.count_documents.assert_awaited_once()
+    assert ledger.pipeline[0]["$match"]["status"] == "archived"
+
+
+@pytest.mark.asyncio
+async def test_compliance_full_hot_page_skips_azure_blob_reads(monkeypatch):
+    count_mock = AsyncMock(return_value=(900, True))
+    fetch_mock = AsyncMock()
+    monkeypatch.setattr(compliance, "count_archived_documents", count_mock)
+    monkeypatch.setattr(compliance, "_fetch_archived_page", fetch_mock)
+
+    archived, total, meta = await compliance._resolve_archive_page(
+        object(),
+        tenant_id="TENANT-A",
+        collection_names=["peca_forensic_logs"],
+        hot_total=100,
+        hot_docs=[{"event_uid": f"hot-{i}"} for i in range(50)],
+        skip=0,
+        limit=50,
+        start_dt=None,
+        end_dt=None,
+        event_id=None,
+    )
+
+    assert archived == []
+    assert total == 1000
+    assert meta == {
+        "archive_read_performed": False,
+        "archive_rows": 900,
+        "total_is_exact": True,
+    }
+    fetch_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_compliance_boundary_page_reads_only_missing_cold_rows(monkeypatch):
+    monkeypatch.setattr(
+        compliance,
+        "count_archived_documents",
+        AsyncMock(return_value=(4, True)),
+    )
+    fetch_mock = AsyncMock(
+        return_value=([{"event_uid": "cold-1"}, {"event_uid": "cold-2"}], 4)
+    )
+    monkeypatch.setattr(compliance, "_fetch_archived_page", fetch_mock)
+
+    archived, total, meta = await compliance._resolve_archive_page(
+        object(),
+        tenant_id="TENANT-A",
+        collection_names=["peca_forensic_logs"],
+        hot_total=2,
+        hot_docs=[{"event_uid": "hot-2"}],
+        skip=1,
+        limit=3,
+        start_dt=None,
+        end_dt=None,
+        event_id=None,
+    )
+
+    assert [doc["event_uid"] for doc in archived] == ["cold-1", "cold-2"]
+    assert total == 6
+    assert meta["archive_read_performed"] is True
+    assert fetch_mock.await_args.kwargs["skip"] == 0
+    assert fetch_mock.await_args.kwargs["limit"] == 2
+
+
+@pytest.mark.asyncio
+async def test_compliance_cold_page_applies_archive_offset(monkeypatch):
+    monkeypatch.setattr(
+        compliance,
+        "count_archived_documents",
+        AsyncMock(return_value=(10, True)),
+    )
+    fetch_mock = AsyncMock(return_value=([{"event_uid": "cold-4"}], 10))
+    monkeypatch.setattr(compliance, "_fetch_archived_page", fetch_mock)
+
+    archived, total, _ = await compliance._resolve_archive_page(
+        object(),
+        tenant_id="TENANT-A",
+        collection_names=["fbr_pos_logs"],
+        hot_total=3,
+        hot_docs=[],
+        skip=7,
+        limit=1,
+        start_dt=None,
+        end_dt=None,
+        event_id=None,
+    )
+
+    assert archived[0]["event_uid"] == "cold-4"
+    assert total == 13
+    assert fetch_mock.await_args.kwargs["skip"] == 4
+
+
+@pytest.mark.asyncio
+async def test_filtered_full_hot_page_is_fast_and_marks_total_inexact(monkeypatch):
+    count_mock = AsyncMock()
+    fetch_mock = AsyncMock()
+    monkeypatch.setattr(compliance, "count_archived_documents", count_mock)
+    monkeypatch.setattr(compliance, "_fetch_archived_page", fetch_mock)
+
+    archived, total, meta = await compliance._resolve_archive_page(
+        object(),
+        tenant_id="TENANT-A",
+        collection_names=["peca_forensic_logs"],
+        hot_total=50,
+        hot_docs=[{"event_uid": f"hot-{i}"} for i in range(10)],
+        skip=0,
+        limit=10,
+        start_dt=None,
+        end_dt=None,
+        event_id="4688",
+    )
+
+    assert archived == []
+    assert total == 50
+    assert meta["total_is_exact"] is False
+    count_mock.assert_not_awaited()
+    fetch_mock.assert_not_awaited()
 
 
 def test_compliance_hot_retention_is_separate_from_vault_retention():
