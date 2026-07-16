@@ -1,7 +1,7 @@
 # WarSOC Current-State Architecture and Operational Contract
 
 **Document status:** Authoritative as-built map
-**Snapshot date:** 2026-07-15
+**Snapshot date:** 2026-07-16
 **Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, and launch proof.
 
 This document describes what the current source code does. It is not a sales claim and it does not treat an implemented path as production-proven unless verification evidence exists.
@@ -22,7 +22,7 @@ WarSOC currently has a coherent end-to-end architecture for a maximum of 50 Wind
 10. Compliance views, search, CSV exports, and PDF reports can merge Mongo hot records with verified Azure archive records.
 11. The dashboard intentionally separates normal agent telemetry from actual security alerts and groups repeated detections into operator incidents.
 
-The architecture is implemented and deployed at backend commit `443939d` with Windows agent `4.2.4-Native`. Production preflight, platform pipeline, 50-agent capacity, real native Windows detection, live browser integration, alert workflow, mitigation, SMTP delivery, immutable archival, authorized cold retrieval, and cold-backed CSV/PDF exports have been verified. WarSOC is suitable for a controlled Windows SMB pilot. The remaining obligations are explicitly recorded in Section 22; most importantly, a customer-style mailbox invitation activation, an independent Mongo backup restoration, physical Azure retention segmentation, and explicit hot-versus-cold provenance in API responses are not represented as completed work.
+The current release candidate is the working tree based on backend commit `67ee741` with Windows agent `4.2.4-Native`. The complete backend suite passes with `273 passed`, `4 skipped`, and zero failures; frontend lint and the production Vite build also pass. Historical production proof recorded below was gathered from the previously deployed release and remains valid evidence for those runs, but it is not proof that this newer candidate is live. The candidate must be committed, rebuilt, deployed, and smoke-tested before it replaces the deployed release. WarSOC remains suitable for a controlled Windows SMB pilot once that deployment gate is completed. Remaining obligations are explicitly recorded in Section 22.
 
 ## 2. Product Boundary
 
@@ -586,7 +586,7 @@ The archive reader:
 7. Marks records as archived and records their source collection/blob.
 8. Deduplicates hot and cold identities and sorts newest first.
 
-The internal reader preserves `_archived`, source collection, and blob identity while verifying the payload. The current compliance response curation removes that internal marker and labels `data_origin` with the logical collection name. Evidence retrieval and integrity are correct, but the browser cannot yet distinguish a Mongo-hot row from an Azure-cold row. The required presentation fix is an explicit non-secret field such as `storage_tier: "mongodb_hot" | "azure_archive"`; internal blob paths should remain hidden unless an authorized audit-detail contract requires them.
+The internal reader preserves `_archived`, source collection, and blob identity while verifying the payload. Compliance response curation now exposes only `storage_tier: "hot" | "cold_archive"` and `archived: true | false`; internal blob names, paths, and credentials remain hidden. The evidence tab renders these fields in the curated record and now distinguishes a retrieval failure from a valid empty vault instead of silently displaying "No forensic evidence" for both conditions. Production proof of this presentation change is required after the current candidate is deployed.
 
 ### 16.2 Routes that read hot plus cold
 
@@ -743,10 +743,12 @@ flowchart LR
 
 ### 22.1 Release identity and regression evidence
 
-- Backend commit `443939d` is the clean local and DigitalOcean checkout.
-- The Windows-only launch regression completed with `247 passed`, `3 skipped`, and zero failures. The skips are explicitly environment/Git-metadata gated rather than runtime feature failures.
-- A separate reliability group covering dependency-aware health, provisioning rollback, consumer-safe stream retention, and worker metrics completed with `8 passed` and zero failures.
-- Frontend lint and production Vite build passed; the deployed frontend contains no localhost, ngrok, or Web3Forms production binding.
+- The current source candidate is the working tree based on backend commit `67ee741`; it is not represented as deployed until it is committed and rebuilt on DigitalOcean.
+- The complete backend regression completed on 2026-07-16 with `273 passed`, `4 skipped`, and zero failures. The skips are explicitly environment/Git-metadata gated rather than runtime feature failures.
+- SIEM source routing now requires trusted web-log provenance for web and phishing signatures while preserving native Event `4688` command-line detection. This prevents Windows events from being mislabeled as Web-WAF or phishing detections.
+- The `security_alerts` unique index now applies only to documents with a string `alert_uid`; the startup migration handles both Mongo index options and key-spec conflicts, while legacy rows without `alert_uid` remain readable.
+- Compliance evidence responses expose safe hot/cold provenance, and the frontend evidence tab no longer treats an API/archive failure as a valid empty vault.
+- Frontend lint and production Vite build passed. The candidate bundle contains the production API binding `https://api.warsoc.tech/api/v1` and no localhost API binding. The main JavaScript chunk remains a performance warning at approximately 1.67 MB minified / 530 KB gzip.
 - Approved installer: `warsoc_installer-4.2.4.exe`, 17,417,877 bytes, SHA-256 `D7B2541FB0447697D3DE76812A785913FF63D2688CDE26A48EF1660E4F34E41B`.
 - The versioned manifest is `pilot_hash_manifest-4.2.4.json` and also covers the packaged agent, NSSM, native telemetry script, and tenant policy.
 
@@ -803,7 +805,7 @@ The validator's two environment/human warnings were closed separately:
 | Customer-style invitation activation | SMTP delivery, pending-login denial, activation contract tests, and active-auditor RBAC are proven. The latest emailed token was not clicked through manually. | Open one real invitation email, choose a policy-compliant password, log in, and confirm the intended role view. |
 | Independent backup recovery | Azure evidence archival is not a Mongo operational backup. | Restore a current Mongo backup into an isolated environment and record collection counts plus login/search checks. |
 | Physical retention segmentation | One locked 2,190-day container currently governs all evidence blobs. | Route future FBR, PECA, and general/SIEM archives to containers whose locked policy matches the promised retention class. |
-| Archive provenance presentation | Cold retrieval is correct, but compliance responses label rows by collection rather than physical tier. | Expose a safe `storage_tier`/`archived` field without leaking credentials or unrestricted blob paths. |
+| Archive provenance presentation | Implemented and regression-tested in the current source candidate with safe `storage_tier`/`archived` fields and explicit frontend retrieval errors. | Deploy the candidate and confirm one hot row, one cold row, and one simulated reader failure in the production browser. |
 | Formal disposable-VM artifact | Real native Windows functional proof passed on the test host. | Repeat on a clean snapshot-based VM and preserve the generated JSON/EVTX evidence bundle for formal audit records. |
 | Pilot data hygiene | The current demo tenant contains intentional detection-test history. | Provision clean customer tenants and do not demonstrate the contaminated engineering tenant as customer production data. |
 | Installer trust | The pilot installer remains unsigned. | Keep Defender enabled, verify the manifest, use approved hash allowlisting, and complete code signing when available. |

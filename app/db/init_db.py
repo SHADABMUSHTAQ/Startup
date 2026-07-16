@@ -84,7 +84,10 @@ async def _aggressive_create_index(collection, keys, **kwargs):
     try:
         await collection.create_index(keys, **kwargs)
     except OperationFailure as e:
-        if e.code == 85 or "IndexOptionsConflict" in str(e):
+        if e.code in {85, 86} or any(
+            conflict_name in str(e)
+            for conflict_name in ("IndexOptionsConflict", "IndexKeySpecsConflict")
+        ):
             logger.warning(f"Conflicting index found for {keys} with options {kwargs}. Purging and recreating...")
             indexes = await collection.index_information()
             expected_key = keys if isinstance(keys, list) else [(keys, 1)]
@@ -140,7 +143,13 @@ async def init_compliance_db(db):
         # 3. SIEM Security Audit Trail: seven-day hot feed, archive-before-delete.
         await _drop_ttl_indexes(db.security_alerts, "security_alerts")
         #  LEGAL PHYSICS: Hard engine-level block on cross-tenant overwrites for hot feed
-        await _aggressive_create_index(db.security_alerts, [("tenant_id", 1), ("alert_uid", 1)], unique=True, name="idx_alerts_tenant_alert_uid")
+        await _aggressive_create_index(
+            db.security_alerts,
+            [("tenant_id", 1), ("alert_uid", 1)],
+            unique=True,
+            partialFilterExpression={"alert_uid": {"$type": "string"}},
+            name="idx_alerts_tenant_alert_uid",
+        )
         # Legacy FBR/correlation alerts used a non-indexed retention field. Give
         # them a full hot-retention window before the absolute TTL applies.
         await db.security_alerts.update_many(

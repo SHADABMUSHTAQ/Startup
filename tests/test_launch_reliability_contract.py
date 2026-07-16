@@ -88,3 +88,21 @@ async def test_siem_vault_has_write_and_dashboard_indexes(db):
 
     assert (("tenant_id", 1), ("event_uid", 1)) in index_keys
     assert (("tenant_id", 1), ("timestamp", -1)) in index_keys
+
+
+@pytest.mark.asyncio
+async def test_alert_uid_index_deduplicates_identified_alerts_without_blocking_legacy_rows(db):
+    await init_compliance_db(db)
+    indexes = await db["security_alerts"].index_information()
+    alert_index = indexes["idx_alerts_tenant_alert_uid"]
+
+    assert alert_index["unique"] is True
+    assert alert_index["partialFilterExpression"] == {"alert_uid": {"$type": "string"}}
+
+    await db["security_alerts"].insert_many(
+        [
+            {"tenant_id": "TENANT-LEGACY", "message": "legacy one"},
+            {"tenant_id": "TENANT-LEGACY", "message": "legacy two"},
+        ]
+    )
+    assert await db["security_alerts"].count_documents({"tenant_id": "TENANT-LEGACY"}) == 2

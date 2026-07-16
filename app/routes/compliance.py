@@ -208,6 +208,7 @@ def _event_sort_key(doc: dict):
 def _curate_evidence_record(doc: dict, evidence_source: str, data_origin: str) -> dict:
     signature = doc.get("digital_signature")
     forensic_hash = doc.get("forensic_seal")
+    archived = doc.get("_archived") is True
 
     curated = {
         "id": str(doc.get("_id")) if doc.get("_id") is not None else None,
@@ -232,7 +233,9 @@ def _curate_evidence_record(doc: dict, evidence_source: str, data_origin: str) -
         "rsa_signature": signature,
         "cryptographic_hash": forensic_hash,
         "evidence_source": evidence_source,
-        "data_origin": data_origin
+        "data_origin": data_origin,
+        "storage_tier": "cold_archive" if archived else "hot",
+        "archived": archived,
     }
     return curated
 

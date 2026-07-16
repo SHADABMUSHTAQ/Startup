@@ -449,6 +449,7 @@ async def test_dashboard_logs_accept_datetime_and_iso_alert_timestamps(client, d
         [
             {
                 "tenant_id": user["tenant_id"],
+                "alert_uid": "hardening-datetime-alert",
                 "timestamp": now,
                 "event_id": "1102",
                 "severity": "CRITICAL",
@@ -458,6 +459,7 @@ async def test_dashboard_logs_accept_datetime_and_iso_alert_timestamps(client, d
             },
             {
                 "tenant_id": user["tenant_id"],
+                "alert_uid": "hardening-iso-alert",
                 "timestamp": now.isoformat(),
                 "event_id": "7045",
                 "severity": "HIGH",

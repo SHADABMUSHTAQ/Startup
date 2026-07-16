@@ -63,6 +63,22 @@ class SIEMEngine:
         self.phishing_suspicious_tlds = set(k.lower() for k in phishing_cfg.get("suspicious_tlds", []))
         self.phishing_risky_attachments = set(k.lower() for k in phishing_cfg.get("risky_attachment_extensions", []))
         self.phishing_lolbins = [k.lower() for k in phishing_cfg.get("lolbin_indicators", [])]
+        self.phishing_delivery_event_types = {
+            str(value).strip().lower()
+            for value in phishing_cfg.get(
+                "delivery_event_types",
+                [
+                    "email",
+                    "email_gateway",
+                    "email_message",
+                    "browser_download",
+                    "url_click",
+                    "web_proxy",
+                    "http_request",
+                ],
+            )
+            if str(value).strip()
+        }
         
         self._url_pattern = re.compile(r"https?://[^\s'\"]+", flags=re.IGNORECASE)
         self._email_pattern = re.compile(r"\b[a-zA-Z0-9._%+-]+@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b")
@@ -168,7 +184,12 @@ class SIEMEngine:
         if elevated_powershell_alert:
             findings.append(elevated_powershell_alert)
 
-        phishing_alert = self._detect_phishing(log_entry, msg_lower, event_type)
+        phishing_alert = self._detect_phishing(
+            log_entry,
+            msg_lower,
+            event_type,
+            trusted_web_origin=trusted_web_origin,
+        )
         if phishing_alert:
             findings.append(phishing_alert)
 
@@ -179,7 +200,7 @@ class SIEMEngine:
             required_context = rule.get("requires_context", set())
             if required_context and event_type not in required_context:
                 continue
-            if required_context.intersection({"http_request", "http_404", "http_500"}) and not trusted_web_origin:
+            if event_type in {"http_request", "http_404", "http_500"} and not trusted_web_origin:
                 continue
 
             if len(msg) < rule.get("min_message_length", self.default_min_message_length):
@@ -222,8 +243,19 @@ class SIEMEngine:
 
         return findings
 
-    def _detect_phishing(self, log_entry: dict, msg_lower: str, event_type: str):
+    def _detect_phishing(
+        self,
+        log_entry: dict,
+        msg_lower: str,
+        event_type: str,
+        *,
+        trusted_web_origin: bool = False,
+    ):
         if not self.phishing_enabled:
+            return None
+        if event_type not in self.phishing_delivery_event_types:
+            return None
+        if event_type in {"http_request", "http_404", "http_500"} and not trusted_web_origin:
             return None
 
         signals = []

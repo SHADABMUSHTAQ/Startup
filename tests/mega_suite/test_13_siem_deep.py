@@ -110,6 +110,10 @@ async def test_siem_deep_dive(running_siem_worker):
             source_ip=f"8.8.8.{int(time.time()) % 255}",
         )
         sql_event["event_type"] = "http_request"
+        sql_event["raw_data"] = {
+            "raw": sql_event["message"],
+            "web_log_file": r"C:\inetpub\logs\LogFiles\W3SVC1\u_ex.log",
+        }
         resp = await ingest([sql_event])
         assert resp.status_code == 200, f"SQL injection ingest failed: {resp.text}"
         

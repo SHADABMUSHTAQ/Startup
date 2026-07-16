@@ -8,6 +8,26 @@ import pytest
 
 from app.workers import storage_archiver
 from app.utils import archive_reader
+from app.routes.compliance import _curate_evidence_record
+
+
+def test_compliance_evidence_exposes_safe_storage_tier_provenance():
+    hot = _curate_evidence_record(
+        {"event_id": "4688"},
+        "peca_forensic",
+        "peca_forensic_logs",
+    )
+    archived = _curate_evidence_record(
+        {"event_id": "4688", "_archived": True},
+        "peca_forensic",
+        "peca_forensic_logs",
+    )
+
+    assert hot["storage_tier"] == "hot"
+    assert hot["archived"] is False
+    assert archived["storage_tier"] == "cold_archive"
+    assert archived["archived"] is True
+    assert "_archive_blob_name" not in archived
 
 
 def test_archive_reader_search_matches_title_and_message_substrings():

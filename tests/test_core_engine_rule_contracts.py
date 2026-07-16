@@ -41,13 +41,21 @@ SIEM_RULE_SAMPLES = {
 }
 
 
+ENABLED_SIEM_RULE_NAMES = sorted(
+    rule_name
+    for rule_name, rule in SIEM_RULES["detection"]["rules"].items()
+    if rule.get("enabled", True)
+)
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("rule_name", sorted(SIEM_RULES["detection"]["rules"]))
+@pytest.mark.parametrize("rule_name", ENABLED_SIEM_RULE_NAMES)
 async def test_every_siem_regex_rule_fires(rule_name):
-    missing_samples = set(SIEM_RULES["detection"]["rules"]) - set(SIEM_RULE_SAMPLES)
+    missing_samples = set(ENABLED_SIEM_RULE_NAMES) - set(SIEM_RULE_SAMPLES)
     assert not missing_samples, f"Missing SIEM rule samples: {sorted(missing_samples)}"
 
     event_type, message = SIEM_RULE_SAMPLES[rule_name]
+    raw_data = {"web_log_file": r"C:\inetpub\logs\u_ex.log"} if event_type.startswith("http") else {}
     engine = SIEMEngine(SIEM_RULES)
     findings = await engine.analyze_single_log(
         {
@@ -56,12 +64,25 @@ async def test_every_siem_regex_rule_fires(rule_name):
             "event_type": event_type,
             "message": message,
             "user": "contract_user",
+            "raw_data": raw_data,
         }
     )
 
     assert any(finding["type"] == rule_name for finding in findings), (
         f"{rule_name} did not fire. Findings: {[finding['type'] for finding in findings]}"
     )
+
+
+def test_disabled_siem_rules_are_not_loaded_as_active_detectors():
+    engine = SIEMEngine(SIEM_RULES)
+    disabled = {
+        name
+        for name, rule in SIEM_RULES["detection"]["rules"].items()
+        if not rule.get("enabled", True)
+    }
+
+    assert disabled
+    assert disabled.isdisjoint(engine.rules)
 
 
 def test_peca_and_fbr_catalogs_are_complete_and_disjoint():

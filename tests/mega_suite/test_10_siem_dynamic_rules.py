@@ -248,7 +248,8 @@ async def test_catalog_password_spray_triggers_after_five_users_in_five_minutes(
 
     assert len(alerts) == 1
     assert alerts[0]["type"] == "Password spraying attack detected"
-    assert "10.0.0.55" in redis.sets["warsoc:banned_ips:TENANT-SPRAY"]
+    assert "recommended_action" in alerts[0]
+    assert "warsoc:banned_ips:TENANT-SPRAY" not in redis.sets
 
     duplicate_alerts = await engine.run_dynamic_rules(
         tenant_id="TENANT-SPRAY",

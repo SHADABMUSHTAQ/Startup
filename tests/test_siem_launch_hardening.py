@@ -51,13 +51,13 @@ async def test_regex_cooldown_is_scoped_to_same_payload():
     engine.set_redis_client(redis)
 
     first = await engine.analyze_single_log(
-        {"tenant_id": "TENANT-A", "source_ip": "10.0.0.9", "event_type": "http_request", "message": "attack probe"}
+        {"tenant_id": "TENANT-A", "source_ip": "10.0.0.9", "event_type": "command_line", "message": "attack probe"}
     )
     duplicate = await engine.analyze_single_log(
-        {"tenant_id": "TENANT-A", "source_ip": "10.0.0.9", "event_type": "http_request", "message": "attack probe"}
+        {"tenant_id": "TENANT-A", "source_ip": "10.0.0.9", "event_type": "command_line", "message": "attack probe"}
     )
     changed_payload = await engine.analyze_single_log(
-        {"tenant_id": "TENANT-A", "source_ip": "10.0.0.9", "event_type": "http_request", "message": "attack destructive payload"}
+        {"tenant_id": "TENANT-A", "source_ip": "10.0.0.9", "event_type": "command_line", "message": "attack destructive payload"}
     )
 
     assert [finding["type"] for finding in first] == ["CUSTOM_ATTACK"]
@@ -163,3 +163,39 @@ async def test_native_process_telemetry_cannot_be_labelled_as_phishing_by_itself
     )
 
     assert not any(finding["type"] == "PHISHING_PATTERN" for finding in findings)
+
+
+@pytest.mark.asyncio
+async def test_native_command_line_rule_is_not_forced_through_web_provenance():
+    engine = SIEMEngine(SIEM_RULES)
+    findings = await engine.analyze_single_log(
+        {
+            "tenant_id": "TENANT-COMMAND",
+            "agent_id": "AGENT-1",
+            "event_id": "4688",
+            "event_type": "command_line",
+            "source_ip": "192.168.1.10",
+            "user": "alice",
+            "message": "input=ok; whoami",
+        }
+    )
+
+    assert any(finding["type"] == "COMMAND_INJECTION" for finding in findings)
+
+
+@pytest.mark.asyncio
+async def test_untrusted_http_label_cannot_activate_web_or_phishing_rules():
+    engine = SIEMEngine(SIEM_RULES)
+    findings = await engine.analyze_single_log(
+        {
+            "tenant_id": "TENANT-WEB",
+            "agent_id": "AGENT-1",
+            "event_type": "http_request",
+            "source_ip": "192.168.1.10",
+            "user": "alice",
+            "message": "verify your account at http://198.51.100.5/?id=1' union select password from users --",
+            "raw_data": {},
+        }
+    )
+
+    assert not any(finding["type"] in {"SQL_INJECTION", "PHISHING_PATTERN"} for finding in findings)
