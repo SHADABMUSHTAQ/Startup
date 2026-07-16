@@ -409,7 +409,7 @@ async def test_agent_activation_code_is_single_use_and_returns_agent_jwt(client,
     assert "expired activation code" in reuse_resp.json().get("detail", "").lower()
 
 
-async def test_logs_endpoint_enforces_tenant_isolation(client, db):
+async def test_logs_endpoint_enforces_tenant_isolation(client, db, monkeypatch):
     tenant_a_headers, tenant_a, _ = await _signup_and_login(client, "hardening_logs_a")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fastapi_app), base_url="http://testserver") as tenant_b_client:
         _, tenant_b, _ = await _signup_and_login(tenant_b_client, "hardening_logs_b")
@@ -439,6 +439,29 @@ async def test_logs_endpoint_enforces_tenant_isolation(client, db):
     body = resp.json()
     assert len(body["data"]) == 1
     assert body["data"][0]["message"] == "tenant A visible"
+
+    collection_type = type(db["siem_cold_vault"])
+    original_count_documents = collection_type.count_documents
+
+    async def reject_live_collection_count(collection, *args, **kwargs):
+        if collection.name in {"siem_cold_vault", "security_alerts"}:
+            raise AssertionError("live dashboard route must not count evidence collections")
+        return await original_count_documents(collection, *args, **kwargs)
+
+    monkeypatch.setattr(collection_type, "count_documents", reject_live_collection_count)
+    live_resp = await client.get(
+        "/api/v1/logs/live?source=siem",
+        headers=tenant_a_headers,
+    )
+    assert live_resp.status_code == 200, live_resp.text
+    live_body = live_resp.json()
+    assert len(live_body["data"]) == 1
+    assert live_body["mode"] == "hot_live"
+    assert live_body["source"] == "siem"
+    assert "total" not in live_body
+    assert "raw_total" not in live_body
+    assert live_body["data"][0]["message"] == "tenant A visible"
+    assert "raw_event_data" not in live_body["data"][0]
 
 
 async def test_dashboard_logs_accept_datetime_and_iso_alert_timestamps(client, db):
@@ -477,6 +500,17 @@ async def test_dashboard_logs_accept_datetime_and_iso_alert_timestamps(client, d
     assert messages == {"datetime alert visible", "ISO alert visible"}
     assert all("_expire_at" not in item for item in body["data"])
     assert all("_retention_ts" not in item for item in body["data"])
+
+    live_resp = await client.get(
+        "/api/v1/logs/live?source=security_alerts",
+        headers=headers,
+    )
+    assert live_resp.status_code == 200, live_resp.text
+    live_body = live_resp.json()
+    assert live_body["mode"] == "hot_live"
+    assert "total" not in live_body
+    assert "raw_total" not in live_body
+    assert {item["message"] for item in live_body["data"]} == messages
 
 
 async def test_alert_history_enforces_tenant_isolation(client, db):
@@ -1244,6 +1278,12 @@ async def test_auditor_cannot_bypass_alert_rbac_through_logs_gateway(client, db)
 
     alerts = await client.get("/api/v1/logs", headers=headers)
     assert alerts.status_code == 403, alerts.text
+
+    live_alerts = await client.get(
+        "/api/v1/logs/live?source=security_alerts",
+        headers=headers,
+    )
+    assert live_alerts.status_code == 403, live_alerts.text
 
     compliance = await client.get(
         "/api/v1/logs?source=compliance&pack=fbr_pos",

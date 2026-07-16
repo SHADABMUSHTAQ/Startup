@@ -221,21 +221,37 @@ async def agent_status(
             },
         ).to_list(length=1000)
 
+        registered_agents = [
+            (agent, str(agent.get("agent_id") or ""))
+            for agent in agents
+            if str(agent.get("agent_id") or "")
+        ]
+        live_status_by_agent = {}
+        sensor_status_by_agent = {}
+        if redis_client is not None and registered_agents:
+            status_keys = [
+                f"status:{tenant_id}:{agent_id}"
+                for _, agent_id in registered_agents
+            ]
+            sensor_keys = [
+                f"warsoc:agent_sensor:{agent_id}"
+                for _, agent_id in registered_agents
+            ]
+            values = await redis_client.mget([*status_keys, *sensor_keys])
+            split_at = len(registered_agents)
+            live_status_by_agent = {
+                agent_id: values[index]
+                for index, (_, agent_id) in enumerate(registered_agents)
+            }
+            sensor_status_by_agent = {
+                agent_id: values[split_at + index]
+                for index, (_, agent_id) in enumerate(registered_agents)
+            }
+
         data = []
-        for agent in agents:
-            agent_id = str(agent.get("agent_id") or "")
-            if not agent_id:
-                continue
-            live_last_seen = (
-                await redis_client.get(f"status:{tenant_id}:{agent_id}")
-                if redis_client is not None
-                else None
-            )
-            sensor_raw = (
-                await redis_client.get(f"warsoc:agent_sensor:{agent_id}")
-                if redis_client is not None
-                else None
-            )
+        for agent, agent_id in registered_agents:
+            live_last_seen = live_status_by_agent.get(agent_id)
+            sensor_raw = sensor_status_by_agent.get(agent_id)
             sensor_status = agent.get("sensor_status") if isinstance(agent.get("sensor_status"), dict) else {}
             if sensor_raw:
                 try:

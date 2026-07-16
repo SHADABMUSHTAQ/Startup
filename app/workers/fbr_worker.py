@@ -845,7 +845,10 @@ async def fbr_worker():
                                 matched_rule = rule
                         if not is_syslog:
                             if not event_id or event_id not in fbr_targets:
-                                print(f"DROP: Event ID not in fbr_targets: {event_id} {fbr_targets}")
+                                logger.debug(
+                                    "Ignoring non-FBR event_id=%s",
+                                    event_id,
+                                )
                                 immediate_ack_ids.append(message_id)
                                 continue
 

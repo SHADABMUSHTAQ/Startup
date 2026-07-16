@@ -573,7 +573,7 @@ async def ingest_pulse_logs(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("Bulk ingestion error: %s", exc)
+        logger.error("Bulk ingestion error: %r", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to queue log batch")
 
 # ---------------------------------------------------------

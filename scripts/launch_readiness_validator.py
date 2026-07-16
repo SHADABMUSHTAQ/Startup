@@ -192,6 +192,7 @@ class Validator:
             self.blacklist_flow(agent_id, private_key)
             websocket_probe = self.start_websocket_probe()
             self.ingest_and_pipeline(agent_jwt)
+            self.dashboard_live_read_flow()
             self.finish_websocket_probe(websocket_probe)
 
         self.rbac_flow(admin_password)
@@ -654,6 +655,31 @@ class Validator:
         self.wait_for("FBR correlated tamper visibility", fbr_ready, self.args.wait_seconds)
         self.wait_for("FBR invoice evidence visibility", fbr_invoice_ready, self.args.wait_seconds)
         self.wait_for("PECA evidence visibility", peca_ready, self.args.wait_seconds)
+
+    def dashboard_live_read_flow(self):
+        for source, limit in (("security_alerts", 500), ("siem", 100)):
+            started = time.perf_counter()
+            response = self.admin.request(
+                "GET",
+                f"/api/v1/logs/live?source={source}&limit={limit}&aggregate={'true' if source == 'security_alerts' else 'false'}",
+                timeout=10,
+            )
+            elapsed = time.perf_counter() - started
+            body = response.body if isinstance(response.body, dict) else {}
+            ok = (
+                response.status == 200
+                and body.get("mode") == "hot_live"
+                and body.get("source") == source
+                and isinstance(body.get("data"), list)
+                and "total" not in body
+                and "raw_total" not in body
+                and elapsed < 10
+            )
+            self.record(
+                f"Dashboard live read ({source})",
+                ok,
+                f"HTTP {response.status}; seconds={elapsed:.3f}; returned={body.get('returned')}; has_more={body.get('has_more')}",
+            )
 
     def rbac_flow(self, admin_password: str):
         auditor_email = self.unique_email("auditor")

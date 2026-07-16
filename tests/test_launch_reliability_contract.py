@@ -7,6 +7,7 @@ import pytest
 
 from app.db.init_db import init_compliance_db
 from app.main import app as fastapi_app
+from app.database import init_db as init_core_db
 
 
 @pytest.mark.asyncio
@@ -88,6 +89,32 @@ async def test_siem_vault_has_write_and_dashboard_indexes(db):
 
     assert (("tenant_id", 1), ("event_uid", 1)) in index_keys
     assert (("tenant_id", 1), ("timestamp", -1)) in index_keys
+    assert "idx_siem_vault_tenant_event_uid" in indexes
+    assert "idx_siem_vault_tenant_timestamp" in indexes
+
+    for collection_name in ("logs", "peca_forensic_logs", "fbr_pos_logs"):
+        collection_indexes = await db[collection_name].index_information()
+        collection_keys = {
+            tuple(details.get("key", []))
+            for details in collection_indexes.values()
+        }
+        assert (("tenant_id", 1), ("timestamp", -1)) in collection_keys
+
+
+@pytest.mark.asyncio
+async def test_core_startup_guarantees_siem_vault_indexes_before_compliance_backfills(db):
+    await db["siem_cold_vault"].drop_indexes()
+    await init_core_db()
+
+    indexes = await db["siem_cold_vault"].index_information()
+    assert indexes["idx_siem_vault_tenant_event_uid"]["key"] == [
+        ("tenant_id", 1),
+        ("event_uid", 1),
+    ]
+    assert indexes["idx_siem_vault_tenant_timestamp"]["key"] == [
+        ("tenant_id", 1),
+        ("timestamp", -1),
+    ]
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,10 @@ from bson import ObjectId
 from datetime import datetime, timezone, timedelta
 import json
 import asyncio
+import logging
+import time
 from cryptography.fernet import Fernet
+from prometheus_client import Counter, Histogram
 from app.config.config import get_settings
 from app.utils.archive_reader import fetch_archived_documents
 from app.utils.alert_incidents import aggregate_security_alerts
@@ -16,6 +19,24 @@ from app.utils.alert_context import operator_alert_document
 # Strictly Decoupled, Paginated, and Tenant-Isolated
 
 router = APIRouter()
+logger = logging.getLogger("warsoc.logs")
+
+LIVE_READ_SECONDS = Histogram(
+    "warsoc_dashboard_live_read_seconds",
+    "Latency of bounded MongoDB reads used by the live dashboard.",
+    ["source"],
+)
+LIVE_READ_ROWS = Histogram(
+    "warsoc_dashboard_live_read_rows",
+    "Raw MongoDB rows returned to a live dashboard reconciliation.",
+    ["source"],
+    buckets=(0, 1, 10, 25, 50, 100, 250, 500),
+)
+LIVE_READ_FAILURES = Counter(
+    "warsoc_dashboard_live_read_failures_total",
+    "Failed bounded live-dashboard reads.",
+    ["source"],
+)
 
 def json_serializer(obj):
     if isinstance(obj, ObjectId):
@@ -29,6 +50,14 @@ from app.utils.audit import audit_log
 RAW_RETENTION_ANCHOR_FIELD = "_retention_ts"
 _settings = get_settings()
 _fernet = Fernet(_settings.encryption_key.encode()) if _settings.encryption_key else None
+_LIST_PROJECTION = {
+    "raw_event_data": 0,
+    "raw_event": 0,
+    "raw_data": 0,
+    "processed_data": 0,
+    RAW_RETENTION_ANCHOR_FIELD: 0,
+    "_expire_at": 0,
+}
 
 
 def _decrypt_evidence_field(value):
@@ -104,14 +133,7 @@ async def get_logs_master(
             raise HTTPException(status_code=400, detail="Invalid cursor format")
 
     #  LAZY LOADING: Exclude the heavy raw string for O(1) ingestion speed
-    projection = {
-        "raw_event_data": 0,
-        "raw_event": 0,
-        "raw_data": 0,
-        "processed_data": 0,
-        RAW_RETENTION_ANCHOR_FIELD: 0,
-        "_expire_at": 0,
-    }
+    projection = _LIST_PROJECTION
 
     # 📁 Collection Selection
     if source == "security_alerts":
@@ -181,7 +203,8 @@ async def get_logs_master(
     else:
         collection = db["security_alerts"]
 
-    # Count raw documents before optional operator-view aggregation.
+    # Historical/search callers retain exact count semantics. The automatic
+    # dashboard reconciliation path uses /logs/live and never reaches this scan.
     raw_total = await collection.count_documents(query)
     total = raw_total
 
@@ -231,6 +254,75 @@ async def get_logs_master(
         "incident_count": incident_count,
         "raw_total": raw_total,
     }
+
+
+@router.get("/live")
+async def get_live_logs(
+    source: str = Query("security_alerts", pattern="^(security_alerts|siem)$"),
+    limit: int = Query(100, ge=1, le=500),
+    aggregate: bool = Query(True, description="Group repeated alerts into operator incidents"),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    role: str = Depends(RequireRole(["admin", "manager", "analyst"])),
+):
+    """Return a bounded hot-tier reconciliation page for automatic dashboard refreshes.
+
+    This route deliberately performs no exact count, no Azure read and no
+    management-audit write. Complete historical/search semantics remain on
+    GET /logs and compliance/export routes.
+    """
+    tenant_id = current_user.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="Unauthorized access to live telemetry.")
+
+    collection = db["security_alerts" if source == "security_alerts" else "siem_cold_vault"]
+    started = time.perf_counter()
+    try:
+        # Fetch one extra row to expose bounded-page completeness without an
+        # expensive count_documents scan. Timestamp is normalized on current
+        # worker writes and covered by the tenant/timestamp indexes.
+        cursor = (
+            collection.find({"tenant_id": tenant_id}, _LIST_PROJECTION)
+            .sort("timestamp", -1)
+            .limit(limit + 1)
+        )
+        documents = await cursor.to_list(length=limit + 1)
+        has_more = len(documents) > limit
+        documents = documents[:limit]
+        raw_returned = len(documents)
+
+        rows = await asyncio.to_thread(
+            lambda: json.loads(json.dumps(documents, default=json_serializer))
+        )
+        if source == "security_alerts":
+            rows = [operator_alert_document(row) for row in rows]
+            if aggregate:
+                rows = aggregate_security_alerts(rows)
+
+        LIVE_READ_ROWS.labels(source=source).observe(raw_returned)
+        return {
+            "status": "success",
+            "mode": "hot_live",
+            "source": source,
+            "data": rows,
+            "limit": limit,
+            "returned": len(rows),
+            "raw_returned": raw_returned,
+            "has_more": has_more,
+        }
+    except Exception:
+        LIVE_READ_FAILURES.labels(source=source).inc()
+        raise
+    finally:
+        elapsed = time.perf_counter() - started
+        LIVE_READ_SECONDS.labels(source=source).observe(elapsed)
+        if elapsed >= 2.0:
+            logger.warning(
+                "Slow live dashboard read source=%s duration_ms=%.1f limit=%s",
+                source,
+                elapsed * 1000,
+                limit,
+            )
 
 @router.get("/{log_id}/evidence")
 @audit_log("View Forensic Evidence")

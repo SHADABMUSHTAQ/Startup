@@ -22,7 +22,7 @@ WarSOC currently has a coherent end-to-end architecture for a maximum of 50 Wind
 10. Compliance views, search, CSV exports, and PDF reports can merge Mongo hot records with verified Azure archive records.
 11. The dashboard intentionally separates normal agent telemetry from actual security alerts and groups repeated detections into operator incidents.
 
-The current release candidate is the working tree based on backend commit `a5e1616` with Windows agent `4.2.4-Native`, plus the hot-first compliance retrieval optimization described in Section 16. The complete backend suite passes with `278 passed`, `4 skipped`, and zero failures; frontend lint and the production Vite build also pass. Historical production proof recorded below was gathered from the previously deployed release and remains valid evidence for those runs, but it is not proof that this newer candidate is live. The candidate must be committed, rebuilt, deployed, and smoke-tested before it replaces the deployed release. WarSOC remains suitable for a controlled Windows SMB pilot once that deployment gate is completed. Remaining obligations are explicitly recorded in Section 22.
+The current release candidate is the working tree based on backend commit `6029298` and frontend commit `51c0c3c`, with Windows agent `4.2.4-Native`. It adds the bounded dashboard read architecture described in Sections 14 and 17 without changing SIEM, FBR, PECA, retention, encryption, evidence, or alert-lifecycle semantics. The complete backend suite passes with `285 passed`, `3 skipped`, and zero failures; frontend lint and the production Vite build also pass. The three skips are the explicit `E2E=1` external run and two Git-metadata checks unavailable inside the mounted test container. Historical production proof recorded below remains valid for those runs, but it is not proof that this working tree is live. The candidate must be committed, rebuilt, deployed, measured, and smoke-tested before it replaces the deployed release.
 
 ## 2. Product Boundary
 
@@ -524,6 +524,19 @@ The threshold and the physical move time are not identical:
 
 MongoDB itself is therefore not allowed to delete evidence on a timer. Only the verified archive transaction may remove hot copies.
 
+### 14.4 Dashboard read indexes and startup guarantee
+
+The operational read indexes are part of the fast database startup phase, not only the slower compliance migration phase:
+
+- `security_alerts`: `(tenant_id, timestamp DESC)`.
+- `siem_cold_vault`: `(tenant_id, timestamp DESC)` for live reads.
+- `siem_cold_vault`: `(tenant_id, event_uid)` for idempotent evidence writes.
+- FBR, PECA, raw logs, uploads, users, firewall policy, and alert identity retain their existing tenant-scoped indexes.
+
+The same index names/options are used by core and compliance startup. An existing equivalent index is accepted even when its legacy name differs; WarSOC does not drop and rebuild a large index merely to rename it. An incompatible unique, sparse, TTL, or partial index is still repaired according to the collection contract.
+
+Read-only execution-plan proof is available through `scripts/measure_dashboard_reads.py`. On the 2026-07-16 local production-shaped dataset, the unindexed SIEM query scanned 156,257 documents. After the guaranteed index was created, a populated-tenant page returned 501 rows while examining exactly 501 keys and 501 documents, used `IXSCAN`, and reported 2 ms Mongo execution time. This is source-candidate proof; production must be measured again after deployment.
+
 ## 15. Azure Cold Archive Transaction
 
 ### 15.1 Production scheduler
@@ -619,8 +632,8 @@ For deep historical work, users must apply date/event filters or use CSV in boun
 
 | Screen/widget | Backend source | Meaning |
 |---|---|---|
-| Omni Agent Feed | `GET /api/v1/logs?source=siem&limit=100&aggregate=false` | Latest normal and suspicious endpoint evidence from `siem_cold_vault`. |
-| Live Inspection / threats | `GET /api/v1/logs` default alert source | Actionable records from `security_alerts`, grouped by incident/occurrence. |
+| Omni Agent Feed | `GET /api/v1/logs/live?source=siem&limit=100&aggregate=false` | Latest normal and suspicious hot endpoint evidence from `siem_cold_vault`. |
+| Live Inspection / threats | `GET /api/v1/logs/live?source=security_alerts&limit=500&aggregate=true` | Latest actionable hot records from `security_alerts`, grouped by incident/occurrence. |
 | Historical charts | Dashboard history/search endpoints | Tenant-scoped aggregates for selected time window. |
 | Agent health badge | `GET /api/v1/data/status` | Active, degraded, or offline/not-configured telemetry state. |
 | Compliance catalog | `GET /api/v1/compliance/packs` and `GET /api/v1/auth/my-packs` | Available and entitled packs. |
@@ -629,14 +642,29 @@ For deep historical work, users must apply date/event filters or use CSV in boun
 
 The Agent Feed and Live Inspection must not use the same dataset. If normal events appear as threats, or threats disappear because only raw events are fetched, that is a frontend binding regression.
 
+`GET /api/v1/logs/live` is deliberately separate from historical `GET /api/v1/logs`:
+
+- It accepts only `security_alerts` and `siem`.
+- It is tenant-isolated and restricted to admin, manager, and analyst roles. Auditors receive HTTP 403.
+- It reads Mongo hot storage only and never opens Azure.
+- It excludes raw/heavy/encrypted detail fields from the list projection.
+- It fetches at most the requested limit plus one row to return `has_more`.
+- It performs no `count_documents` scan and returns no misleading total.
+- It does not create a management-audit record for every automatic browser refresh.
+- Historical `/logs`, forensic detail, compliance evidence, search, CSV, and PDF retain their existing complete/audited contracts.
+
 ### 17.2 Live updates
 
 1. The browser requests a one-time WebSocket ticket from `POST /api/v1/ws/ticket`.
 2. The ticket is short-lived, stored in Redis, and bound to the session/tenant.
 3. The browser connects to `/ws/alerts` over WSS.
 4. The backend validates and consumes the ticket.
-5. The browser receives tenant-scoped alert messages.
-6. Periodic HTTP refresh remains a fallback/reconciliation path.
+5. The browser receives tenant-scoped alert messages and displays critical notification text immediately.
+6. Alert bursts are coalesced into at most one server reconciliation every five seconds.
+7. Only one alert request and one endpoint-evidence request may be in flight at a time.
+8. Alert HTTP reconciliation runs every 30 seconds as a fallback; endpoint evidence runs every 10 seconds; agent health runs every 30 seconds.
+
+The previous implementation issued both live queries every five seconds, refetched on every WebSocket message, counted both collections, and wrote a management-audit row for every automatic `/logs` request. Two active browsers could overlap requests until Axios cancelled them at ten seconds. The dedicated live contract removes this read/write amplification while preserving the 500-alert and 100-event display boundaries.
 
 ### 17.3 Duplicate presentation
 
@@ -749,12 +777,13 @@ flowchart LR
 
 ### 22.1 Release identity and regression evidence
 
-- The current source candidate is the working tree based on backend commit `67ee741`; it is not represented as deployed until it is committed and rebuilt on DigitalOcean.
-- The complete backend regression completed on 2026-07-16 with `273 passed`, `4 skipped`, and zero failures. The skips are explicitly environment/Git-metadata gated rather than runtime feature failures.
+- The current source candidate is the working tree based on backend commit `6029298` and frontend commit `51c0c3c`; it is not represented as deployed until both working trees are committed and rebuilt/redeployed.
+- The complete backend regression completed on 2026-07-16 with `285 passed`, `3 skipped`, and zero failures. The skips are the explicit external `E2E=1` run and two Git-metadata checks unavailable inside the mounted test container.
 - SIEM source routing now requires trusted web-log provenance for web and phishing signatures while preserving native Event `4688` command-line detection. This prevents Windows events from being mislabeled as Web-WAF or phishing detections.
 - The `security_alerts` unique index now applies only to documents with a string `alert_uid`; the startup migration handles both Mongo index options and key-spec conflicts, while legacy rows without `alert_uid` remain readable.
 - Compliance evidence responses expose safe hot/cold provenance, and the frontend evidence tab no longer treats an API/archive failure as a valid empty vault.
 - Frontend lint and production Vite build passed. The candidate bundle contains the production API binding `https://api.warsoc.tech/api/v1` and no localhost API binding. The main JavaScript chunk remains a performance warning at approximately 1.67 MB minified / 530 KB gzip.
+- Python compilation passed for the changed API, database, worker, launch-validator, and measurement modules. Both repositories pass `git diff --check`.
 - Approved installer: `warsoc_installer-4.2.4.exe`, 17,417,877 bytes, SHA-256 `D7B2541FB0447697D3DE76812A785913FF63D2688CDE26A48EF1660E4F34E41B`.
 - The versioned manifest is `pilot_hash_manifest-4.2.4.json` and also covers the packaged agent, NSSM, native telemetry script, and tenant policy.
 
@@ -812,6 +841,8 @@ The validator's two environment/human warnings were closed separately:
 | Independent backup recovery | Azure evidence archival is not a Mongo operational backup. | Restore a current Mongo backup into an isolated environment and record collection counts plus login/search checks. |
 | Physical retention segmentation | One locked 2,190-day container currently governs all evidence blobs. | Route future FBR, PECA, and general/SIEM archives to containers whose locked policy matches the promised retention class. |
 | Archive provenance presentation | Implemented and regression-tested in the current source candidate with safe `storage_tier`/`archived` fields and explicit frontend retrieval errors. | Deploy the candidate and confirm one hot row, one cold row, and one simulated reader failure in the production browser. |
+| Dashboard read candidate | Production previously showed repeated HTTP 499 cancellations and Mongo at 152.84% CPU while ingestion/detection remained active. The source candidate has bounded reads, request coalescing, startup indexes, and metrics. | Deploy both candidates; run `measure_dashboard_reads.py` for an active tenant; confirm both plans use `IXSCAN`, no fresh dashboard 499 responses occur, and live-read p95 remains below two seconds. |
+| Intermittent ingest exception | The old production log emitted `Bulk ingestion error:` without exception type or traceback while surrounding ingests continued returning 200. The candidate logs `repr` plus the stack. | After deployment, monitor one real-agent cycle. If the error recurs, preserve the complete traceback and resolve that exact failure before declaring the incident closed. |
 | Formal disposable-VM artifact | Real native Windows functional proof passed on the test host. | Repeat on a clean snapshot-based VM and preserve the generated JSON/EVTX evidence bundle for formal audit records. |
 | Pilot data hygiene | The current demo tenant contains intentional detection-test history. | Provision clean customer tenants and do not demonstrate the contaminated engineering tenant as customer production data. |
 | Installer trust | The pilot installer remains unsigned. | Keep Defender enabled, verify the manifest, use approved hash allowlisting, and complete code signing when available. |
@@ -835,6 +866,7 @@ These items do not invalidate the verified processing pipeline. They define the 
 | Azure immutability insufficient | Do not delete hot Mongo records. | Archiver hard failure. |
 | Archive hash mismatch on read | Reject that blob's records. | Archive-reader integrity error. |
 | WebSocket disconnects | HTTP refresh reconciles; reconnect with a fresh ticket. | UI reconnect state and API polling. |
+| Live dashboard read becomes slow | Preserve the previous feed; reject overlapping browser requests and emit a slow-read warning/metric. | `warsoc_dashboard_live_read_seconds`, Nginx 499 count, Mongo execution-plan proof. |
 | SMTP fails | Detection/evidence persists; notification retries/fails visibly. | Email worker metrics/logs. |
 
 ## 24. Operating Checks
@@ -848,6 +880,8 @@ These items do not invalidate the verified processing pipeline. They define the 
 - Disk, Mongo volume, and Redis memory usage.
 - Latest successful Azure archive ledger timestamp.
 - Email queue failures.
+- Dashboard live-read latency/failures and new Nginx HTTP 499 responses.
+- Mongo CPU plus execution plans if live-read p95 exceeds two seconds.
 
 ### Weekly
 
@@ -862,6 +896,7 @@ These items do not invalidate the verified processing pipeline. They define the 
 
 - Backend unit/integration suite.
 - Frontend lint and production build.
+- Read-only `measure_dashboard_reads.py` proof for an active tenant with `IXSCAN` and no collection scan.
 - Production acceptance preflight.
 - Real activation, registration, heartbeat, and telemetry smoke test.
 - One SIEM detection, one PECA control, one FBR invoice event, and one FBR FIM correlation.
@@ -884,12 +919,13 @@ Do not declare the current release fully accepted until all of the following are
 7. FBR invoice evidence from strict JSONL or authenticated API.
 8. FBR file delete/permission scenario producing exactly one encrypted FIM event and no alert for ordinary writes.
 9. Dashboard Agent Feed showing normal evidence and Live Inspection showing only actionable threats.
-10. Alert acknowledgement, closure with notes, and safe IP mitigation.
-11. Auditor access allowed for entitled evidence and denied for operations/team/agent controls.
-12. Email delivery proof.
-13. PDF and CSV proof.
-14. Azure blob upload, immutability, SHA verification, archive-ledger entry, and successful API retrieval proof.
-15. Backup restore proof distinct from the compliance archive.
+10. Both `/api/v1/logs/live` sources return within ten seconds, expose `mode=hot_live`, omit exact totals, and produce no fresh Nginx HTTP 499 responses.
+11. Alert acknowledgement, closure with notes, and safe IP mitigation.
+12. Auditor access allowed for entitled evidence and denied for operations/team/agent/live-feed controls.
+13. Email delivery proof.
+14. PDF and CSV proof.
+15. Azure blob upload, immutability, SHA verification, archive-ledger entry, and successful API retrieval proof.
+16. Backup restore proof distinct from the compliance archive.
 
 ## 26. Source-of-Truth Files
 
@@ -904,13 +940,15 @@ Do not declare the current release fully accepted until all of the following are
 | Stream trimming safety | `app/workers/stream_retention.py` |
 | Storage archival | `app/workers/storage_archiver.py` |
 | Azure retrieval | `app/utils/archive_reader.py` |
-| Database indexes/TTL removal | `app/db/init_db.py` |
+| Fast startup database indexes | `app/database.py` |
+| Compliance indexes/TTL removal | `app/db/init_db.py` |
 | Agent enrollment/download/heartbeat | `app/routes/agent_orchestration.py` |
 | Agent ingest | `app/routes/ingest_pulse.py` |
 | POS API | `app/routes/pos.py` |
 | Compliance API | `app/routes/compliance.py` |
 | Alert lifecycle | `app/routes/alerts.py` |
 | Search/status | `app/routes/data.py` |
+| Historical and bounded live reads | `app/routes/logs.py` |
 | Reports | `app/routes/export.py` |
 | Roles | `app/utils/rbac.py` plus route dependencies |
 | Windows agent | `agent/` |
@@ -919,6 +957,8 @@ Do not declare the current release fully accepted until all of the following are
 | Production services | `docker-compose.prod.yml` |
 | Dashboard integration | Frontend `src/assets/Pages/Dashboard/Dashboard.jsx` |
 | Compliance integration | Frontend `src/assets/Pages/Compliance/ComplianceDashboard.jsx` |
+| Dashboard query-plan proof | `scripts/measure_dashboard_reads.py` |
+| Full platform acceptance | `scripts/launch_readiness_validator.py` |
 
 ## 27. Interpretation Rules
 

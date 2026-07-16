@@ -137,22 +137,35 @@ async def init_db():
     # Ensure tenant isolation indexes exist for performance and safety
     if db_manager.db is not None:
         indexes = [
-            ("logs", [("tenant_id", 1), ("timestamp", -1)]),
-            ("security_alerts", [("tenant_id", 1), ("timestamp", -1)]),
-            ("peca_forensic_logs", [("tenant_id", 1), ("timestamp", -1)]),
-            ("fbr_pos_logs", [("tenant_id", 1), ("timestamp", -1)]),
-            ("csv_uploads", [("tenant_id", 1), ("timestamp", -1)]),
-            ("logs", "tenant_id"),
-            ("security_alerts", "tenant_id"),
-            ("analysis_results", "tenant_id"),
-            ("firewall_rules", [("tenant_id", 1), ("ip", 1)]),
-            ("users", "tenant_id")
+            ("logs", [("tenant_id", 1), ("timestamp", -1)], None),
+            ("security_alerts", [("tenant_id", 1), ("timestamp", -1)], None),
+            ("peca_forensic_logs", [("tenant_id", 1), ("timestamp", -1)], None),
+            ("fbr_pos_logs", [("tenant_id", 1), ("timestamp", -1)], None),
+            ("csv_uploads", [("tenant_id", 1), ("timestamp", -1)], None),
+            # These two indexes are required by ingestion and the dashboard.
+            # Keep them in the fast startup phase so a later compliance
+            # backfill timeout cannot leave the live SIEM vault unindexed.
+            (
+                "siem_cold_vault",
+                [("tenant_id", 1), ("event_uid", 1)],
+                "idx_siem_vault_tenant_event_uid",
+            ),
+            (
+                "siem_cold_vault",
+                [("tenant_id", 1), ("timestamp", -1)],
+                "idx_siem_vault_tenant_timestamp",
+            ),
+            ("logs", "tenant_id", None),
+            ("security_alerts", "tenant_id", None),
+            ("analysis_results", "tenant_id", None),
+            ("firewall_rules", [("tenant_id", 1), ("ip", 1)], None),
+            ("users", "tenant_id", "idx_users_tenant_id_1"),
         ]
-        for coll, idx in indexes:
+        for coll, idx, explicit_name in indexes:
             try:
                 # Use a specific name to avoid collision with default generated names
                 idx_str = str(idx).replace(' ', '').replace('[', '').replace(']', '').replace('(', '').replace(')', '').replace(',', '_').replace("'", '')
-                index_name = f"idx_{coll}_{idx_str}"
+                index_name = explicit_name or f"idx_{coll}_{idx_str}"
                 try:
                     await db_manager.db[coll].create_index(idx, name=index_name)
                 except Exception as e:
@@ -166,16 +179,30 @@ async def init_db():
                             expected_key = list(idx)
 
                         idxs = await db_manager.db[coll].index_information()
-                        dropped = False
+                        handled = False
                         for name, info in idxs.items():
                             if info.get('key') == expected_key:
-                                await db_manager.db[coll].drop_index(name)
-                                print(f"    - Dropped conflicting index {coll}.{name}")
-                                await db_manager.db[coll].create_index(idx, name=index_name)
-                                print(f"    - Recreated compound index {index_name}")
-                                dropped = True
+                                # Index names are operational metadata. Do not
+                                # rebuild a large equivalent non-TTL index just
+                                # to rename it during API startup.
+                                equivalent = not any(
+                                    (
+                                        info.get('unique'),
+                                        info.get('sparse'),
+                                        info.get('expireAfterSeconds') is not None,
+                                        info.get('partialFilterExpression'),
+                                    )
+                                )
+                                if equivalent:
+                                    print(f"    - Using equivalent index {coll}.{name}")
+                                else:
+                                    await db_manager.db[coll].drop_index(name)
+                                    print(f"    - Dropped incompatible index {coll}.{name}")
+                                    await db_manager.db[coll].create_index(idx, name=index_name)
+                                    print(f"    - Recreated compound index {index_name}")
+                                handled = True
                                 break
-                        if not dropped:
+                        if not handled:
                             print(f" Index conflict for {coll}/{idx} but no matching key found: {e}")
                     else:
                         print(f" Index setup for {coll}/{idx} failed: {e}")

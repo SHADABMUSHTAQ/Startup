@@ -88,19 +88,35 @@ async def _aggressive_create_index(collection, keys, **kwargs):
             conflict_name in str(e)
             for conflict_name in ("IndexOptionsConflict", "IndexKeySpecsConflict")
         ):
-            logger.warning(f"Conflicting index found for {keys} with options {kwargs}. Purging and recreating...")
             indexes = await collection.index_information()
             expected_key = keys if isinstance(keys, list) else [(keys, 1)]
+            expected_unique = bool(kwargs.get("unique", False))
+            expected_sparse = bool(kwargs.get("sparse", False))
+            expected_partial = kwargs.get("partialFilterExpression")
             for idx_name, idx_info in indexes.items():
-                if idx_info.get("key") == expected_key:
-                    try:
-                        await collection.drop_index(idx_name)
-                        logger.warning(f"Dropped conflicting index: {idx_name}")
-                    except OperationFailure as err:
-                        if err.code == 27 or "IndexNotFound" in str(err):
-                            pass
-                        else:
-                            raise err
+                if idx_info.get("key") != expected_key:
+                    continue
+                equivalent = (
+                    bool(idx_info.get("unique", False)) == expected_unique
+                    and bool(idx_info.get("sparse", False)) == expected_sparse
+                    and idx_info.get("partialFilterExpression") == expected_partial
+                    and idx_info.get("expireAfterSeconds") is None
+                )
+                if equivalent:
+                    logger.info(
+                        "Using equivalent existing index %s for %s",
+                        idx_name,
+                        expected_key,
+                    )
+                    return
+                try:
+                    await collection.drop_index(idx_name)
+                    logger.warning(f"Dropped incompatible index: {idx_name}")
+                except OperationFailure as err:
+                    if err.code == 27 or "IndexNotFound" in str(err):
+                        pass
+                    else:
+                        raise err
             if "name" in kwargs and kwargs["name"] in indexes:
                 try:
                     await collection.drop_index(kwargs["name"])
@@ -128,7 +144,11 @@ async def init_compliance_db(db):
             logger.warning("Dropped legacy unique index peca_forensic_logs.event_id_1")
 
         await _aggressive_create_index(db.peca_forensic_logs, [("event_id", 1)], name="event_id_1", unique=False)
-        await _aggressive_create_index(db.peca_forensic_logs, [("tenant_id", 1), ("timestamp", -1)])
+        await _aggressive_create_index(
+            db.peca_forensic_logs,
+            [("tenant_id", 1), ("timestamp", -1)],
+            name="idx_peca_forensic_logs_tenant_id_1_timestamp_-1",
+        )
         await _aggressive_create_index(
             db.peca_forensic_logs,
             [("tenant_id", 1), ("timestamp", -1), ("ingested_at", -1), ("_id", -1)],
@@ -140,7 +160,11 @@ async def init_compliance_db(db):
         # 2. FBR POS Compliance: 6 Year vault-retention metadata.
         await _drop_ttl_indexes(db.fbr_pos_logs, "fbr_pos_logs")
         await _backfill_expire_at(db.fbr_pos_logs, retention_days=365 * 6)
-        await _aggressive_create_index(db.fbr_pos_logs, [("tenant_id", 1), ("timestamp", -1)])
+        await _aggressive_create_index(
+            db.fbr_pos_logs,
+            [("tenant_id", 1), ("timestamp", -1)],
+            name="idx_fbr_pos_logs_tenant_id_1_timestamp_-1",
+        )
         await _aggressive_create_index(
             db.fbr_pos_logs,
             [("tenant_id", 1), ("timestamp", -1), ("ingested_at", -1), ("_id", -1)],
@@ -266,7 +290,11 @@ async def init_compliance_db(db):
         
         #  PERFORMANCE HARDENING: Unified Tenant Exploration
         # Composite index for O(log n) dashboard log lookups at scale.
-        await _aggressive_create_index(db.logs, [("tenant_id", 1), ("timestamp", -1)])
+        await _aggressive_create_index(
+            db.logs,
+            [("tenant_id", 1), ("timestamp", -1)],
+            name="idx_logs_tenant_id_1_timestamp_-1",
+        )
         await _aggressive_create_index(db.logs, [("source_ip", 1)])
         
         # High-cardinality search optimization
