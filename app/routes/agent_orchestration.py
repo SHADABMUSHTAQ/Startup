@@ -489,8 +489,13 @@ async def agent_heartbeat(
                 
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Cryptographic verification failed: {repr(e)}")
+    except Exception as exc:
+        logger.warning(
+            "Agent heartbeat signature validation failed: agent_id=%s error_type=%s",
+            body.agent_id,
+            type(exc).__name__,
+        )
+        raise HTTPException(status_code=401, detail="Cryptographic verification failed") from exc
         
     if tenant_id:
         sensor_status = _sanitize_sensor_status(body.sensor_status)
@@ -577,8 +582,13 @@ async def deregister_agent(
         if not isinstance(public_key, ed25519.Ed25519PublicKey):
             raise HTTPException(status_code=400, detail="Invalid key type")
         public_key.verify(signature_bytes, raw_body)
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Cryptographic verification failed: {e}")
+    except Exception as exc:
+        logger.warning(
+            "Agent revocation signature validation failed: agent_id=%s error_type=%s",
+            body.agent_id,
+            type(exc).__name__,
+        )
+        raise HTTPException(status_code=401, detail="Cryptographic verification failed") from exc
         
     # 3. Block the agent immediately in Redis, then free one seat once.
     tenant_id = agent.get("tenant_id")

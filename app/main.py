@@ -12,7 +12,7 @@ import redis.asyncio as aioredis
 from app.routes.auth import get_current_user
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Depends, Request, status, WebSocketException, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
@@ -76,10 +76,10 @@ class MemoryLimitMiddleware(BaseHTTPMiddleware):
                 self._last_check_at = now
             memory_percent = self._last_memory_percent
         except Exception:
-            return JSONResponse(status_code=503, content={"detail": "Service unavailable: memory pressure check failed"})
+            return JSONResponse(status_code=503, content={"detail": "The service is temporarily unavailable."})
 
         if memory_percent >= self.threshold:
-            return JSONResponse(status_code=503, content={"detail": "Service unavailable: memory pressure too high"})
+            return JSONResponse(status_code=503, content={"detail": "The service is temporarily unavailable."})
 
         return await call_next(request)
 
@@ -414,8 +414,61 @@ app.add_middleware(
 )
 
 
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+def _request_reference(request: Request) -> str:
+    return str(getattr(request.state, "request_id", "") or uuid.uuid4().hex[:16])
+
+
+@app.middleware("http")
+async def request_reference_middleware(request: Request, call_next):
+    request.state.request_id = uuid.uuid4().hex[:16]
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request.state.request_id
+    return response
+
+
+@app.exception_handler(HTTPException)
+async def sanitized_http_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code < 500:
+        return await fastapi_http_exception_handler(request, exc)
+
+    request_id = _request_reference(request)
+    logger.error(
+        "Request failed: request_id=%s method=%s path=%s status=%s detail=%r",
+        request_id,
+        request.method,
+        request.url.path,
+        exc.status_code,
+        exc.detail,
+    )
+    headers = dict(exc.headers or {})
+    headers["X-Request-ID"] = request_id
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "detail": "The service is temporarily unavailable.",
+            "request_id": request_id,
+        },
+        headers=headers,
+    )
+
+
+@app.exception_handler(Exception)
+async def sanitized_unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = _request_reference(request)
+    logger.exception(
+        "Unhandled request failure: request_id=%s method=%s path=%s",
+        request_id,
+        request.method,
+        request.url.path,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "The service is temporarily unavailable.",
+            "request_id": request_id,
+        },
+        headers={"X-Request-ID": request_id},
+    )
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
