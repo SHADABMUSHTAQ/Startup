@@ -22,7 +22,8 @@ from app.utils.compliance_catalog import COMPLIANCE_CATALOG
 from app.utils.observability import increment_redis_counter, record_worker_heartbeat_with_client
 from app.utils.custom_json import dumps as json_dumps
 from app.utils.alert_incidents import operator_message
-from app.utils.alert_context import build_alert_context, operator_alert_document
+from app.utils.alert_context import build_alert_context
+from app.utils.security_incidents import project_and_publish_incident
 from app.actions.alerting import dispatch_alert_if_entitled, is_email_trigger_severity
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [SIEM-Worker] %(message)s")
@@ -331,6 +332,7 @@ async def _flush_siem_cold_vault(db, cold_docs: list[dict]) -> int:
         _normalize_document_timestamps(item)
         event_uid = item.get("event_uid") or str(uuid.uuid4())
         item["event_uid"] = event_uid
+        item["context"] = build_alert_context(item)
         ops.append(
             UpdateOne(
                 {"tenant_id": item.get("tenant_id"), "event_uid": event_uid},
@@ -496,7 +498,9 @@ async def siem_worker():
                             {"$set": alert_payload},
                             upsert=True,
                         )
-                        operator_alert = operator_alert_document(alert_payload)
+                        operator_alert = await project_and_publish_incident(
+                            db, redis, alert_payload
+                        )
                         await redis.publish("security_alerts", json_dumps(operator_alert))
                         if is_email_trigger_severity(alert_payload.get("severity")):
                             await dispatch_alert_if_entitled(db, redis, tenant_id, operator_alert, "SIEM")
@@ -869,7 +873,9 @@ async def siem_worker():
                                         c_alert["context"] = build_alert_context(c_alert, log_data)
                                         try:
                                             await db.security_alerts.update_one({"tenant_id": tenant_id, "alert_uid": alert_uid}, {"$set": c_alert}, upsert=True)
-                                            operator_alert = operator_alert_document(c_alert, log_data)
+                                            operator_alert = await project_and_publish_incident(
+                                                db, redis, c_alert, log_data
+                                            )
                                             await redis.publish("security_alerts", json_dumps(operator_alert))
                                             await _record_detection_latency(redis, log_data.get("timestamp"))
                                             logger.info(f"[CORR ALERT] {c_alert['severity']}: {c_alert['summary']}")
@@ -950,7 +956,9 @@ async def siem_worker():
                                     raise
 
                                 # Publish to redis for live websocket dashboard
-                                operator_alert = operator_alert_document(alert_payload, log_data)
+                                operator_alert = await project_and_publish_incident(
+                                    db, redis, alert_payload, log_data
+                                )
                                 await redis.publish("security_alerts", json_dumps(operator_alert))
                                 await _record_detection_latency(redis, log_data.get("timestamp"))
                                 logger.info(f"[!] ALERT: {display_title} for {tenant_id}")
@@ -1002,7 +1010,9 @@ async def siem_worker():
                                     finding["context"] = build_alert_context(finding, log_data)
                                     try:
                                         await db.security_alerts.update_one({"tenant_id": tenant_id, "alert_uid": finding["alert_uid"]}, {"$set": finding}, upsert=True)
-                                        operator_alert = operator_alert_document(finding, log_data)
+                                        operator_alert = await project_and_publish_incident(
+                                            db, redis, finding, log_data
+                                        )
                                         await redis.publish("security_alerts", json_dumps(operator_alert))
                                         await _record_detection_latency(redis, log_data.get("timestamp"))
                                         logger.info(f"[!] ADVANCED ALERT: {finding['summary']} for {tenant_id}")
@@ -1042,7 +1052,9 @@ async def siem_worker():
                                     corr_alert["context"] = build_alert_context(corr_alert, log_data)
                                     try:
                                         await db.security_alerts.update_one({"tenant_id": tenant_id, "alert_uid": corr_alert["alert_uid"]}, {"$set": corr_alert}, upsert=True)
-                                        operator_alert = operator_alert_document(corr_alert, log_data)
+                                        operator_alert = await project_and_publish_incident(
+                                            db, redis, corr_alert, log_data
+                                        )
                                         await redis.publish("security_alerts", json_dumps(operator_alert))
                                         await _record_detection_latency(redis, log_data.get("timestamp"))
                                         logger.info(f"[CORR] ALERT: {corr_alert['type']} | {corr_alert['severity']} | {tenant_id}")

@@ -70,18 +70,36 @@ async def dispatch_alert_if_entitled(
         if not rule_id:
             rule_id = hashlib.sha256(f"{tenant_id}:{required_pack}".encode("utf-8")).hexdigest()[:16]
 
+        alert_context = alert_data.get("context") if isinstance(alert_data.get("context"), dict) else {}
         sanitized_alert = {
             "rule_id": rule_id,
+            "incident_id": alert_data.get("incident_id"),
             "event_id": alert_data.get("event_id", "UNKNOWN"),
             "severity": alert_data.get("matched_rule_severity", "High"),
             "name": alert_data.get("event", alert_data.get("tags", "Security Event")),
             "timestamp": str(alert_data.get("timestamp", alert_data.get("ingested_at", ""))),
             "source_ip": alert_data.get("source_ip", "Unknown"),
             "user": alert_data.get("user", "System"),
+            "agent_id": alert_data.get("agent_id") or alert_context.get("agent_id"),
+            "target": alert_data.get("target") or alert_context.get("target"),
             "recipient": user.get("email") or user.get("username") or tenant_id,
         }
 
-        lock_key = f"alert_lock:{tenant_id}:{rule_id}"
+        incident_identity = str(alert_data.get("incident_id") or "").strip()
+        if not incident_identity:
+            incident_identity = hashlib.sha256(
+                ":".join(
+                    str(value or "unknown").strip().lower()
+                    for value in (
+                        rule_id,
+                        sanitized_alert.get("agent_id"),
+                        sanitized_alert.get("source_ip"),
+                        sanitized_alert.get("user"),
+                        sanitized_alert.get("target"),
+                    )
+                ).encode("utf-8")
+            ).hexdigest()[:24]
+        lock_key = f"alert_lock:{tenant_id}:{incident_identity}"
         acquired = await redis.set(lock_key, "1", nx=True, ex=300)
         if not acquired:
             logger.info(f"Duplicate alert dropped for tenant {tenant_id} rule {rule_id}.")

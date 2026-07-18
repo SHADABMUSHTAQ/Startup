@@ -42,7 +42,15 @@ def _mapping_layers(payloads: Iterable[Mapping[str, Any] | None]) -> list[Mappin
         layers.append(current)
         if len(layers) >= 24:
             break
-        for key in ("context", "processed_data", "raw_data", "raw_event_data", "event_data", "data"):
+        for key in (
+            "context",
+            "processed_data",
+            "raw_data",
+            "raw_event_data",
+            "event_data",
+            "system",
+            "data",
+        ):
             nested = current.get(key)
             if isinstance(nested, Mapping):
                 queue.append(nested)
@@ -63,6 +71,18 @@ def _command_from_raw_message(raw_message: Any) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _event_outcome(layers: list[Mapping[str, Any]]) -> Any:
+    explicit = _first(layers, "outcome", "result")
+    if explicit not in (None, ""):
+        return explicit
+    workflow_states = {"NEW", "ACKNOWLEDGED", "CLOSED", "FALSE_POSITIVE"}
+    for layer in layers:
+        value = layer.get("status")
+        if value not in (None, "") and str(value).strip().upper() not in workflow_states:
+            return value
+    return None
+
+
 def build_alert_context(alert: Mapping[str, Any], source_event: Mapping[str, Any] | None = None) -> dict:
     """Build bounded context without returning raw evidence objects."""
     layers = _mapping_layers((alert, source_event))
@@ -70,14 +90,50 @@ def build_alert_context(alert: Mapping[str, Any], source_event: Mapping[str, Any
     if not command_line:
         command_line = _command_from_raw_message(_first(layers, "raw_message"))
 
+    actor = _first(
+        layers,
+        "actor",
+        "subject_user_name",
+        "SubjectUserName",
+        "account_name",
+        "user",
+    )
+    target_user = _first(
+        layers,
+        "target_user",
+        "target_user_name",
+        "TargetUserName",
+        "member_name",
+        "MemberName",
+    )
+    protected_object = _first(
+        layers,
+        "object_name",
+        "ObjectName",
+        "file_path",
+        "registry_key",
+        "service_name",
+        "task_name",
+        "share_name",
+        "target_fingerprint",
+    )
+
     context = {
+        "schema_version": "operator-context-v1",
         "rule_id": _first(layers, "rule_id", "matched_rule_id", "type"),
         "event_id": _first(layers, "event_id"),
         "event_uid": _first(layers, "event_uid"),
         "mitre": _first(layers, "mitre", "mitre_id"),
         "endpoint": _first(layers, "computer", "hostname", "agent_id"),
         "agent_id": _first(layers, "agent_id"),
-        "user": _first(layers, "user", "target_user", "subject_user_name", "actor"),
+        "actor": actor,
+        "actor_sid": _first(layers, "subject_user_sid", "SubjectUserSid"),
+        "actor_domain": _first(layers, "subject_domain_name", "SubjectDomainName"),
+        "target_user": target_user,
+        "target_sid": _first(layers, "target_user_sid", "TargetUserSid", "target_sid"),
+        # Backward-compatible list-view field. New UI should prefer actor and
+        # target_user so successful logons do not conflate both identities.
+        "user": actor or target_user,
         "process_name": _first(
             layers,
             "new_process_name",
@@ -88,6 +144,7 @@ def build_alert_context(alert: Mapping[str, Any], source_event: Mapping[str, Any
             "Application",
             "NewProcessName",
         ),
+        "process_id": _first(layers, "process_id", "ProcessId", "new_process_id", "NewProcessId"),
         "parent_process": _first(
             layers,
             "parent_process_name",
@@ -95,12 +152,32 @@ def build_alert_context(alert: Mapping[str, Any], source_event: Mapping[str, Any
             "creator_process_name",
             "CreatorProcessName",
         ),
+        "parent_process_id": _first(
+            layers,
+            "parent_process_id",
+            "creator_process_id",
+            "CreatorProcessId",
+        ),
         "command_line": redact_sensitive_text(command_line),
         "source_address": _first(layers, "source_network_address", "source_address", "source_ip"),
-        "source_port": _first(layers, "source_port"),
-        "destination_address": _first(layers, "destination_address", "dest_address"),
-        "destination_port": _first(layers, "destination_port", "dest_port"),
-        "target": _first(layers, "target", "object_name", "file_path", "registry_key"),
+        "source_port": _first(layers, "source_port", "SourcePort"),
+        "destination_address": _first(
+            layers,
+            "destination_address",
+            "dest_address",
+            "DestinationAddress",
+        ),
+        "destination_port": _first(layers, "destination_port", "dest_port", "DestinationPort"),
+        "protocol": _first(layers, "protocol", "Protocol"),
+        "direction": _first(layers, "direction", "Direction"),
+        "application": _first(layers, "application", "Application"),
+        "target": _first(layers, "target") or target_user or protected_object,
+        "protected_object": protected_object,
+        "outcome": _event_outcome(layers),
+        "channel": _first(layers, "channel", "Channel"),
+        "provider": _first(layers, "provider", "Provider", "provider_name"),
+        "record_id": _first(layers, "event_record_id", "EventRecordID", "record_id"),
+        "match_reason": _first(layers, "match_reason", "matched_rule_name", "summary"),
     }
     return {key: value for key, value in context.items() if value not in (None, "")}
 

@@ -31,16 +31,25 @@ def _event_matches(doc: dict, event_id: Optional[str]) -> bool:
     return actual == expected
 
 
-def _event_uid_matches(doc: dict, event_uid: Optional[str]) -> bool:
-    if event_uid is None:
+def _event_uid_matches(
+    doc: dict,
+    event_uid: Optional[str],
+    event_uids: Optional[Iterable[str]] = None,
+) -> bool:
+    expected_values = {
+        str(value).strip()
+        for value in ([event_uid] if event_uid is not None else [])
+        + list(event_uids or [])
+        if str(value or "").strip()
+    }
+    if not expected_values:
         return True
-    expected = str(event_uid).strip()
     candidates = (
         doc.get("event_uid"),
         (doc.get("raw_event_data") or {}).get("event_uid") if isinstance(doc.get("raw_event_data"), dict) else None,
         (doc.get("raw_data") or {}).get("event_uid") if isinstance(doc.get("raw_data"), dict) else None,
     )
-    return any(str(candidate or "").strip() == expected for candidate in candidates)
+    return any(str(candidate or "").strip() in expected_values for candidate in candidates)
 
 
 def _document_id_matches(doc: dict, document_id: Optional[str]) -> bool:
@@ -150,6 +159,7 @@ async def fetch_archived_documents(
     end_dt: Optional[datetime] = None,
     event_id: Optional[str] = None,
     event_uid: Optional[str] = None,
+    event_uids: Optional[Iterable[str]] = None,
     document_id: Optional[str] = None,
     search_term: Optional[str] = None,
     limit: int = 500,
@@ -186,9 +196,21 @@ async def fetch_archived_documents(
     if event_id is not None:
         expected_event_id = str(event_id).strip()
         ledger_filters.append({"$or": [{"event_ids": expected_event_id}, {"event_ids": {"$exists": False}}]})
-    if event_uid is not None:
-        expected_event_uid = str(event_uid).strip()
-        ledger_filters.append({"$or": [{"event_uids": expected_event_uid}, {"event_uids": {"$exists": False}}]})
+    expected_event_uids = {
+        str(value).strip()
+        for value in ([event_uid] if event_uid is not None else [])
+        + list(event_uids or [])
+        if str(value or "").strip()
+    }
+    if expected_event_uids:
+        ledger_filters.append(
+            {
+                "$or": [
+                    {"event_uids": {"$in": sorted(expected_event_uids)}},
+                    {"event_uids": {"$exists": False}},
+                ]
+            }
+        )
     if document_id is not None:
         expected_document_id = str(document_id).strip()
         ledger_filters.append({
@@ -240,7 +262,7 @@ async def fetch_archived_documents(
                     continue
                 if not _event_matches(doc, event_id):
                     continue
-                if not _event_uid_matches(doc, event_uid):
+                if not _event_uid_matches(doc, event_uid, expected_event_uids):
                     continue
                 if not _document_id_matches(doc, document_id):
                     continue

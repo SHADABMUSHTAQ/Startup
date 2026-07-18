@@ -203,6 +203,60 @@ async def init_compliance_db(db):
             ],
         )
 
+        # 3.1 Operational incidents: mutable workflow state is deliberately
+        # separated from seven-day alert evidence. Occurrence rows provide
+        # cross-worker idempotency and expire only after the hot evidence has
+        # safely passed through the Azure archiver.
+        await _aggressive_create_index(
+            db.security_incidents,
+            [("tenant_id", 1), ("incident_id", 1)],
+            unique=True,
+            name="uq_security_incident_tenant_id",
+        )
+        await _aggressive_create_index(
+            db.security_incidents,
+            [("tenant_id", 1), ("status", 1), ("last_seen", -1), ("_id", -1)],
+            name="idx_security_incident_work_queue",
+        )
+        await _aggressive_create_index(
+            db.security_incidents,
+            [("tenant_id", 1), ("suppressed", 1), ("last_seen", -1)],
+            name="idx_security_incident_operator_feed",
+        )
+        await _aggressive_create_index(
+            db.security_incident_occurrences,
+            [("tenant_id", 1), ("occurrence_uid", 1)],
+            unique=True,
+            name="uq_security_incident_occurrence",
+        )
+        await _aggressive_create_index(
+            db.security_incident_occurrences,
+            [("tenant_id", 1), ("incident_id", 1)],
+            name="idx_security_incident_occurrence_parent",
+        )
+        await _aggressive_create_index(
+            db.security_incident_occurrences,
+            [("tenant_id", 1), ("event_uid", 1)],
+            name="idx_security_incident_occurrence_event",
+        )
+        await _aggressive_create_index(
+            db.security_incident_occurrences,
+            [("expires_at", 1)],
+            expireAfterSeconds=0,
+            name="ttl_security_incident_occurrences",
+        )
+        await _aggressive_create_index(
+            db.incident_audit_log,
+            [("tenant_id", 1), ("incident_id", 1), ("timestamp", -1)],
+            name="idx_incident_audit_tenant_incident",
+        )
+        await _aggressive_create_index(
+            db.system_migrations,
+            [("migration_id", 1)],
+            unique=True,
+            name="uq_system_migration_id",
+        )
+
         # 3.5 SIEM Cold Vault: the archiver owns hot-data removal. A Mongo TTL
         # could delete evidence during an Azure outage before archival succeeds.
         await _drop_ttl_indexes(db.siem_cold_vault, "siem_cold_vault")
@@ -332,6 +386,16 @@ async def init_compliance_db(db):
             db.user_activation_tokens,
             [("user_id", 1), ("purpose", 1), ("used_at", 1)],
             name="idx_user_activation_lifecycle",
+        )
+
+        from app.utils.security_incidents import backfill_hot_security_incidents
+
+        backfill_limit = max(0, min(50000, int(os.getenv("INCIDENT_BACKFILL_LIMIT", "5000"))))
+        backfill_result = await backfill_hot_security_incidents(db, limit=backfill_limit)
+        logger.info(
+            "Operational incident backfill complete: scanned=%s projected=%s",
+            backfill_result["scanned"],
+            backfill_result["projected"],
         )
 
         logger.info(" 7-Tier Database Layer Hardened: Capacity TTL active and audit-veto enforced.")

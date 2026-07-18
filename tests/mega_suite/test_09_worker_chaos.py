@@ -239,6 +239,12 @@ def _patch_fbr_worker(monkeypatch, fake_redis, logs_col, tenants_col):
     async def _fake_validate_fbr(*args, **kwargs):
         return True, None
     monkeypatch.setattr(fbr_worker, "_validate_stream_signature", _fake_validate_fbr)
+    async def _fake_project_incident(*args, **kwargs):
+        return {}
+    # Incident projection has its own contract tests. These chaos cases isolate
+    # FBR evidence durability and must not count incident-ledger writes as FBR
+    # evidence inserts.
+    monkeypatch.setattr(fbr_worker, "project_and_publish_incident", _fake_project_incident)
     class FakeDatabase:
         def __getattr__(self, name):
             if name == "fbr_pos_logs": return logs_col

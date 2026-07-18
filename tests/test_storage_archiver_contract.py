@@ -495,7 +495,10 @@ def test_archive_managed_collections_have_no_independent_ttl_deletion():
     ):
         assert f'_drop_ttl_indexes(db.{collection_name}, "{collection_name}")' in init_text
     assert 'name="ttl_user_activation_tokens"' in init_text
-    assert init_text.count("expireAfterSeconds=") == 1
+    assert 'name="ttl_security_incident_occurrences"' in init_text
+    # Only short-lived activation tokens and the incident idempotency ledger
+    # use TTL deletion. Evidence collections remain archive-before-delete.
+    assert init_text.count("expireAfterSeconds=") == 2
 
 
 @pytest.mark.asyncio

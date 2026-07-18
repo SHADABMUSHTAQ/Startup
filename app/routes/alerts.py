@@ -17,6 +17,10 @@ from app.utils.rbac import RoleChecker
 from app.utils.archive_reader import fetch_archived_documents
 from app.utils.alert_incidents import aggregate_security_alerts
 from app.utils.alert_context import operator_alert_document
+from app.utils.security_incidents import (
+    find_incident_ids_for_references,
+    incident_reference_values,
+)
 from bson import ObjectId
 import json
 
@@ -280,12 +284,45 @@ async def update_alert_status(
         id_terms.append({"alert_id": requested_id})
 
     id_filter = {"tenant_id": tenant_id, "$or": id_terms}
+    matched_alerts = await db["security_alerts"].find(
+        id_filter,
+        {"_id": 1, "alert_id": 1, "alert_uid": 1, "event_uid": 1},
+    ).to_list(length=500)
     result = await db["security_alerts"].update_many(
         id_filter,
         {"$set": set_fields},
     )
 
-    if result.matched_count == 0:
+    references = incident_reference_values(matched_alerts, unique_ids)
+    incident_ids = await find_incident_ids_for_references(db, tenant_id, references)
+    incident_updates = dict(set_fields)
+    incident_updates["updated_at"] = datetime.now(timezone.utc)
+    if update.status == AlertStatus.CLOSED:
+        incident_updates["closed_at"] = incident_updates["updated_at"]
+    elif update.status is not None:
+        incident_updates["closed_at"] = None
+
+    incident_result = None
+    if incident_ids:
+        incident_result = await db.security_incidents.update_many(
+            {"tenant_id": tenant_id, "incident_id": {"$in": incident_ids}},
+            {"$set": incident_updates},
+        )
+        audit_rows = [
+            {
+                "tenant_id": tenant_id,
+                "incident_id": incident_id,
+                "action": "legacy_alert_workflow_sync",
+                "changed_fields": list(incident_updates.keys()),
+                "operator": set_fields["updated_by"],
+                "timestamp": incident_updates["updated_at"],
+            }
+            for incident_id in incident_ids
+        ]
+        if audit_rows:
+            await db.incident_audit_log.insert_many(audit_rows)
+
+    if result.matched_count == 0 and not incident_ids:
         raise HTTPException(
             status_code=404,
             detail="Alert not found or access denied.",
@@ -296,4 +333,5 @@ async def update_alert_status(
         "message": f"Alert {alert_id} updated successfully.",
         "updated_fields": list(set_fields.keys()),
         "updated_alerts": result.matched_count,
+        "updated_incidents": incident_result.modified_count if incident_result else 0,
     }

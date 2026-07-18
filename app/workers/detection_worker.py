@@ -21,6 +21,7 @@ from typing import Optional
 
 import httpx
 from redis.asyncio import Redis
+from app.utils.security_incidents import project_and_publish_incident
 
 logger = logging.getLogger("Detection-Worker")
 
@@ -476,6 +477,9 @@ async def main():
                         for alert in alerts:
                             try:
                                 await db.security_alerts.insert_one(alert)
+                                await project_and_publish_incident(
+                                    db, redis_client, alert, log_data
+                                )
                             except Exception as db_err:
                                 logger.error(
                                     f"[DB] Alert insert failed: {db_err}"

@@ -183,6 +183,8 @@ services:
     networks:
       - warsoc-secure-net
     depends_on:
+      api:
+        condition: service_healthy
       mongodb:
         condition: service_healthy
       redis:

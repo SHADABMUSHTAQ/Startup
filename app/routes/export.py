@@ -186,7 +186,7 @@ async def csv_list_generator(docs: list[dict], fieldnames):
 
 @router.get("/csv")
 async def export_csv(
-    data_type: str = Query(..., description="Type of data to export: 'alerts', 'logs', or 'compliance'"),
+    data_type: str = Query(..., description="Type of data to export: 'incidents', 'alerts', 'logs', or 'compliance'"),
     pack_id: Optional[str] = Query(None, description="Optional compliance pack for data_type=compliance"),
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None),
@@ -205,7 +205,11 @@ async def export_csv(
     tenant_id = _safe_path_segment(raw_tenant_id)
 
     role = str(current_user.get("role") or "").strip().lower()
-    if data_type == "alerts":
+    if data_type == "incidents":
+        if role not in {"admin", "manager", "analyst"}:
+            raise HTTPException(status_code=403, detail="Role is not permitted to export incidents")
+        collection_name = "security_incidents"
+    elif data_type == "alerts":
         if role not in {"admin", "manager", "analyst"}:
             raise HTTPException(status_code=403, detail="Role is not permitted to export alerts")
         collection_name = "security_alerts"
@@ -238,27 +242,38 @@ async def export_csv(
             str_bounds["$lte"] = end_dt.isoformat()
 
         # Handle mixed BSON Date and ISO String formats
-        query["$or"] = [
-            {"timestamp": time_bounds},
-            {"timestamp": str_bounds},
-            {"ingested_at": time_bounds},
-            {"ingested_at": str_bounds}
-        ]
+        if data_type == "incidents":
+            query["$or"] = [
+                {"last_seen": time_bounds},
+                {"first_seen": time_bounds},
+            ]
+        else:
+            query["$or"] = [
+                {"timestamp": time_bounds},
+                {"timestamp": str_bounds},
+                {"ingested_at": time_bounds},
+                {"ingested_at": str_bounds}
+            ]
 
-    cursor = collection.find(query).sort("timestamp", -1).limit(limit)
+    sort_field = "last_seen" if data_type == "incidents" else "timestamp"
+    cursor = collection.find(query).sort(sort_field, -1).limit(limit)
     hot_docs = await cursor.to_list(length=limit)
-    archived_docs, _ = await fetch_archived_documents(
-        db,
-        tenant_id=tenant_id,
-        collections=[collection_name],
-        start_dt=start_dt,
-        end_dt=end_dt,
-        event_id=None,
-        limit=limit,
-    )
+    archived_docs = []
+    if data_type != "incidents":
+        archived_docs, _ = await fetch_archived_documents(
+            db,
+            tenant_id=tenant_id,
+            collections=[collection_name],
+            start_dt=start_dt,
+            end_dt=end_dt,
+            event_id=None,
+            limit=limit,
+        )
     export_docs = sorted(
         [*hot_docs, *archived_docs],
-        key=lambda doc: _parse_time(str(doc.get("timestamp") or doc.get("ingested_at") or "")) or datetime.min.replace(tzinfo=timezone.utc),
+        key=lambda doc: _parse_time(
+            str(doc.get("last_seen") or doc.get("timestamp") or doc.get("ingested_at") or "")
+        ) or datetime.min.replace(tzinfo=timezone.utc),
         reverse=True,
     )[:limit]
     if data_type == "alerts":

@@ -14,6 +14,7 @@ from app.config.config import get_settings
 from app.utils.archive_reader import fetch_archived_documents
 from app.utils.alert_incidents import aggregate_security_alerts
 from app.utils.alert_context import operator_alert_document
+from app.utils.telemetry_groups import aggregate_endpoint_events
 
 # 📊 MASTER BUILD: Logs Gateway
 # Strictly Decoupled, Paginated, and Tenant-Isolated
@@ -260,7 +261,7 @@ async def get_logs_master(
 async def get_live_logs(
     source: str = Query("security_alerts", pattern="^(security_alerts|siem)$"),
     limit: int = Query(100, ge=1, le=500),
-    aggregate: bool = Query(True, description="Group repeated alerts into operator incidents"),
+    aggregate: bool = Query(True, description="Group repeated alert or telemetry rows for operator presentation"),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
     role: str = Depends(RequireRole(["admin", "manager", "analyst"])),
@@ -298,6 +299,8 @@ async def get_live_logs(
             rows = [operator_alert_document(row) for row in rows]
             if aggregate:
                 rows = aggregate_security_alerts(rows)
+        elif source == "siem" and aggregate:
+            rows = aggregate_endpoint_events(rows)
 
         LIVE_READ_ROWS.labels(source=source).observe(raw_returned)
         return {

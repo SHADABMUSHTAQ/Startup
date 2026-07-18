@@ -16,9 +16,22 @@ AGENT_ONLINE_WINDOW_SECONDS = 600
 def _serialize_docs(docs: list[dict]) -> list[dict]:
     final_results = []
     for doc in docs:
+        source_collection = str(doc.get("_source_collection") or "")
+        if not source_collection:
+            source_collection = str(doc.pop("_hot_source_collection", "") or "")
+        record_type = {
+            "security_alerts": "alert_evidence",
+            "siem_cold_vault": "endpoint_event",
+            "csv_uploads": "upload_finding",
+        }.get(source_collection, "security_record")
         doc["_id"] = str(doc["_id"])
+        doc["record_type"] = record_type
+        doc["storage_tier"] = "cold_archive" if doc.get("_archived") else "hot"
         doc.pop(RAW_RETENTION_ANCHOR_FIELD, None)
         doc.pop("_expire_at", None)
+        doc.pop("_archived", None)
+        doc.pop("_source_collection", None)
+        doc.pop("_archive_blob_name", None)
         final_results.append(doc)
     return final_results
 
@@ -140,20 +153,29 @@ async def _run_safe_global_search(db, tenant_id: str, q: str, days: str, skip: i
             if time_clause:
                 exact_query = {"$and": [exact_query, time_clause]}
             cursor = db[coll_name].find(exact_query).sort([("timestamp", -1), ("_id", -1)]).limit(limit)
-            docs.extend(await cursor.to_list(length=limit))
+            rows = await cursor.to_list(length=limit)
+            for row in rows:
+                row["_hot_source_collection"] = coll_name
+            docs.extend(rows)
 
             if len(search_term) >= 3:
                 text_query = _text_search_query(tenant_id, search_term)
                 if time_clause:
                     text_query = {"$and": [text_query, time_clause]}
                 cursor = db[coll_name].find(text_query).sort([("timestamp", -1), ("_id", -1)]).limit(limit)
-                docs.extend(await cursor.to_list(length=limit))
+                rows = await cursor.to_list(length=limit)
+                for row in rows:
+                    row["_hot_source_collection"] = coll_name
+                docs.extend(rows)
         else:
             latest_query = {"tenant_id": tenant_id}
             if time_clause:
                 latest_query = {"$and": [latest_query, time_clause]}
             cursor = db[coll_name].find(latest_query).sort([("timestamp", -1), ("_id", -1)]).limit(limit)
-            docs.extend(await cursor.to_list(length=limit))
+            rows = await cursor.to_list(length=limit)
+            for row in rows:
+                row["_hot_source_collection"] = coll_name
+            docs.extend(rows)
 
     archived_docs, _ = await fetch_archived_documents(
         db,
@@ -166,7 +188,10 @@ async def _run_safe_global_search(db, tenant_id: str, q: str, days: str, skip: i
     )
     docs.extend(archived_docs)
 
-    deduped = {str(doc.get("_id")): doc for doc in docs}
+    deduped = {
+        f"{doc.get('_source_collection') or doc.get('_hot_source_collection') or 'unknown'}:{doc.get('_id')}": doc
+        for doc in docs
+    }
     ordered_docs = sorted(deduped.values(), key=_sort_key, reverse=True)
     final_results = _serialize_docs(ordered_docs[skip: skip + limit])
     return {

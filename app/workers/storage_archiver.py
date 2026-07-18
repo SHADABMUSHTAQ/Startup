@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from azure.core.exceptions import ResourceExistsError
 from azure.storage.blob.aio import BlobServiceClient
+from app.utils.security_incidents import project_security_incident
 from bson import ObjectId
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -459,6 +460,13 @@ async def run_archiver():
                         break
 
                     try:
+                        if collection_name == "security_alerts":
+                            # Archive is allowed to remove alert evidence only
+                            # after its mutable workflow state has been projected.
+                            # Any projection failure aborts the batch, preserving
+                            # the original MongoDB documents for a later retry.
+                            for alert in docs:
+                                await project_security_incident(db, alert)
                         await _archive_batch(
                             container_client,
                             db,

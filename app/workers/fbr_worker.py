@@ -21,6 +21,7 @@ from app.utils.tenant_cache import get_tenant_features
 from app.utils.rate_limiter import incr_count, set_flag, get_flag
 from app.actions.alerting import dispatch_alert_if_entitled, is_email_trigger_severity
 from app.utils.agent_crypto import timestamp_age_seconds
+from app.utils.security_incidents import project_and_publish_incident, project_security_incident
 
 
 from cryptography.fernet import Fernet
@@ -433,7 +434,11 @@ def _upsert_body(document: dict) -> dict:
     return body
 
 
-async def _upsert_fbr_vault_and_alerts(db, cold_docs: list[dict]) -> list[dict]:
+async def _upsert_fbr_vault_and_alerts(
+    db,
+    cold_docs: list[dict],
+    redis_client: Redis | None = None,
+) -> list[dict]:
     now = datetime.now(timezone.utc)
     cold_ops = []
     keys = []
@@ -472,6 +477,7 @@ async def _upsert_fbr_vault_and_alerts(db, cold_docs: list[dict]) -> list[dict]:
             cold_id_by_key[(doc.get("tenant_id"), doc.get("event_uid"))] = doc.get("_id")
 
     meta_ops = []
+    incident_meta = []
     for item in cold_docs:
         tenant_id = item.get("tenant_id")
         event_uid = item.get("event_uid")
@@ -491,8 +497,10 @@ async def _upsert_fbr_vault_and_alerts(db, cold_docs: list[dict]) -> list[dict]:
             "summary": item.get("matched_rule_name") or item.get("message") or "",
             "event_uid": event_uid,
             "cold_id": cold_id_by_key.get((tenant_id, event_uid)),
+            "status": "NEW",
             "_retention_ts": now,
         }
+        incident_meta.append((meta, item))
         meta_ops.append(
             UpdateOne(
                 {"tenant_id": tenant_id, "alert_uid": alert_uid},
@@ -506,6 +514,11 @@ async def _upsert_fbr_vault_and_alerts(db, cold_docs: list[dict]) -> list[dict]:
 
     if meta_ops:
         await db.security_alerts.bulk_write(meta_ops, ordered=False)
+        for meta, source_event in incident_meta:
+            if redis_client is not None:
+                await project_and_publish_incident(db, redis_client, meta, source_event)
+            else:
+                await project_security_incident(db, meta, source_event)
 
     return cold_docs
 
@@ -705,7 +718,7 @@ async def fbr_worker():
                             item["event_uid"] = event_uid
 
                         try:
-                            cold_docs = await _upsert_fbr_vault_and_alerts(db, list(buffer))
+                            cold_docs = await _upsert_fbr_vault_and_alerts(db, list(buffer), redis)
 
                             try:
                                 if active_claim_keys:
@@ -970,7 +983,7 @@ async def fbr_worker():
                         item["event_uid"] = str(uuid.uuid4())
 
                 try:
-                    cold_docs = await _upsert_fbr_vault_and_alerts(db, list(buffer))
+                    cold_docs = await _upsert_fbr_vault_and_alerts(db, list(buffer), redis)
 
                     try:
                         if active_claim_keys:
