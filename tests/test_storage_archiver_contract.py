@@ -606,3 +606,91 @@ async def test_archive_reader_verifies_integrity_filters_and_deduplicates(monkey
     assert docs[0]["event_uid"] == "Security:42"
     assert docs[0]["_archived"] is True
     assert "$and" in ledger.query
+
+
+@pytest.mark.asyncio
+async def test_unfiltered_archive_page_stops_after_enough_newest_records(monkeypatch):
+    newest_document = {
+        "_id": "newest",
+        "tenant_id": "TENANT-A",
+        "event_uid": "Security:newest",
+        "timestamp": "2026-07-02T10:00:00+00:00",
+    }
+    older_document = {
+        "_id": "older",
+        "tenant_id": "TENANT-A",
+        "event_uid": "Security:older",
+        "timestamp": "2026-07-01T10:00:00+00:00",
+    }
+    payloads = {
+        "newest.json": json.dumps([newest_document]).encode("utf-8"),
+        "older.json": json.dumps([older_document]).encode("utf-8"),
+    }
+    entries = [
+        {
+            "blob_name": name,
+            "collection": "peca_forensic_logs",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+        for name, payload in payloads.items()
+    ]
+
+    class FakeCursor:
+        def sort(self, *_args):
+            return self
+
+        def limit(self, _value):
+            return self
+
+        async def to_list(self, length):
+            return entries[:length]
+
+    class FakeLedger:
+        def find(self, _query):
+            return FakeCursor()
+
+    class FakeDownloader:
+        def __init__(self, payload):
+            self.payload = payload
+
+        async def readall(self):
+            return self.payload
+
+    downloads = []
+
+    class FakeBlob:
+        def __init__(self, name):
+            self.name = name
+
+        async def download_blob(self):
+            downloads.append(self.name)
+            return FakeDownloader(payloads[self.name])
+
+    class FakeContainer:
+        def get_blob_client(self, name):
+            return FakeBlob(name)
+
+    class FakeBlobService:
+        @classmethod
+        def from_connection_string(cls, _connection_string):
+            return cls()
+
+        def get_container_client(self, _container_name):
+            return FakeContainer()
+
+        async def close(self):
+            return None
+
+    monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "UseDevelopmentStorage=true")
+    monkeypatch.setattr(archive_reader, "BlobServiceClient", FakeBlobService)
+
+    docs, total = await archive_reader.fetch_archived_documents(
+        {"storage_archives": FakeLedger()},
+        tenant_id="TENANT-A",
+        collections=["peca_forensic_logs"],
+        limit=1,
+    )
+
+    assert total == 1
+    assert docs[0]["event_uid"] == "Security:newest"
+    assert downloads == ["newest.json"]

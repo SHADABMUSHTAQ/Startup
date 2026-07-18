@@ -231,6 +231,18 @@ async def fetch_archived_documents(
 
     client = BlobServiceClient.from_connection_string(connection_string)
     docs: list[dict] = []
+    identities: set[str] = set()
+    unfiltered_page = not any(
+        (
+            start_dt,
+            end_dt,
+            event_id,
+            event_uid,
+            tuple(event_uids or ()),
+            document_id,
+            search_term,
+        )
+    )
     try:
         container = client.get_container_client(container_name)
         for entry in archive_entries:
@@ -274,6 +286,13 @@ async def fetch_archived_documents(
                 doc["_source_collection"] = collection_name
                 doc["_archive_blob_name"] = blob_name
                 docs.append(doc)
+                identities.add(_document_identity(doc))
+
+            # Ledger rows are newest-first. For an unfiltered page, once the
+            # requested number of unique records has been recovered, older
+            # blobs cannot improve the page and only add Azure latency/cost.
+            if unfiltered_page and len(identities) >= max(1, limit):
+                break
     finally:
         await client.close()
 
