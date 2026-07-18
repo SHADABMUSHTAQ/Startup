@@ -93,6 +93,8 @@ Retention days: 90 unless contract says otherwise
 Daily quota GiB: 0 for backend default
 ```
 
+`Daily quota GiB` is an internal WarSOC safety limit, not a customer self-service option. On the current shared 8GB RAM / 4 vCPU pilot infrastructure, keep it at `0` unless a contract specifically requires a tighter value. The backend hard-caps custom provisioning at `3 GiB/day`.
+
 The generated customer admin logs in at:
 
 ```text
@@ -108,7 +110,7 @@ Contract type: Customized
 Compliance packs: FBR POS + PECA Forensic
 Max agents: 50
 Retention days: contract value
-Daily quota GiB: contract value, or 0 for backend default
+Daily quota GiB: 0 for backend default, or a contract value up to 3
 ```
 
 ## Security Rules

@@ -470,17 +470,33 @@ async def sanitized_unhandled_exception_handler(request: Request, exc: Exception
         headers={"X-Request-ID": request_id},
     )
 
+
+def _sanitize_validation_errors(errors: list[dict]) -> list[dict]:
+    sanitized = []
+    for error in errors:
+        item = dict(error)
+        ctx = item.get("ctx")
+        if isinstance(ctx, dict):
+            clean_ctx = {}
+            for key, value in ctx.items():
+                clean_ctx[key] = str(value) if isinstance(value, BaseException) else value
+            item["ctx"] = clean_ctx
+        sanitized.append(item)
+    return sanitized
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = _sanitize_validation_errors(exc.errors())
     logger.warning(
         "Request validation failed: method=%s path=%s errors=%s",
         request.method,
         request.url.path,
-        exc.errors(),
+        errors,
     )
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors()},
+        content={"detail": errors},
     )
 
 @app.middleware("http")

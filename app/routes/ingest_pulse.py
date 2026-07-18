@@ -31,8 +31,9 @@ STATUS_KEY_PREFIX = "status"
 STATUS_TTL_SECONDS = 600
 MAX_INGEST_BODY_BYTES = 5 * 1024 * 1024
 DEFAULT_AGENT_LIMIT_FOR_QUOTA = 10
-DEFAULT_DAILY_INGEST_BYTES_PER_AGENT = int(os.getenv("INGEST_DAILY_BYTES_PER_AGENT", str(250 * 1024 * 1024)))
+DEFAULT_DAILY_INGEST_BYTES_PER_AGENT = int(os.getenv("INGEST_DAILY_BYTES_PER_AGENT", str(50 * 1024 * 1024)))
 DEFAULT_DAILY_INGEST_BYTES_FLOOR = int(os.getenv("INGEST_DAILY_BYTES_FLOOR", str(1024 * 1024 * 1024)))
+MAX_DAILY_INGEST_BYTES = int(os.getenv("INGEST_DAILY_BYTES_MAX", str(3 * 1024 * 1024 * 1024)))
 INGEST_DAILY_QUOTA_TTL_SECONDS = int(os.getenv("INGEST_DAILY_QUOTA_TTL_SECONDS", str(3 * 24 * 60 * 60)))
 RAW_STREAM_MAX_ENTRIES = int(os.getenv("RAW_STREAM_MAX_ENTRIES", "500000"))
 
@@ -232,17 +233,18 @@ async def _resolve_daily_ingest_quota_bytes(redis_client, tenant_id: str) -> int
     tenant_override = _redis_text(await redis_client.get(f"tenant_ingest_quota_bytes:{tenant_id}"))
     override_quota = _positive_int(tenant_override)
     if override_quota:
-        return override_quota
+        return min(override_quota, MAX_DAILY_INGEST_BYTES) if MAX_DAILY_INGEST_BYTES > 0 else override_quota
 
     cached_limit = _redis_text(await redis_client.get(f"tenant_agent_limit:{tenant_id}"))
     agent_limit = effective_agent_limit(
         _positive_int(cached_limit, DEFAULT_AGENT_LIMIT_FOR_QUOTA),
         DEFAULT_AGENT_LIMIT_FOR_QUOTA,
     )
-    return max(
+    quota = max(
         DEFAULT_DAILY_INGEST_BYTES_FLOOR,
         agent_limit * max(1, DEFAULT_DAILY_INGEST_BYTES_PER_AGENT),
     )
+    return min(quota, MAX_DAILY_INGEST_BYTES) if MAX_DAILY_INGEST_BYTES > 0 else quota
 
 
 async def _enforce_daily_ingest_quota(redis_client, tenant_id: str, payload_bytes: int) -> None:

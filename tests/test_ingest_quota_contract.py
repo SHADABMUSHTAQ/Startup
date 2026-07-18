@@ -3,6 +3,7 @@ from fastapi import HTTPException
 
 from app.routes.ingest_pulse import (
     DEFAULT_DAILY_INGEST_BYTES_PER_AGENT,
+    MAX_DAILY_INGEST_BYTES,
     _enforce_daily_ingest_quota,
     _resolve_daily_ingest_quota_bytes,
 )
@@ -36,6 +37,16 @@ async def test_daily_ingest_quota_uses_contract_override_when_present():
     quota = await _resolve_daily_ingest_quota_bytes(redis, "WARSOC_QUOTA")
 
     assert quota == 12345
+
+
+@pytest.mark.asyncio
+async def test_daily_ingest_quota_caps_oversized_contract_override():
+    oversized = str(MAX_DAILY_INGEST_BYTES * 100).encode()
+    redis = FakeQuotaRedis({"tenant_ingest_quota_bytes:WARSOC_QUOTA": oversized})
+
+    quota = await _resolve_daily_ingest_quota_bytes(redis, "WARSOC_QUOTA")
+
+    assert quota == MAX_DAILY_INGEST_BYTES
 
 
 @pytest.mark.asyncio

@@ -1,9 +1,10 @@
 from pathlib import Path
+import os
 
 import pytest
 from pydantic import ValidationError
 
-from app.routes.admin import ProvisionRequest
+from app.routes.admin import MAX_DAILY_INGEST_QUOTA_BYTES, ProvisionRequest
 from app.routes.auth import InviteUserRequest, UpgradePlan, UserCreate
 from app.routes.sales import QuoteRequest
 from app.utils.pricing import calculate_package_price
@@ -105,6 +106,53 @@ def test_every_commercial_contract_rejects_51_endpoints():
             compliance_packs=[],
             billing_cycle="monthly",
         )
+
+
+def test_admin_provisioning_rejects_oversized_daily_ingest_quota():
+    ProvisionRequest(
+        company_name="Quota OK",
+        plan_type="Customized",
+        max_agents=50,
+        admin_email="quota-ok@example.com",
+        admin_name="Quota Admin",
+        admin_password=STRONG_PASSWORD,
+        daily_ingest_quota_bytes=MAX_DAILY_INGEST_QUOTA_BYTES,
+    )
+
+    with pytest.raises(ValidationError):
+        ProvisionRequest(
+            company_name="Quota Too High",
+            plan_type="Customized",
+            max_agents=50,
+            admin_email="quota-too-high@example.com",
+            admin_name="Quota Admin",
+            admin_password=STRONG_PASSWORD,
+            daily_ingest_quota_bytes=MAX_DAILY_INGEST_QUOTA_BYTES + 1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_admin_provisioning_api_rejects_oversized_daily_ingest_quota(async_client, db):
+    email = "quota-api-too-high@example.com"
+
+    response = await async_client.post(
+        "/api/v1/admin/provision",
+        headers={"X-Admin-Key": os.environ["SUPER_ADMIN_API_KEY"]},
+        json={
+            "company_name": "Quota API Too High",
+            "plan_type": "Customized",
+            "compliance_packs": ["fbr_pos", "peca_forensic"],
+            "max_agents": 50,
+            "admin_email": email,
+            "admin_name": "Quota Admin",
+            "admin_password": STRONG_PASSWORD,
+            "daily_ingest_quota_bytes": MAX_DAILY_INGEST_QUOTA_BYTES + 1,
+        },
+    )
+
+    assert response.status_code == 422
+    assert await db["users"].count_documents({"email": email}) == 0
+    assert await db["tenants"].count_documents({"company_name": "Quota API Too High"}) == 0
 
 
 def test_fifty_seat_enrollment_rate_limits_are_not_ten_per_minute():

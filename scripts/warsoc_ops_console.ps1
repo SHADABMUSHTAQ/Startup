@@ -179,11 +179,11 @@ $quotaBox = New-Object System.Windows.Forms.NumericUpDown
 $quotaBox.Location = New-Point 195 $y
 $quotaBox.Size = New-Size 100 24
 $quotaBox.Minimum = 0
-$quotaBox.Maximum = 500
+$quotaBox.Maximum = 3
 $quotaBox.Value = 0
 $form.Controls.Add($quotaBox)
 $quotaHint = New-Object System.Windows.Forms.Label
-$quotaHint.Text = "0 = backend default. Use a number only for a specific contract."
+$quotaHint.Text = "0 = backend default. Pilot cap: 3 GiB/day."
 $quotaHint.Location = New-Point 310 ($y + 2)
 $quotaHint.Size = New-Size 360 24
 $form.Controls.Add($quotaHint)

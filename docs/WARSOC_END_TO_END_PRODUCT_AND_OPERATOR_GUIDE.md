@@ -132,7 +132,7 @@ The parser also contains structured handling for authentication, process, object
 5. A worker acknowledges an event only after its required processing succeeds; failures are retried or routed to a dead-letter path according to the worker contract.
 6. Alerts are stored in `security_alerts` and published through Redis to the authenticated tenant WebSocket.
 
-Default quota at the 50-agent platform ceiling is 2.5 GiB per tenant per UTC day: 50 MiB per contracted endpoint, with a 1 GiB floor for smaller tenants. A tenant-specific quota may be provisioned. Quota checks fail closed if Redis is unavailable.
+Default quota at the 50-agent platform ceiling is 2.5 GiB per tenant per UTC day: 50 MiB per contracted endpoint, with a 1 GiB floor for smaller tenants. A tenant-specific quota may be provisioned by WarSOC operations only, but custom provisioning is capped at 3 GiB/day on the current shared pilot infrastructure. Quota checks fail closed if Redis is unavailable.
 
 ## 7. SIEM capability
 

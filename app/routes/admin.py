@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Security, Request
 from fastapi.security.api_key import APIKeyHeader
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from bson import ObjectId
 import asyncio
 import logging
@@ -20,6 +20,10 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 # Strictly enforced environment-injected Super Admin Key (No hardcoded fallback)
 ADMIN_SECRET_KEY = os.getenv("SUPER_ADMIN_API_KEY")
+MAX_DAILY_INGEST_QUOTA_BYTES = int(
+    os.getenv("INGEST_DAILY_BYTES_MAX", str(3 * 1024 * 1024 * 1024))
+)
+MAX_DAILY_INGEST_QUOTA_GIB = max(1, MAX_DAILY_INGEST_QUOTA_BYTES // (1024 * 1024 * 1024))
 api_key_header = APIKeyHeader(name="X-Admin-Key", auto_error=True)
 SENSITIVE_TENANT_FIELDS = {
     "agent_master_secret",
@@ -51,6 +55,16 @@ class ProvisionRequest(BaseModel):
     admin_password: StrongPassword
     retention_days: int = Field(default=90, ge=1, le=2190)
     daily_ingest_quota_bytes: int | None = Field(default=None, ge=1)
+
+    @field_validator("daily_ingest_quota_bytes")
+    @classmethod
+    def enforce_platform_quota_ceiling(cls, value: int | None) -> int | None:
+        if value is not None and value > MAX_DAILY_INGEST_QUOTA_BYTES:
+            raise ValueError(
+                f"daily_ingest_quota_bytes exceeds the current platform cap of "
+                f"{MAX_DAILY_INGEST_QUOTA_GIB} GiB/day"
+            )
+        return value
 
 class ProvisionResponse(BaseModel):
     tenant_id: str
