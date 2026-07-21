@@ -176,7 +176,7 @@ The frontend exposes the Compliance workspace to admin and auditor roles. The ba
 1. The admin selects Download Agent in the dashboard.
 2. The frontend requests `GET /api/v1/agent/download`.
 3. The backend returns a redirect to `AGENT_CDN_URL`.
-4. Azure public artifact storage serves the approved `warsoc_installer-4.2.4.exe` artifact. Production preflight verified 17,417,877 bytes and SHA-256 `D7B2541FB0447697D3DE76812A785913FF63D2688CDE26A48EF1660E4F34E41B` against `pilot_hash_manifest-4.2.4.json`.
+4. Azure public artifact storage serves the deployed `warsoc_installer-4.2.4.exe` artifact. Production preflight verified 17,417,877 bytes and SHA-256 `D7B2541FB0447697D3DE76812A785913FF63D2688CDE26A48EF1660E4F34E41B` against `pilot_hash_manifest-4.2.4.json`. The local signed-event candidate is `warsoc_installer-4.2.5.exe`, 17,470,610 bytes with SHA-256 `AD1939261FBEBC526149213CF253B14EC38CFD832BC7CFBFCC9334240FCA98AE`; it is not the production artifact until the CDN object and manifest are replaced and verified.
 5. The installer asks for the activation code, confirms `https://api.warsoc.tech`, and optionally accepts local POS directories.
 6. The installer validates the activation code before making the installation operational.
 7. The native telemetry script configures auditing and optional POS SACLs.
@@ -258,11 +258,22 @@ Dashboard health means:
 4. The agent sends batches to the HTTPS ingestion endpoint.
 5. Transient failures leave records in the local spool for retry.
 6. Malformed POS JSONL records are quarantined locally and are not guessed, relabelled, or sent as valid evidence.
+
 7. `event_uid` is preserved across retries for backend idempotency.
 8. The spool has a 500 MiB hard boundary, a 400 MiB recovery boundary, and a 2 GiB free-disk reserve by default.
 9. Reaching either disk boundary pauses new durable collection, leaves existing unacknowledged records intact, and reports the endpoint as Degraded.
 
 This is at-least-once delivery with event-level duplicate suppression, not fire-and-forget delivery.
+
+### 8.1 Endpoint event authenticity
+
+- Agent `4.2.5-Native-Signed` assigns the durable `event_uid` and timestamp before spooling, then signs the exact delivery payload with its enrolled Ed25519 key.
+- Existing plaintext private keys are migrated to a Windows DPAPI-protected key file; new keys are never written as plaintext.
+- The API verifies the canonical payload hash, agent identity, enrolled public key and Ed25519 signature before admitting a signed event to Redis.
+- A supplied but invalid signature always fails with HTTP 401 and is never treated as a legacy event.
+- `AGENT_EVENT_SIGNATURE_MODE=observe` accepts unsigned pre-4.2.5 agents while marking their evidence `agent_jwt_only`; verified events are marked `agent_signed`.
+- Production may switch to `AGENT_EVENT_SIGNATURE_MODE=required` only after every active agent is upgraded and the unsigned-event metric remains zero for the agreed observation window.
+- Signature verification proves which enrolled endpoint key signed the accepted payload. It does not prove that an endpoint was uncompromised or that a DPAPI-protected software key could not be abused by a SYSTEM-level attacker.
 
 ## 9. API Ingestion Contract
 
@@ -903,7 +914,7 @@ Additional production-assisted lifecycle proof remains recorded:
 | Remaining item | Current state | Completion condition |
 |---|---|---|
 | Customer-style invitation activation | SMTP delivery, pending-login denial, activation contract tests, and active-auditor RBAC are proven. The latest emailed token was not clicked through manually. | Open one real invitation email, choose a policy-compliant password, log in, and confirm the intended role view. |
-| Independent backup recovery | Azure evidence archival is not a Mongo operational backup. | Restore a current Mongo backup into an isolated environment and record collection counts plus login/search checks. |
+| Independent backup recovery | The production-format encrypted Mongo drill now verifies SHA-256 and restores into a network-disabled disposable MongoDB container. | Repository proof `20260721T200605Z-7541a279` restored 156,671 documents with zero failures and recorded collection/index counts. Repeat against the final production backup during the Azure cutover. |
 | Physical retention segmentation | One locked 2,190-day container currently governs all evidence blobs. | Route future FBR, PECA, and general/SIEM archives to containers whose locked policy matches the promised retention class. |
 | Archive provenance presentation | Backend hot/cold provenance, Azure retrieval and explicit reader failures are implemented. Runtime cold retrieval passed and the repaired frontend is deployed. | Confirm one hot row, one cold row and one simulated reader failure in the production browser. |
 | Dashboard post-deploy resources | The deployed frontend uses the intended 30-second alert and 10-second evidence schedule. Before deployment, Mongo used approximately 55.91% CPU and 1.639 GiB of its 2 GiB container limit. In the first post-deploy snapshot it used 1.55% CPU and 939.6 MiB; API, Redis and the unified worker were also low-use and healthy. A brief 502 and two legacy 499 cancellations occurred while the API container restarted at 21:30; no `/logs/live` 499 or 5xx appeared after deployment. | Measure Mongo CPU/memory and Nginx status codes for at least 15 continuous minutes after deployment; require no live-read 499s and p95 below two seconds. |
@@ -962,7 +973,8 @@ Status meanings:
 | PDF report | Human-readable compliance summary | PROVEN | Current PECA PDF returned HTTP 200 and a valid PDF payload. The PDF itself is not cryptographically signed. |
 | Email daemon | Queue, retry, SMTP delivery and DLQ | PROVEN | Current metrics show 285 delivered, zero queued/processing/dead-letter/retries; validator increased delivery by six. |
 | Metrics and health | Worker, queue, agent, DLQ, detection and dashboard telemetry | PROVEN | Protected production metrics were read successfully. Dashboard live-read histograms are deployed on the backend. |
-| Independent Mongo backup | Operational disaster recovery separate from evidence archive | UNPROVEN | Backup configuration is not equivalent to a tested restore. A dated isolated restore remains mandatory. |
+| Independent Mongo backup | Operational disaster recovery separate from evidence archive | CANDIDATE-PROVEN | Drill `20260721T200605Z-7541a279` verified SHA-256, decrypted a production-format archive, and restored 156,671 documents across 18 collections with zero failures into a network-disabled disposable MongoDB. Repeat with the final Azure-hosted production backup during cutover. |
+| Endpoint event authenticity | Per-event Ed25519 signature tied to the enrolled agent key before Redis admission | CANDIDATE-PROVEN | Agent/API unit and pipeline tests pass; agent `4.2.5` and its manifest are built locally. Production remains in the 4.2.4/unsigned-event state until the backend and CDN artifact are deployed, all endpoints are upgraded, and enforcement changes from `observe` to `required`. |
 | Physical retention classes | Match actual Azure lock duration to commercial 3/6/9/12-month or compliance terms | PARTIAL | One locked 2,190-day container protects all current evidence; it is safe from early deletion but cannot honor shorter physical deletion dates. |
 | Installer code signing | Publisher reputation and Defender trust | PARTIAL | Exact hash allowlisting supports the pilot while Defender stays enabled; the binary remains unsigned. |
 | Capacity ceiling | Maximum 50 active agents per tenant | PROVEN for synthetic soak | Prior production soak registered 50/50, rejected seat 51 and met latency. Real customer mix must still be monitored because event volume per endpoint varies. |
@@ -1048,6 +1060,7 @@ Do not declare the current release fully accepted until all of the following are
 14. PDF and CSV proof.
 15. Azure blob upload, immutability, SHA verification, archive-ledger entry, and successful API retrieval proof.
 16. Backup restore proof distinct from the compliance archive.
+17. Endpoint-signature metrics proving zero invalid signatures and, before enabling required mode, zero unsigned active agents for the agreed observation window.
 
 ## 26. Source-of-Truth Files
 
@@ -1066,6 +1079,10 @@ Do not declare the current release fully accepted until all of the following are
 | Stream trimming safety | `app/workers/stream_retention.py` |
 | Storage archival | `app/workers/storage_archiver.py` |
 | Azure retrieval | `app/utils/archive_reader.py` |
+| Endpoint event signature verification | `app/utils/agent_crypto.py` and `app/routes/ingest_pulse.py` |
+| Windows event signing and protected key storage | `agent/windows_agent.py` |
+| Azure backend migration | `docs/AZURE_BACKEND_MIGRATION_RUNBOOK.md` and `deploy/azure/` |
+| Operational backup and restore drill | `scripts/backup_mongodb.sh` and `scripts/run_backup_restore_drill.ps1` |
 | Fast startup database indexes | `app/database.py` |
 | Compliance indexes/TTL removal | `app/db/init_db.py` |
 | Agent enrollment/download/heartbeat | `app/routes/agent_orchestration.py` |

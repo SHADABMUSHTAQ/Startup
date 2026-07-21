@@ -50,12 +50,18 @@ class Settings(BaseSettings):
     # --- EXTERNAL INTEGRATIONS ---
     vt_api_key: str = os.getenv("VT_API_KEY", "")
     agent_cdn_url: str = os.getenv("AGENT_CDN_URL", "")
+    agent_event_signature_mode: str = os.getenv(
+        "AGENT_EVENT_SIGNATURE_MODE", "observe"
+    ).strip().lower()
 
     # --- TRANSACTIONAL EMAIL (Zoho Mail) ---
     zoho_smtp_host: str = os.getenv("ZOHO_SMTP_HOST", "smtp.zoho.com")
     zoho_smtp_port: int = int(os.getenv("ZOHO_SMTP_PORT", "587"))
     zoho_smtp_user: str = os.getenv("ZOHO_SMTP_USER", "")
     zoho_smtp_pass: str = os.getenv("ZOHO_SMTP_PASS", "")
+    enable_security_alert_emails: bool = os.getenv(
+        "ENABLE_SECURITY_ALERT_EMAILS", "false"
+    ).strip().lower() in {"1", "true", "yes"}
 
     class Config:
         env_file = ".env"
@@ -152,6 +158,8 @@ def get_settings():
             raise RuntimeError(f"FATAL: Missing production secrets: {', '.join(missing)}")
         if not _is_valid_agent_cdn_url(s.agent_cdn_url):
             raise RuntimeError("FATAL: AGENT_CDN_URL must be an HTTPS URL that points directly to the Windows installer .exe.")
+        if s.agent_event_signature_mode not in {"observe", "required"}:
+            raise RuntimeError("FATAL: AGENT_EVENT_SIGNATURE_MODE must be 'observe' or 'required'.")
     return s
 
 def load_config(config_file: str = "config.json") -> dict:

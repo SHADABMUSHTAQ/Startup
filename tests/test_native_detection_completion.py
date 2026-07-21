@@ -321,6 +321,7 @@ async def test_agent_ingest_requires_and_atomically_consumes_nonce_envelope():
 
 @pytest.mark.asyncio
 async def test_email_jobs_are_retried_durably_then_acknowledged(monkeypatch):
+    monkeypatch.setattr(email_daemon.settings, "enable_security_alert_emails", True)
     redis = FakeEmailRedis()
     raw_payload = json.dumps(
         {

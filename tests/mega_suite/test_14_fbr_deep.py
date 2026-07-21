@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from app.database import db_manager
 from app.workers.fbr_worker import fbr_worker
+from app.utils.agent_crypto import build_event_signature_string, build_payload_hash, build_signable_event_payload
 from tests.helpers import ed25519_keypair_pem, provision_and_login_admin
 
 def _now_iso():
@@ -26,16 +27,16 @@ def _http_event(event_id, event_uid, tenant_id, agent_id, message, source_ip, pr
         "agent_id": agent_id,
         "timestamp": _now_iso(),
         "source_ip": source_ip,
+        "user": user or "SYSTEM",
         "message": message,
         "raw_data": message
     }
-    if user:
-        payload["user"] = user
-    
-    payload_str = json.dumps(payload, sort_keys=True)
-    signature = sk.sign(payload_str.encode("utf-8")).hex()
-    
-    payload["agent_signature"] = signature
+    payload_hash = build_payload_hash(build_signable_event_payload(payload))
+    signature_input = build_event_signature_string(agent_id, payload["timestamp"], event_uid, payload_hash)
+    payload["payload_hash"] = payload_hash
+    payload["signature_version"] = "ed25519-v1"
+    payload["signature_algorithm"] = "Ed25519"
+    payload["agent_signature"] = sk.sign(signature_input.encode("utf-8")).hex()
     return payload
 
 @pytest.mark.asyncio

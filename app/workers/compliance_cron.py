@@ -221,26 +221,44 @@ async def run_monthly_reports(db):
 
 async def check_heartbeats(app_redis, db):
     """
-    Checks the Redis LAST_HEARTBEAT keys. If an agent has missed its heartbeat (key expired),
-    it flags the tenant's agent status as offline in MongoDB.
+    Persist per-agent connectivity without changing lifecycle authorization.
+
+    ``status`` remains the active/inactive/revoked authorization boundary.
+    ``connectivity_status`` mirrors the presence of each agent's own Redis
+    heartbeat key and cannot make another agent in the tenant appear online.
     """
     try:
         tenants = await db["tenants"].find({"status": "active"}).to_list(length=1000)
         for tenant in tenants:
             tenant_id = tenant["tenant_id"]
-            # Look for any heartbeat key for this tenant
-            keys = await app_redis.keys(f"status:{tenant_id}:*")
-            if not keys:
-                # Agent is offline
-                await db["agents"].update_many(
-                    {"tenant_id": tenant_id},
-                    {"$set": {"status": "offline", "last_dead_air": datetime.now(timezone.utc).isoformat()}}
-                )
-            else:
-                # Agent is online
-                await db["agents"].update_many(
-                    {"tenant_id": tenant_id},
-                    {"$set": {"status": "online"}}
+            agents = await db["agents"].find(
+                {
+                    "tenant_id": tenant_id,
+                    "status": {"$nin": ["inactive", "revoked"]},
+                },
+                {"_id": 1, "agent_id": 1},
+            ).to_list(length=1000)
+            registered = [agent for agent in agents if str(agent.get("agent_id") or "")]
+            if not registered:
+                continue
+
+            heartbeat_keys = [
+                f"status:{tenant_id}:{agent['agent_id']}"
+                for agent in registered
+            ]
+            heartbeat_values = await app_redis.mget(heartbeat_keys)
+            checked_at = datetime.now(timezone.utc)
+            for agent, heartbeat in zip(registered, heartbeat_values):
+                online = bool(heartbeat)
+                update = {
+                    "connectivity_status": "online" if online else "offline",
+                    "connectivity_checked_at": checked_at,
+                }
+                if not online:
+                    update["last_dead_air"] = checked_at
+                await db["agents"].update_one(
+                    {"_id": agent["_id"]},
+                    {"$set": update},
                 )
     except Exception as e:
         logger.error(f"[!] Heartbeat check failed: {e}")

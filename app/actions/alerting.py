@@ -3,7 +3,10 @@ import json
 import logging
 from redis.asyncio import Redis
 
+from app.config.config import get_settings
+
 logger = logging.getLogger("Alerting-Bridge")
+settings = get_settings()
 
 
 EMAIL_TRIGGER_SEVERITIES = {"HIGH", "CRITICAL", "ALERT"}
@@ -36,6 +39,9 @@ async def dispatch_alert_if_entitled(
     Entitlement Gate: Dispatches an alert to the mail worker only if the tenant 
     is actively subscribed to the required compliance pack.
     """
+    if not settings.enable_security_alert_emails:
+        logger.debug("Security-alert email delivery is disabled; dashboard alert remains active.")
+        return False
     if not tenant_id:
         return False
         

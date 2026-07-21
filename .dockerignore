@@ -30,6 +30,7 @@ temp_agent_enroll.json
 *.log
 *.txt
 !requirements.txt
+!requirements-dev.txt
 *.bak
 test_*_output.txt
 omni_audit_*.txt

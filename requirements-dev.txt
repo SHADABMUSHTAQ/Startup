@@ -1,0 +1,5 @@
+# Test-only dependencies. These are installed by the local API image, never by
+# docker-compose.prod.yml.
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-html==4.2.0

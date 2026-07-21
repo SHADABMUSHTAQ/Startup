@@ -1,5 +1,9 @@
 import win32evtlog
 import win32security
+try:
+    import win32crypt
+except ImportError:  # Enables platform-neutral parser/spool tests; Windows key use still fails closed.
+    win32crypt = None
 import requests
 import time
 import socket
@@ -48,12 +52,13 @@ if not env_loaded:
     print(f"[WARN] .env not found in any standard location. Using system environment variables.")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-AGENT_VERSION = "4.2.4-Native"
+AGENT_VERSION = "4.2.5-Native-Signed"
 TENANT_ID = os.getenv("TENANT_ID", "provision").strip() or "provision"
 PROGRAM_DATA_DIR = Path(os.getenv("PROGRAMDATA", str(_AGENT_DIR))) / "WarSOC"
 JWT_TOKEN_PATH = PROGRAM_DATA_DIR / ".agent_jwt"
 AGENT_ID_PATH = PROGRAM_DATA_DIR / ".agent_id"
 PRIVATE_KEY_PATH = PROGRAM_DATA_DIR / "agent_private_key.pem"
+PROTECTED_PRIVATE_KEY_PATH = PROGRAM_DATA_DIR / "agent_private_key.dpapi"
 LEGACY_JWT_TOKEN_PATH = _AGENT_DIR / ".agent_jwt"
 LEGACY_AGENT_ID_PATH = _AGENT_DIR / ".agent_id"
 LEGACY_PRIVATE_KEY_PATH = _AGENT_DIR / "agent_private_key.pem"
@@ -189,25 +194,76 @@ def _load_or_create_signing_key():
     from cryptography.hazmat.primitives.asymmetric import ed25519
     from cryptography.hazmat.primitives import serialization
     PROGRAM_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if not PRIVATE_KEY_PATH.exists() and LEGACY_PRIVATE_KEY_PATH.exists():
-        try:
-            PRIVATE_KEY_PATH.write_bytes(LEGACY_PRIVATE_KEY_PATH.read_bytes())
-            LEGACY_PRIVATE_KEY_PATH.unlink()
-        except Exception:
-            pass
-    readable_private_key_path = (
-        PRIVATE_KEY_PATH
-        if PRIVATE_KEY_PATH.exists()
-        else LEGACY_PRIVATE_KEY_PATH
-    )
-    if not readable_private_key_path.exists() and JWT_TOKEN:
+    plaintext_paths = [PRIVATE_KEY_PATH, LEGACY_PRIVATE_KEY_PATH]
+
+    class PlaintextKeyCleanupError(RuntimeError):
+        pass
+
+    def protect_and_store(pem_data):
+        if win32crypt is None:
+            raise RuntimeError("Windows DPAPI is unavailable")
+        _, protected = win32crypt.CryptProtectData(
+            pem_data,
+            "WarSOC Ed25519 Agent Key",
+            None,
+            None,
+            None,
+            0,
+        )
+        temporary_path = PROTECTED_PRIVATE_KEY_PATH.with_suffix(".dpapi.tmp")
+        with open(temporary_path, "wb") as protected_handle:
+            protected_handle.write(protected)
+            protected_handle.flush()
+            os.fsync(protected_handle.fileno())
+        os.replace(temporary_path, PROTECTED_PRIVATE_KEY_PATH)
+
+    def remove_plaintext_keys():
+        for plaintext_path in plaintext_paths:
+            if not plaintext_path.exists():
+                continue
+            try:
+                plaintext_path.unlink()
+            except Exception as exc:
+                raise PlaintextKeyCleanupError(
+                    f"could not remove plaintext signing key: {plaintext_path}"
+                ) from exc
+        if any(path.exists() for path in plaintext_paths):
+            raise PlaintextKeyCleanupError("plaintext signing key cleanup is incomplete")
+
+    if not PROTECTED_PRIVATE_KEY_PATH.exists() and JWT_TOKEN and not any(
+        path.exists() for path in plaintext_paths
+    ):
         _clear_cached_agent_identity("cached token existed without an agent signing key")
 
     try:
-        if readable_private_key_path.exists():
+        if PROTECTED_PRIVATE_KEY_PATH.exists():
+            if win32crypt is None:
+                raise RuntimeError("Windows DPAPI is unavailable")
+            _, pem_data = win32crypt.CryptUnprotectData(
+                PROTECTED_PRIVATE_KEY_PATH.read_bytes(),
+                None,
+                None,
+                None,
+                0,
+            )
+            private_key = serialization.load_pem_private_key(pem_data, password=None)
+            if isinstance(private_key, ed25519.Ed25519PrivateKey):
+                remove_plaintext_keys()
+                return private_key
+
+            raise ValueError("protected signing key was not Ed25519")
+
+        readable_private_key_path = next(
+            (path for path in plaintext_paths if path.exists()),
+            None,
+        )
+        if readable_private_key_path is not None:
             pem_data = readable_private_key_path.read_bytes()
             private_key = serialization.load_pem_private_key(pem_data, password=None)
             if isinstance(private_key, ed25519.Ed25519PrivateKey):
+                protect_and_store(pem_data)
+                remove_plaintext_keys()
+                print("[OK] Migrated agent signing key to DPAPI-protected storage.")
                 return private_key
 
             backup_path = readable_private_key_path.with_suffix(
@@ -219,6 +275,10 @@ def _load_or_create_signing_key():
             except Exception as exc:
                 print(f"[WARN] Could not quarantine unsupported legacy signing key: {exc}")
             _clear_cached_agent_identity("legacy signing key was not Ed25519")
+    except PlaintextKeyCleanupError:
+        # Keep the existing identity intact and retry on the next sender cycle.
+        # Sending must not continue while a plaintext private-key copy remains.
+        raise
     except Exception:
         _clear_cached_agent_identity("agent signing key was unreadable")
 
@@ -228,7 +288,7 @@ def _load_or_create_signing_key():
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption()
     )
-    PRIVATE_KEY_PATH.write_bytes(pem)
+    protect_and_store(pem)
     return signing_key
 
 
@@ -274,10 +334,12 @@ def _build_event_payload_hash(payload):
     signable_payload = {
         "source_ip": payload.get("source_ip", ""),
         "user": payload.get("user", ""),
-        "event_id": str(payload.get("event_id", "")),
+        "event_id": str(payload.get("event_id", "")).strip(),
+        "event_type": payload.get("event_type", ""),
         "message": payload.get("message", ""),
         "processed_data": payload.get("processed_data") or {},
         "raw_event_data": payload.get("raw_event_data") if payload.get("raw_event_data") is not None else payload.get("raw_data", {}),
+        "agent_version": payload.get("agent_version", ""),
     }
     canonical = _canonical_json(signable_payload)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -289,6 +351,43 @@ def _build_ingest_envelope(events):
         "timestamp": int(time.time()),
         "payload": events,
     }
+
+
+def _sign_event_for_delivery(payload, signing_key):
+    """Attach deterministic Ed25519 provenance without mutating the spooled object."""
+    event = dict(payload)
+    event.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+    if not str(event.get("event_uid") or "").strip():
+        event["event_uid"] = "legacy-" + hashlib.sha256(
+            _canonical_json(event).encode("utf-8")
+        ).hexdigest()[:32]
+
+    for field in (
+        "agent_signature",
+        "payload_hash",
+        "signature_version",
+        "signature_algorithm",
+        "signing_key_id",
+        "signature_verified",
+        "signature_verified_at",
+        "signature_verification_status",
+        "source_assurance",
+    ):
+        event.pop(field, None)
+
+    payload_hash = _build_event_payload_hash(event)
+    signature_input = (
+        f"{AGENT_ID}|{event['timestamp']}|{event['event_uid']}|{payload_hash}"
+    ).encode("utf-8")
+    event.update(
+        {
+            "payload_hash": payload_hash,
+            "signature_version": "ed25519-v1",
+            "signature_algorithm": "Ed25519",
+            "agent_signature": signing_key.sign(signature_input).hex(),
+        }
+    )
+    return event
 
 
 def _signed_agent_post(path, payload, signing_key, timeout=10):
@@ -1207,7 +1306,10 @@ def quarantine_pos_audit_line(line, reason, file_path):
 
 def enqueue_payload(payload):
     """Make an outbound event durable before its source cursor can advance."""
-    return SPOOLER.append(payload)
+    durable_payload = dict(payload)
+    durable_payload.setdefault("event_uid", uuid.uuid4().hex)
+    durable_payload.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+    return SPOOLER.append(durable_payload)
 
 def _estimate_payload_bytes(batch):
     """Estimate encoded request size in bytes for a JSON batch."""
@@ -1255,6 +1357,7 @@ def _truncate_single_log_payload(single_log):
 def ingest_sender_thread():
     global OUTBOUND_BATCH_SIZE, REQUEST_SESSION
     ORIGINAL_BATCH_SIZE = OUTBOUND_BATCH_SIZE # Store the baseline (e.g., 25)
+    signing_key = None
 
     print(f"[*] Sender Online. Zero-Loss 'Rotate & Drain' Active. Batch Size: {OUTBOUND_BATCH_SIZE}")
     while True:
@@ -1279,6 +1382,9 @@ def ingest_sender_thread():
             # CHUNK THE BATCH (dynamically uses updated OUTBOUND_BATCH_SIZE)
             for i in range(0, len(batch), OUTBOUND_BATCH_SIZE):
                 chunk = batch[i:i + OUTBOUND_BATCH_SIZE]
+                if signing_key is None:
+                    signing_key = _load_or_create_signing_key()
+                chunk = [_sign_event_for_delivery(log, signing_key) for log in chunk]
 
                 # Preflight split before network call to avoid 413/reset loops.
                 chunk_bytes = _estimate_payload_bytes(chunk)
@@ -1291,7 +1397,12 @@ def ingest_sender_thread():
                         break
                     else:
                         print(f"[WARN] Preflight single-log trim: {chunk_bytes} bytes > {MAX_OUTBOUND_BYTES} bytes")
-                        chunk = [_truncate_single_log_payload(chunk[0])]
+                        chunk = [
+                            _sign_event_for_delivery(
+                                _truncate_single_log_payload(chunk[0]),
+                                signing_key,
+                            )
+                        ]
 
                 # TRANSMISSION
                 resp = secure_request("POST", INGEST_URL, json=_build_ingest_envelope(chunk), timeout=20)

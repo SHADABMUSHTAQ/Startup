@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import os
 import socket
 import subprocess
@@ -9,7 +8,7 @@ from datetime import datetime, timezone
 
 import httpx
 import pytest
-from ecdsa import SigningKey
+from cryptography.hazmat.primitives import serialization
 
 from app.utils.agent_crypto import (
     build_event_signature_string,
@@ -71,10 +70,14 @@ def _http_event(
     signable_payload = build_signable_event_payload(event)
     payload_hash = build_payload_hash(signable_payload)
     canonical = build_event_signature_string(agent_id, event["timestamp"], event_uid, payload_hash)
-    event["agent_signature"] = SigningKey.from_pem(private_key_pem).sign_deterministic(
-        canonical.encode("utf-8"),
-        hashfunc=hashlib.sha256,
-    ).hex()
+    private_key = serialization.load_pem_private_key(
+        private_key_pem.encode("ascii"),
+        password=None,
+    )
+    event["payload_hash"] = payload_hash
+    event["signature_version"] = "ed25519-v1"
+    event["signature_algorithm"] = "Ed25519"
+    event["agent_signature"] = private_key.sign(canonical.encode("utf-8")).hex()
     return event
 
 

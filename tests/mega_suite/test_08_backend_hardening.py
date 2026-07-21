@@ -300,7 +300,7 @@ async def test_auth_fails_closed_when_redis_revocation_is_unavailable(client, au
         fastapi_app.state.redis = redis_client
 
     assert resp.status_code == 503
-    assert "revocation check failed" in resp.json()["detail"]
+    assert resp.json()["detail"] == "The service is temporarily unavailable."
 
 
 async def test_websocket_ticket_is_short_lived_and_bound_to_session(client, redis_client):

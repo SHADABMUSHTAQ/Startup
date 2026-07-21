@@ -69,7 +69,7 @@ def test_backend_contains_only_the_cdn_agent_download_route():
 
 def test_pilot_manifest_covers_complete_executable_installation_chain():
     manifest_script = _read("scripts/generate_pilot_hash_manifest.ps1")
-    assert "warsoc_installer.exe" in manifest_script
+    assert "warsoc_installer-4.2.5.exe" in manifest_script
     assert "warsoc_agent.exe" in manifest_script
     assert "tools\\nssm\\nssm.exe" in manifest_script
     assert "agent\\deploy_warsoc_telemetry.ps1" in manifest_script
@@ -89,6 +89,12 @@ def test_database_backup_is_encrypted_offsite_and_fail_closed():
     assert "AZURE_BACKUP_CONTAINER_SAS_URL" in backup_script
     assert 'x-ms-blob-type: BlockBlob' in backup_script
     assert "curl" in backup_script
+
+    restore_drill = _read("scripts/run_backup_restore_drill.ps1")
+    assert "--network none" in restore_drill
+    assert "mongorestore" in restore_drill
+    assert "Get-FileHash" in restore_drill
+    assert 'requiredCollection in @("tenants", "users")' in restore_drill
 
 
 def test_auth_and_websocket_contracts_do_not_leak_or_overgrant():

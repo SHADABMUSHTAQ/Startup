@@ -362,6 +362,14 @@ async def _process_job(
         job = _parse_job(raw_payload)
         if not job:
             raise ValueError("Empty email job payload")
+        if (
+            str(job.get("type") or "security_alert_email").strip() == "security_alert_email"
+            and not settings.enable_security_alert_emails
+        ):
+            await _ack_processing_job(redis_client, raw_payload)
+            await _increment_metric(redis_client, "warsoc_security_alert_email_suppressed_total")
+            logger.info("Suppressed security-alert email; dashboard alert remains available")
+            return
         message = _build_message(job)
         async with semaphore:
             await asyncio.to_thread(_send_email, message)

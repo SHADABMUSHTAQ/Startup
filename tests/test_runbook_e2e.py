@@ -43,9 +43,10 @@ async def test_runbook_heartbeat_sentinel(async_client: AsyncClient, db, redis_c
     # Run the compliance cron sweep
     await check_heartbeats(redis_client, db)
     
-    # Assert that the agent status in MongoDB is marked as 'offline' or 'yellow'
+    # Connectivity must not mutate the active/inactive/revoked authorization state.
     agent_doc = await db["agents"].find_one({"agent_id": agent_id})
-    assert agent_doc["status"] in ["offline", "yellow", "inactive", "disconnected"]
+    assert agent_doc["status"] == "active"
+    assert agent_doc["connectivity_status"] == "offline"
 
 @pytest.mark.asyncio
 async def test_runbook_siem_event_coverage(async_client: AsyncClient, db, redis_client, auth_headers, agent_public_key_pem):

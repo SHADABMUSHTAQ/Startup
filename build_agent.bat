@@ -74,6 +74,7 @@ if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
     --hidden-import dotenv ^
     --hidden-import win32evtlog ^
     --hidden-import win32security ^
+    --hidden-import win32crypt ^
     --hidden-import pythoncom ^
     --hidden-import pywintypes ^
     --name warsoc_agent ^

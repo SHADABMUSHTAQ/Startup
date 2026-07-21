@@ -20,10 +20,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # 4. Dependency Installation
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir cryptography==43.0.0 && \
-    pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements-dev.txt ./
+ARG INSTALL_DEV_DEPENDENCIES=false
+RUN pip install --no-cache-dir --upgrade \
+        pip \
+        setuptools==83.0.0 \
+        wheel==0.46.2 && \
+    pip install --no-cache-dir -r requirements.txt && \
+    if [ "$INSTALL_DEV_DEPENDENCIES" = "true" ]; then \
+        pip install --no-cache-dir -r requirements-dev.txt; \
+    fi
 
 # 5. Application Ingestion
 # Copy the core app and workers into the container

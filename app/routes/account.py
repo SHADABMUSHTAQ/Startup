@@ -1,11 +1,5 @@
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
-import secrets
-import struct
-import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -14,13 +8,18 @@ from pydantic import BaseModel
 
 from app.database import get_db
 from app.routes.auth import get_current_user
+from app.utils.totp import (
+    TOTP_DIGITS,
+    TOTP_INTERVAL_SECONDS,
+    TOTP_ISSUER,
+    build_otpauth_uri,
+    generate_totp_secret,
+    protect_totp_secret,
+    reveal_totp_secret,
+    verify_totp,
+)
 
 router = APIRouter()
-
-TOTP_INTERVAL_SECONDS = 30
-TOTP_DIGITS = 6
-TOTP_ISSUER = "WarSOC"
-
 
 class ProfileUpdate(BaseModel):
     full_name: Optional[str] = None
@@ -61,47 +60,6 @@ def _normalize_email(value: str) -> str:
     if not normalized or "@" not in normalized:
         raise HTTPException(status_code=400, detail="Enter a valid email address")
     return normalized
-
-
-def _b32_secret() -> str:
-    raw = secrets.token_bytes(20)
-    return base64.b32encode(raw).decode("ascii").rstrip("=")
-
-
-def _b32_decode(secret: str) -> bytes:
-    normalized = secret.strip().upper().replace(" ", "")
-    padding = "=" * (-len(normalized) % 8)
-    return base64.b32decode(normalized + padding, casefold=True)
-
-
-def _totp_code(secret: str, counter: Optional[int] = None) -> str:
-    step = int(counter if counter is not None else time.time() // TOTP_INTERVAL_SECONDS)
-    key = _b32_decode(secret)
-    msg = struct.pack(">Q", step)
-    digest = hmac.new(key, msg, hashlib.sha1).digest()
-    offset = digest[-1] & 0x0F
-    binary = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
-    return str(binary % (10 ** TOTP_DIGITS)).zfill(TOTP_DIGITS)
-
-
-def _verify_totp(secret: str, code: str, window: int = 1) -> bool:
-    value = str(code or "").strip()
-    if len(value) != TOTP_DIGITS or not value.isdigit():
-        return False
-
-    current_counter = int(time.time() // TOTP_INTERVAL_SECONDS)
-    for delta in range(-window, window + 1):
-        if _totp_code(secret, current_counter + delta) == value:
-            return True
-    return False
-
-
-def _otpauth_uri(username: str, secret: str) -> str:
-    label = f"{TOTP_ISSUER}:{username}"
-    return (
-        f"otpauth://totp/{label}"
-        f"?secret={secret}&issuer={TOTP_ISSUER}&digits={TOTP_DIGITS}&period={TOTP_INTERVAL_SECONDS}"
-    )
 
 
 @router.get("/profile")
@@ -190,15 +148,15 @@ async def setup_two_factor(
             "message": "Two-factor protection is already enabled.",
         }
 
-    secret = _b32_secret()
+    secret = generate_totp_secret()
     username = current_user.get("email") or current_user.get("username") or "user"
-    uri = _otpauth_uri(username, secret)
+    uri = build_otpauth_uri(username, secret)
 
     await db["users"].update_one(
         {"_id": current_user["_id"]},
         {
             "$set": {
-                "two_factor_pending_secret": secret,
+                "two_factor_pending_secret": protect_totp_secret(secret),
                 "two_factor_pending_at": datetime.now(timezone.utc),
                 "two_factor_enabled": False,
             }
@@ -223,12 +181,17 @@ async def verify_two_factor(
 ):
     pending_secret = current_user.get("two_factor_pending_secret")
     active_secret = current_user.get("two_factor_secret")
-    secret = pending_secret or active_secret
+    stored_secret = pending_secret or active_secret
 
-    if not secret:
+    if not stored_secret:
         raise HTTPException(status_code=400, detail="Two-factor setup has not been initiated")
 
-    if not _verify_totp(secret, payload.code):
+    try:
+        secret = reveal_totp_secret(stored_secret)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Two-factor verification is unavailable") from exc
+
+    if not verify_totp(secret, payload.code):
         raise HTTPException(status_code=401, detail="Invalid verification code")
 
     await db["users"].update_one(
@@ -236,7 +199,7 @@ async def verify_two_factor(
         {
             "$set": {
                 "two_factor_enabled": True,
-                "two_factor_secret": secret,
+                "two_factor_secret": protect_totp_secret(secret),
                 "two_factor_verified_at": datetime.now(timezone.utc),
             },
             "$unset": {
@@ -258,11 +221,16 @@ async def disable_two_factor(
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    secret = current_user.get("two_factor_secret")
-    if not secret:
+    stored_secret = current_user.get("two_factor_secret")
+    if not stored_secret:
         raise HTTPException(status_code=400, detail="Two-factor protection is not enabled")
 
-    if not _verify_totp(secret, payload.code):
+    try:
+        secret = reveal_totp_secret(stored_secret)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Two-factor verification is unavailable") from exc
+
+    if not verify_totp(secret, payload.code):
         raise HTTPException(status_code=401, detail="Invalid verification code")
 
     await db["users"].update_one(

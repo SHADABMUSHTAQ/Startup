@@ -19,6 +19,11 @@ from app.config.config import get_settings
 from app.utils.rbac import RoleChecker
 from app.utils.limiter import limiter
 from app.utils.security_policy import effective_agent_limit
+from app.utils.agent_lifecycle import (
+    agent_lifecycle_is_active,
+    agent_status_needs_lifecycle_migration,
+    normalize_agent_lifecycle_status,
+)
 
 
 router = APIRouter()
@@ -449,11 +454,16 @@ async def agent_heartbeat(
         agent = await db["agents"].find_one({"agent_id": body.agent_id})
         if not agent:
             raise HTTPException(status_code=401, detail="Agent not found")
-        doc_status = str(agent.get("status", "active")).strip().lower()
-        if not agent.get("approved", True) or doc_status != "active":
+        doc_status = normalize_agent_lifecycle_status(agent.get("status"))
+        if not agent.get("approved", True) or not agent_lifecycle_is_active(doc_status):
             await redis_client.set(status_key, doc_status or "inactive")
             await redis_client.set(revoked_key, "1")
             raise HTTPException(status_code=403, detail="Agent is inactive")
+        if agent_status_needs_lifecycle_migration(doc_status):
+            await db["agents"].update_one(
+                {"_id": agent["_id"]},
+                {"$set": {"status": "active", "connectivity_status": doc_status}},
+            )
             
         public_key_pem = agent.get("public_key")
         tenant_id = agent.get("tenant_id", "WARSOC_DEFAULT")
@@ -523,6 +533,8 @@ async def agent_heartbeat(
                     "version": body.current_version,
                     "last_ip": request.client.host,
                     "sensor_status": _sanitize_sensor_status(body.sensor_status),
+                    "status": "active",
+                    "connectivity_status": "online",
                 }
             },
         )

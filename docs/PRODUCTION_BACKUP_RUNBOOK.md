@@ -35,3 +35,27 @@ container:
 5. Destroy the disposable environment and record the test result.
 
 A backup is not launch-accepted until one complete restore has succeeded.
+
+## Automated Isolated Drill
+
+From a trusted Windows operations machine with Docker running:
+
+```powershell
+$secret = Read-Host "Backup encryption passphrase" -AsSecureString
+.\scripts\run_backup_restore_drill.ps1 -BackupPassphrase $secret
+```
+
+The script creates a production-format compressed dump, encrypts it with the
+same OpenSSL AES-256-CBC/PBKDF2 contract as the scheduled Linux backup, verifies
+SHA-256, restores into a temporary MongoDB 7 container with `--network none`,
+records document/index counts, and removes the restore database. The encrypted
+archive is deleted by default; the non-sensitive JSON proof remains under
+`tmp/backup-restore-drill`.
+
+To validate an archive downloaded from the private Azure backup container, add
+`-ExistingEncryptedArchive` and `-ExistingHashFile`. The drill verifies and
+restores those exact files without modifying or deleting them.
+
+Latest repository proof: run `20260721T200605Z-7541a279` restored 156,671
+documents with zero restore failures and confirmed the required `tenants` and
+`users` collections plus SIEM, FBR, PECA, alerts, agents and indexes.

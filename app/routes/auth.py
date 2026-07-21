@@ -23,6 +23,12 @@ from app.utils.pricing import calculate_package_price
 from app.utils.rbac import RoleChecker
 from app.routes.admin import verify_admin
 from app.utils.security_policy import PLATFORM_MAX_AGENTS, StrongPassword
+from app.utils.totp import reveal_totp_secret, verify_totp
+from app.utils.agent_lifecycle import (
+    agent_lifecycle_is_active,
+    agent_status_needs_lifecycle_migration,
+    normalize_agent_lifecycle_status,
+)
 
 logger = logging.getLogger("auth")
 
@@ -353,11 +359,16 @@ async def verify_agent_token(request: Request, token: str = Depends(oauth2_schem
             agent_doc = await db["agents"].find_one({"agent_id": agent_id})
             if not agent_doc:
                 raise HTTPException(status_code=401, detail="Unknown agent")
-            doc_status = str(agent_doc.get("status", "active")).strip().lower()
-            if not agent_doc.get("approved", True) or doc_status != "active":
+            doc_status = normalize_agent_lifecycle_status(agent_doc.get("status"))
+            if not agent_doc.get("approved", True) or not agent_lifecycle_is_active(doc_status):
                 await redis.set(status_key, doc_status or "inactive")
                 await redis.set(revoked_key, "1")
                 raise HTTPException(status_code=403, detail="Agent is inactive")
+            if agent_status_needs_lifecycle_migration(doc_status):
+                await db["agents"].update_one(
+                    {"_id": agent_doc["_id"]},
+                    {"$set": {"status": "active", "connectivity_status": doc_status}},
+                )
             await redis.set(status_key, "active")
 
         mapped_tenant = None
@@ -380,11 +391,16 @@ async def verify_agent_token(request: Request, token: str = Depends(oauth2_schem
                 raise HTTPException(status_code=401, detail="Unknown agent")
             if not agent_doc.get("approved", True):
                 raise HTTPException(status_code=403, detail="Agent not approved")
-            doc_status = str(agent_doc.get("status", "active")).strip().lower()
-            if doc_status != "active":
+            doc_status = normalize_agent_lifecycle_status(agent_doc.get("status"))
+            if not agent_lifecycle_is_active(doc_status):
                 await redis.set(status_key, doc_status or "inactive")
                 await redis.set(revoked_key, "1")
                 raise HTTPException(status_code=403, detail="Agent is inactive")
+            if agent_status_needs_lifecycle_migration(doc_status):
+                await db["agents"].update_one(
+                    {"_id": agent_doc["_id"]},
+                    {"$set": {"status": "active", "connectivity_status": doc_status}},
+                )
 
             mapped_tenant = agent_doc.get("tenant_id")
             public_key = agent_doc.get("public_key")
@@ -546,6 +562,7 @@ async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
 class LoginSchema(BaseModel):
     username: str
     password: str
+    totp_code: Optional[str] = Field(default=None, min_length=6, max_length=6)
 
 @router.post("/login")
 @limiter.limit("5/minute")
@@ -555,6 +572,18 @@ async def login(request: Request, user_data: LoginSchema, db=Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if str(db_user.get("status") or "active").strip().lower() != "active":
         raise HTTPException(status_code=403, detail="Account activation is required")
+
+    if bool(db_user.get("two_factor_enabled", False)):
+        stored_secret = db_user.get("two_factor_secret")
+        if not user_data.totp_code:
+            return JSONResponse(status_code=202, content={"mfa_required": True})
+        try:
+            secret = reveal_totp_secret(stored_secret)
+        except (RuntimeError, ValueError):
+            logger.error("Enabled two-factor account has an unreadable secret: user_id=%s", db_user.get("_id"))
+            raise HTTPException(status_code=503, detail="Authentication is temporarily unavailable")
+        if not verify_totp(secret, user_data.totp_code):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
 
     await _require_active_paid_tenant(db, db_user)
 

@@ -37,8 +37,6 @@ os.environ.setdefault("SUPER_ADMIN_API_KEY", "warsoc-test-super-admin-key-2026")
 
 import pytest
 import pytest_asyncio
-from ecdsa import SigningKey, NIST256p
-import hashlib
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
@@ -173,8 +171,7 @@ async def _provision_mock_tenant(db, redis, *, tenant_suffix: str, plan_type: st
     agent_id = f"{tenant_id}_AGENT"
     hostname = f"{tenant_suffix.lower()}-host"
 
-    signing_key = SigningKey.generate(curve=NIST256p, hashfunc=hashlib.sha256)
-    public_key = signing_key.get_verifying_key().to_pem().decode("utf-8")
+    private_key_pem, public_key = ed25519_keypair_pem()
 
     tenant_doc = {
         "tenant_id": tenant_id,
@@ -229,7 +226,7 @@ async def _provision_mock_tenant(db, redis, *, tenant_suffix: str, plan_type: st
         "agent_id": agent_id,
         "hostname": hostname,
         "public_key": public_key,
-        "private_key_pem": signing_key.to_pem().decode("utf-8"),
+        "private_key_pem": private_key_pem,
         "agent_jwt": agent_jwt,
         "username": user_doc["username"],
         "password": "Password123!Secure",

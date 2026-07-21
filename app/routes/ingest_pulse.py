@@ -19,7 +19,12 @@ from app.utils.security_policy import effective_agent_limit
 from app.database import get_db
 #  Secures the Dashboard endpoints below
 from app.routes.auth import get_current_user, verify_agent_token
-from app.utils.agent_crypto import parse_utc_timestamp, timestamp_age_seconds
+from app.utils.agent_crypto import (
+    AgentEventSignatureError,
+    parse_utc_timestamp,
+    timestamp_age_seconds,
+    verify_event_signature,
+)
 
 router = APIRouter()
 settings = get_settings()
@@ -36,6 +41,14 @@ DEFAULT_DAILY_INGEST_BYTES_FLOOR = int(os.getenv("INGEST_DAILY_BYTES_FLOOR", str
 MAX_DAILY_INGEST_BYTES = int(os.getenv("INGEST_DAILY_BYTES_MAX", str(3 * 1024 * 1024 * 1024)))
 INGEST_DAILY_QUOTA_TTL_SECONDS = int(os.getenv("INGEST_DAILY_QUOTA_TTL_SECONDS", str(3 * 24 * 60 * 60)))
 RAW_STREAM_MAX_ENTRIES = int(os.getenv("RAW_STREAM_MAX_ENTRIES", "500000"))
+
+
+def _agent_event_signature_mode() -> str:
+    mode = os.getenv(
+        "AGENT_EVENT_SIGNATURE_MODE",
+        getattr(settings, "agent_event_signature_mode", "observe"),
+    ).strip().lower()
+    return mode if mode in {"observe", "required"} else "required"
 
 _GENERIC_HIGH_SIGNAL_KEYWORDS = {
     "../",
@@ -378,14 +391,24 @@ def _normalize_stream_payloads(raw_payload, agent_context: dict) -> list[dict]:
                 "event_uid": str(fields.get("event_uid") or payload.get("event_uid") or uuid.uuid4().hex),
                 "message": fields.get("message", payload.get("message", "Unknown Event")),
                 "timestamp": fields.get("timestamp") or tags.get("timestamp") or payload.get("timestamp") or datetime.now(timezone.utc).isoformat(),
-                "raw_data": payload.get("raw_data") or fields,
-                "raw_event_data": payload.get("raw_event_data") or fields,
+                "raw_data": payload.get("raw_data") if payload.get("raw_data") is not None else fields,
+                "raw_event_data": (
+                    payload.get("raw_event_data")
+                    if payload.get("raw_event_data") is not None
+                    else payload.get("raw_data", fields)
+                ),
                 "processed_data": payload.get("processed_data") or {},
-                # Signatures removed from worker ingest per CTO directive; strip any provided values.
-                "agent_signature": None,
-                "agent_version": payload.get("agent_version") or "telegraf_polyglot",
+                "agent_signature": fields.get("agent_signature") or payload.get("agent_signature"),
+                "payload_hash": fields.get("payload_hash") or payload.get("payload_hash"),
+                "signature_version": fields.get("signature_version") or payload.get("signature_version"),
+                "signature_algorithm": fields.get("signature_algorithm") or payload.get("signature_algorithm"),
+                # Do not invent a value before signature verification. Signed
+                # agents authenticate the exact version they supplied; an
+                # omitted version remains explicitly unknown.
+                "agent_version": payload.get("agent_version") or "",
                 "tenant_id": tenant_id,
-                "public_key": payload.get("public_key") or public_key,
+                # Public keys are server-owned enrollment state, never agent-supplied evidence.
+                "public_key": public_key,
             }
 
             if not candidate["event_id"]:
@@ -394,6 +417,40 @@ def _normalize_stream_payloads(raw_payload, agent_context: dict) -> list[dict]:
             normalized_payloads.append(candidate)
 
     return normalized_payloads
+
+
+def _verify_endpoint_event(payload: dict, agent_context: dict) -> dict:
+    """Authenticate an endpoint event or explicitly mark a legacy unsigned event."""
+    candidate = dict(payload)
+    supplied_signature_fields = any(
+        candidate.get(field)
+        for field in ("agent_signature", "payload_hash", "signature_version")
+    )
+    if not supplied_signature_fields:
+        if _agent_event_signature_mode() == "required":
+            raise AgentEventSignatureError("endpoint event signature is required")
+        candidate.update(
+            {
+                "agent_signature": None,
+                "payload_hash": None,
+                "signature_version": None,
+                "signature_algorithm": None,
+                "signing_key_id": None,
+                "signature_verified": False,
+                "source_assurance": "agent_jwt_only",
+                "signature_verification_status": "unsigned_legacy",
+            }
+        )
+        return candidate
+
+    verification = verify_event_signature(
+        candidate,
+        agent_id=agent_context["agent_id"],
+        public_key_pem=str(agent_context.get("public_key") or ""),
+    )
+    candidate.update(verification)
+    candidate["signature_verification_status"] = "verified"
+    return candidate
 
 
 async def _consume_agent_ingest_envelope(raw_payload, agent_id: str, redis_client):
@@ -495,19 +552,37 @@ async def ingest_pulse_logs(
             redis_client,
         )
         original_raw_payload = raw_payload
-        await _enforce_daily_ingest_quota(
-            redis_client,
-            verified_tenant_id,
-            raw_payload_bytes,
-        )
 
         sanitized_payloads = _normalize_stream_payloads(raw_events, agent_context)
 
         if not sanitized_payloads:
             raise HTTPException(status_code=400, detail="No valid events found in payload")
 
-        payload_items = sanitized_payloads
+        try:
+            payload_items = [
+                _verify_endpoint_event(payload, agent_context)
+                for payload in sanitized_payloads
+            ]
+        except AgentEventSignatureError as exc:
+            try:
+                if redis_client:
+                    await redis_client.incr("warsoc_endpoint_event_signatures_rejected_total")
+            except Exception:
+                pass
+            logger.warning(
+                "[SECURITY] Endpoint event signature rejected: agent=%s reason=%s",
+                verified_agent_id,
+                str(exc),
+            )
+            raise HTTPException(status_code=401, detail="Endpoint event verification failed") from exc
 
+        # Invalid or unauthenticated endpoint evidence must not consume the
+        # tenant's legitimate daily ingest allowance.
+        await _enforce_daily_ingest_quota(
+            redis_client,
+            verified_tenant_id,
+            raw_payload_bytes,
+        )
 
 
         security_config = _get_security_config()
@@ -528,16 +603,16 @@ async def ingest_pulse_logs(
             raise HTTPException(status_code=503, detail="Redis unavailable for ingest queue")
 
         status_updates = []
+        verified_signature_count = 0
+        unsigned_legacy_count = 0
         async with redis.pipeline(transaction=True) as pipe:
             for log_data in payload_items:
                 log_data.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
 
-                # Ensure tenant/agent identity; strip any signature fields for workers.
+                # Ensure tenant/agent identity while preserving verified provenance.
                 log_data["tenant_id"] = verified_tenant_id
                 log_data["agent_id"] = verified_agent_id
                 log_data.pop("agent_hmac_signature", None)
-                # Do not forward agent signatures into the stream (removed by policy)
-                log_data["agent_signature"] = None
                 siem_hot_event = _is_siem_hot_event(log_data)
                 if siem_hot_event:
                     log_data["siem_hot_enqueued"] = True
@@ -553,8 +628,22 @@ async def ingest_pulse_logs(
                         SIEM_HOT_QUEUE,
                         payload_to_stream,
                     )
+                if log_data.get("signature_verified") is True:
+                    verified_signature_count += 1
+                elif log_data.get("signature_verification_status") == "unsigned_legacy":
+                    unsigned_legacy_count += 1
                 status_updates.append((verified_tenant_id, verified_agent_id))
 
+            if verified_signature_count:
+                await pipe.incrby(
+                    "warsoc_endpoint_event_signatures_verified_total",
+                    verified_signature_count,
+                )
+            if unsigned_legacy_count:
+                await pipe.incrby(
+                    "warsoc_endpoint_event_signatures_unsigned_total",
+                    unsigned_legacy_count,
+                )
             await pipe.execute()
 
         current_utc_timestamp = datetime.now(timezone.utc).isoformat()

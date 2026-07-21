@@ -71,7 +71,7 @@ async def test_provisioning_rolls_back_tenant_and_genesis_when_user_insert_fails
     )
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "Tenant provisioning failed; no account was created."
+    assert response.json()["detail"] == "The service is temporarily unavailable."
     assert await db["users"].count_documents({"email": email}) == 0
     tenant = await db["tenants"].find_one({"company_name": f"Rollback Contract {run_id}"})
     assert tenant is None
