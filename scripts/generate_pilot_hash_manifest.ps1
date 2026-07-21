@@ -16,7 +16,7 @@ if (-not $AgentPath) {
     $AgentPath = Join-Path $repositoryRoot "agent\dist\warsoc_agent.exe"
 }
 if (-not $InstallerPath) {
-    $InstallerPath = Join-Path $repositoryRoot "Output\warsoc_installer-4.2.5.exe"
+    $InstallerPath = Join-Path $repositoryRoot "Output\warsoc_installer-4.2.6.exe"
 }
 if (-not $NssmPath) {
     $NssmPath = Join-Path $repositoryRoot "tools\nssm\nssm.exe"
@@ -28,7 +28,7 @@ if (-not $TenantPolicyPath) {
     $TenantPolicyPath = Join-Path $repositoryRoot "agent\tenant_policy.json"
 }
 if (-not $OutputPath) {
-    $OutputPath = Join-Path $repositoryRoot "Output\pilot_hash_manifest-4.2.5.json"
+    $OutputPath = Join-Path $repositoryRoot "Output\pilot_hash_manifest-4.2.6.json"
 }
 
 $resolvedAgent = (Resolve-Path -LiteralPath $AgentPath).Path

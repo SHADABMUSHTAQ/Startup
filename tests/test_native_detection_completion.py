@@ -482,6 +482,31 @@ def test_enrolled_agent_id_wins_over_installer_bootstrap_placeholder(monkeypatch
     assert agent._select_agent_id("", "auto", "WARSOC_TENANT") == "WARSOC_TENANT"
 
 
+def test_windows_dpapi_return_shapes_are_normalized(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+
+    class NativePywin32Shape:
+        @staticmethod
+        def CryptProtectData(*_args):
+            return b"protected"
+
+        @staticmethod
+        def CryptUnprotectData(*_args):
+            return ("WarSOC Ed25519 Agent Key", b"plaintext")
+
+    monkeypatch.setattr(agent, "win32crypt", NativePywin32Shape)
+    assert agent._dpapi_protect(b"plaintext") == b"protected"
+    assert agent._dpapi_unprotect(b"protected") == b"plaintext"
+
+    class CompatibleTupleShape(NativePywin32Shape):
+        @staticmethod
+        def CryptProtectData(*_args):
+            return ("WarSOC Ed25519 Agent Key", b"protected-tuple")
+
+    monkeypatch.setattr(agent, "win32crypt", CompatibleTupleShape)
+    assert agent._dpapi_protect(b"plaintext") == b"protected-tuple"
+
+
 def test_native_xml_and_jsonl_parsers(monkeypatch, tmp_path):
     agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
     xml = """<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">

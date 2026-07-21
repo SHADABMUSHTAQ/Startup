@@ -52,7 +52,7 @@ if not env_loaded:
     print(f"[WARN] .env not found in any standard location. Using system environment variables.")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-AGENT_VERSION = "4.2.5-Native-Signed"
+AGENT_VERSION = "4.2.6-Native-Signed"
 TENANT_ID = os.getenv("TENANT_ID", "provision").strip() or "provision"
 PROGRAM_DATA_DIR = Path(os.getenv("PROGRAMDATA", str(_AGENT_DIR))) / "WarSOC"
 JWT_TOKEN_PATH = PROGRAM_DATA_DIR / ".agent_jwt"
@@ -189,6 +189,42 @@ def get_local_ip():
 LOCAL_IP = get_local_ip()
 
 
+def _dpapi_payload(result, operation):
+    """Normalize pywin32 DPAPI return shapes across supported releases."""
+    if isinstance(result, tuple):
+        if len(result) < 2:
+            raise RuntimeError(f"Windows DPAPI {operation} returned an incomplete result")
+        result = result[1]
+    if not isinstance(result, (bytes, bytearray, memoryview)):
+        raise RuntimeError(f"Windows DPAPI {operation} returned invalid data")
+    return bytes(result)
+
+
+def _dpapi_protect(data):
+    if win32crypt is None:
+        raise RuntimeError("Windows DPAPI is unavailable")
+    return _dpapi_payload(
+        win32crypt.CryptProtectData(
+            data,
+            "WarSOC Ed25519 Agent Key",
+            None,
+            None,
+            None,
+            0,
+        ),
+        "protection",
+    )
+
+
+def _dpapi_unprotect(data):
+    if win32crypt is None:
+        raise RuntimeError("Windows DPAPI is unavailable")
+    return _dpapi_payload(
+        win32crypt.CryptUnprotectData(data, None, None, None, 0),
+        "unprotection",
+    )
+
+
 def _load_or_create_signing_key():
     global JWT_TOKEN, AGENT_ID
     from cryptography.hazmat.primitives.asymmetric import ed25519
@@ -200,16 +236,7 @@ def _load_or_create_signing_key():
         pass
 
     def protect_and_store(pem_data):
-        if win32crypt is None:
-            raise RuntimeError("Windows DPAPI is unavailable")
-        _, protected = win32crypt.CryptProtectData(
-            pem_data,
-            "WarSOC Ed25519 Agent Key",
-            None,
-            None,
-            None,
-            0,
-        )
+        protected = _dpapi_protect(pem_data)
         temporary_path = PROTECTED_PRIVATE_KEY_PATH.with_suffix(".dpapi.tmp")
         with open(temporary_path, "wb") as protected_handle:
             protected_handle.write(protected)
@@ -237,15 +264,7 @@ def _load_or_create_signing_key():
 
     try:
         if PROTECTED_PRIVATE_KEY_PATH.exists():
-            if win32crypt is None:
-                raise RuntimeError("Windows DPAPI is unavailable")
-            _, pem_data = win32crypt.CryptUnprotectData(
-                PROTECTED_PRIVATE_KEY_PATH.read_bytes(),
-                None,
-                None,
-                None,
-                0,
-            )
+            pem_data = _dpapi_unprotect(PROTECTED_PRIVATE_KEY_PATH.read_bytes())
             private_key = serialization.load_pem_private_key(pem_data, password=None)
             if isinstance(private_key, ed25519.Ed25519PrivateKey):
                 remove_plaintext_keys()
