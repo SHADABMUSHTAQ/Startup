@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     backend_public_url: str = os.getenv("BACKEND_PUBLIC_URL", "http://127.0.0.1:8000")
     allowed_origins: str = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
     enable_legacy_routes: bool = os.getenv("ENABLE_LEGACY_ROUTES", "false").strip().lower() in {"1", "true", "yes"}
+    enable_manual_log_injection: bool = os.getenv(
+        "ENABLE_MANUAL_LOG_INJECTION", "false"
+    ).strip().lower() in {"1", "true", "yes"}
     metrics_allowlist_ips: str = os.getenv("METRICS_ALLOWLIST_IPS", "127.0.0.1,::1")
     metrics_bearer_token: str = os.getenv("METRICS_BEARER_TOKEN", "")
 

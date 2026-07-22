@@ -3,6 +3,7 @@ import json
 import pytest
 
 from app.workers.email_daemon import _build_message
+from app.main import app as fastapi_app
 
 
 from unittest.mock import AsyncMock, patch
@@ -63,6 +64,35 @@ async def test_homepage_contact_honeypot_does_not_store_or_queue(async_client, d
     assert await redis_client.llen("email_alert_queue") == 0
 
 
+@pytest.mark.asyncio
+async def test_quote_is_persisted_when_email_queue_is_unavailable(async_client, db):
+    await db["sales_leads"].delete_many({})
+    redis = fastapi_app.state.redis
+    fastapi_app.state.redis = None
+    try:
+        response = await async_client.post(
+            "/api/v1/sales/request-quote",
+            json={
+                "contact_name": "Pilot Buyer",
+                "contact_email": "buyer@example.com",
+                "company_name": "Pilot Company",
+                "plan_type": "Custom Platform",
+                "endpoints": 15,
+                "compliance_packs": ["fbr_pos", "peca_forensic"],
+                "billing_cycle": "monthly",
+                "customization": {"endpoints": 15, "retentionMonths": 12},
+            },
+        )
+    finally:
+        fastapi_app.state.redis = redis
+
+    assert response.status_code == 200, response.text
+    lead = await db["sales_leads"].find_one({"contact_email": "buyer@example.com"})
+    assert lead["commercial_model"] == "custom_contract_manual_invoice"
+    assert lead["requested_retention_months"] == 12
+    assert "backend_true_mrr" not in lead
+
+
 def test_email_daemon_builds_homepage_contact_messages():
     sales_message = _build_message(
         {
@@ -97,7 +127,7 @@ def test_email_daemon_builds_homepage_contact_messages():
     assert confirmation_message["Subject"] == "We received your WarSOC request"
 
 
-def test_quote_emails_include_archive_request_and_escape_html():
+def test_quote_emails_include_scope_without_claiming_a_price_and_escape_html():
     sales_message = _build_message(
         {
             "type": "sales_quote",
@@ -109,10 +139,7 @@ def test_quote_emails_include_archive_request_and_escape_html():
                 "plan_type": "Custom Platform",
                 "endpoints": 50,
                 "compliance_packs": ["fbr_pos", "peca_forensic"],
-                "billing_cycle": "monthly",
-                "frontend_calculated_total": 145000,
-                "activation_fee": 5000,
-                "backend_initial_payment": 150000,
+                "billing_preference": "monthly",
                 "customization": {"retention_months": 12},
             },
         }
@@ -127,16 +154,17 @@ def test_quote_emails_include_archive_request_and_escape_html():
                 "plan_type": "Custom Platform",
                 "endpoints": 50,
                 "compliance_packs": ["fbr_pos", "peca_forensic"],
-                "billing_cycle": "monthly",
-                "frontend_total": 145000,
+                "billing_preference": "monthly",
                 "customization": {"retention_months": 12},
             },
         }
     )
 
     assert "Requested General Archive: 12 months" in sales_message.get_content()
-    assert "Calculated MRR: Rs 145000" in sales_message.get_content()
+    assert "Commercial Terms: Manual review and invoice" in sales_message.get_content()
+    assert "Calculated MRR" not in sales_message.get_content()
     html = confirmation.get_body(preferencelist=("html",)).get_content()
     assert "Requested General Archive:</strong> 12 months" in html
+    assert "Estimated Total" not in html
     assert "<script>" not in html
     assert "&lt;script&gt;" in html

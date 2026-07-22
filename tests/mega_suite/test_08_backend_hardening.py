@@ -1228,12 +1228,14 @@ async def test_team_invite_uses_single_use_password_setup_link(client, db):
     )
     assert response.status_code == 201, response.text
     assert response.json()["status"] == "pending"
+    assert response.headers["cache-control"] == "no-store"
+    activation_url = response.json()["activation_url"]
+    token = parse_qs(urlparse(activation_url).fragment)["token"][0]
 
     queued = await fastapi_app.state.redis.lpop("email_alert_queue")
     job = json.loads(queued)
     assert "temporary_password" not in job["payload"]
-    activation_url = job["payload"]["activation_url"]
-    token = parse_qs(urlparse(activation_url).fragment)["token"][0]
+    assert job["payload"]["activation_url"] == activation_url
     chosen_password = "Secure-Invite-Password-2026!"
 
     activated = await client.post(

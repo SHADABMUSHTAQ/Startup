@@ -100,12 +100,26 @@ def test_every_commercial_contract_rejects_51_endpoints():
             billing_cycle="monthly",
             frontend_calculated_total=0,
         )
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError, match="Automated pricing is disabled"):
         calculate_package_price(
             endpoints=51,
             compliance_packs=[],
             billing_cycle="monthly",
         )
+
+
+def test_manual_contract_route_contains_no_dormant_billing_path():
+    auth_source = (
+        Path(__file__).resolve().parents[1] / "app" / "routes" / "auth.py"
+    ).read_text(encoding="utf-8")
+    upgrade_block = auth_source.split('@router.post("/upgrade")', 1)[1].split(
+        '@router.post("/invite")', 1
+    )[0]
+
+    assert "manual invoice approval" in upgrade_block
+    assert "calculate_package_price" not in upgrade_block
+    assert 'db["billing"]' not in upgrade_block
+    assert "calculated_total" not in upgrade_block
 
 
 def test_admin_provisioning_rejects_oversized_daily_ingest_quota():

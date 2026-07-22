@@ -8,7 +8,7 @@ from typing import Literal
 
 from app.database import get_db
 from app.utils.limiter import limiter
-from app.utils.pricing import calculate_package_price
+from app.utils.pricing import normalize_billing_cycle, normalize_compliance_packs
 from app.utils.security_policy import PLATFORM_MAX_AGENTS
 
 router = APIRouter()
@@ -41,7 +41,9 @@ class QuoteRequest(BaseModel):
     endpoints: int = Field(ge=10, le=PLATFORM_MAX_AGENTS)
     compliance_packs: list[str]
     billing_cycle: str
-    frontend_calculated_total: float
+    # Accepted for compatibility with older frontend deployments only. The
+    # public request endpoint never treats a browser-supplied price as a quote.
+    frontend_calculated_total: float | None = None
     customization: QuoteCustomization = Field(default_factory=QuoteCustomization)
 
 
@@ -61,20 +63,13 @@ async def request_quote(
     db=Depends(get_db)
 ):
     """
-    B2B Flow: Accepts a quote request, recalculates pricing independently,
-    stores the lead safely in MongoDB, and queues email notifications via Redis.
+    B2B Flow: Stores requested scope for manual commercial review and queues
+    notifications. It does not create a price, invoice, or billing record.
     """
     redis = getattr(request.app.state, "redis", None)
-    if not redis:
-        logger.error("Redis unavailable: cannot queue quote request.")
-        raise HTTPException(status_code=503, detail="Service unavailable: quote queue offline.")
-        
-    # Recalculate pricing independently. Never trust the frontend total.
-    price = calculate_package_price(
-        endpoints=data.endpoints,
-        compliance_packs=data.compliance_packs,
-        billing_cycle=data.billing_cycle,
-    )
+
+    normalized_packs = normalize_compliance_packs(data.compliance_packs)
+    billing_preference = normalize_billing_cycle(data.billing_cycle)
     customization = data.customization.normalized(fallback_endpoints=data.endpoints)
     
     # 2. Build the structured Lead Document
@@ -85,15 +80,10 @@ async def request_quote(
         "company_name": data.company_name,
         "plan_type": data.plan_type,
         "endpoints": data.endpoints,
-        "compliance_packs": price.compliance_packs,
-        "billing_cycle": price.billing_cycle,
-        "frontend_total": data.frontend_calculated_total,
-        "pricing_version": price.pricing_version,
-        "activation_fee": price.activation_fee,
-        "backend_true_mrr": price.monthly_total,
-        "backend_initial_payment": price.initial_payment,
-        "backend_yearly_value": price.yearly_value,
-        "price_breakdown": price.breakdown,
+        "compliance_packs": normalized_packs,
+        "billing_preference": billing_preference,
+        "commercial_model": "custom_contract_manual_invoice",
+        "client_estimate_ignored": data.frontend_calculated_total,
         "customization": customization,
         "requested_retention_months": customization["retention_months"],
         "requested_retention_days": customization["retention_days"],
@@ -106,7 +96,11 @@ async def request_quote(
         await db["sales_leads"].insert_one(lead_doc)
     except Exception as e:
         logger.error("Database unavailable: failed to save sales lead: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to submit quote request due to internal database error.")
+        raise HTTPException(status_code=500, detail="Unable to submit the request right now.")
+
+    if not redis:
+        logger.error("Quote lead saved but the email queue is unavailable.")
+        return {"message": "Quote request received successfully. Our team will contact you shortly."}
 
     # Queue the lead email to the sales team
     lead_job = {
@@ -127,9 +121,8 @@ async def request_quote(
             "plan_type": data.plan_type,
             "company_name": data.company_name,
             "endpoints": data.endpoints,
-            "compliance_packs": price.compliance_packs,
-            "billing_cycle": price.billing_cycle,
-            "frontend_total": data.frontend_calculated_total,
+            "compliance_packs": normalized_packs,
+            "billing_preference": billing_preference,
             "customization": customization,
         }
     }
@@ -177,7 +170,7 @@ async def contact_sales(
         await db["sales_leads"].insert_one(lead_doc)
     except Exception as exc:
         logger.error("Database unavailable: failed to save contact lead: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to submit contact request due to internal database error.")
+        raise HTTPException(status_code=500, detail="Unable to submit the request right now.")
 
     redis = getattr(request.app.state, "redis", None)
     if not redis:

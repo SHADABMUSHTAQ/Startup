@@ -37,6 +37,7 @@ def test_production_compose_is_private_fail_fast_and_sized_for_pilot():
     assert "AZURE_IMMUTABILITY_REQUIRED" in compose
     assert "0.0.0.0}:5140" not in compose
     assert "AGENT_CDN_URL required" in compose
+    assert "ENABLE_MANUAL_LOG_INJECTION: ${ENABLE_MANUAL_LOG_INJECTION:-false}" in compose
     assert "SALES_EMAIL required" in compose
     assert "ZOHO_SMTP_USER required" in compose
     assert "ZOHO_SMTP_PASS required" in compose
@@ -69,7 +70,7 @@ def test_backend_contains_only_the_cdn_agent_download_route():
 
 def test_pilot_manifest_covers_complete_executable_installation_chain():
     manifest_script = _read("scripts/generate_pilot_hash_manifest.ps1")
-    assert "warsoc_installer-4.2.5.exe" in manifest_script
+    assert "warsoc_installer-4.2.6.exe" in manifest_script
     assert "warsoc_agent.exe" in manifest_script
     assert "tools\\nssm\\nssm.exe" in manifest_script
     assert "agent\\deploy_warsoc_telemetry.ps1" in manifest_script

@@ -76,10 +76,7 @@ def _build_message(job: dict) -> EmailMessage:
         plan = payload.get("plan_type", "Unknown")
         endpoints = payload.get("endpoints", 0)
         packs = ", ".join(payload.get("compliance_packs", [])) or "None"
-        billing = payload.get("billing_cycle", "monthly")
-        mrr = payload.get("frontend_calculated_total", 0)
-        activation_fee = payload.get("activation_fee", 5000)
-        initial_payment = payload.get("backend_initial_payment", 0)
+        billing = payload.get("billing_preference", payload.get("billing_cycle", "monthly"))
         customization = payload.get("customization") if isinstance(payload.get("customization"), dict) else {}
         retention_months = customization.get("retention_months", customization.get("retentionMonths", 0))
         subject = f"HOT LEAD: {company} - {plan}"
@@ -92,11 +89,9 @@ def _build_message(job: dict) -> EmailMessage:
             f"Compliance Packs: {packs}\n"
             f"Estimated Endpoints: {endpoints}\n"
             f"Requested General Archive: {retention_months} months\n"
-            f"Billing Cycle: {billing.capitalize()}\n"
-            f"Calculated MRR: Rs {mrr}\n"
-            f"Activation Setup Fee: Rs {activation_fee}\n"
-            f"Total Initial Payment Due: Rs {initial_payment}\n\n"
-            f"Dial this lead within 60 seconds."
+            f"Billing Preference: {billing.capitalize()}\n"
+            f"Commercial Terms: Manual review and invoice\n\n"
+            f"Contact this lead to confirm the deployment scope."
         )
         message = EmailMessage()
         message["From"] = DEFAULT_FROM_ADDRESS
@@ -109,8 +104,7 @@ def _build_message(job: dict) -> EmailMessage:
         plan = escape(str(payload.get("plan_type", "Unknown")))
         endpoints = escape(str(payload.get("endpoints", 0)))
         packs = escape(", ".join(payload.get("compliance_packs", [])) or "None")
-        billing = escape(str(payload.get("billing_cycle", "monthly")))
-        total = escape(str(payload.get("frontend_total", 0)))
+        billing = escape(str(payload.get("billing_preference", payload.get("billing_cycle", "monthly"))))
         customization = payload.get("customization") if isinstance(payload.get("customization"), dict) else {}
         retention_months = escape(str(customization.get("retention_months", customization.get("retentionMonths", 0))))
         subject = f"Your Custom WarSOC Quote - {company}"
@@ -125,10 +119,9 @@ def _build_message(job: dict) -> EmailMessage:
                     <li><strong>Endpoints:</strong> {endpoints}</li>
                     <li><strong>Compliance Packs:</strong> {packs}</li>
                     <li><strong>Requested General Archive:</strong> {retention_months} months</li>
-                    <li><strong>Billing Cycle:</strong> {billing.title()}</li>
-                    <li><strong>Estimated Total:</strong> Rs {total}</li>
+                    <li><strong>Billing Preference:</strong> {billing.title()}</li>
                 </ul>
-                <p>A member of the WarSOC deployment team will contact you shortly to finalize your network requirements and provide your official B2B contract.</p>
+                <p>A member of the WarSOC deployment team will contact you shortly to confirm scope, commercial terms, and the manual invoice.</p>
                 <br/>
                 <p>Securely yours,<br/><strong>WarSOC Deployments</strong></p>
             </body>

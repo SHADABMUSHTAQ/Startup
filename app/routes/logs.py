@@ -391,6 +391,9 @@ async def inject_manual_log(
     """
      TOOL: Allows analysts to manually inject logs for testing and simulation.
     """
+    if not _settings.enable_manual_log_injection:
+        raise HTTPException(status_code=404, detail="Not found")
+
     tenant_id = current_user.get("tenant_id")
     if not tenant_id:
         raise HTTPException(status_code=403, detail="Unauthorized.")

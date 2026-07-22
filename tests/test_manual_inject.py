@@ -1,11 +1,23 @@
 import pytest
-import json
 from unittest.mock import AsyncMock, MagicMock
 from fastapi import HTTPException
-from app.routes.logs import inject_manual_log
+from app.routes import logs
 
 @pytest.mark.asyncio
-async def test_inject_manual_log_redis_xadd():
+async def test_inject_manual_log_is_disabled_by_default():
+    with pytest.raises(HTTPException) as exc:
+        await logs.inject_manual_log(
+            payload={"event_id": 4625},
+            db=MagicMock(),
+            current_user={"username": "test_admin", "tenant_id": "TENANT_12345"},
+            role="admin",
+            request=MagicMock(),
+        )
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_inject_manual_log_requires_explicit_opt_in(monkeypatch):
     # 1. Setup mock payload and objects
     payload = {
         "event_id": 4625,
@@ -28,7 +40,8 @@ async def test_inject_manual_log_redis_xadd():
     mock_request.app.state.redis = mock_redis
     
     # 2. Call the endpoint function directly
-    response = await inject_manual_log(
+    monkeypatch.setattr(logs._settings, "enable_manual_log_injection", True)
+    response = await logs.inject_manual_log(
         payload=payload,
         db=mock_db,
         current_user=mock_user,

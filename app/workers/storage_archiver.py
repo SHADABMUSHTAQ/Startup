@@ -62,6 +62,55 @@ HOT_RETENTION_DAYS_BY_COLLECTION = {
     "logs": DEFAULT_RAW_LOG_HOT_RETENTION_DAYS,
 }
 
+ARCHIVE_RETENTION_CLASS_BY_COLLECTION = {
+    "fbr_pos_logs": "FBR",
+    "peca_forensic_logs": "PECA",
+    "siem_cold_vault": "SIEM",
+    "security_alerts": "SIEM",
+    "logs": "SIEM",
+}
+
+
+def _archive_retention_class(collection_name: str) -> str:
+    return ARCHIVE_RETENTION_CLASS_BY_COLLECTION.get(collection_name, "GENERAL")
+
+
+def _archive_routing_key(collection_name: str, vault_retention_days: int | None = None) -> str:
+    retention_class = _archive_retention_class(collection_name)
+    if retention_class in {"SIEM", "GENERAL"} and vault_retention_days:
+        return f"{retention_class}_{max(1, int(vault_retention_days))}"
+    return retention_class
+
+
+def _archive_container_name(
+    collection_name: str,
+    vault_retention_days: int | None = None,
+) -> str:
+    retention_class = _archive_retention_class(collection_name)
+    routing_key = _archive_routing_key(collection_name, vault_retention_days)
+    exact = os.getenv(f"AZURE_STORAGE_CONTAINER_{routing_key}", "").strip()
+    class_fallback = os.getenv(f"AZURE_STORAGE_CONTAINER_{retention_class}", "").strip()
+    return exact or class_fallback or os.getenv(
+        "AZURE_STORAGE_CONTAINER", "warsoc-cold-storage"
+    ).strip()
+
+
+def _container_policy_setting(
+    collection_name: str,
+    setting: str,
+    default: str,
+    vault_retention_days: int | None = None,
+) -> str:
+    retention_class = _archive_retention_class(collection_name)
+    routing_key = _archive_routing_key(collection_name, vault_retention_days)
+    exact = os.getenv(f"AZURE_CONTAINER_IMMUTABILITY_{setting}_{routing_key}", "").strip()
+    class_fallback = os.getenv(
+        f"AZURE_CONTAINER_IMMUTABILITY_{setting}_{retention_class}", ""
+    ).strip()
+    return exact or class_fallback or os.getenv(
+        f"AZURE_CONTAINER_IMMUTABILITY_{setting}", default
+    )
+
 
 def _environment_flag(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
@@ -104,7 +153,11 @@ async def _verify_blob_immutability(blob_client, required_until: datetime) -> di
     return status
 
 
-async def _verify_container_immutability_capability(container_client) -> dict:
+async def _verify_container_immutability_capability(
+    container_client,
+    collection_name: str = "",
+    vault_retention_days: int | None = None,
+) -> dict:
     properties = await container_client.get_container_properties()
     has_policy = bool(getattr(properties, "has_immutability_policy", False))
     has_legal_hold = bool(getattr(properties, "has_legal_hold", False))
@@ -118,17 +171,26 @@ async def _verify_container_immutability_capability(container_client) -> dict:
             "Hot records will not be deleted."
         )
     try:
-        configured_days = int(os.getenv("AZURE_CONTAINER_IMMUTABILITY_DAYS", "0"))
+        configured_days = int(
+            _container_policy_setting(
+                collection_name,
+                "DAYS",
+                "0",
+                vault_retention_days,
+            )
+        )
     except ValueError as exc:
         raise RuntimeError("AZURE_CONTAINER_IMMUTABILITY_DAYS must be an integer") from exc
     return {
         "has_immutability_policy": has_policy,
         "has_legal_hold": has_legal_hold,
         "immutable_storage_with_versioning_enabled": version_immutability,
-        "declared_locked": _environment_flag(
-            "AZURE_CONTAINER_IMMUTABILITY_LOCKED",
-            default=False,
-        ),
+        "declared_locked": _container_policy_setting(
+            collection_name,
+            "LOCKED",
+            "false",
+            vault_retention_days,
+        ).strip().lower() in {"1", "true", "yes", "on"},
         "configured_days": configured_days,
     }
 
@@ -265,6 +327,7 @@ async def _archive_batch(
     batch_number: int,
     tenant_retention_days: int,
     container_immutability: dict | None = None,
+    container_name: str | None = None,
 ):
     document_ids = [doc["_id"] for doc in docs if "_id" in doc]
     if not document_ids:
@@ -348,9 +411,14 @@ async def _archive_batch(
     event_ids = sorted({str(doc.get("event_id")) for doc in docs if doc.get("event_id") is not None})
     event_uids = sorted({str(doc.get("event_uid")) for doc in docs if doc.get("event_uid")})
     alert_uids = sorted({str(doc.get("alert_uid")) for doc in docs if doc.get("alert_uid")})
+    resolved_container_name = container_name or _archive_container_name(
+        collection_name,
+        vault_retention_days,
+    )
     archive_doc = {
         "tenant_id": tenant_id,
         "collection": collection_name,
+        "container_name": resolved_container_name,
         "blob_name": json_blob_name,
         "hash_blob_name": hash_blob_name,
         "archive_key": archive_key,
@@ -388,10 +456,11 @@ async def _archive_batch(
         "_id": {"$in": document_ids},
     })
     logger.info(
-        "Archived %s.%s batch %s to %s and deleted %s hot records.",
+        "Archived %s.%s batch %s to %s/%s and deleted %s hot records.",
         tenant_id,
         collection_name,
         batch_number,
+        resolved_container_name,
         json_blob_name,
         delete_result.deleted_count,
     )
@@ -407,7 +476,6 @@ async def run_archiver():
     if not azure_conn_str:
         raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING is required for archival")
 
-    container_name = os.getenv("AZURE_STORAGE_CONTAINER", "warsoc-cold-storage")
     mongo_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
     db_name = os.getenv("MONGODB_DB_NAME", "warsoc_db")
     archive_batch_size = int(os.getenv("ARCHIVE_BATCH_SIZE", "5000"))
@@ -421,15 +489,34 @@ async def run_archiver():
     try:
         db = mongo_client[db_name]
         blob_service_client = BlobServiceClient.from_connection_string(azure_conn_str)
-        container_client = blob_service_client.get_container_client(container_name)
-        if not await container_client.exists():
-            await container_client.create_container()
-            logger.info("Created Azure container: %s", container_name)
-        container_immutability = None
-        if _environment_flag("AZURE_IMMUTABILITY_REQUIRED", default=False):
-            container_immutability = await _verify_container_immutability_capability(
-                container_client
+        container_contexts = {}
+
+        async def get_container_context(collection_name: str, tenant_retention_days: int):
+            retention_class = _archive_retention_class(collection_name)
+            vault_retention_days = _effective_vault_retention_days(
+                collection_name,
+                tenant_retention_days,
             )
+            routing_key = _archive_routing_key(collection_name, vault_retention_days)
+            container_name = _archive_container_name(collection_name, vault_retention_days)
+            context_key = (container_name, routing_key)
+            if context_key in container_contexts:
+                return container_contexts[context_key]
+
+            container_client = blob_service_client.get_container_client(container_name)
+            if not await container_client.exists():
+                await container_client.create_container()
+                logger.info("Created Azure container: %s", container_name)
+            container_immutability = None
+            if _environment_flag("AZURE_IMMUTABILITY_REQUIRED", default=False):
+                container_immutability = await _verify_container_immutability_capability(
+                    container_client,
+                    collection_name,
+                    vault_retention_days,
+                )
+            context = (container_name, container_client, container_immutability)
+            container_contexts[context_key] = context
+            return context
 
         cursor = db.tenants.find({})
         async for tenant in cursor:
@@ -460,6 +547,10 @@ async def run_archiver():
                         break
 
                     try:
+                        container_name, container_client, container_immutability = await get_container_context(
+                            collection_name,
+                            retention_days,
+                        )
                         if collection_name == "security_alerts":
                             # Archive is allowed to remove alert evidence only
                             # after its mutable workflow state has been projected.
@@ -477,6 +568,7 @@ async def run_archiver():
                             batch_number,
                             retention_days,
                             container_immutability,
+                            container_name,
                         )
                     except Exception as exc:
                         logger.error(

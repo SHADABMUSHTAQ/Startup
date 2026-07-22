@@ -19,7 +19,6 @@ from app.config.config import get_settings
 from app.utils.audit import audit_log
 from app.utils.limiter import limiter
 from app.utils.observability import record_auth_fail_closed
-from app.utils.pricing import calculate_package_price
 from app.utils.rbac import RoleChecker
 from app.routes.admin import verify_admin
 from app.utils.security_policy import PLATFORM_MAX_AGENTS, StrongPassword
@@ -59,12 +58,14 @@ class PlanUpdate(BaseModel):
 
 
 class UpgradePlan(BaseModel):
+    """Legacy request shape retained while self-service contract changes stay disabled."""
+
     plan_type: str
     compliance_packs: list[str]
     endpoints: int = Field(ge=1, le=PLATFORM_MAX_AGENTS)
     storage_gb: int = Field(ge=0)
     retention_months: int = Field(ge=0)
-    billing_cycle: Optional[str] = "monthly"  # Backend now calculates price based on cycle
+    billing_cycle: Optional[str] = "monthly"
 
 
 class InviteUserRequest(BaseModel):
@@ -782,118 +783,6 @@ async def upgrade_plan(
         detail="Contract changes are handled through WarSOC operations provisioning and manual invoice approval.",
     )
 
-    secure_username = current_user["username"]
-    canonical_plan = normalize_plan_type(data.plan_type)
-    resolved_packs = resolve_compliance_packs(canonical_plan, data.compliance_packs)
-
-    retention_days_calc = max(90, data.retention_months * 30)
-
-    await db["users"].update_one(
-        {"username": secure_username},
-        {"$set": {
-            "plan_type": canonical_plan,
-            "has_active_plan": True,
-            "compliance_packs": resolved_packs,
-            "endpoints": data.endpoints,
-            "storage_gb": data.storage_gb,
-            "retention_months": data.retention_months,
-            "retention_days": retention_days_calc
-        }}
-    )
-
-    # âœ… CTO FIX 6: Also update the plan in the tenants collection.
-    db_user = await db["users"].find_one({"username": secure_username})
-    tenant_id = db_user.get("tenant_id")
-    if tenant_id:
-        await db["tenants"].update_one(
-            {"tenant_id": tenant_id},
-            {
-                "$set": {
-                    "plan": canonical_plan,
-                    "plan_type": canonical_plan,
-                    "compliance_packs": resolved_packs,
-                    "endpoints": data.endpoints,
-                    "agent_limit": data.endpoints,
-                    "max_agents": data.endpoints,
-                    "storage_gb": data.storage_gb,
-                    "retention_months": data.retention_months,
-                    "retention_days": retention_days_calc
-                }
-            },
-            upsert=True
-        )
-        # âœ… MASTER BUILD FIX: Immediate Cache Sync
-        redis = request.app.state.redis
-        if redis:
-            await redis.set(f"tenant_plan:{tenant_id}", canonical_plan)
-            # Sync features so generate-activation gets it instantly
-            features = []
-            if "fbr_pos" in resolved_packs: features.append("FBR")
-            if "peca_forensic" in resolved_packs: features.append("PECA")
-            features_str = ",".join(features) if features else "SIEM"
-            await redis.set(f"tenant_features:{tenant_id}", features_str)
-            await redis.set(f"tenant_agent_limit:{tenant_id}", str(data.endpoints))
-            await redis.set(f"tenant_retention:{tenant_id}", str(retention_days_calc))
-
-    tenant_id = db_user.get("tenant_id", "WARSOC_DEFAULT")
-    access_token = create_access_token(
-        data={"sub": db_user["username"], "type": "user", "tenant_id": tenant_id, "role": db_user.get("role", "admin")},
-        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    )
-    # ðŸ”’ Final Identity Contract Verification
-    plan = normalize_plan_type(db_user.get("plan_type", "Free"))
-    packs = resolve_compliance_packs(plan, db_user.get("compliance_packs", resolved_packs))
-
-    # ðŸ›ï¸ CTO SECURITY FIX: Backend Price Calculator (SSOT)
-    # Never trust the frontend with price. We calculate it here.
-    price = calculate_package_price(
-        endpoints=data.endpoints,
-        compliance_packs=packs,
-        billing_cycle=data.billing_cycle,
-    )
-
-    # ðŸ’³ NAYA: Record Transaction in the Permanent Billing Ledger (Using CALCULATED amount)
-    billing_record = {
-        "tenant_id": tenant_id,
-        "username": secure_username,
-        "amount": price.initial_payment,
-        "plan": plan,
-        "endpoints": data.endpoints,
-        "storage": data.storage_gb,
-        "retention": data.retention_months,
-        "billing_cycle": price.billing_cycle,
-        "packs": packs,
-        "pricing_version": price.pricing_version,
-        "monthly_total": price.monthly_total,
-        "activation_fee": price.activation_fee,
-        "price_breakdown": price.breakdown,
-        "timestamp": datetime.now(timezone.utc)
-    }
-    await db["billing"].insert_one(billing_record)
-
-    response = JSONResponse({
-        "username": db_user["username"],
-        "tenant_id": tenant_id,
-        "plan_type": plan,
-        "has_active_plan": db_user.get("has_active_plan", False),
-        "compliance_packs": packs,
-        "calculated_total": price.initial_payment,
-        "monthly_total": price.monthly_total,
-        "pricing_version": price.pricing_version,
-        "transaction_recorded": True
-    })
-
-    secure_cookie = request.url.scheme == "https"
-    response.set_cookie(
-        key="warsoc_token",
-        value=access_token,
-        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        secure=secure_cookie,
-        httponly=True,
-        samesite="Lax"
-    )
-    return response
-
 @router.post("/invite", status_code=status.HTTP_201_CREATED)
 @audit_log("Team Provisioning")
 async def invite_user(
@@ -966,17 +855,18 @@ async def invite_user(
         }
     )
 
+    frontend_url = "https://warsoc.tech"
+    allowed_origins = [origin.strip().rstrip("/") for origin in settings.allowed_origins.split(",") if origin.strip()]
+    for origin in allowed_origins:
+        if origin.startswith("https://") and "localhost" not in origin and "127.0.0.1" not in origin:
+            frontend_url = origin
+            break
+    activation_url = f"{frontend_url}/set-password#token={raw_token}"
+
     email_queued = False
     redis = getattr(request.app.state, "redis", None)
     if redis:
         try:
-            frontend_url = "https://warsoc.tech"
-            allowed_origins = [origin.strip().rstrip("/") for origin in settings.allowed_origins.split(",") if origin.strip()]
-            for origin in allowed_origins:
-                if origin.startswith("https://") and "localhost" not in origin and "127.0.0.1" not in origin:
-                    frontend_url = origin
-                    break
-            activation_url = f"{frontend_url}/set-password#token={raw_token}"
             invite_job = {
                 "type": "team_invite",
                 "recipient": str(payload.email),
@@ -994,12 +884,20 @@ async def invite_user(
         except Exception as exc:
             logger.error("Failed to queue team invite email for %s: %s", payload.email, exc)
 
-    return {
-        "message": f"Secure invitation created successfully for {role}",
-        "role": role,
-        "email_queued": email_queued,
-        "status": "pending",
-    }
+    response = JSONResponse(
+        status_code=status.HTTP_201_CREATED,
+        content={
+            "message": f"Secure invitation created successfully for {role}",
+            "role": role,
+            "email_queued": email_queued,
+            "activation_url": activation_url,
+            "expires_at": expires_at.isoformat(),
+            "status": "pending",
+        },
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @router.post("/activate-invite")

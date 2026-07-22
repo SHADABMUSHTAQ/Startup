@@ -1,7 +1,7 @@
 # WarSOC Current-State Architecture and Operational Contract
 
 **Document status:** Authoritative as-built map
-**Snapshot date:** 2026-07-18
+**Snapshot date:** 2026-07-22
 **Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, and launch proof.
 
 This document describes what the current source code does. It is not a sales claim and it does not treat an implemented path as production-proven unless verification evidence exists.
@@ -22,9 +22,9 @@ WarSOC currently has a coherent end-to-end architecture for a maximum of 50 Wind
 10. Compliance views, search, CSV exports, and PDF reports can merge Mongo hot records with verified Azure archive records.
 11. The dashboard separates normal endpoint telemetry, immutable detection evidence, and mutable operator incidents.
 
-The previously verified production backend is deployed from commit `526c55b` with Windows agent `4.2.4-Native`. Its bounded live-read API, database indexes, ingestion, workers, compliance pipelines, archive reader and reports were verified directly on DigitalOcean on 2026-07-16.
+The current source release is Windows agent `4.2.6-Native-Signed`. Exact-machine validation on 2026-07-21 proved enrollment, fresh heartbeats, SIEM alerting, PECA Event 4688 evidence, FBR invoice evidence, native FBR database-deletion correlation, 7,191 verified endpoint signatures and zero rejected signatures. The installer is 17,471,600 bytes with SHA-256 `F80C22FCD65FD5755B8483F105FCA4AA3FFFFFBAB4E29B807828D4CC406CDAE0`.
 
-The incident-workflow release described in this document is a tested deployment candidate layered on that production baseline. Its complete backend suite passes with `292 passed`, `3 skipped`, and zero failures. The candidate frontend passes ESLint and the production Vite build. It is not production truth until the backend and frontend are committed, deployed together, and the post-deploy incident smoke test passes. The frontend must not be deployed first because it depends on the new `/api/v1/incidents` contract.
+The complete current backend suite closes with 314 passed, 3 explicitly skipped and zero application failures. The current frontend passes ESLint and the production Vite build. These local facts do not by themselves prove that a remote backend, Vercel deployment or CDN object runs the same commit/artifact; production acceptance must compare the deployed commit, API behavior and downloaded artifact hash.
 
 ## 2. Product Boundary
 
@@ -59,6 +59,7 @@ The incident-workflow release described in this document is a tested deployment 
 - It does not guarantee that every normal Windows event becomes an alert. Normal events are evidence and correlation inputs; only dangerous or contextually suspicious activity alerts.
 - It does not make a PDF cryptographically signed. The PECA source records contain the forensic signatures; the PDF is a human-readable summary.
 - It does not automatically email an agent installer link to analysts. Agent activation and download are tenant-admin actions.
+- Manual log injection is disabled by default in production and returns 404 unless operations explicitly enables `ENABLE_MANUAL_LOG_INJECTION` for a controlled exercise.
 
 ## 3. End-to-End Data Flow
 
@@ -106,7 +107,7 @@ flowchart TD
 
 ## 4. Tenant and Commercial Flow
 
-1. A prospect selects the desired endpoint count and compliance packs on the website.
+1. A prospect selects the desired endpoint count, compliance packs, archive request and billing preference on the website. The public flow does not display or create an authoritative price.
 2. The prospect submits a quote request to `POST /api/v1/sales/request-quote`.
 3. WarSOC contacts the prospect, agrees the scope, and issues a manual invoice outside the product.
 4. An authorized WarSOC operator provisions the tenant through the protected admin provisioning API or the local operations console.
@@ -114,7 +115,7 @@ flowchart TD
 6. Credentials are transferred to the customer through the agreed secure onboarding channel.
 7. Public self-service signup is configured to fail closed for the launch model.
 
-There are no fixed product-tier names required by the operating flow. The tenant contract is defined by its endpoint limit, selected compliance packs, and configured retention.
+There are no fixed product-tier names or public price formulas required by the operating flow. The tenant contract is defined by its endpoint limit, selected compliance packs, configured retention and manually agreed commercial terms.
 
 ## 5. Identity, Session, and RBAC Flow
 
@@ -151,7 +152,7 @@ The frontend exposes the Compliance workspace to admin and auditor roles. The ba
 - List team: `GET /api/v1/auth/team`, admin only.
 - Remove team member: `DELETE /api/v1/auth/team/{user_id}`, admin only.
 - Roles are assigned by the tenant admin within the backend's allowed-role policy.
-- The invite email contains a 24-hour single-use HTTPS activation link. It never contains a temporary password.
+- The invite response returns a 24-hour single-use HTTPS activation link once to the authenticated tenant admin with `Cache-Control: no-store`. Email delivery is attempted when SMTP is available; the admin can securely transfer the same link when it is not. The system never creates, returns or emails a temporary password.
 - Invited users remain `pending` and cannot log in until the token is atomically consumed and a policy-compliant password is stored.
 - Analysts do not receive agent enrollment authority merely because they can investigate alerts.
 - New and changed passwords must contain at least 16 characters, an uppercase letter, a lowercase letter, a number, and a symbol; bcrypt-compatible input is capped at 72 UTF-8 bytes.
@@ -176,7 +177,7 @@ The frontend exposes the Compliance workspace to admin and auditor roles. The ba
 1. The admin selects Download Agent in the dashboard.
 2. The frontend requests `GET /api/v1/agent/download`.
 3. The backend returns a redirect to `AGENT_CDN_URL`.
-4. Azure public artifact storage serves the deployed `warsoc_installer-4.2.4.exe` artifact. Production preflight verified 17,417,877 bytes and SHA-256 `D7B2541FB0447697D3DE76812A785913FF63D2688CDE26A48EF1660E4F34E41B` against `pilot_hash_manifest-4.2.4.json`. The local signed-event candidate is `warsoc_installer-4.2.5.exe`, 17,470,610 bytes with SHA-256 `AD1939261FBEBC526149213CF253B14EC38CFD832BC7CFBFCC9334240FCA98AE`; it is not the production artifact until the CDN object and manifest are replaced and verified.
+4. Azure public artifact storage must serve the versioned `warsoc_installer-4.2.6.exe` artifact. The local release is 17,471,600 bytes with SHA-256 `F80C22FCD65FD5755B8483F105FCA4AA3FFFFFBAB4E29B807828D4CC406CDAE0` and is covered by `pilot_hash_manifest-4.2.6.json`. Production acceptance must hash the downloaded CDN object and compare it with this manifest.
 5. The installer asks for the activation code, confirms `https://api.warsoc.tech`, and optionally accepts local POS directories.
 6. The installer validates the activation code before making the installation operational.
 7. The native telemetry script configures auditing and optional POS SACLs.
@@ -267,11 +268,11 @@ This is at-least-once delivery with event-level duplicate suppression, not fire-
 
 ### 8.1 Endpoint event authenticity
 
-- Agent `4.2.5-Native-Signed` assigns the durable `event_uid` and timestamp before spooling, then signs the exact delivery payload with its enrolled Ed25519 key.
+- Agent `4.2.6-Native-Signed` assigns the durable `event_uid` and timestamp before spooling, then signs the exact delivery payload with its enrolled Ed25519 key.
 - Existing plaintext private keys are migrated to a Windows DPAPI-protected key file; new keys are never written as plaintext.
 - The API verifies the canonical payload hash, agent identity, enrolled public key and Ed25519 signature before admitting a signed event to Redis.
 - A supplied but invalid signature always fails with HTTP 401 and is never treated as a legacy event.
-- `AGENT_EVENT_SIGNATURE_MODE=observe` accepts unsigned pre-4.2.5 agents while marking their evidence `agent_jwt_only`; verified events are marked `agent_signed`.
+- `AGENT_EVENT_SIGNATURE_MODE=observe` accepts unsigned legacy agents while marking their evidence `agent_jwt_only`; verified events are marked `agent_signed`.
 - Production may switch to `AGENT_EVENT_SIGNATURE_MODE=required` only after every active agent is upgraded and the unsigned-event metric remains zero for the agreed observation window.
 - Signature verification proves which enrolled endpoint key signed the accepted payload. It does not prove that an endpoint was uncompromised or that a DPAPI-protected software key could not be abused by a SYSTEM-level attacker.
 
@@ -549,7 +550,7 @@ Sensitive FBR fields, including message, raw event, raw data, raw event data, an
 
 There is no end-user retention button for PECA or FBR because these values are compliance policy, not an arbitrary UI preference. SIEM archive retention follows the tenant contract. All three core live data classes use a seven-day Mongo archival threshold.
 
-The production Azure evidence container is currently protected by one locked 2,190-day container-scoped immutability policy. This is stronger than the logical SIEM and PECA minimums, but it also means every blob written to that container is physically non-deletable for the container policy period. A three-, six-, nine-, or twelve-month general archive selection therefore controls WarSOC metadata and retrieval expectations but does **not** currently make the Azure blob deletable at that shorter date. Exact physical retention requires future archives to be routed to separate containers or storage accounts by retention class. A locked Azure policy cannot be shortened for blobs already governed by it.
+The deployed Azure evidence account has used one locked 2,190-day container-scoped immutability policy. This is stronger than the logical SIEM and PECA minimums, but it physically over-retains those classes. The archiver now supports optional fixed `PECA`/`FBR` containers and duration-aware `SIEM_<days>`/`GENERAL_<days>` containers, records the selected container in every new ledger row, and makes archive readback use that recorded container. Class-level and global fallbacks remain available, so no routing change occurs until separately locked containers are explicitly configured. A locked Azure policy cannot be shortened for blobs already governed by it.
 
 The threshold and the physical move time are not identical:
 
@@ -609,7 +610,7 @@ For each tenant, collection, and batch:
 5. Upload a companion `.sha256` blob.
 6. Read Azure blob properties.
 7. Verify legal hold or a locked immutability policy that lasts through the required retention date.
-8. Insert a `storage_archives` ledger row with tenant, collection, blob names, hash, count, timestamps, event IDs, retention, and immutability status.
+8. Insert a `storage_archives` ledger row with tenant, collection, physical container, blob names, hash, count, timestamps, event IDs, retention, and immutability status.
 9. Delete only those exact Mongo `_id` values for the same tenant.
 
 If upload, hash handling, immutability verification, or ledger insertion fails, the Mongo records are not deleted. The visible failure mode is hot-storage growth, not silent evidence loss.
@@ -631,8 +632,8 @@ The public agent-artifact account/container must remain separate from the privat
 - Verification mode: `AZURE_IMMUTABILITY_SCOPE=container`.
 - Operator declaration: locked for 2,190 days.
 - The archiver verifies Azure container immutability capability and the declared locked period before deleting hot Mongo records.
-- The current single-container design satisfies the six-year FBR floor but physically over-retains PECA and shorter general/SIEM contracts.
-- Correct future segmentation is: FBR six-year evidence, PECA one-year evidence, and separate general/SIEM containers for each supported contract window. That change requires code/config support for collection-to-container routing and must not attempt to weaken the existing locked container.
+- The current deployed single-container policy satisfies the six-year FBR floor but physically over-retains PECA and shorter general/SIEM contracts.
+- Code/config routing supports fixed FBR and PECA containers plus exact-duration SIEM/general buckets such as `SIEM_90` and `GENERAL_180`. It is intentionally inactive until each target container exists, has a locked policy covering that duration, and its environment override is set. Existing blobs remain in the original locked container.
 
 ## 16. Cold Archive Retrieval
 
@@ -649,7 +650,7 @@ The archive reader:
 7. Marks records as archived and records their source collection/blob.
 8. Deduplicates hot and cold identities and sorts newest first.
 
-The internal reader preserves `_archived`, source collection, and blob identity while verifying the payload. Compliance response curation now exposes only `storage_tier: "hot" | "cold_archive"` and `archived: true | false`; internal blob names, paths, and credentials remain hidden. The evidence tab renders these fields in the curated record and now distinguishes a retrieval failure from a valid empty vault instead of silently displaying "No forensic evidence" for both conditions. Production proof of this presentation change is required after the current candidate is deployed.
+The internal reader preserves `_archived`, source collection, physical container, and blob identity while verifying the payload. Compliance response curation exposes only `storage_tier: "hot" | "cold_archive"` and `archived: true | false`; internal container/blob names, paths, and credentials remain hidden. The evidence tab distinguishes a retrieval failure from a valid empty vault instead of silently displaying "No forensic evidence" for both conditions.
 
 Compliance list routes use hot-first pagination. They read the requested Mongo page first and obtain an unfiltered archive count from the local `storage_archives` ledger. When Mongo completely satisfies the requested page, no Azure blob is downloaded. Azure is read only when the page crosses beyond the available hot rows or a filtered request cannot be satisfied from hot data. This removes private-blob network latency from normal dashboard loads without changing archive integrity verification, exports, or retention behavior.
 
@@ -844,31 +845,30 @@ The API creates the incident collections and indexes and performs the bounded ho
 
 ### 22.1 Release identity and regression evidence
 
-- DigitalOcean is running backend commit `526c55b`. The production API container reported healthy MongoDB and Redis dependencies and all Compose services were running at verification time.
-- The last separately recorded production frontend baseline was GitHub `main` `952e96b`, served by Vercel as `/assets/index-3HJmwRRy.js`. That statement is retained as historical production evidence; it is not proof that the incident-workflow candidate is deployed.
-- The incident-workflow candidate is based on local backend commit `6324298` plus the working-tree changes documented here, and local frontend commit `61301f6` plus its dashboard/network/feed changes. The backend and frontend must be committed and deployed backend-first as one compatible release.
-- The complete backend regression for the candidate completed on 2026-07-18 with `292 passed`, `3 skipped`, and zero failures. The skips remain the explicit external `E2E=1` run and two Git-metadata checks unavailable inside the mounted test container.
+- DigitalOcean commit `526c55b` and Vercel commit `952e96b` are retained only as historical verified baselines. They are not evidence of the currently deployed commit after later pushes.
+- The 2026-07-22 working release contains agent `4.2.6-Native-Signed`, the custom-contract quote correction, non-cacheable invitation handoff, production-disabled manual injection and optional duration-aware archive-container routing.
+- The complete backend regression closed with `314 passed`, `3 skipped`, and zero application failures. A source-read-only harness initially blocked nine CSV upload tests at the filesystem boundary; the final exact-tree run used disposable writable upload/report volumes and passed all application tests. The focused security/quote/invitation/archive sets also pass independently.
 - SIEM source routing now requires trusted web-log provenance for web and phishing signatures while preserving native Event `4688` command-line detection. This prevents Windows events from being mislabeled as Web-WAF or phishing detections.
 - The `security_alerts` unique index now applies only to documents with a string `alert_uid`; the startup migration handles both Mongo index options and key-spec conflicts, while legacy rows without `alert_uid` remain readable.
 - Compliance evidence responses expose safe hot/cold provenance, and the frontend evidence tab no longer treats an API/archive failure as a valid empty vault.
-- Frontend lint and the production Vite build pass for the local incident-workflow candidate. The candidate uses `/incidents`, `/incidents/summary`, `/logs/live?source=siem&aggregate=true`, and the production API binding; it has not been promoted to production merely because the build passed. The main JavaScript chunk remains a performance warning at approximately 1.68 MB minified / 532 KB gzip.
+- Frontend lint and the production Vite build pass. The frontend uses `/incidents`, `/incidents/summary`, `/logs/live?source=siem&aggregate=true`, the custom-contract quote payload and the one-time invitation-link response. The main JavaScript chunk remains a performance warning at approximately 1.69 MB minified / 535 KB gzip.
 - Python compilation passed for the changed API, database, worker, launch-validator, and measurement modules. Both repositories pass `git diff --check`.
-- Approved installer: `warsoc_installer-4.2.4.exe`, 17,417,877 bytes, SHA-256 `D7B2541FB0447697D3DE76812A785913FF63D2688CDE26A48EF1660E4F34E41B`.
-- The versioned manifest is `pilot_hash_manifest-4.2.4.json` and also covers the packaged agent, NSSM, native telemetry script, and tenant policy.
+- Current installer: `warsoc_installer-4.2.6.exe`, 17,471,600 bytes, SHA-256 `F80C22FCD65FD5755B8483F105FCA4AA3FFFFFBAB4E29B807828D4CC406CDAE0`.
+- The versioned manifest is `pilot_hash_manifest-4.2.6.json` and also covers the packaged agent, NSSM, native telemetry script, and tenant policy.
 
 ### 22.2 Production preflight
 
-Production preflight run `15545d8ce7` passed on 2026-07-16:
+Historical production preflight run `15545d8ce7` passed on 2026-07-16:
 
 - `warsoc.tech` resolves to Vercel and `api.warsoc.tech` resolves to DigitalOcean `143.198.201.185`; the frontend and backend do not share an address.
 - Frontend/API TLS, HTTPS, HSTS, clickjacking protection, MIME protection, CORS with credentials, backend dependency health, and blocked public API docs passed.
 - MongoDB `27017`, Redis `6379`, and API `8000` are closed externally.
 - The deployed frontend is bound to `https://api.warsoc.tech/api/v1`, its same-origin API proxy returns the expected unauthenticated 401, and its contact form uses the WarSOC backend.
-- The authenticated agent download returns HTTP 307 to the versioned Azure `4.2.4` artifact, whose size and SHA-256 match the local manifest exactly.
+- At that time, the authenticated agent download returned HTTP 307 to the then-current Azure `4.2.4` artifact. This is not current 4.2.6 CDN proof.
 
 ### 22.3 Production platform pipeline
 
-Current deployed validator run `b87116c8af` completed on 2026-07-16 with zero failures and two explicit warnings:
+Historical deployed validator run `b87116c8af` completed on 2026-07-16 with zero failures and two explicit warnings:
 
 - Health, blocked signup, quote, contact, absent legacy payment webhook, tenant provisioning, login, and auth hydration passed.
 - Agent activation, Ed25519 registration, attacker-IP mitigation, heartbeat blacklist delivery, telemetry ingest, and authenticated POS ingest passed.
@@ -890,13 +890,13 @@ Additional production-assisted lifecycle proof remains recorded:
 
 ### 22.4 Native agent, detection, capacity, and frontend proof
 
-- The live endpoint reports `4.2.4-Native`, online/Active, native audit policy configured, Security and System channels `ok`, one POS SACL path, strict POS log present, zero parse/channel/spool failures, and an unblocked empty 500 MiB spool.
+- The exact-machine release test reports `4.2.6-Native-Signed`, successful enrollment and fresh heartbeats. It produced a SIEM alert, exact PECA Event 4688 evidence, FBR invoice evidence and a native correlated FBR database deletion. The backend recorded 7,191 verified endpoint signatures and zero rejected signatures.
 - Real Windows telemetry produced all 11 PECA controls: `4624`, `4625`, `4672`, `4688`, `4697`, `4720`, `4726`, `4732`, `7045`, `1102`, and `1100`.
 - Native FBR proof produced one invoice modification, one invoice deletion, one correlated database-file deletion, and one database permission-change event. The ordinary database write produced no additional FIM alert.
-- Current production metrics showed Redis healthy, DLQ depth/ejections zero, all required SIEM/FBR/PECA/retention workers healthy, email queue/processing/DLQ depth zero, 285 delivered emails, zero agent parse/channel/spool failures, an unblocked empty spool and last-observed detection latency of 0.018385 seconds.
+- Previous production metrics showed Redis healthy, DLQ depth/ejections zero, all required SIEM/FBR/PECA/retention workers healthy, zero agent parse/channel/spool failures, an unblocked empty spool and last-observed detection latency of 0.018385 seconds. Security-alert email is now explicitly disabled; SMTP remains optional for sales/contact/invitation delivery and the invitation flow has a manual secure-link fallback.
 - The current Redis snapshot showed `siem_group`, `fbr_group`, `eto_group`, and `siem_hot_group` at the current stream tail with zero pending messages. Redis's large historical `lag` counters reflect trimmed history and are not current unread entries; operational checks use tail position plus pending count.
 - Fifty-agent soak run `2053d97832` registered 50/50 agents, rejected seat 51 with HTTP 403, accepted 50/50 concurrent ingests, produced SIEM in 5.18 seconds, vaulted all 50 PECA events, produced the FBR correlation, and completed in 7.22 seconds.
-- A fresh authenticated browser login previously proved the production-baseline dashboard, Active agent state, and bounded live reads. The incident-workflow candidate changes that contract: endpoint evidence uses `/logs/live?source=siem&limit=100&aggregate=true`; operational threats use `/incidents` with `/incidents/summary`; WebSocket incident envelopes are reconciled by periodic HTTP reads. Production Nginx/API proof of these new paths is required after the paired deployment.
+- Endpoint evidence uses `/logs/live?source=siem&limit=100&aggregate=true`; operational threats use `/incidents` with `/incidents/summary`; WebSocket incident envelopes are reconciled by periodic HTTP reads. The current frontend passes ESLint and production build, but each remote deployment still requires authenticated browser proof against its deployed backend commit.
 
 ### 22.5 Production archive and report proof
 
@@ -913,7 +913,7 @@ Additional production-assisted lifecycle proof remains recorded:
 
 | Remaining item | Current state | Completion condition |
 |---|---|---|
-| Customer-style invitation activation | SMTP delivery, pending-login denial, activation contract tests, and active-auditor RBAC are proven. The latest emailed token was not clicked through manually. | Open one real invitation email, choose a policy-compliant password, log in, and confirm the intended role view. |
+| Customer-style invitation activation | Pending-login denial, token activation, replay rejection and active login are covered. SMTP is no longer required because the authenticated admin receives the link once. | Copy one link in the deployed browser, activate it as the invited role and confirm the intended role view. |
 | Independent backup recovery | The production-format encrypted Mongo drill now verifies SHA-256 and restores into a network-disabled disposable MongoDB container. | Repository proof `20260721T200605Z-7541a279` restored 156,671 documents with zero failures and recorded collection/index counts. Repeat against the final production backup during the Azure cutover. |
 | Physical retention segmentation | One locked 2,190-day container currently governs all evidence blobs. | Route future FBR, PECA, and general/SIEM archives to containers whose locked policy matches the promised retention class. |
 | Archive provenance presentation | Backend hot/cold provenance, Azure retrieval and explicit reader failures are implemented. Runtime cold retrieval passed and the repaired frontend is deployed. | Confirm one hot row, one cold row and one simulated reader failure in the production browser. |
@@ -946,10 +946,10 @@ Status meanings:
 | Authentication/session | Login, HttpOnly access cookie, CSRF double-submit and `/auth/me` | PROVEN | Existing tenant login, auth context and profile returned 200. Public signup returned 403. |
 | Manual sales flow | Quote/contact to operator follow-up; no automatic payment | PROVEN | Quote and contact requests returned 200; legacy payment webhook returned 404. No Safepay dependency is required. |
 | Tenant provisioning | Super-admin creates tenant, admin, packs and seat limit | PROVEN | Disposable production tenant provisioning and login passed in run `b87116c8af`. |
-| Team invitation | Admin queues role-specific one-time activation email | PARTIAL | Secure invitation returned 201, `pending`, and `email_queued=true`; pending login was denied and SMTP delivered. The latest real email link was not manually completed. |
+| Team invitation | Admin creates role-specific one-time activation link; SMTP delivery is optional | CANDIDATE-PROVEN | The response is non-cacheable and returns the 24-hour single-use link once to the authenticated admin. Pending login denial, atomic activation, replay rejection and login with the chosen password pass. Remote browser copy/share activation remains an acceptance step. |
 | RBAC | Admin/manager/analyst/auditor route restrictions | PARTIAL | Regression and earlier production-assisted checks cover route denial/allow rules. A current invited auditor click-through remains required. |
-| Azure agent artifact | Public versioned installer delivery outside DigitalOcean | PROVEN | `warsoc_installer-4.2.4.exe` returned 17,417,877 bytes and matched SHA-256 `D7B2541F...F34E41B`; backend download redirected with HTTP 307. |
-| Installer and Windows service | Validate activation, configure telemetry and run agent under NSSM | PROVEN | Current real endpoint reports agent `4.2.4-Native`, Active, with fresh heartbeats and continuous ingestion. |
+| Azure agent artifact | Public versioned installer delivery outside the backend host | CANDIDATE-PROVEN | Local `warsoc_installer-4.2.6.exe` is 17,471,600 bytes and matches SHA-256 `F80C22FC...06CDAE0`; production must verify that the 307 target downloads the same bytes. |
+| Installer and Windows service | Validate activation, configure telemetry and run agent under NSSM | PROVEN on exact machine | Agent `4.2.6-Native-Signed` enrolled and produced fresh heartbeats plus SIEM/PECA/FBR evidence on the test machine. |
 | Native Windows telemetry | Security/System XML collection without Sysmon | PROVEN | Audit policy is configured; Security and System channels report `ok`; current native Event 4688 evidence continues to arrive. |
 | Agent durability boundary | Local spool, retry, disk reserve and 500 MiB cap | PROVEN for current agent state | Metrics report zero spool bytes, zero blocked agents and zero spool-limit hits. Failure/recovery behavior remains covered by regression and prior native tests. |
 | Agent ingestion | Signed authenticated batches to `/api/v1/ingest/pulse` | PROVEN | Real agent batches and run-specific validation batches returned HTTP 200; zero parse/channel failures are reported. |
@@ -971,11 +971,11 @@ Status meanings:
 | Hot-plus-cold retrieval | Merge Mongo and SHA-verified Azure records | PROVEN in API; browser provenance presentation pending | Current authenticated FBR/PECA reads return data; runtime cold samples were returned and marked archived. The frontend is deployed, but a hot/cold/error provenance visual exercise remains an acceptance obligation. |
 | CSV export | Bounded detailed export from hot and cold sources | PROVEN | Current production CSV returned HTTP 200 and 204,350 bytes; validator CSV also passed. |
 | PDF report | Human-readable compliance summary | PROVEN | Current PECA PDF returned HTTP 200 and a valid PDF payload. The PDF itself is not cryptographically signed. |
-| Email daemon | Queue, retry, SMTP delivery and DLQ | PROVEN | Current metrics show 285 delivered, zero queued/processing/dead-letter/retries; validator increased delivery by six. |
+| Email daemon | Queue, retry, SMTP delivery and DLQ | OPTIONAL/PARTIAL | Security-alert email is disabled. Quote/contact records persist before email queueing. Team invitations return a secure manual handoff link even when SMTP is unavailable. Current SMTP quota/delivery must not be assumed. |
 | Metrics and health | Worker, queue, agent, DLQ, detection and dashboard telemetry | PROVEN | Protected production metrics were read successfully. Dashboard live-read histograms are deployed on the backend. |
 | Independent Mongo backup | Operational disaster recovery separate from evidence archive | CANDIDATE-PROVEN | Drill `20260721T200605Z-7541a279` verified SHA-256, decrypted a production-format archive, and restored 156,671 documents across 18 collections with zero failures into a network-disabled disposable MongoDB. Repeat with the final Azure-hosted production backup during cutover. |
-| Endpoint event authenticity | Per-event Ed25519 signature tied to the enrolled agent key before Redis admission | CANDIDATE-PROVEN | Agent/API unit and pipeline tests pass; agent `4.2.5` and its manifest are built locally. Production remains in the 4.2.4/unsigned-event state until the backend and CDN artifact are deployed, all endpoints are upgraded, and enforcement changes from `observe` to `required`. |
-| Physical retention classes | Match actual Azure lock duration to commercial 3/6/9/12-month or compliance terms | PARTIAL | One locked 2,190-day container protects all current evidence; it is safe from early deletion but cannot honor shorter physical deletion dates. |
+| Endpoint event authenticity | Per-event Ed25519 signature tied to the enrolled agent key before Redis admission | PROVEN IN OBSERVE MODE | Agent/API tests and exact-machine flow pass with 7,191 verified and zero rejected signatures. Keep `observe` until every active endpoint is 4.2.6 and active unsigned traffic remains zero for the agreed window, then switch to `required`. |
+| Physical retention classes | Match actual Azure lock duration to compliance and general retention terms | CODE COMPLETE / CLOUD PENDING | Routing and readback support separate SIEM, PECA, FBR and general containers with safe legacy fallback. Existing blobs remain in the locked 2,190-day container; new routing must not be enabled until target containers and locked policies exist. |
 | Installer code signing | Publisher reputation and Defender trust | PARTIAL | Exact hash allowlisting supports the pilot while Defender stays enabled; the binary remains unsigned. |
 | Capacity ceiling | Maximum 50 active agents per tenant | PROVEN for synthetic soak | Prior production soak registered 50/50, rejected seat 51 and met latency. Real customer mix must still be monitored because event volume per endpoint varies. |
 | Linux/syslog | Linux and network-device telemetry | OUT OF SCOPE | The syslog receiver is bound only to loopback and is not part of the Windows SMB pilot contract. Preserve it only as future work. |
@@ -1000,7 +1000,7 @@ Status meanings:
 | Archive hash mismatch on read | Reject that blob's records. | Archive-reader integrity error. |
 | WebSocket disconnects | HTTP refresh reconciles; reconnect with a fresh ticket. | UI reconnect state and API polling. |
 | Live dashboard read becomes slow | Preserve the previous feed; reject overlapping browser requests and emit a slow-read warning/metric. | `warsoc_dashboard_live_read_seconds`, Nginx 499 count, Mongo execution-plan proof. |
-| SMTP fails | Detection/evidence persists; notification retries/fails visibly. | Email worker metrics/logs. |
+| SMTP fails | Detection/evidence and sales/contact records persist; notification retries/fails visibly; admins can transfer the non-cacheable one-time invitation link directly. | Email worker metrics/logs and invitation response. |
 
 ## 24. Operating Checks
 

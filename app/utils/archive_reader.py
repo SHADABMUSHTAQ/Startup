@@ -171,8 +171,8 @@ async def fetch_archived_documents(
     working in local/dev environments.
     """
     connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
-    container_name = os.getenv("AZURE_STORAGE_CONTAINER", "warsoc-cold-storage")
-    if not connection_string or not container_name:
+    default_container_name = os.getenv("AZURE_STORAGE_CONTAINER", "warsoc-cold-storage")
+    if not connection_string or not default_container_name:
         return [], 0
 
     collection_list = [str(name) for name in collections if name]
@@ -244,12 +244,13 @@ async def fetch_archived_documents(
         )
     )
     try:
-        container = client.get_container_client(container_name)
         for entry in archive_entries:
             blob_name = entry.get("blob_name")
             collection_name = entry.get("collection")
             if not blob_name or not collection_name:
                 continue
+            container_name = entry.get("container_name") or default_container_name
+            container = client.get_container_client(container_name)
             try:
                 downloader = await container.get_blob_client(blob_name).download_blob()
                 raw = await downloader.readall()
@@ -284,6 +285,7 @@ async def fetch_archived_documents(
                     continue
                 doc["_archived"] = True
                 doc["_source_collection"] = collection_name
+                doc["_archive_container_name"] = container_name
                 doc["_archive_blob_name"] = blob_name
                 docs.append(doc)
                 identities.add(_document_identity(doc))

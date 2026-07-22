@@ -227,6 +227,28 @@ def test_siem_hot_retention_is_capped_to_seven_days():
     assert storage_archiver._effective_retention_days("logs", 90) == 7
 
 
+def test_archive_container_routing_is_opt_in_and_collection_specific(monkeypatch):
+    monkeypatch.setenv("AZURE_STORAGE_CONTAINER", "legacy-vault")
+    monkeypatch.setenv("AZURE_STORAGE_CONTAINER_SIEM", "siem-vault")
+    monkeypatch.setenv("AZURE_STORAGE_CONTAINER_PECA", "peca-vault")
+    monkeypatch.setenv("AZURE_STORAGE_CONTAINER_FBR", "fbr-vault")
+    monkeypatch.setenv("AZURE_STORAGE_CONTAINER_SIEM_90", "siem-90-vault")
+    monkeypatch.setenv("AZURE_STORAGE_CONTAINER_GENERAL_180", "general-180-vault")
+
+    assert storage_archiver._archive_container_name("siem_cold_vault", 90) == "siem-90-vault"
+    assert storage_archiver._archive_container_name("siem_cold_vault", 180) == "siem-vault"
+    assert storage_archiver._archive_container_name("security_alerts") == "siem-vault"
+    assert storage_archiver._archive_container_name("peca_forensic_logs") == "peca-vault"
+    assert storage_archiver._archive_container_name("fbr_pos_logs") == "fbr-vault"
+    assert storage_archiver._archive_container_name("analysis_results", 180) == "general-180-vault"
+    assert storage_archiver._archive_container_name("analysis_results", 270) == "legacy-vault"
+
+    monkeypatch.setenv("AZURE_CONTAINER_IMMUTABILITY_DAYS", "365")
+    monkeypatch.setenv("AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_90", "90")
+    assert storage_archiver._container_policy_setting("siem_cold_vault", "DAYS", "0", 90) == "90"
+    assert storage_archiver._container_policy_setting("siem_cold_vault", "DAYS", "0", 180) == "365"
+
+
 def test_blob_immutability_requires_locked_policy_through_retention():
     required_until = datetime(2032, 7, 10, tzinfo=timezone.utc)
     adequate = SimpleNamespace(
@@ -358,6 +380,7 @@ async def test_container_scope_archives_then_deletes_hot_records(monkeypatch):
 
     monkeypatch.setenv("AZURE_IMMUTABILITY_REQUIRED", "true")
     monkeypatch.setenv("AZURE_IMMUTABILITY_SCOPE", "container")
+    monkeypatch.setenv("AZURE_STORAGE_CONTAINER_FBR", "fbr-vault")
     deleted = await storage_archiver._archive_batch(
         FakeContainer(),
         FakeDb(),
@@ -377,6 +400,8 @@ async def test_container_scope_archives_then_deletes_hot_records(monkeypatch):
 
     assert deleted == 1
     collections["storage_archives"].update_one.assert_awaited_once()
+    archive_update = collections["storage_archives"].update_one.await_args.args[1]
+    assert archive_update["$setOnInsert"]["container_name"] == "fbr-vault"
     collections["fbr_pos_logs"].delete_many.assert_awaited_once()
 
 
@@ -516,16 +541,19 @@ async def test_archive_reader_verifies_integrity_filters_and_deduplicates(monkey
     entries = [
         {
             "blob_name": "valid.json",
+            "container_name": "siem-vault",
             "collection": "siem_cold_vault",
             "sha256": hashlib.sha256(valid_blob).hexdigest(),
         },
         {
             "blob_name": "duplicate.json",
+            "container_name": "siem-vault",
             "collection": "siem_cold_vault",
             "sha256": hashlib.sha256(valid_blob).hexdigest(),
         },
         {
             "blob_name": "tampered.json",
+            "container_name": "siem-vault",
             "collection": "siem_cold_vault",
             "sha256": "0" * 64,
         },
@@ -576,12 +604,15 @@ async def test_archive_reader_verifies_integrity_filters_and_deduplicates(monkey
             }
             return FakeBlob(payloads[name])
 
+    requested_containers = []
+
     class FakeBlobService:
         @classmethod
         def from_connection_string(cls, _connection_string):
             return cls()
 
-        def get_container_client(self, _container_name):
+        def get_container_client(self, container_name):
+            requested_containers.append(container_name)
             return FakeContainer()
 
         async def close(self):
@@ -601,6 +632,8 @@ async def test_archive_reader_verifies_integrity_filters_and_deduplicates(monkey
         search_term="203.0",
         limit=10,
     )
+
+    assert requested_containers == ["siem-vault", "siem-vault", "siem-vault"]
 
     assert total == 1
     assert docs[0]["event_uid"] == "Security:42"
