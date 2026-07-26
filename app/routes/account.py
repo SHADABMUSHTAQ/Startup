@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.database import get_db
 from app.routes.auth import get_current_user
+from app.utils.limiter import limiter
 from app.utils.totp import (
     TOTP_DIGITS,
     TOTP_INTERVAL_SECONDS,
@@ -138,7 +139,9 @@ async def two_factor_status(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/2fa/setup")
+@limiter.limit("5/minute")
 async def setup_two_factor(
+    request: Request,
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -174,7 +177,9 @@ async def setup_two_factor(
 
 
 @router.post("/2fa/verify")
+@limiter.limit("5/minute")
 async def verify_two_factor(
+    request: Request,
     payload: TwoFactorCode,
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
@@ -216,7 +221,9 @@ async def verify_two_factor(
 
 
 @router.post("/2fa/disable")
+@limiter.limit("5/minute")
 async def disable_two_factor(
+    request: Request,
     payload: TwoFactorCode,
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),

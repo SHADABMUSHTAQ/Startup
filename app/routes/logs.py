@@ -60,6 +60,33 @@ _LIST_PROJECTION = {
     "_expire_at": 0,
 }
 
+_PACK_COLLECTIONS = {
+    "fbr": "fbr_pos_logs",
+    "fbr_pos": "fbr_pos_logs",
+    "peca": "peca_forensic_logs",
+    "peca_forensic": "peca_forensic_logs",
+    "peca_vault": "peca_forensic_logs",
+    "eto": "peca_forensic_logs",
+    "eto_forensic": "peca_forensic_logs",
+}
+
+
+def _allowed_evidence_collections(current_user: dict) -> list[str]:
+    role = str(current_user.get("role") or "").strip().lower()
+    entitled = {
+        _PACK_COLLECTIONS[str(pack).strip().lower()]
+        for pack in current_user.get("compliance_packs", [])
+        if str(pack).strip().lower() in _PACK_COLLECTIONS
+    }
+
+    if role == "admin":
+        return ["siem_cold_vault", *sorted(entitled)]
+    if role == "auditor":
+        return sorted(entitled)
+    if role in {"manager", "analyst"}:
+        return ["siem_cold_vault"]
+    return []
+
 
 def _decrypt_evidence_field(value):
     if not value or not isinstance(value, str) or _fernet is None:
@@ -333,6 +360,7 @@ async def get_forensic_evidence(
     log_id: str,
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    role: str = Depends(RequireRole(["admin", "manager", "analyst", "auditor"])),
     request: Request = None
 ):
     """
@@ -341,22 +369,25 @@ async def get_forensic_evidence(
     """
     tenant_id = current_user.get("tenant_id")
 
-    # Surgical Fetch across both pools
+    allowed_collections = _allowed_evidence_collections(current_user)
+    if not allowed_collections:
+        raise HTTPException(status_code=403, detail="Forensic evidence access is not permitted")
+
     try:
         log_obj_id = ObjectId(log_id)
     except:
         raise HTTPException(status_code=400, detail="Invalid log reference")
 
-    doc = await db.siem_cold_vault.find_one({"_id": log_obj_id, "tenant_id": tenant_id})
-    if not doc:
-        doc = await db.peca_forensic_logs.find_one({"_id": log_obj_id, "tenant_id": tenant_id})
-    if not doc:
-        doc = await db.fbr_pos_logs.find_one({"_id": log_obj_id, "tenant_id": tenant_id})
+    doc = None
+    for collection_name in allowed_collections:
+        doc = await db[collection_name].find_one({"_id": log_obj_id, "tenant_id": tenant_id})
+        if doc:
+            break
     if not doc:
         archived_docs, _ = await fetch_archived_documents(
             db,
             tenant_id=tenant_id,
-            collections=["siem_cold_vault", "peca_forensic_logs", "fbr_pos_logs"],
+            collections=allowed_collections,
             document_id=log_id,
             limit=1,
         )
@@ -420,6 +451,7 @@ async def get_management_audit(
     limit: int = Query(50, ge=1, le=500),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    role: str = Depends(RequireRole(["admin"])),
     request: Request = None
 ):
 

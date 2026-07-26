@@ -1,7 +1,7 @@
 # WarSOC Current-State Architecture and Operational Contract
 
 **Document status:** Authoritative as-built map
-**Snapshot date:** 2026-07-22
+**Snapshot date:** 2026-07-26
 **Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, and launch proof.
 
 This document describes what the current source code does. It is not a sales claim and it does not treat an implemented path as production-proven unless verification evidence exists.
@@ -24,7 +24,7 @@ WarSOC currently has a coherent end-to-end architecture for a maximum of 50 Wind
 
 The current source release is Windows agent `4.2.6-Native-Signed`. Exact-machine validation on 2026-07-21 proved enrollment, fresh heartbeats, SIEM alerting, PECA Event 4688 evidence, FBR invoice evidence, native FBR database-deletion correlation, 7,191 verified endpoint signatures and zero rejected signatures. The installer is 17,471,600 bytes with SHA-256 `F80C22FCD65FD5755B8483F105FCA4AA3FFFFFBAB4E29B807828D4CC406CDAE0`.
 
-The complete current backend suite closes with 314 passed, 3 explicitly skipped and zero application failures. The current frontend passes ESLint and the production Vite build. These local facts do not by themselves prove that a remote backend, Vercel deployment or CDN object runs the same commit/artifact; production acceptance must compare the deployed commit, API behavior and downloaded artifact hash.
+The complete current backend suite closes with 330 passed, 3 explicitly skipped and zero application failures. The current frontend passes ESLint and the production Vite build. These local facts do not by themselves prove that a remote backend, Vercel deployment or CDN object runs the same commit/artifact; production acceptance must compare the deployed commit, API behavior and downloaded artifact hash.
 
 ## 2. Product Boundary
 
@@ -291,7 +291,11 @@ This is at-least-once delivery with event-level duplicate suppression, not fire-
 ### 9.2 Authenticated POS evidence
 
 - Endpoint: `POST /api/v1/fbr/pos/ingest`.
-- Requires agent authentication.
+- Requires agent authentication and the enrolled Ed25519 key.
+- The exact JSON request body is signed in `X-WarSOC-Signature`.
+- The strict envelope contains only `nonce`, `timestamp`, and `payload`.
+- Redis atomically consumes each agent-scoped nonce for five minutes; replays return HTTP 409.
+- Requests older or newer than the five-minute acceptance window are rejected.
 - Maximum request body: 5 MB.
 - Maximum event count: 500.
 - Unknown fields are rejected.
@@ -767,6 +771,7 @@ This is WarSOC policy distribution. Actual packet enforcement on an endpoint dep
 - Merges hot Mongo and verified Azure records.
 - Decrypts authorized compliance fields.
 - Removes internal retention fields and private signature implementation fields from ordinary tabular output.
+- Neutralizes spreadsheet formula prefixes in every exported string cell.
 - Default limit 5,000; maximum 50,000.
 
 ### 19.2 PDF audit report
@@ -835,6 +840,7 @@ The API creates the incident collections and indexes and performs the bounded ho
 - Persistent volumes protect Mongo and Redis across container recreation.
 - Docker JSON logs rotate at 10 MB with five files per service.
 - API and workers use read-only filesystems with explicit writable volumes/tmpfs.
+- Application containers run as a non-root user with `no-new-privileges`, all Linux capabilities dropped, and a 256-process ceiling.
 - Production target: DigitalOcean 4 vCPU / 8 GB RAM.
 - Frontend target: Vercel at `https://warsoc.tech`.
 - API target: DigitalOcean at `https://api.warsoc.tech`.
@@ -847,11 +853,14 @@ The API creates the incident collections and indexes and performs the bounded ho
 
 - DigitalOcean commit `526c55b` and Vercel commit `952e96b` are retained only as historical verified baselines. They are not evidence of the currently deployed commit after later pushes.
 - The 2026-07-22 working release contains agent `4.2.6-Native-Signed`, the custom-contract quote correction, non-cacheable invitation handoff, production-disabled manual injection and optional duration-aware archive-container routing.
-- The complete backend regression closed with `314 passed`, `3 skipped`, and zero application failures. A source-read-only harness initially blocked nine CSV upload tests at the filesystem boundary; the final exact-tree run used disposable writable upload/report volumes and passed all application tests. The focused security/quote/invitation/archive sets also pass independently.
+- The complete backend regression closed with `330 passed`, `3 skipped`, and zero application failures. The mega-suite closed with 116 passes and 2 skips; the remaining current tests closed with 214 passes and 1 skip. The focused security closure has 12 passing tests covering public auth response fields, signed POS replay protection, heartbeat freshness, 2FA throttling, evidence RBAC, CSV formula safety, upload cleanup, and purge path containment.
 - SIEM source routing now requires trusted web-log provenance for web and phishing signatures while preserving native Event `4688` command-line detection. This prevents Windows events from being mislabeled as Web-WAF or phishing detections.
 - The `security_alerts` unique index now applies only to documents with a string `alert_uid`; the startup migration handles both Mongo index options and key-spec conflicts, while legacy rows without `alert_uid` remain readable.
 - Compliance evidence responses expose safe hot/cold provenance, and the frontend evidence tab no longer treats an API/archive failure as a valid empty vault.
-- Frontend lint and the production Vite build pass. The frontend uses `/incidents`, `/incidents/summary`, `/logs/live?source=siem&aggregate=true`, the custom-contract quote payload and the one-time invitation-link response. The main JavaScript chunk remains a performance warning at approximately 1.69 MB minified / 535 KB gzip.
+- Frontend lint and the production Vite build pass. Vercel now declares HSTS, CSP, clickjacking, MIME-sniffing, referrer, and browser-permission headers. The PDF sanitizer is pinned to DOMPurify 3.4.12 and React Router is pinned to 7.18.1 to avoid the client-side redirect/XSS advisories present in older releases. The registry still reports the 7.18.1 RSC server-action CSRF advisory; that code path is not reachable in this Vite client-only SPA, which defines no React Server Components or Router actions. The frontend uses `/incidents`, `/incidents/summary`, `/logs/live?source=siem&aggregate=true`, the custom-contract quote payload and the one-time invitation-link response. The main JavaScript chunk remains a performance warning at approximately 1.69 MB minified / 535 KB gzip.
+- `/auth/me` uses an explicit public-field allowlist, so encrypted 2FA material and future internal database fields cannot be returned accidentally.
+- Raw evidence detail is collection-scoped by role and entitlement: admin receives SIEM plus entitled compliance evidence, auditor receives entitled compliance evidence, and manager/analyst receive SIEM evidence only. Management-audit reads are admin-only.
+- Uploaded CSV source files are temporary parsing artifacts. Successful and failed uploads remove the physical source; failed partial imports are rolled back. `scripts/purge_legacy_upload_sources.py` provides a dry-run-first cleanup for files retained by older releases.
 - Python compilation passed for the changed API, database, worker, launch-validator, and measurement modules. Both repositories pass `git diff --check`.
 - Current installer: `warsoc_installer-4.2.6.exe`, 17,471,600 bytes, SHA-256 `F80C22FCD65FD5755B8483F105FCA4AA3FFFFFBAB4E29B807828D4CC406CDAE0`.
 - The versioned manifest is `pilot_hash_manifest-4.2.6.json` and also covers the packaged agent, NSSM, native telemetry script, and tenant policy.
@@ -1083,6 +1092,7 @@ Do not declare the current release fully accepted until all of the following are
 | Windows event signing and protected key storage | `agent/windows_agent.py` |
 | Azure backend migration | `docs/AZURE_BACKEND_MIGRATION_RUNBOOK.md` and `deploy/azure/` |
 | Operational backup and restore drill | `scripts/backup_mongodb.sh` and `scripts/run_backup_restore_drill.ps1` |
+| Legacy uploaded-source cleanup | `scripts/purge_legacy_upload_sources.py` |
 | Fast startup database indexes | `app/database.py` |
 | Compliance indexes/TTL removal | `app/db/init_db.py` |
 | Agent enrollment/download/heartbeat | `app/routes/agent_orchestration.py` |

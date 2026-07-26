@@ -4,8 +4,15 @@ x-warsoc-logging: &warsoc-logging
     max-size: "10m"
     max-file: "5"
 
+x-warsoc-process-security: &warsoc-process-security
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
 services:
   warsoc-api:
+    <<: *warsoc-process-security
     build: .
     container_name: warsoc-api-prod
     restart: always
@@ -53,11 +60,13 @@ services:
         limits:
           cpus: '1.0'
           memory: 1G
+          pids: 256
         reservations:
           cpus: '0.5'
           memory: 512M
 
   unified-worker:
+    <<: *warsoc-process-security
     build: .
     container_name: warsoc-unified-worker-prod
     command: python -m app.workers.unified_worker
@@ -97,8 +106,10 @@ services:
         limits:
           cpus: '1.5'
           memory: 1280M
+          pids: 256
 
   threat-hunter:
+    <<: *warsoc-process-security
     build: .
     container_name: warsoc-threat-hunter-prod
     profiles: ["legacy-detection"]
@@ -128,8 +139,10 @@ services:
         limits:
           cpus: '0.5'
           memory: 256M
+          pids: 256
 
   compliance-cron:
+    <<: *warsoc-process-security
     build: .
     container_name: warsoc-compliance-cron-prod
     command: python -m app.workers.compliance_cron
@@ -157,8 +170,10 @@ services:
         limits:
           cpus: '0.5'
           memory: 256M
+          pids: 256
 
   storage-archiver:
+    <<: *warsoc-process-security
     build: .
     container_name: warsoc-storage-archiver-prod
     command: python -m app.workers.storage_archiver
@@ -206,6 +221,7 @@ services:
         limits:
           cpus: '0.75'
           memory: 768M
+          pids: 256
 
   mongodb:
     image: mongo:7
@@ -261,6 +277,7 @@ services:
       retries: 5
 
   syslog-receiver:
+    <<: *warsoc-process-security
     build: .
     container_name: warsoc-syslog-receiver-prod
     command: python /app/syslog_receiver.py
@@ -297,6 +314,7 @@ services:
         limits:
           cpus: '0.25'
           memory: 256M
+          pids: 256
 
   nginx:
     image: nginx:alpine

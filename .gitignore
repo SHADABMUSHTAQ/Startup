@@ -78,6 +78,7 @@ scripts/*
 !scripts/launch_readiness_validator.py
 !scripts/measure_dashboard_reads.py
 !scripts/migrate_fbr_encryption.py
+!scripts/purge_legacy_upload_sources.py
 !scripts/native_50_agent_soak.py
 !scripts/validate_native_windows_vm.ps1
 !scripts/generate_pilot_hash_manifest.ps1

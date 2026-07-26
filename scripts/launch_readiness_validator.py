@@ -39,6 +39,15 @@ from datetime import datetime, timezone
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.utils.agent_crypto import (
+    EVENT_SIGNATURE_VERSION,
+    build_event_signature_string,
+    build_payload_hash,
+    build_signable_event_payload,
+)
+
 
 @dataclass
 class Response:
@@ -191,7 +200,7 @@ class Validator:
         if agent_id and agent_jwt and private_key:
             self.blacklist_flow(agent_id, private_key)
             websocket_probe = self.start_websocket_probe()
-            self.ingest_and_pipeline(agent_jwt)
+            self.ingest_and_pipeline(agent_id, agent_jwt, private_key)
             self.dashboard_live_read_flow()
             self.finish_websocket_probe(websocket_probe)
 
@@ -545,7 +554,7 @@ class Validator:
             result["detail"],
         )
 
-    def ingest_and_pipeline(self, agent_jwt: str):
+    def ingest_and_pipeline(self, agent_id: str, agent_jwt: str, private_key):
         now = datetime.now(timezone.utc).isoformat()
         events = [
             {
@@ -582,6 +591,19 @@ class Validator:
                 "raw_data": {"event_uid": f"{self.run_id}-fbr-delete"},
             },
         ]
+        for event in events:
+            payload_hash = build_payload_hash(build_signable_event_payload(event))
+            signature_input = build_event_signature_string(
+                agent_id,
+                event["timestamp"],
+                event["event_uid"],
+                payload_hash,
+            ).encode("utf-8")
+            event.update({
+                "payload_hash": payload_hash,
+                "agent_signature": private_key.sign(signature_input).hex(),
+                "signature_version": EVENT_SIGNATURE_VERSION,
+            })
         ingest = self.admin.request(
             "POST",
             "/api/v1/ingest/pulse",
@@ -594,10 +616,10 @@ class Validator:
         )
         self.record("Agent telemetry ingest", ingest.status in {200, 202}, f"HTTP {ingest.status}; {ingest.body}")
 
-        pos_ingest = self.admin.request(
-            "POST",
-            "/api/v1/fbr/pos/ingest",
-            {
+        pos_envelope = {
+            "nonce": uuid.uuid4().hex,
+            "timestamp": time.time(),
+            "payload": {
                 "event_id": "FBR-INV-MOD",
                 "event_uid": f"{self.run_id}-invoice",
                 "invoice_id": f"INV-{self.run_id}",
@@ -606,7 +628,16 @@ class Validator:
                 "source_system": "launch-pos",
                 "reason": "Launch validation invoice modification",
             },
-            headers={"Authorization": f"Bearer {agent_jwt}"},
+        }
+        pos_body = json.dumps(pos_envelope, separators=(",", ":")).encode("utf-8")
+        pos_ingest = self.admin.request(
+            "POST",
+            "/api/v1/fbr/pos/ingest",
+            body_bytes=pos_body,
+            headers={
+                "Authorization": f"Bearer {agent_jwt}",
+                "X-WarSOC-Signature": private_key.sign(pos_body).hex(),
+            },
         )
         self.record(
             "Authenticated POS ingest",

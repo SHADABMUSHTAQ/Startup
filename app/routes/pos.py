@@ -1,6 +1,13 @@
+import hashlib
 import logging
+import math
+import re
+import time
 import orjson
-from fastapi import APIRouter, HTTPException, Depends, Request
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from fastapi import APIRouter, HTTPException, Depends, Header, Request
 from fastapi.responses import ORJSONResponse
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -8,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.utils.rate_limiter import redis_ingest_rate_limit
 from app.routes.auth import verify_agent_token
+from app.utils.agent_crypto import AgentEventSignatureError, public_key_id
 
 logger = logging.getLogger("fbr_pos")
 router = APIRouter()
@@ -15,6 +23,9 @@ router = APIRouter()
 RAW_LOGS_QUEUE = "raw_logs_queue"
 MAX_INGEST_BODY_BYTES = 5 * 1024 * 1024
 MAX_POS_EVENTS_PER_REQUEST = 500
+POS_NONCE_TTL_SECONDS = 300
+POS_SIGNATURE_VERSION = "ed25519-http-body-v1"
+_NONCE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 
 
 class PosAuditEvent(BaseModel):
@@ -51,6 +62,7 @@ class PosAuditEvent(BaseModel):
 @router.post("/ingest", status_code=202, response_class=ORJSONResponse)
 async def ingest_pos_logs(
     request: Request,
+    x_warsoc_signature: str = Header(..., alias="X-WarSOC-Signature"),
     agent_context: dict = Depends(verify_agent_token),
     _rate_limit=Depends(redis_ingest_rate_limit)
 ):
@@ -69,26 +81,69 @@ async def ingest_pos_logs(
         if not buffer:
             raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
+        signature_hex = str(x_warsoc_signature or "").strip().lower()
+        public_key_pem = str(agent_context.get("public_key") or "")
+        try:
+            if len(signature_hex) != 128 or any(ch not in "0123456789abcdef" for ch in signature_hex):
+                raise ValueError("invalid signature encoding")
+            public_key = serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
+            if not isinstance(public_key, ed25519.Ed25519PublicKey):
+                raise ValueError("invalid signing key type")
+            public_key.verify(bytes.fromhex(signature_hex), bytes(buffer))
+        except (InvalidSignature, TypeError, ValueError, AgentEventSignatureError) as exc:
+            logger.warning(
+                "Rejected unsigned or invalid POS request: agent_id=%s",
+                verified_agent_id,
+            )
+            raise HTTPException(status_code=401, detail="POS request signature verification failed") from exc
+        except Exception as exc:
+            logger.warning(
+                "Rejected unreadable POS signing key: agent_id=%s",
+                verified_agent_id,
+            )
+            raise HTTPException(status_code=401, detail="POS request signature verification failed") from exc
+
         try:
             raw_payload = orjson.loads(buffer)
         except orjson.JSONDecodeError as exc:
             raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
 
-        if isinstance(raw_payload, dict) and "payload" in raw_payload:
-            if set(raw_payload) != {"payload"}:
-                raise HTTPException(status_code=422, detail="Envelope may contain only the payload field")
-            events_data = raw_payload.get("payload", [])
-        else:
-            events_data = raw_payload
+        if not isinstance(raw_payload, dict) or set(raw_payload) != {"nonce", "timestamp", "payload"}:
+            raise HTTPException(
+                status_code=422,
+                detail="Envelope must contain only nonce, timestamp, and payload",
+            )
+
+        nonce = str(raw_payload.get("nonce") or "")
+        timestamp = raw_payload.get("timestamp")
+        if not _NONCE_PATTERN.fullmatch(nonce):
+            raise HTTPException(status_code=422, detail="Invalid request nonce")
+        if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)) or not math.isfinite(timestamp):
+            raise HTTPException(status_code=422, detail="Invalid request timestamp")
+        if abs(time.time() - float(timestamp)) > POS_NONCE_TTL_SECONDS:
+            raise HTTPException(status_code=401, detail="POS request timestamp outside the allowed window")
+
+        events_data = raw_payload.get("payload")
         raw_events = [events_data] if isinstance(events_data, dict) else events_data
         if not isinstance(raw_events, list):
-            raise HTTPException(status_code=422, detail="Payload must be an event, a list, or an object containing payload")
+            raise HTTPException(status_code=422, detail="Payload must be an event or a list of events")
         if len(raw_events) > MAX_POS_EVENTS_PER_REQUEST:
             raise HTTPException(status_code=413, detail=f"Maximum {MAX_POS_EVENTS_PER_REQUEST} POS events per request")
 
         redis = request.app.state.redis
         if not redis:
             raise HTTPException(status_code=503, detail="Redis unavailable for ingest queue")
+
+        nonce_key = f"warsoc:pos_nonce:{verified_agent_id}:{nonce}"
+        try:
+            nonce_claimed = await redis.set(nonce_key, "1", ex=POS_NONCE_TTL_SECONDS, nx=True)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Replay protection unavailable") from exc
+        if not nonce_claimed:
+            raise HTTPException(status_code=409, detail="POS request replay detected")
+
+        payload_hash = hashlib.sha256(bytes(buffer)).hexdigest()
+        signing_key_id = public_key_id(public_key_pem)
 
         queued_count = 0
         async with redis.pipeline(transaction=True) as pipe:
@@ -122,7 +177,17 @@ async def ingest_pos_logs(
                     "metadata": validated.metadata,
                 }
                 event_data["raw_event_data"] = validated.model_dump(mode="json")
-                event_data["agent_signature"] = None
+                event_data.update({
+                    "agent_signature": signature_hex,
+                    "payload_hash": payload_hash,
+                    "signature_version": POS_SIGNATURE_VERSION,
+                    "signature_algorithm": "Ed25519",
+                    "signing_key_id": signing_key_id,
+                    "signature_verified": True,
+                    "source_assurance": "agent_signed",
+                    "signature_verification_status": "verified",
+                    "signature_verified_at": datetime.now(timezone.utc).isoformat(),
+                })
 
                 payload_to_stream = {"payload": orjson.dumps(event_data).decode("utf-8")}
                 

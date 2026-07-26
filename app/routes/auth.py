@@ -674,7 +674,15 @@ async def logout(request: Request, current_user=Depends(get_current_user)):
 
 @router.get("/me")
 async def get_me(request: Request, user: dict = Depends(get_current_user)):
-    resp = user.copy()
+    public_fields = {
+        "_id", "username", "email", "full_name", "name", "tenant_id",
+        "company", "plan_type", "role", "compliance_packs", "max_agents",
+        "agent_limit", "retention_days", "daily_ingest_quota_bytes",
+        "has_active_plan", "status", "phone", "location", "website", "bio",
+        "avatar", "billing_alerts", "product_updates", "two_factor_enabled",
+        "created_at", "last_login", "agent_issued_at",
+    }
+    resp = {key: value for key, value in user.items() if key in public_fields}
 
     # 🛡️ Source of Truth for Packs
     plan = normalize_plan_type(resp.get("plan_type", "Free"))
@@ -684,10 +692,6 @@ async def get_me(request: Request, user: dict = Depends(get_current_user)):
     # 🚀 MASTER BUILD FIX: Convert non-serializable MongoDB types to strings
     if "_id" in resp:
         resp["_id"] = str(resp["_id"])
-
-    # Remove sensitive/internal fields before returning to clients
-    for _s in ("hashed_password", "agent_secret", "current_jti", "token_exp"):
-        resp.pop(_s, None)
 
     for key, value in list(resp.items()):
         if isinstance(value, datetime):

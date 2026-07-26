@@ -269,6 +269,9 @@ def _detect_csv_structure(file_path: str):
 @limiter.limit("5/minute")
 async def analyze_log_file(request: Request, file: UploadFile = File(...), db=Depends(get_db), current_user=Depends(get_current_user)):
     # Phase 4 policy: manual CSV backfills remain exempt from live /ingest/windows skew guard.
+    file_path = None
+    analysis_tag = None
+    secure_tenant_id = ""
     try:
         raw_tenant_id = current_user.get("tenant_id", "")
         secure_tenant_id = re.sub(r'[^a-zA-Z0-9_-]', '', raw_tenant_id)
@@ -412,7 +415,7 @@ async def analyze_log_file(request: Request, file: UploadFile = File(...), db=De
         analysis_doc = {
             "tenant_id": secure_tenant_id,
             "filename": secure_original_name,
-            "file_path": file_path,
+            "source_file_retained": False,
             "status": "completed", 
             "uploaded_at": datetime.now(timezone.utc),
             "total_events": parsed_rows,
@@ -428,10 +431,24 @@ async def analyze_log_file(request: Request, file: UploadFile = File(...), db=De
         }
         
     except HTTPException:
+        if analysis_tag and secure_tenant_id:
+            await db["csv_uploads"].delete_many(
+                {"tenant_id": secure_tenant_id, "analysis_tag": analysis_tag}
+            )
         raise
     except Exception as e:
         logger.error("CSV upload failed: %s", e)
+        if analysis_tag and secure_tenant_id:
+            await db["csv_uploads"].delete_many(
+                {"tenant_id": secure_tenant_id, "analysis_tag": analysis_tag}
+            )
         raise HTTPException(status_code=500, detail="Ingestion failed. Please try again or contact support.")
+    finally:
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except OSError as exc:
+                logger.warning("Unable to remove temporary upload file: %s", exc)
 
 
 @router.get("/results")
@@ -455,7 +472,8 @@ async def get_upload_history(db=Depends(get_db), current_user=Depends(get_curren
             results.append(doc)
         return {"status": "success", "data": results}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Upload history lookup failed")
+        raise HTTPException(status_code=500, detail="Upload history is temporarily unavailable.") from e
 
 
 @router.get("/results/{analysis_id}")

@@ -4,12 +4,24 @@ from fastapi.testclient import TestClient
 from app.main import app
 import httpx
 import os
+import json
+import time
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from app.routes.auth import verify_agent_token
 from app.utils.rate_limiter import redis_ingest_rate_limit
 
+private_key = ed25519.Ed25519PrivateKey.generate()
+public_key = private_key.public_key().public_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PublicFormat.SubjectPublicKeyInfo,
+).decode("utf-8")
+
+
 def mock_verify_agent_token():
-    return {'tenant_id': 'tenant-test', 'agent_id': 'agent-test'}
+    return {'tenant_id': 'tenant-test', 'agent_id': 'agent-test', 'public_key': public_key}
 
 async def mock_redis_ingest_rate_limit():
     pass
@@ -30,6 +42,9 @@ class MockPipeline:
         pass
 
 class MockRedis:
+    async def set(self, *args, **kwargs):
+        return True
+
     def pipeline(self, transaction=True):
         return MockPipeline()
 
@@ -38,6 +53,8 @@ app.state.redis = MockRedis()
 client = TestClient(app)
 
 payload = {
+  'nonce': 'fbr-test-nonce-1234567890',
+  'timestamp': time.time(),
   'payload': [
     {
       'event_id': 'FBR-INV-DEL', 
@@ -57,7 +74,15 @@ payload = {
 }
 
 try:
-    response = client.post('/api/v1/fbr/pos/ingest', json=payload)
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    response = client.post(
+        '/api/v1/fbr/pos/ingest',
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-WarSOC-Signature": private_key.sign(body).hex(),
+        },
+    )
     print(response.status_code)
     print(response.json())
 except Exception as e:

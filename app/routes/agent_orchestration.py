@@ -76,7 +76,7 @@ class AgentRegisterRequest(BaseModel):
 class HeartbeatRequest(BaseModel):
     agent_id: str
     current_version: str
-    timestamp: float = None
+    timestamp: float = Field(..., allow_inf_nan=False)
     sensor_status: dict[str, Any] | None = None
 
 
@@ -492,10 +492,9 @@ async def agent_heartbeat(
         public_key.verify(signature_bytes, raw_body)
         
         # 0-Mercy Nonce/Timestamp validation
-        if body.timestamp is not None:
-            now_ts = datetime.now(timezone.utc).timestamp()
-            if abs(now_ts - body.timestamp) > 30:
-                raise HTTPException(status_code=401, detail="Expired Signature: Timestamp is older than 30 seconds. Replay Attack Prevented.")
+        now_ts = datetime.now(timezone.utc).timestamp()
+        if abs(now_ts - body.timestamp) > 30:
+            raise HTTPException(status_code=401, detail="Expired Signature: Timestamp is older than 30 seconds. Replay Attack Prevented.")
                 
     except HTTPException:
         raise

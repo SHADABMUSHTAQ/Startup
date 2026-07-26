@@ -20,6 +20,7 @@ from pathlib import Path
 from app.utils.report_engine import get_reports_base_dir
 from app.utils.archive_reader import fetch_archived_documents
 from app.utils.alert_incidents import aggregate_security_alerts
+from app.utils.csv_security import sanitize_csv_cell
 
 def _load_runtime_config() -> dict:
     config_path = Path(__file__).resolve().parent.parent / "config" / "config.json"
@@ -158,7 +159,7 @@ async def csv_generator(cursor, fieldnames):
             if isinstance(value, (dict, list)):
                 value = str(value)
             row[field] = value
-        writer.writerow(row)
+        writer.writerow({key: sanitize_csv_cell(value) for key, value in row.items()})
         yield buffer.getvalue().encode("utf-8")
         buffer.seek(0)
         buffer.truncate(0)
@@ -179,7 +180,7 @@ async def csv_list_generator(docs: list[dict], fieldnames):
             if isinstance(value, (dict, list)):
                 value = str(value)
             row[field] = value
-        writer.writerow(row)
+        writer.writerow({key: sanitize_csv_cell(value) for key, value in row.items()})
         yield buffer.getvalue().encode("utf-8")
         buffer.seek(0)
         buffer.truncate(0)

@@ -742,6 +742,7 @@ async def test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches(client, db):
                 seeded_fbr = await db["fbr_pos_logs"].find_one({"tenant_id": tenant_id, "message": fbr_doc["message"]})
                 assert seeded_fbr is not None
 
+            current_user_state["compliance_packs"] = ["eto_forensic"]
             evidence_resp = await local_client.get(f"/logs/{peca_insert.inserted_id}/evidence")
             assert evidence_resp.status_code == 200, evidence_resp.text
             evidence_body = evidence_resp.json()
@@ -755,7 +756,8 @@ async def test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches(client, db):
             assert alerts_body[0]["summary"] == alert_doc["summary"]
             assert alerts_body[0]["tenant_id"] == tenant_id
 
-            export_resp = await local_client.get("/export/csv?data_type=compliance")
+            current_user_state["compliance_packs"] = ["fbr_pos"]
+            export_resp = await local_client.get("/export/csv?data_type=compliance&pack_id=fbr_pos")
             assert export_resp.status_code == 200, export_resp.text
             export_columns = export_resp.text.splitlines()[0].split(",")
             assert "_id" not in export_columns

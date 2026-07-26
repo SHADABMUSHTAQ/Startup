@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -13,6 +13,7 @@ from app.database import get_db
 from app.routes.auth import get_current_user, require_premium_plan
 from app.utils.rbac import RoleChecker
 from app.utils.archive_reader import count_archived_documents, fetch_archived_documents
+from app.utils.csv_security import sanitize_csv_cell
 
 settings = get_settings()
 try:
@@ -57,7 +58,7 @@ async def csv_generator(cursor, fieldnames):
             if isinstance(value, (dict, list)):
                 value = str(value)
             row[field] = value
-        writer.writerow(row)
+        writer.writerow({key: sanitize_csv_cell(value) for key, value in row.items()})
         yield buffer.getvalue()
         buffer.seek(0)
         buffer.truncate(0)
@@ -78,7 +79,7 @@ async def csv_list_generator(docs: list[dict], fieldnames):
             if isinstance(value, (dict, list)):
                 value = str(value)
             row[field] = value
-        writer.writerow(row)
+        writer.writerow({key: sanitize_csv_cell(value) for key, value in row.items()})
         yield buffer.getvalue()
         buffer.seek(0)
         buffer.truncate(0)
@@ -881,12 +882,13 @@ async def get_compliance_evidence_by_pack(
 
 @router.get("/export")
 async def export_compliance_evidence(
-    type: str = Query("fbr", description="Type of compliance data to export: 'fbr' or 'peca'"),
+    type: Literal["fbr", "peca"] = Query("fbr", description="Type of compliance data to export: 'fbr' or 'peca'"),
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None),
-    limit: int = Query(50000, ge=1),
+    limit: int = Query(5000, ge=1, le=50000),
     db = Depends(get_db),
-    current_user: dict = Depends(require_premium_plan)
+    current_user: dict = Depends(require_premium_plan),
+    _: str = Depends(RoleChecker(["admin", "auditor"])),
 ):
     """
     Dedicated Compliance Export Engine (Uncapped).
@@ -896,10 +898,10 @@ async def export_compliance_evidence(
     if not tenant_id:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
-    if type == "fbr":
-        collection_name = "fbr_pos_logs"
-    else:
-        collection_name = "peca_forensic_logs"
+    requested_pack = "fbr_pos" if type == "fbr" else "peca_forensic"
+    if requested_pack not in _get_entitled_packs(current_user):
+        raise HTTPException(status_code=403, detail="Not entitled to this compliance pack")
+    collection_name = "fbr_pos_logs" if requested_pack == "fbr_pos" else "peca_forensic_logs"
 
     collection = db[collection_name]
     query = {"tenant_id": tenant_id}
