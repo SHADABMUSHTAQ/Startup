@@ -6,10 +6,13 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from motor.motor_asyncio import AsyncIOMotorClient
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config.config import get_settings
 
