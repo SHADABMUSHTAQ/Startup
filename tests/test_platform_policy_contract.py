@@ -100,7 +100,7 @@ def test_every_commercial_contract_rejects_51_endpoints():
             billing_cycle="monthly",
             frontend_calculated_total=0,
         )
-    with pytest.raises(RuntimeError, match="Automated pricing is disabled"):
+    with pytest.raises(ValueError, match="endpoints must be between 10 and 50"):
         calculate_package_price(
             endpoints=51,
             compliance_packs=[],

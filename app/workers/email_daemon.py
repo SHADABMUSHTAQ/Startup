@@ -79,6 +79,19 @@ def _build_message(job: dict) -> EmailMessage:
         billing = payload.get("billing_preference", payload.get("billing_cycle", "monthly"))
         customization = payload.get("customization") if isinstance(payload.get("customization"), dict) else {}
         retention_months = customization.get("retention_months", customization.get("retentionMonths", 0))
+        estimate = payload.get("estimate") or payload.get("server_estimate") or {}
+        has_estimate = bool(estimate.get("pricing_version"))
+        currency = estimate.get("currency", "PKR")
+        recurring_total = int(estimate.get("recurring_total") or 0)
+        setup_fee = int(estimate.get("one_time_setup_fee") or 0)
+        first_invoice = int(estimate.get("estimated_first_invoice") or 0)
+        commercial_terms = (
+            f"Recurring Estimate: {currency} {recurring_total:,}\n"
+            f"One-time Setup: {currency} {setup_fee:,}\n"
+            f"Estimated First Invoice: {currency} {first_invoice:,} before applicable taxes\n"
+            if has_estimate
+            else "Commercial Terms: Manual review required for this earlier request\n"
+        )
         subject = f"HOT LEAD: {company} - {plan}"
         body = (
             f" NEW INBOUND B2B LEAD \n\n"
@@ -90,7 +103,8 @@ def _build_message(job: dict) -> EmailMessage:
             f"Estimated Endpoints: {endpoints}\n"
             f"Requested General Archive: {retention_months} months\n"
             f"Billing Preference: {billing.capitalize()}\n"
-            f"Commercial Terms: Manual review and invoice\n\n"
+            f"{commercial_terms}"
+            f"Payment Method: Manual invoice\n\n"
             f"Contact this lead to confirm the deployment scope."
         )
         message = EmailMessage()
@@ -107,7 +121,22 @@ def _build_message(job: dict) -> EmailMessage:
         billing = escape(str(payload.get("billing_preference", payload.get("billing_cycle", "monthly"))))
         customization = payload.get("customization") if isinstance(payload.get("customization"), dict) else {}
         retention_months = escape(str(customization.get("retention_months", customization.get("retentionMonths", 0))))
-        subject = f"Your Custom WarSOC Quote - {company}"
+        estimate = payload.get("estimate") if isinstance(payload.get("estimate"), dict) else {}
+        has_estimate = bool(estimate.get("pricing_version"))
+        currency = escape(str(estimate.get("currency", "PKR")))
+        recurring_total = int(estimate.get("recurring_total") or 0)
+        setup_fee = int(estimate.get("one_time_setup_fee") or 0)
+        first_invoice = int(estimate.get("estimated_first_invoice") or 0)
+        commercial_terms = (
+            f"""
+                    <li><strong>Recurring Estimate:</strong> {currency} {recurring_total:,}</li>
+                    <li><strong>One-time Setup:</strong> {currency} {setup_fee:,}</li>
+                    <li><strong>Estimated First Invoice:</strong> {currency} {first_invoice:,} before applicable taxes</li>
+            """
+            if has_estimate
+            else "<li><strong>Commercial Terms:</strong> Manual review required for this earlier request</li>"
+        )
+        subject = f"Your WarSOC Estimate - {company}"
         html_body = f"""
         <html>
             <body style="font-family: Arial, sans-serif; color: #333;">
@@ -120,8 +149,9 @@ def _build_message(job: dict) -> EmailMessage:
                     <li><strong>Compliance Packs:</strong> {packs}</li>
                     <li><strong>Requested General Archive:</strong> {retention_months} months</li>
                     <li><strong>Billing Preference:</strong> {billing.title()}</li>
+                    {commercial_terms}
                 </ul>
-                <p>A member of the WarSOC deployment team will contact you shortly to confirm scope, commercial terms, and the manual invoice.</p>
+                <p>A member of the WarSOC deployment team will contact you to confirm scope and issue the manual invoice.</p>
                 <br/>
                 <p>Securely yours,<br/><strong>WarSOC Deployments</strong></p>
             </body>
@@ -131,7 +161,7 @@ def _build_message(job: dict) -> EmailMessage:
         message["From"] = DEFAULT_FROM_ADDRESS
         message["To"] = str(recipient)
         message["Subject"] = subject
-        message.set_content("Thank you for requesting a custom quote. Please view this email in an HTML client.")
+        message.set_content("Thank you for requesting a WarSOC estimate. Please view this email in an HTML client.")
         message.add_alternative(html_body, subtype='html')
     elif job_type == "sales_contact":
         contact_name = payload.get("contact_name", "Unknown")

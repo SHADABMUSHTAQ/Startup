@@ -8,7 +8,13 @@ from typing import Literal
 
 from app.database import get_db
 from app.utils.limiter import limiter
-from app.utils.pricing import normalize_billing_cycle, normalize_compliance_packs
+from app.utils.pricing import (
+    PRICING_VERSION,
+    calculate_package_price,
+    normalize_billing_cycle,
+    normalize_compliance_packs,
+    public_pricing_catalog,
+)
 from app.utils.security_policy import PLATFORM_MAX_AGENTS
 
 router = APIRouter()
@@ -18,10 +24,12 @@ class QuoteCustomization(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     endpoints: int | None = Field(default=None, ge=10, le=PLATFORM_MAX_AGENTS)
-    retentionMonths: int = Field(default=0, ge=0, le=72)
+    # Zero is accepted only for compatibility with the immediately preceding
+    # frontend release and is normalized to the included three-month baseline.
+    retentionMonths: Literal[0, 3, 6, 9, 12] = 3
 
     def normalized(self, fallback_endpoints: int) -> dict:
-        retention_months = int(self.retentionMonths or 0)
+        retention_months = int(self.retentionMonths or 3)
         return {
             "endpoints": int(self.endpoints or fallback_endpoints),
             "retention_months": retention_months,
@@ -41,6 +49,7 @@ class QuoteRequest(BaseModel):
     endpoints: int = Field(ge=10, le=PLATFORM_MAX_AGENTS)
     compliance_packs: list[str]
     billing_cycle: str
+    pricing_version: str | None = None
     # Accepted for compatibility with older frontend deployments only. The
     # public request endpoint never treats a browser-supplied price as a quote.
     frontend_calculated_total: float | None = None
@@ -55,6 +64,14 @@ class ContactRequest(BaseModel):
     message: str = Field(min_length=10, max_length=5000)
     website: str | None = Field(default=None, max_length=200)
 
+
+@router.get("/pricing")
+@limiter.limit("60/minute")
+async def get_pricing(request: Request):
+    """Return the versioned public list-price catalog used by the quote UI."""
+    del request
+    return public_pricing_catalog()
+
 @router.post("/request-quote")
 @limiter.limit("3/minute")
 async def request_quote(
@@ -63,14 +80,28 @@ async def request_quote(
     db=Depends(get_db)
 ):
     """
-    B2B Flow: Stores requested scope for manual commercial review and queues
-    notifications. It does not create a price, invoice, or billing record.
+    B2B Flow: Stores requested scope plus a server-calculated public estimate
+    and queues notifications. It does not create an invoice or billing record.
     """
     redis = getattr(request.app.state, "redis", None)
 
     normalized_packs = normalize_compliance_packs(data.compliance_packs)
     billing_preference = normalize_billing_cycle(data.billing_cycle)
     customization = data.customization.normalized(fallback_endpoints=data.endpoints)
+    if data.pricing_version and data.pricing_version != PRICING_VERSION:
+        raise HTTPException(
+            status_code=409,
+            detail="Pricing has changed. Refresh the page and review the current estimate.",
+        )
+    try:
+        estimate = calculate_package_price(
+            endpoints=data.endpoints,
+            compliance_packs=normalized_packs,
+            billing_cycle=billing_preference,
+            retention_months=customization["retention_months"],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="The requested scope is invalid.") from exc
     
     # 2. Build the structured Lead Document
     lead_doc = {
@@ -82,7 +113,9 @@ async def request_quote(
         "endpoints": data.endpoints,
         "compliance_packs": normalized_packs,
         "billing_preference": billing_preference,
-        "commercial_model": "custom_contract_manual_invoice",
+        "commercial_model": "public_list_price_manual_invoice",
+        "pricing_version": PRICING_VERSION,
+        "server_estimate": estimate,
         "client_estimate_ignored": data.frontend_calculated_total,
         "customization": customization,
         "requested_retention_months": customization["retention_months"],
@@ -100,7 +133,10 @@ async def request_quote(
 
     if not redis:
         logger.error("Quote lead saved but the email queue is unavailable.")
-        return {"message": "Quote request received successfully. Our team will contact you shortly."}
+        return {
+            "message": "Quote request received successfully. Our team will contact you shortly.",
+            "estimate": estimate,
+        }
 
     # Queue the lead email to the sales team
     lead_job = {
@@ -124,6 +160,7 @@ async def request_quote(
             "compliance_packs": normalized_packs,
             "billing_preference": billing_preference,
             "customization": customization,
+            "estimate": estimate,
         }
     }
 
@@ -134,7 +171,10 @@ async def request_quote(
         logger.error("Failed to queue quote request: %s", e)
         # We don't throw 500 here because the lead is safely captured in the DB!
         
-    return {"message": "Quote request received successfully. Our team will contact you shortly."}
+    return {
+        "message": "Quote request received successfully. Our team will contact you shortly.",
+        "estimate": estimate,
+    }
 
 
 @router.post("/contact")
