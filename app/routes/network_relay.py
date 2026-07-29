@@ -30,6 +30,7 @@ from app.routes.auth import (
 )
 from app.routes.ingest_pulse import (
     INGEST_DAILY_QUOTA_TTL_SECONDS,
+    PLATFORM_DAILY_INGEST_BYTES_MAX,
     _resolve_daily_ingest_quota_bytes,
 )
 from app.utils.agent_crypto import public_key_id
@@ -1096,6 +1097,7 @@ async def _admit_batch(
     payloads: list[str],
     *,
     quota_bytes: int = 2**63 - 1,
+    platform_quota_bytes: int = PLATFORM_DAILY_INGEST_BYTES_MAX,
     payload_bytes: int = 0,
 ) -> int:
     relay = relay_context["relay"]
@@ -1122,6 +1124,7 @@ local payload_count = tonumber(ARGV[8])
 local incoming_bytes = tonumber(ARGV[13])
 local quota_limit = tonumber(ARGV[14])
 local quota_ttl = tonumber(ARGV[15])
+local platform_quota_limit = tonumber(ARGV[16])
 
 if current_sequence == incoming_sequence and current_hash == incoming_hash and current_chain == incoming_chain then
   return 2
@@ -1134,14 +1137,18 @@ else
   if incoming_sequence ~= current_sequence + 1 or incoming_previous ~= current_hash then return -1 end
 end
 local quota_used = tonumber(redis.call('GET', KEYS[3]) or '0')
+local platform_quota_used = tonumber(redis.call('GET', KEYS[4]) or '0')
 if incoming_bytes > 0 and quota_used + incoming_bytes > quota_limit then return -4 end
+if incoming_bytes > 0 and platform_quota_limit > 0 and platform_quota_used + incoming_bytes > platform_quota_limit then return -5 end
 if redis.call('XLEN', KEYS[2]) + payload_count > stream_limit then return -3 end
-for i = 16, 15 + payload_count do
+for i = 17, 16 + payload_count do
   redis.call('XADD', KEYS[2], '*', 'payload', ARGV[i])
 end
 if incoming_bytes > 0 then
   redis.call('INCRBY', KEYS[3], incoming_bytes)
+  redis.call('INCRBY', KEYS[4], incoming_bytes)
   redis.call('EXPIRE', KEYS[3], quota_ttl)
+  redis.call('EXPIRE', KEYS[4], quota_ttl)
 end
 redis.call('HSET', KEYS[1],
   'sequence', incoming_sequence,
@@ -1153,10 +1160,11 @@ return 1
     return int(
         await redis.eval(
             script,
-            3,
+            4,
             state_key,
             RAW_LOGS_QUEUE,
             f"warsoc:ingest:bytes:{relay_context['tenant_id']}:{datetime.now(timezone.utc).strftime('%Y%m%d')}",
+            f"warsoc:ingest:bytes:platform:{datetime.now(timezone.utc).strftime('%Y%m%d')}",
             batch.sequence,
             batch.previous_batch_hash,
             batch_hash,
@@ -1172,6 +1180,7 @@ return 1
             max(0, int(payload_bytes)),
             max(1, int(quota_bytes)),
             INGEST_DAILY_QUOTA_TTL_SECONDS,
+            max(0, int(platform_quota_bytes)),
             *payloads,
         )
     )
@@ -1342,6 +1351,8 @@ async def ingest_relay_batch(
     )
     if admission == -4:
         raise HTTPException(status_code=429, detail="Tenant daily ingest quota exceeded")
+    if admission == -5:
+        raise HTTPException(status_code=503, detail="Ingest capacity is temporarily exhausted; relay must retain and retry")
     if admission == -3:
         raise HTTPException(status_code=503, detail="Ingest queue is under pressure; relay must retain and retry")
     if admission == -2:

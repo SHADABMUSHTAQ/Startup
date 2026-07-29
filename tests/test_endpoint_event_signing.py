@@ -4,7 +4,11 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from app.routes.ingest_pulse import _verify_endpoint_event
+from app.routes.ingest_pulse import (
+    _build_event_signature_status,
+    _extract_endpoint_name,
+    _verify_endpoint_event,
+)
 from app.utils.agent_crypto import (
     AgentEventSignatureError,
     build_event_signature_string,
@@ -124,3 +128,43 @@ def test_required_mode_rejects_unsigned_event(monkeypatch):
             {"event_uid": "legacy-1", "timestamp": "2026-01-01T00:00:00+00:00"},
             {"agent_id": "WARSOC_AGENT_LEGACY", "public_key": ""},
         )
+
+
+def test_signature_status_extracts_authenticated_windows_endpoint_name():
+    payloads = [
+        {
+            "agent_version": "4.2.7-Native-Signed",
+            "raw_event_data": {
+                "system": {"computer": "POS-REGISTER-07"},
+            },
+        }
+    ]
+
+    assert _extract_endpoint_name(payloads) == "POS-REGISTER-07"
+    status = _build_event_signature_status(
+        payloads,
+        verified_count=1,
+        unsigned_count=0,
+        observed_at="2026-07-29T12:00:00+00:00",
+    )
+
+    assert status == {
+        "status": "verified",
+        "ready": True,
+        "last_event_at": "2026-07-29T12:00:00+00:00",
+        "last_signed_event_at": "2026-07-29T12:00:00+00:00",
+        "endpoint_name": "POS-REGISTER-07",
+        "agent_version": "4.2.7-Native-Signed",
+    }
+
+
+def test_mixed_signature_batch_is_never_reported_ready():
+    status = _build_event_signature_status(
+        [],
+        verified_count=1,
+        unsigned_count=1,
+        observed_at="2026-07-29T12:00:00+00:00",
+    )
+
+    assert status["status"] == "mixed"
+    assert status["ready"] is False

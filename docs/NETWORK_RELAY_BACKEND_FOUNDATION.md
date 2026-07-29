@@ -13,7 +13,7 @@ WarSOC must not expose an unauthenticated UDP syslog listener to the public clou
 2. The relay validates the registered source, applies resource limits, parses only approved metadata, and durably stores accepted records in an encrypted local spool.
 3. The relay signs a deterministic batch using its own Ed25519 identity.
 4. The relay sends the batch to the WarSOC HTTPS API.
-5. The API verifies identity, tenant, signature, source contract, schema, sequence, chain, queue capacity, and tenant quota before atomic Redis admission.
+5. The API verifies identity, tenant, signature, source contract, schema, sequence, chain, queue capacity, tenant quota, and deployment-wide quota before atomic Redis admission.
 6. The SIEM stores the observation and performs only source-aware rules and correlations.
 
 The relay signature proves which enrolled relay accepted and forwarded the record. It does not prove that a legacy UDP firewall cryptographically authored the original datagram. Such evidence is `relay_attested`, not `device_authenticated`.
@@ -129,10 +129,11 @@ The Redis Lua transaction performs these operations atomically:
 2. Return an idempotent acknowledgement for an exact duplicate retry.
 3. Reject an incorrect sequence, chain, or key epoch.
 4. Check daily tenant byte quota.
-5. Check raw-stream admission capacity.
-6. Append every batch event.
-7. Increment quota usage.
-8. Advance the relay chain checkpoint.
+5. Check the shared deployment-wide daily byte ceiling.
+6. Check raw-stream admission capacity.
+7. Append every batch event.
+8. Increment tenant and deployment quota usage.
+9. Advance the relay chain checkpoint.
 
 An exact duplicate retry neither duplicates the stream records nor charges quota twice. A Mongo receipt failure after Redis admission returns a retryable failure; the next exact retry repairs the missing receipt without duplicating queue data.
 
@@ -284,6 +285,7 @@ This avoids two false claims: that every firewall message is court-authenticated
 | Wrong sequence or chain | Return conflict; retain local batch for operator recovery. |
 | Redis unavailable or stream full | Reject with retryable failure; relay retains local data. |
 | Daily quota exceeded | Return 429; relay retains local data and reports pressure. |
+| Deployment-wide daily ceiling reached | Return 503; relay retains local data and retries after capacity becomes available. |
 | Mongo receipt unavailable after Redis admission | Return retryable failure; duplicate retry repairs the receipt. |
 | Parser cannot represent a record | Quarantine/drop locally and report a signed parser-failure control record. |
 | Local ciphertext or chain changes | Fail verification and report degraded/tamper state when connectivity permits. |
@@ -296,7 +298,7 @@ Selected backend validation through 2026-07-29:
   registration, status, revocation, recovery, source-isolation, feature-gate,
   and hybrid-correlation tests passed.
 - 122 selected security, ingestion, worker, SIEM, FBR, PECA, stream-retention, archive, and relay tests passed together in the writable Docker test harness.
-- The complete backend suite then passed with 346 passed, 3 skipped, and 0 failed in the writable Docker test harness. The skips were the explicitly opt-in `E2E=1` grand-master test and two Git tracking checks when Git was unavailable inside the runtime image.
+- The complete maintained backend suite passed with 369 passed, 3 skipped, and 0 failed on 2026-07-29. Default discovery is intentionally limited to `tests/`; live-fire and scratch scripts are not part of this regression claim.
 - `git diff --check` is clean except informational Windows line-ending warnings.
 
 The suite verifies parser conservatism, packet/raw rejection, schema rejection, signing compatibility, encrypted spool bounds, FIFO retention, tamper detection, exact outbox retries, control priority, atomic Redis admission, duplicate suppression, quota rejection, VPN spraying, non-alert VPN context, same-host hybrid correlation, source-family isolation, worker behavior, FBR, PECA, retention, and archive contracts.

@@ -14,6 +14,11 @@ from app.routes.auth import get_current_user, require_premium_plan
 from app.utils.rbac import RoleChecker
 from app.utils.archive_reader import count_archived_documents, fetch_archived_documents
 from app.utils.csv_security import sanitize_csv_cell
+from app.utils.endpoint_health import (
+    EVENT_SIGNATURE_STATUS_KEY_PREFIX,
+    decode_event_signature_status,
+    event_signature_mode,
+)
 
 settings = get_settings()
 try:
@@ -483,6 +488,7 @@ async def list_compliance_packs():
 
 @router.get("/coverage")
 async def get_compliance_coverage(
+    request: Request,
     db=Depends(get_db),
     current_user: dict = Depends(get_current_user),
     _: str = Depends(RoleChecker(["admin", "manager", "auditor"])),
@@ -502,6 +508,23 @@ async def get_compliance_coverage(
         {"_id": 0, "agent_id": 1, "last_seen": 1, "sensor_status": 1},
     ).to_list(length=1000)
 
+    signature_mode = event_signature_mode()
+    redis_client = getattr(request.app.state, "redis", None)
+    signature_status_by_agent = {}
+    agent_ids = [str(agent.get("agent_id") or "") for agent in agents]
+    agent_ids = [agent_id for agent_id in agent_ids if agent_id]
+    if redis_client is not None and agent_ids:
+        signature_values = await redis_client.mget(
+            [
+                f"{EVENT_SIGNATURE_STATUS_KEY_PREFIX}:{tenant_id}:{agent_id}"
+                for agent_id in agent_ids
+            ]
+        )
+        signature_status_by_agent = {
+            agent_id: decode_event_signature_status(signature_values[index])
+            for index, agent_id in enumerate(agent_ids)
+        }
+
     now = datetime.now(timezone.utc)
     agent_states = []
     for agent in agents:
@@ -509,6 +532,10 @@ async def get_compliance_coverage(
         channels = sensor.get("channels") if isinstance(sensor.get("channels"), dict) else {}
         last_seen = _coerce_dt(agent.get("last_seen"))
         online = bool(last_seen and (now - last_seen).total_seconds() <= 600)
+        signature_status = signature_status_by_agent.get(
+            str(agent.get("agent_id") or ""),
+            decode_event_signature_status(None),
+        )
         native_ready = (
             online
             and str(sensor.get("audit_policy_status") or "").lower() == "configured"
@@ -516,6 +543,7 @@ async def get_compliance_coverage(
                 str((channels.get(channel) or {}).get("status") or "").lower() == "ok"
                 for channel in ("Security", "System")
             )
+            and (signature_mode != "required" or signature_status["ready"])
         )
         try:
             pos_sacl_path_count = int(sensor.get("pos_sacl_path_count") or 0)
@@ -534,6 +562,7 @@ async def get_compliance_coverage(
                 "online": online,
                 "native_ready": native_ready,
                 "fbr_ready": fbr_ready,
+                "signing_ready": bool(signature_status["ready"]),
             }
         )
 
@@ -541,6 +570,7 @@ async def get_compliance_coverage(
     for pack_id in sorted(entitled_packs):
         required_key = "fbr_ready" if pack_id == "fbr_pos" else "native_ready"
         ready_count = sum(1 for state in agent_states if state[required_key])
+        signing_ready_count = sum(1 for state in agent_states if state["signing_ready"])
         if not agent_states or ready_count == 0:
             status = "not_configured"
         elif ready_count == len(agent_states):
@@ -560,6 +590,8 @@ async def get_compliance_coverage(
                 "status": status,
                 "registered_agents": len(agent_states),
                 "ready_agents": ready_count,
+                "signing_ready_agents": signing_ready_count,
+                "event_signature_mode": signature_mode,
                 "last_evidence_at": _to_jsonable(
                     (latest or {}).get("timestamp") or (latest or {}).get("ingested_at")
                 ),

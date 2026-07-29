@@ -25,6 +25,10 @@ from app.utils.agent_crypto import (
     timestamp_age_seconds,
     verify_event_signature,
 )
+from app.utils.endpoint_health import (
+    EVENT_SIGNATURE_STATUS_KEY_PREFIX,
+    EVENT_SIGNATURE_STATUS_TTL_SECONDS,
+)
 
 router = APIRouter()
 settings = get_settings()
@@ -39,6 +43,9 @@ DEFAULT_AGENT_LIMIT_FOR_QUOTA = 10
 DEFAULT_DAILY_INGEST_BYTES_PER_AGENT = int(os.getenv("INGEST_DAILY_BYTES_PER_AGENT", str(50 * 1024 * 1024)))
 DEFAULT_DAILY_INGEST_BYTES_FLOOR = int(os.getenv("INGEST_DAILY_BYTES_FLOOR", str(1024 * 1024 * 1024)))
 MAX_DAILY_INGEST_BYTES = int(os.getenv("INGEST_DAILY_BYTES_MAX", str(3 * 1024 * 1024 * 1024)))
+PLATFORM_DAILY_INGEST_BYTES_MAX = int(
+    os.getenv("INGEST_PLATFORM_DAILY_BYTES_MAX", str(3 * 1024 * 1024 * 1024))
+)
 INGEST_DAILY_QUOTA_TTL_SECONDS = int(os.getenv("INGEST_DAILY_QUOTA_TTL_SECONDS", str(3 * 24 * 60 * 60)))
 RAW_STREAM_MAX_ENTRIES = int(os.getenv("RAW_STREAM_MAX_ENTRIES", "500000"))
 
@@ -268,23 +275,34 @@ async def _enforce_daily_ingest_quota(redis_client, tenant_id: str, payload_byte
         quota_bytes = await _resolve_daily_ingest_quota_bytes(redis_client, tenant_id)
         day_bucket = datetime.now(timezone.utc).strftime("%Y%m%d")
         quota_key = f"warsoc:ingest:bytes:{tenant_id}:{day_bucket}"
+        platform_quota_key = f"warsoc:ingest:bytes:platform:{day_bucket}"
         script = """
-local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+local tenant_current = tonumber(redis.call('GET', KEYS[1]) or '0')
+local platform_current = tonumber(redis.call('GET', KEYS[2]) or '0')
 local increment = tonumber(ARGV[1])
-local limit = tonumber(ARGV[2])
-if current + increment > limit then
-  return {0, current, limit}
+local tenant_limit = tonumber(ARGV[2])
+local platform_limit = tonumber(ARGV[3])
+local ttl = tonumber(ARGV[4])
+if tenant_current + increment > tenant_limit then
+  return {0, tenant_current, tenant_limit, platform_current, platform_limit, 1}
 end
-local updated = redis.call('INCRBY', KEYS[1], increment)
-redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
-return {1, updated, limit}
+if platform_limit > 0 and platform_current + increment > platform_limit then
+  return {0, tenant_current, tenant_limit, platform_current, platform_limit, 2}
+end
+local tenant_updated = redis.call('INCRBY', KEYS[1], increment)
+local platform_updated = redis.call('INCRBY', KEYS[2], increment)
+redis.call('EXPIRE', KEYS[1], ttl)
+redis.call('EXPIRE', KEYS[2], ttl)
+return {1, tenant_updated, tenant_limit, platform_updated, platform_limit, 0}
 """
         result = await redis_client.eval(
             script,
-            1,
+            2,
             quota_key,
+            platform_quota_key,
             int(payload_bytes),
             int(quota_bytes),
+            int(PLATFORM_DAILY_INGEST_BYTES_MAX),
             int(INGEST_DAILY_QUOTA_TTL_SECONDS),
         )
     except HTTPException:
@@ -295,13 +313,28 @@ return {1, updated, limit}
 
     allowed = int(result[0]) if result else 0
     if allowed != 1:
-        used = int(result[1]) if len(result) > 1 else 0
-        quota = int(result[2]) if len(result) > 2 else 0
+        tenant_used = int(result[1]) if len(result) > 1 else 0
+        tenant_quota = int(result[2]) if len(result) > 2 else 0
+        platform_used = int(result[3]) if len(result) > 3 else 0
+        platform_quota = int(result[4]) if len(result) > 4 else 0
+        rejection_scope = int(result[5]) if len(result) > 5 else 1
+        if rejection_scope == 2:
+            logger.error(
+                "Platform daily ingest ceiling reached: used=%s quota=%s attempted=%s tenant=%s",
+                platform_used,
+                platform_quota,
+                payload_bytes,
+                tenant_id,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Ingest capacity is temporarily exhausted. Agent must retain and retry the batch.",
+            )
         logger.warning(
             "Tenant daily ingest quota exceeded: tenant=%s used=%s quota=%s attempted=%s",
             tenant_id,
-            used,
-            quota,
+            tenant_used,
+            tenant_quota,
             payload_bytes,
         )
         raise HTTPException(
@@ -453,6 +486,70 @@ def _verify_endpoint_event(payload: dict, agent_context: dict) -> dict:
     return candidate
 
 
+def _extract_endpoint_name(payloads: list[dict]) -> str | None:
+    """Return a bounded endpoint name from authenticated event content."""
+    for payload in payloads:
+        processed = payload.get("processed_data")
+        processed = processed if isinstance(processed, dict) else {}
+        raw_event = payload.get("raw_event_data")
+        raw_event = raw_event if isinstance(raw_event, dict) else {}
+        raw_system = raw_event.get("system")
+        raw_system = raw_system if isinstance(raw_system, dict) else {}
+        raw_data = payload.get("raw_data")
+        raw_data = raw_data if isinstance(raw_data, dict) else {}
+        raw_data_system = raw_data.get("system")
+        raw_data_system = raw_data_system if isinstance(raw_data_system, dict) else {}
+
+        candidates = (
+            payload.get("endpoint_name"),
+            payload.get("hostname"),
+            payload.get("computer"),
+            processed.get("endpoint_name"),
+            processed.get("hostname"),
+            processed.get("computer"),
+            raw_system.get("computer"),
+            raw_system.get("Computer"),
+            raw_data_system.get("computer"),
+            raw_data_system.get("Computer"),
+        )
+        for candidate in candidates:
+            value = str(candidate or "").strip()
+            if value and value.lower() not in {"unknown", "n/a", "none", "-"}:
+                return value[:255]
+    return None
+
+
+def _build_event_signature_status(
+    payloads: list[dict],
+    *,
+    verified_count: int,
+    unsigned_count: int,
+    observed_at: str,
+) -> dict:
+    if verified_count and unsigned_count:
+        status = "mixed"
+    elif verified_count:
+        status = "verified"
+    elif unsigned_count:
+        status = "unsigned_legacy"
+    else:
+        status = "unknown"
+
+    versions = {
+        str(payload.get("agent_version") or "").strip()
+        for payload in payloads
+        if str(payload.get("agent_version") or "").strip()
+    }
+    return {
+        "status": status,
+        "ready": status == "verified",
+        "last_event_at": observed_at,
+        "last_signed_event_at": observed_at if verified_count else None,
+        "endpoint_name": _extract_endpoint_name(payloads),
+        "agent_version": sorted(versions)[-1] if versions else None,
+    }
+
+
 async def _consume_agent_ingest_envelope(raw_payload, agent_id: str, redis_client):
     """Validate and atomically consume the required anti-replay envelope."""
     if not isinstance(raw_payload, dict) or set(raw_payload) != {
@@ -602,7 +699,7 @@ async def ingest_pulse_logs(
         if not redis:
             raise HTTPException(status_code=503, detail="Redis unavailable for ingest queue")
 
-        status_updates = []
+        current_utc_timestamp = datetime.now(timezone.utc).isoformat()
         verified_signature_count = 0
         unsigned_legacy_count = 0
         async with redis.pipeline(transaction=True) as pipe:
@@ -632,7 +729,6 @@ async def ingest_pulse_logs(
                     verified_signature_count += 1
                 elif log_data.get("signature_verification_status") == "unsigned_legacy":
                     unsigned_legacy_count += 1
-                status_updates.append((verified_tenant_id, verified_agent_id))
 
             if verified_signature_count:
                 await pipe.incrby(
@@ -644,15 +740,23 @@ async def ingest_pulse_logs(
                     "warsoc_endpoint_event_signatures_unsigned_total",
                     unsigned_legacy_count,
                 )
-            await pipe.execute()
-
-        current_utc_timestamp = datetime.now(timezone.utc).isoformat()
-        for tenant_id, agent_id in set(status_updates):
-            await redis.set(
-                f"{STATUS_KEY_PREFIX}:{tenant_id}:{agent_id}",
+            signature_status = _build_event_signature_status(
+                payload_items,
+                verified_count=verified_signature_count,
+                unsigned_count=unsigned_legacy_count,
+                observed_at=current_utc_timestamp,
+            )
+            await pipe.set(
+                f"{STATUS_KEY_PREFIX}:{verified_tenant_id}:{verified_agent_id}",
                 current_utc_timestamp,
                 ex=STATUS_TTL_SECONDS,
             )
+            await pipe.set(
+                f"{EVENT_SIGNATURE_STATUS_KEY_PREFIX}:{verified_tenant_id}:{verified_agent_id}",
+                orjson.dumps(signature_status).decode("utf-8"),
+                ex=EVENT_SIGNATURE_STATUS_TTL_SECONDS,
+            )
+            await pipe.execute()
 
         return ORJSONResponse({
             "status": "success",

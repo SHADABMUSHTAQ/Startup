@@ -1,10 +1,14 @@
 # WarSOC Backend Migration: DigitalOcean to Azure VM
 
 **Status:** Authoritative cutover runbook
-**Updated:** 2026-07-22
+**Updated:** 2026-07-29
 **Scope:** Move the existing Docker Compose backend from DigitalOcean to one hardened Azure Ubuntu VM without changing the public API hostname or the application topology.
 
 This is a stateful migration, not a fresh deployment. MongoDB, Redis, customer uploads, generated reports, TLS material, cryptographic keys, secrets, archive configuration and release identity must cross the boundary together.
+
+**Execution timing:** Deferred until the current pilot trial ends. Until a cutover window is approved, DigitalOcean remains the writable production backend, the Azure VM must not accept production writes, and this document is preparation only.
+
+**Current project decision:** Pilot tenants and pilot evidence are disposable. If no pilot contract requires continuity, the preferred Azure path is a clean production launch with new tenant IDs and no pilot Mongo/Redis restore. The stateful procedure in Sections 5-8 remains available only if a signed contract, investigation or retention obligation later requires existing data to move.
 
 ## 0. Non-Negotiable Boundaries
 
@@ -17,6 +21,27 @@ This is a stateful migration, not a fresh deployment. MongoDB, Redis, customer u
 - Do not run DigitalOcean and Azure as writable WarSOC backends at the same time.
 - Keep DigitalOcean stopped but intact for at least 24 hours after acceptance.
 - A failed migration must preserve evidence. Abort before DNS cutover whenever a pre-cutover gate fails.
+- Retention-container separation is a separate post-pilot operation. Complete and prove it before migration or leave the current locked 2,190-day fallback unchanged until after migration; never combine both changes in one cutover.
+- Treat archived telemetry, backups, uploads, reports and Mongo volumes as potentially containing PII. Do not place them in the public agent-artifact account.
+
+### 0.1 PII and Azure security boundary
+
+WarSOC may store security telemetry containing usernames, endpoint names, IP addresses, process details, file paths, incident context and tenant identifiers. Azure Storage encrypts stored data at rest and WarSOC uses HTTPS/TLS in transit, but these controls do not anonymize readable SIEM metadata. FBR and PECA sensitive payload fields are application-encrypted; general SIEM evidence is not uniformly field-encrypted before archival.
+
+Required migration controls:
+
+1. Keep artifacts and evidence in separate storage accounts. Only the versioned installer is public.
+2. Keep evidence, database backups, reports and uploads private with anonymous blob access disabled.
+3. Select and record an Azure geography approved for the tenant data and redundancy model. A region decision is a data-residency decision, not only a latency decision.
+4. Require TLS, least-privilege RBAC, MFA for administrators, diagnostic logging and access reviews.
+5. Restrict the evidence account to the Azure backend network using a private endpoint or an explicitly approved storage firewall design before final cutover.
+6. Store secrets in root-owned files during staging; never commit connection strings, storage keys, backup keys or Fernet/RSA/Ed25519 material.
+7. After the backend is on Azure, replace Shared Key/connection-string access with Microsoft Entra managed identity and least-privilege Blob roles when the application supports that path. The current connection-string implementation must not be described as managed identity.
+8. Preserve the existing Fernet and signing keys through migration. Rotating them during cutover can make retained evidence unreadable or break continuity verification.
+9. Maintain an audited list of who can retrieve raw evidence. Support access does not bypass tenant RBAC or evidence-access auditing.
+10. Do not archive general packet payloads, credentials, email bodies or unrelated customer content. Network expansion remains metadata-only.
+
+Azure immutability prevents alteration and early deletion; it does not remove privacy obligations. Approve purpose, retention and tenant terms before locking a policy because a locked WORM record cannot be removed on demand during the retention interval.
 
 ## 1. Cutover Record
 
@@ -44,7 +69,7 @@ Never use a branch name such as `main` as the release identity. Push the approve
 - Installer SHA-256: `F80C22FCD65FD5755B8483F105FCA4AA3FFFFFBAB4E29B807828D4CC406CDAE0`.
 - Agent URL: `https://warsocartifacts.blob.core.windows.net/warsoc-agent-public/warsoc_installer-4.2.6.exe`.
 - Local manifest: `output/pilot_hash_manifest-4.2.6.json`.
-- Backend regression: `314 passed`, `3 skipped`, zero failures.
+- Backend regression: `369 passed`, `3 skipped`, zero failures (2026-07-29 maintained-suite run).
 - Frontend ESLint and production build: passed.
 
 These facts describe the approved working release. The commit fields above must identify the commits that actually contain it.
@@ -52,6 +77,15 @@ These facts describe the approved working release. The commit fields above must 
 ## 2. Readiness Gates
 
 Complete every gate before provisioning or changing DNS.
+
+### 2.0 Select the cutover mode
+
+Record one mode before any Azure backend is made writable:
+
+- **Clean production launch (current preference):** provision fresh MongoDB/Redis volumes, preserve the approved application cryptographic configuration required by the release, provision new contracted tenants, install backup automation from day one, run acceptance, then change DNS. Pilot tenants and evidence remain on the stopped DigitalOcean host only for the short rollback window and are destroyed through an approved cleanup record afterward.
+- **Stateful migration:** use the complete backup, drain, restore and verification procedure in this runbook. This mode is mandatory if any existing tenant data has contractual, investigative or legal retention value.
+
+A clean launch does not require importing the disposable pilot database, but it still requires a backup/restore capability test on Azure before accepting contracted customer data. Do not confuse "no pilot restore" with "no production backup."
 
 ### 2.1 Repository and artifact gate
 
@@ -65,6 +99,13 @@ Complete every gate before provisioning or changing DNS.
 ### 2.2 Retention gate
 
 Retention must be either fully enabled and proven on DigitalOcean before migration, or left on the current locked 2,190-day fallback. Do not change retention routing during compute cutover.
+
+The project decision is to perform retention separation after the current pilot trial. At cutover planning time, select exactly one state and record it in the cutover record:
+
+- **Separated and proven:** all target containers are locked, routing is enabled, class-by-class upload/readback passed, and production has completed at least one clean archive cycle; or
+- **Fallback unchanged:** every class continues to the existing locked 2,190-day container through the migration, with separation scheduled as a later isolated change.
+
+An in-between state blocks migration.
 
 The intended private Azure containers are:
 
@@ -746,7 +787,7 @@ Never start DigitalOcean Nginx before Azure Nginx is stopped. Never restore an o
 
 - This is a single-VM deployment, not high availability.
 - Azure VM Backup is not application-consistent evidence backup by itself.
-- `AGENT_EVENT_SIGNATURE_MODE=observe` remains the safe migration setting until every active endpoint is signing-capable and unsigned traffic has remained at zero for the agreed observation period.
+- Preserve the approved release setting `AGENT_EVENT_SIGNATURE_MODE=required` during migration. Do not weaken admission to observe mode to accommodate stale agents; upgrade or revoke those endpoints before cutover.
 - The unsigned pilot installer still requires customer-managed hash allowlisting or a future code-signing certificate.
 - Existing blobs locked in the original 2,190-day container cannot have their retention shortened.
 - Security-alert email remains disabled. Transactional email acceptance depends on provider quota.

@@ -70,7 +70,9 @@ def test_backend_contains_only_the_cdn_agent_download_route():
 
 def test_pilot_manifest_covers_complete_executable_installation_chain():
     manifest_script = _read("scripts/generate_pilot_hash_manifest.ps1")
-    assert "warsoc_installer-4.2.6.exe" in manifest_script
+    assert '[string]$Version = "4.2.7"' in manifest_script
+    assert '"Output\\warsoc_installer-$Version.exe"' in manifest_script
+    assert '"Output\\pilot_hash_manifest-$Version.json"' in manifest_script
     assert "warsoc_agent.exe" in manifest_script
     assert "tools\\nssm\\nssm.exe" in manifest_script
     assert "agent\\deploy_warsoc_telemetry.ps1" in manifest_script
@@ -78,6 +80,11 @@ def test_pilot_manifest_covers_complete_executable_installation_chain():
     assert "windows-service-manager" in manifest_script
     assert "native-telemetry-configuration" in manifest_script
     assert "tenant-monitoring-policy" in manifest_script
+
+
+def test_production_requires_signed_endpoint_events_by_default():
+    compose = _read("docker-compose.prod.yml")
+    assert compose.count("AGENT_EVENT_SIGNATURE_MODE: ${AGENT_EVENT_SIGNATURE_MODE:-required}") == 2
 
 
 def test_database_backup_is_encrypted_offsite_and_fail_closed():

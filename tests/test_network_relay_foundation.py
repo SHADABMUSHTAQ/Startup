@@ -559,8 +559,9 @@ async def test_redis_batch_admission_is_atomic_and_duplicate_safe(redis_client):
     ) == 2
     assert await redis_client.xlen("raw_logs_queue") == 1
     quota_keys = [key async for key in redis_client.scan_iter("warsoc:ingest:bytes:*")]
-    assert len(quota_keys) == 1
-    assert int(await redis_client.get(quota_keys[0])) == 100
+    assert len(quota_keys) == 2
+    quota_values = [int(await redis_client.get(key)) for key in quota_keys]
+    assert quota_values == [100, 100]
 
     second = _relay_batch(sequence=2, previous_hash=batch_hash)
     second = second.model_copy(update={"relay_id": batch.relay_id, "chain_id": batch.chain_id})
@@ -574,6 +575,21 @@ async def test_redis_batch_admission_is_atomic_and_duplicate_safe(redis_client):
         quota_bytes=1000,
         payload_bytes=100,
     ) == 1
+    assert await redis_client.xlen("raw_logs_queue") == 2
+
+    platform_rejected = second.model_copy(
+        update={"sequence": 3, "previous_batch_hash": second_hash}
+    )
+    assert await _admit_batch(
+        redis_client,
+        relay_context,
+        platform_rejected,
+        "f" * 64,
+        [json.dumps({"event_uid": "over-platform-quota"})],
+        quota_bytes=1000,
+        platform_quota_bytes=200,
+        payload_bytes=100,
+    ) == -5
     assert await redis_client.xlen("raw_logs_queue") == 2
 
     wrong_epoch = _relay_batch()

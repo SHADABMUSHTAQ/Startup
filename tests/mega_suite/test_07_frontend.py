@@ -2,6 +2,7 @@
 Layer 7: Frontend Integration & Export Tests
 Tests data export, reporting, and frontend API endpoints.
 """
+import json
 import pytest
 from datetime import datetime, timezone
 
@@ -69,6 +70,125 @@ class TestUserWorkflows:
         """Test data status/health endpoint."""
         resp = await client.get("/api/v1/data/status", headers=authenticated_user)
         assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_required_signing_status_distinguishes_legacy_and_verified_agents(
+        self,
+        client,
+        authenticated_user,
+        db,
+        redis_client,
+        agent_public_key_pem,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("AGENT_EVENT_SIGNATURE_MODE", "required")
+        me = await client.get("/api/v1/auth/me", headers=authenticated_user)
+        tenant_id = me.json()["user"]["tenant_id"]
+        agent_id = "WARSOC_AGENT_STATUS_CONTRACT"
+        now = datetime.now(timezone.utc).isoformat()
+        await db["agents"].insert_one(
+            {
+                "tenant_id": tenant_id,
+                "agent_id": agent_id,
+                "public_key": agent_public_key_pem,
+                "status": "active",
+                "version": "4.2.4-Native",
+                "last_seen": datetime.now(timezone.utc),
+                "sensor_status": {
+                    "audit_policy_status": "configured",
+                    "channels": {
+                        "Security": {"status": "ok"},
+                        "System": {"status": "ok"},
+                    },
+                    "pos_sacl_path_count": 0,
+                    "pos_audit_log": {"configured": False, "present": False},
+                },
+            }
+        )
+        await redis_client.set(f"status:{tenant_id}:{agent_id}", now, ex=600)
+        await redis_client.set(
+            f"warsoc:agent_sensor:{agent_id}",
+            json.dumps(
+                {
+                    "audit_policy_status": "configured",
+                    "channels": {
+                        "Security": {"status": "ok"},
+                        "System": {"status": "ok"},
+                    },
+                    "spool": {"blocked": False},
+                }
+            ),
+            ex=600,
+        )
+        signature_key = f"warsoc:agent_event_signature:{tenant_id}:{agent_id}"
+        await redis_client.set(
+            signature_key,
+            json.dumps(
+                {
+                    "status": "unsigned_legacy",
+                    "ready": False,
+                    "last_event_at": now,
+                    "last_signed_event_at": None,
+                    "endpoint_name": "LEGACY-POS",
+                    "agent_version": "4.2.4-Native",
+                }
+            ),
+            ex=600,
+        )
+
+        legacy = await client.get("/api/v1/data/status", headers=authenticated_user)
+        assert legacy.status_code == 200, legacy.text
+        legacy_body = legacy.json()
+        assert legacy_body["event_signature_mode"] == "required"
+        assert legacy_body["endpoint_status"] == "degraded"
+        assert legacy_body["agents_signing_ready"] == 0
+        assert legacy_body["data"][0]["endpoint_name"] == "LEGACY-POS"
+        assert legacy_body["data"][0]["event_signing"]["status"] == "unsigned_legacy"
+        legacy_coverage = await client.get(
+            "/api/v1/compliance/coverage",
+            headers=authenticated_user,
+        )
+        assert legacy_coverage.status_code == 200, legacy_coverage.text
+        legacy_peca = next(
+            row for row in legacy_coverage.json()["coverage"]
+            if row["pack_id"] == "peca_forensic"
+        )
+        assert legacy_peca["event_signature_mode"] == "required"
+        assert legacy_peca["signing_ready_agents"] == 0
+        assert legacy_peca["status"] == "not_configured"
+
+        await redis_client.set(
+            signature_key,
+            json.dumps(
+                {
+                    "status": "verified",
+                    "ready": True,
+                    "last_event_at": now,
+                    "last_signed_event_at": now,
+                    "endpoint_name": "SIGNED-POS",
+                    "agent_version": "4.2.7-Native-Signed",
+                }
+            ),
+            ex=600,
+        )
+        verified = await client.get("/api/v1/data/status", headers=authenticated_user)
+        assert verified.status_code == 200, verified.text
+        verified_body = verified.json()
+        assert verified_body["endpoint_status"] == "active"
+        assert verified_body["agents_signing_ready"] == 1
+        assert verified_body["data"][0]["health"] == "active"
+        assert verified_body["data"][0]["endpoint_name"] == "SIGNED-POS"
+        verified_coverage = await client.get(
+            "/api/v1/compliance/coverage",
+            headers=authenticated_user,
+        )
+        assert verified_coverage.status_code == 200, verified_coverage.text
+        verified_peca = next(
+            row for row in verified_coverage.json()["coverage"]
+            if row["pack_id"] == "peca_forensic"
+        )
+        assert verified_peca["signing_ready_agents"] == 1
+        assert verified_peca["status"] == "active"
 
 
 if __name__ == "__main__":

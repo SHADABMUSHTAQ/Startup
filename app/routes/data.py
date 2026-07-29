@@ -6,6 +6,11 @@ from app.database import get_db
 from app.routes.auth import get_current_user
 from app.utils.rbac import RoleChecker
 from app.utils.archive_reader import fetch_archived_documents
+from app.utils.endpoint_health import (
+    EVENT_SIGNATURE_STATUS_KEY_PREFIX,
+    decode_event_signature_status,
+    event_signature_mode,
+)
 from app.utils.security_policy import effective_agent_limit
 
 router = APIRouter()
@@ -251,8 +256,10 @@ async def agent_status(
             for agent in agents
             if str(agent.get("agent_id") or "")
         ]
+        signature_mode = event_signature_mode()
         live_status_by_agent = {}
         sensor_status_by_agent = {}
+        event_signature_by_agent = {}
         if redis_client is not None and registered_agents:
             status_keys = [
                 f"status:{tenant_id}:{agent_id}"
@@ -262,7 +269,11 @@ async def agent_status(
                 f"warsoc:agent_sensor:{agent_id}"
                 for _, agent_id in registered_agents
             ]
-            values = await redis_client.mget([*status_keys, *sensor_keys])
+            signature_keys = [
+                f"{EVENT_SIGNATURE_STATUS_KEY_PREFIX}:{tenant_id}:{agent_id}"
+                for _, agent_id in registered_agents
+            ]
+            values = await redis_client.mget([*status_keys, *sensor_keys, *signature_keys])
             split_at = len(registered_agents)
             live_status_by_agent = {
                 agent_id: values[index]
@@ -272,11 +283,19 @@ async def agent_status(
                 agent_id: values[split_at + index]
                 for index, (_, agent_id) in enumerate(registered_agents)
             }
+            signature_split_at = split_at * 2
+            event_signature_by_agent = {
+                agent_id: values[signature_split_at + index]
+                for index, (_, agent_id) in enumerate(registered_agents)
+            }
 
         data = []
         for agent, agent_id in registered_agents:
             live_last_seen = live_status_by_agent.get(agent_id)
             sensor_raw = sensor_status_by_agent.get(agent_id)
+            signature_status = decode_event_signature_status(
+                event_signature_by_agent.get(agent_id)
+            )
             sensor_status = agent.get("sensor_status") if isinstance(agent.get("sensor_status"), dict) else {}
             if sensor_raw:
                 try:
@@ -295,11 +314,17 @@ async def agent_status(
             spool_status = sensor_status.get("spool") if isinstance(sensor_status, dict) else {}
             spool_status = spool_status if isinstance(spool_status, dict) else {}
             spool_blocked = bool(spool_status.get("blocked", False))
+            signature_ready = bool(signature_status["ready"])
             health = "offline"
             if online:
                 health = (
                     "active"
-                    if required_channels_ok and audit_configured and not spool_blocked
+                    if (
+                        required_channels_ok
+                        and audit_configured
+                        and not spool_blocked
+                        and (signature_mode != "required" or signature_ready)
+                    )
                     else "degraded"
                 )
 
@@ -309,19 +334,30 @@ async def agent_status(
             data.append(
                 {
                     "agent_id": agent_id,
+                    "endpoint_name": signature_status["endpoint_name"] or agent_id,
                     "last_seen": last_seen,
-                    "version": agent.get("version"),
+                    "version": signature_status["agent_version"] or agent.get("version"),
                     "online": online,
                     "health": health,
                     "sensor_status": sensor_status,
+                    "event_signing": {
+                        "mode": signature_mode,
+                        "status": signature_status["status"],
+                        "ready": signature_ready,
+                        "last_event_at": signature_status["last_event_at"],
+                        "last_signed_event_at": signature_status["last_signed_event_at"],
+                    },
                 }
             )
 
         data.sort(key=lambda item: item.get("last_seen") or "", reverse=True)
         online_count = sum(1 for item in data if item["online"])
         degraded_count = sum(1 for item in data if item["health"] == "degraded")
+        offline_count = sum(1 for item in data if item["health"] == "offline")
+        active_count = sum(1 for item in data if item["health"] == "active")
+        signing_ready_count = sum(1 for item in data if item["event_signing"]["ready"])
         telemetry_status = (
-            "active" if online_count and degraded_count == 0 else (
+            "active" if data and active_count == len(data) else (
                 "degraded" if online_count else "offline"
             )
         )
@@ -331,10 +367,13 @@ async def agent_status(
             "max_agents": max_agents,
             "services_healthy": redis_client is not None,
             "endpoint_status": telemetry_status,
+            "event_signature_mode": signature_mode,
             "data": data,
             "agents_online": online_count,
             "registered_agents": len(data),
             "agents_degraded": degraded_count,
+            "agents_offline": offline_count,
+            "agents_signing_ready": signing_ready_count,
             "telemetry": {
                 "status": telemetry_status,
                 "last_pulse_at": data[0]["last_seen"] if data else None,

@@ -1,5 +1,7 @@
 [CmdletBinding()]
 param(
+    [ValidatePattern('^\d+\.\d+\.\d+$')]
+    [string]$Version = "4.2.7",
     [string]$AgentPath = "",
     [string]$InstallerPath = "",
     [string]$NssmPath = "",
@@ -16,7 +18,7 @@ if (-not $AgentPath) {
     $AgentPath = Join-Path $repositoryRoot "agent\dist\warsoc_agent.exe"
 }
 if (-not $InstallerPath) {
-    $InstallerPath = Join-Path $repositoryRoot "Output\warsoc_installer-4.2.6.exe"
+    $InstallerPath = Join-Path $repositoryRoot "Output\warsoc_installer-$Version.exe"
 }
 if (-not $NssmPath) {
     $NssmPath = Join-Path $repositoryRoot "tools\nssm\nssm.exe"
@@ -28,7 +30,7 @@ if (-not $TenantPolicyPath) {
     $TenantPolicyPath = Join-Path $repositoryRoot "agent\tenant_policy.json"
 }
 if (-not $OutputPath) {
-    $OutputPath = Join-Path $repositoryRoot "Output\pilot_hash_manifest-4.2.6.json"
+    $OutputPath = Join-Path $repositoryRoot "Output\pilot_hash_manifest-$Version.json"
 }
 
 $resolvedAgent = (Resolve-Path -LiteralPath $AgentPath).Path

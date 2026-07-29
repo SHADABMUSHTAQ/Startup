@@ -8,7 +8,7 @@ This document describes what the current source code does. It is not a sales cla
 
 ## 1. Current Verdict
 
-WarSOC currently has a coherent end-to-end architecture for a maximum of 50 Windows agents per tenant:
+WarSOC currently has a coherent end-to-end architecture. The application enforces a maximum of 50 Windows agents per tenant, while the current single-host infrastructure proof covers 50 aggregate concurrent agents rather than an unlimited number of 50-agent tenants:
 
 1. A tenant admin generates a one-time activation code.
 2. The Windows installer validates that code, configures native Windows auditing, and installs the agent as an NSSM service.
@@ -22,11 +22,13 @@ WarSOC currently has a coherent end-to-end architecture for a maximum of 50 Wind
 10. Compliance views, search, CSV exports, and PDF reports can merge Mongo hot records with verified Azure archive records.
 11. The dashboard separates normal endpoint telemetry, immutable detection evidence, and mutable operator incidents.
 
-The current source release is Windows agent `4.2.6-Native-Signed`. Exact-machine validation on 2026-07-21 proved enrollment, fresh heartbeats, SIEM alerting, PECA Event 4688 evidence, FBR invoice evidence, native FBR database-deletion correlation, 7,191 verified endpoint signatures and zero rejected signatures. The installer is 17,471,600 bytes with SHA-256 `F80C22FCD65FD5755B8483F105FCA4AA3FFFFFBAB4E29B807828D4CC406CDAE0`.
+The approved published release is Windows agent `4.2.6-Native-Signed`. Exact-machine validation on 2026-07-21 proved enrollment, fresh heartbeats, SIEM alerting, PECA Event 4688 evidence, FBR invoice evidence, native FBR database-deletion correlation, 7,191 verified endpoint signatures and zero rejected signatures. The installer is 17,471,600 bytes with SHA-256 `F80C22FCD65FD5755B8483F105FCA4AA3FFFFFBAB4E29B807828D4CC406CDAE0`.
+
+The working source is now `4.2.7-Native-Signed` because it adds a bounded, DTD/entity-rejecting native Windows XML parser guard after the 4.2.6 artifact was published. Version 4.2.7 is an unbuilt candidate: it has no approved installer, manifest or CDN object and is not a production claim. Existing 4.2.6 agents remain supported. This version split prevents different binary bytes from being released again under the already published 4.2.6 identity.
 
 The disabled network-relay candidate has also passed 32 focused parser, schema, signing, encrypted-spool, outbox, Redis-admission, lifecycle, source-isolation and hybrid-correlation tests. A locally built 29,263,064-byte Windows relay candidate had SHA-256 `04602CBBCEEA8EF2BE18D5FD1C9DC2F89DADD0B9B8BA140C9B4444264BE055E3` and produced no detection in an enabled Microsoft Defender custom scan. It is unsigned, was not installed as a Windows service, and has not received real-device traffic; these facts keep its production gate closed.
 
-The complete current backend suite closes with 346 passed, 3 explicitly skipped and zero application failures. The current frontend passes ESLint and the production Vite build. These local facts do not by themselves prove that a remote backend, Vercel deployment or CDN object runs the same commit/artifact; production acceptance must compare the deployed commit, API behavior and downloaded artifact hash.
+The complete current backend suite closes with 369 passed, 3 explicitly skipped and zero application failures. The current frontend passes ESLint and the production Vite build. These local facts do not by themselves prove that a remote backend, Vercel deployment or CDN object runs the same commit/artifact; production acceptance must compare the deployed commit, API behavior and downloaded artifact hash.
 
 ## 2. Product Boundary
 
@@ -280,9 +282,14 @@ The backend stores the state on the agent record and exposes it through `GET /ap
 
 Dashboard health means:
 
-- `Active`: enrolled agent is reporting and required telemetry is healthy.
-- `Degraded`: the agent is reporting but a channel/audit requirement is incomplete or local spool backpressure is active. An unconfigured optional POS feed is reported separately and does not invent FBR coverage.
+- `Active`: every registered non-revoked agent is reporting, required telemetry is healthy, and event signing is ready when production is in `required` mode.
+- `Degraded`: at least one agent is reporting but a channel/audit/signing requirement is incomplete, local spool backpressure is active, or another registered agent is offline. An unconfigured optional POS feed is reported separately and does not invent FBR coverage.
 - `Not Configured` or offline: no healthy enrolled reporting agent is available for the requested coverage.
+
+The frontend Endpoint Fleet consumes this API decision directly. It shows seat use,
+online/degraded/offline counts, native Security/System channel health, event-signing
+readiness, FBR source readiness, spool pressure, version and last-seen time. It does
+not infer compliance or signature readiness from local browser state.
 
 ## 8. Durable Agent Delivery
 
@@ -306,7 +313,7 @@ This is at-least-once delivery with event-level duplicate suppression, not fire-
 - The API verifies the canonical payload hash, agent identity, enrolled public key and Ed25519 signature before admitting a signed event to Redis.
 - A supplied but invalid signature always fails with HTTP 401 and is never treated as a legacy event.
 - `AGENT_EVENT_SIGNATURE_MODE=observe` accepts unsigned legacy agents while marking their evidence `agent_jwt_only`; verified events are marked `agent_signed`.
-- Production may switch to `AGENT_EVENT_SIGNATURE_MODE=required` only after every active agent is upgraded and the unsigned-event metric remains zero for the agreed observation window.
+- The production candidate defaults to `AGENT_EVENT_SIGNATURE_MODE=required`. It rejects unsigned endpoint evidence; every endpoint must install a signed-agent release before this candidate is deployed. Development keeps an explicit observe-mode path for compatibility tests only.
 - Signature verification proves which enrolled endpoint key signed the accepted payload. It does not prove that an endpoint was uncompromised or that a DPAPI-protected software key could not be abused by a SYSTEM-level attacker.
 
 ### 8.2 Agent 4.2.6 release delta
@@ -321,6 +328,14 @@ Agent `4.2.6-Native-Signed` is a compatibility and key-protection release over `
 
 The release does **not** add Sysmon, packet capture, firewall-device collection, proprietary POS database parsing or new customer-facing SIEM rules. Detection behavior is controlled by the backend catalogs and worker logic, not by the installer version alone.
 
+### 8.3 Agent 4.2.7 candidate state
+
+The repository source is labelled `4.2.7-Native-Signed` so a future installer rebuilt
+from the post-4.2.6 XML-guard source cannot be confused with the already published
+4.2.6 bytes. No 4.2.7 installer or manifest was built, uploaded or declared production
+by this local closure. The approved public artifact remains 4.2.6 until the normal
+build, Defender/hash, manifest, Azure-upload and production-preflight gates pass.
+
 ## 9. API Ingestion Contract
 
 ### 9.1 Agent telemetry
@@ -328,7 +343,9 @@ The release does **not** add Sysmon, packet capture, firewall-device collection,
 - Endpoint: `POST /api/v1/ingest/pulse`.
 - Requires valid agent authentication.
 - Tenant and agent identity are taken from the authenticated token, not trusted from client payload fields.
-- Enforces request-size, event-count, rate, and tenant daily-ingest controls.
+- Enforces request-size, event-count, rate, tenant daily-ingest and deployment-wide daily-ingest controls.
+- Tenant and deployment counters are admitted atomically in Redis. A tenant limit returns HTTP 429; the deployment ceiling returns HTTP 503 so the agent retains and retries instead of overloading the single host.
+- `INGEST_PLATFORM_DAILY_BYTES_MAX` defaults to 3 GiB/day, matching the current 50-agent aggregate sizing model. It is a host-protection boundary, not a customer entitlement and not proof that every event mix can sustain that volume.
 - Rejects new batches with HTTP 503 when `raw_logs_queue` reaches the configured admission boundary; the agent retains and retries them.
 - Rejects banned sources according to the active mitigation state.
 - Accepted events enter Redis Streams.
@@ -381,6 +398,7 @@ The release does **not** add Sysmon, packet capture, firewall-device collection,
 - The raw stream is never blindly trimmed to enforce memory. `RAW_STREAM_MAX_ENTRIES` applies admission backpressure while acknowledged-entry retention performs safe trimming.
 - Metrics expose raw depth, cumulative safe trims, and the stream-retention worker heartbeat so retention can be proven rather than inferred.
 - Production Redis uses a 640 MB `noeviction` dataset ceiling inside a 1 GB container, leaving allocator/AOF headroom while preserving fail-closed admission behavior.
+- Endpoint and disabled relay admission share the same deployment-wide daily byte counter, so later network enablement cannot bypass the host budget.
 
 ### 10.4 Unified worker
 
@@ -660,6 +678,34 @@ Production was measured again on 2026-07-16 for an active tenant. Both `security
 
 ## 15. Azure Cold Archive Transaction
 
+### 15.0 Data classification and privacy boundary
+
+Azure evidence storage is private infrastructure, but it must be treated as PII-bearing. The archiver serializes the Mongo documents selected for a batch; it does not anonymize the batch before upload. Depending on the source and collection, an archive can contain tenant and agent identifiers, endpoint names, usernames or actors, source/destination IP addresses, process command lines, file paths, timestamps, alert context and other security telemetry that may identify a person or device.
+
+Current application-level protection is not uniform across every collection:
+
+- FBR and PECA encrypt their sensitive payload fields, including `message`, raw-event variants and `processed_data`, with the configured Fernet key before Mongo and Azure storage.
+- Their routing metadata and selected identifiers can remain readable so records can be located, attributed and verified.
+- General SIEM evidence and alerts are not uniformly field-encrypted before archival. They rely on Azure server-side encryption at rest, TLS in transit, private-container authorization and WarSOC tenant/RBAC controls.
+- The archive SHA-256 companion and immutable policy prove integrity and prevent premature modification/deletion; they do not anonymize data or prevent an authorized reader from seeing readable fields.
+
+The operating rule is data minimization: collect only telemetry needed for a documented SIEM, PECA or FBR purpose; do not collect general packet payloads, document contents, credentials, email bodies or unrelated application data. POS invoice evidence must contain the defined audit fields rather than complete proprietary databases or customer transaction payloads.
+
+Before onboarding a tenant, the contract/onboarding record must identify the evidence purposes, data classes, promised retention, Azure geography, authorized roles and incident/support access process. A locked WORM policy cannot satisfy an early deletion request during its retention period, so the legal/contractual retention basis must be approved before a new container policy is locked. Azure hosting and encryption are safeguards, not a declaration that WarSOC is automatically compliant with every privacy law.
+
+### 15.0.1 Post-pilot storage separation checkpoint
+
+Retention segmentation is intentionally deferred until the current pilot trial closes. The existing locked `warsoc-cold-storage` fallback remains safe against early deletion but physically over-retains SIEM and PECA evidence for 2,190 days. After the trial and before new commercial retention promises are activated:
+
+1. Inventory existing containers, policies, ledger rows, tenant retention values and current archive backlog.
+2. Create private `warsoc-retention-90`, `warsoc-retention-180`, `warsoc-retention-270`, `warsoc-retention-360`, `warsoc-peca-365` and `warsoc-fbr-2190` containers in the private evidence account.
+3. Validate each policy while unlocked with harmless data, then lock the exact approved duration.
+4. Add the duration-specific environment variables only after all referenced containers exist and are locked.
+5. Recreate only `storage-archiver`, archive controlled samples for every class, verify the recorded container/hash/immutability and retrieve them through authorized APIs.
+6. Leave existing blobs in the original 2,190-day container. They cannot be shortened or moved as a way to evade the original lock.
+
+Storage separation and compute migration are separate changes. Do not alter archive routing during the DigitalOcean-to-Azure cutover.
+
 ### 15.1 Production scheduler
 
 - Production service: `storage-archiver` in `docker-compose.prod.yml`.
@@ -919,14 +965,14 @@ The API creates the incident collections and indexes and performs the bounded ho
 
 - DigitalOcean commit `526c55b` and Vercel commit `952e96b` are retained only as historical verified baselines. They are not evidence of the currently deployed commit after later pushes.
 - The 2026-07-22 working release contains agent `4.2.6-Native-Signed`, the custom-contract quote correction, non-cacheable invitation handoff, production-disabled manual injection and optional duration-aware archive-container routing.
-- The complete backend regression closed on 2026-07-28 with `346 passed`, `3 skipped`, and zero application failures. The skips were the explicitly opt-in `E2E=1` grand-master test and two Git tracking checks when Git was unavailable inside the runtime image. The focused security closure has 12 passing tests covering public auth response fields, signed POS replay protection, heartbeat freshness, 2FA throttling, evidence RBAC, CSV formula safety, upload cleanup, and purge path containment.
-- The same 349 collected tests were rerun in bounded groups after the single-process Docker wrapper exceeded six minutes while remaining CPU-active. The bounded result was `346 passed` and `3 skipped`: 116 mega-suite passes with two skips, plus 230 non-mega passes with one skip. No test was removed or reclassified. This is a test-runner resource/isolation observation, not evidence of an application failure.
+- The complete maintained backend regression closed on 2026-07-29 with `369 passed`, `3 skipped`, and zero application failures. The skips are explicit environment-dependent checks; no failed test was reclassified as skipped. The focused security closure covers public auth response fields, signed POS replay protection, heartbeat freshness, 2FA throttling, evidence RBAC, CSV formula safety, upload cleanup, purge path containment, tenant/deployment quotas, endpoint-signing readiness and the shared endpoint/relay ingest ceiling.
+- Pytest discovery is now bounded to the maintained `tests/` tree. Root-level live-fire, scratch, browser and binary-output files remain outside the default regression run instead of causing unrelated collection failures. This changes test discovery hygiene, not application behavior.
 - The PECA worker integration test now submits and verifies all 11 catalog controls through authenticated signed ingestion, Redis, the PECA consumer and `peca_forensic_logs`; an FBR control event remains excluded from the PECA vault.
-- `pip-audit` reported no known vulnerability in the pinned backend dependency set on 2026-07-28. Bandit reported no high-severity issue. Its medium findings were the local Windows Event XML `ElementTree` parser and uses of `0.0.0.0`; most `0.0.0.0` findings are sentinel values or allow/block safety entries, while the disabled syslog profile intentionally binds inside its container. Windows Event XML is obtained from the native Windows Event Log API rather than an upload endpoint, but the parser trust boundary remains an accepted hardening item rather than a claim of arbitrary-XML safety.
+- On 2026-07-29, a fresh candidate image built from the current Dockerfile contained `cryptography 49.0.0`, `setuptools 83.0.0`, `wheel 0.46.2`, and no `ecdsa`; its installed-environment `pip-audit` emitted `No known vulnerabilities found`. A direct pinned-requirements audit also reported no known vulnerability. The older cached development image is not release evidence and must not be promoted. Bandit reported no high-severity/high-confidence issue across `app`, `agent`, and `scripts`. Windows Event XML is obtained from the native Windows Event Log API and the current bounded parser rejects DTD/entity declarations before parsing.
 - SIEM source routing now requires trusted web-log provenance for web and phishing signatures while preserving native Event `4688` command-line detection. This prevents Windows events from being mislabeled as Web-WAF or phishing detections.
 - The `security_alerts` unique index now applies only to documents with a string `alert_uid`; the startup migration handles both Mongo index options and key-spec conflicts, while legacy rows without `alert_uid` remain readable.
 - Compliance evidence responses expose safe hot/cold provenance, and the frontend evidence tab no longer treats an API/archive failure as a valid empty vault.
-- Frontend lint and the production Vite build pass. Vercel now declares HSTS, CSP, clickjacking, MIME-sniffing, referrer, and browser-permission headers. The PDF sanitizer is pinned to DOMPurify 3.4.12 and React Router is pinned to 7.18.1 to avoid the client-side redirect/XSS advisories present in older releases. The registry still reports the 7.18.1 RSC server-action CSRF advisory; that code path is not reachable in this Vite client-only SPA, which defines no React Server Components or Router actions. The frontend uses `/incidents`, `/incidents/summary`, `/logs/live?source=siem&aggregate=true`, the custom-contract quote payload and the one-time invitation-link response. The main JavaScript chunk remains a performance warning at approximately 1.69 MB minified / 535 KB gzip.
+- Frontend lint and the production Vite build pass. Vercel declares HSTS, CSP, clickjacking, MIME-sniffing, referrer, and browser-permission headers. The PDF sanitizer is pinned to DOMPurify 3.4.12 and React Router is pinned to 7.18.2. The registry still reports the React Router RSC server-action CSRF advisory; that code path is not reachable in this Vite client-only SPA, which defines no React Server Components or Router actions. The frontend uses `/incidents`, `/incidents/summary`, `/logs/live?source=siem&aggregate=true`, `/data/status`, the custom-contract quote payload and the one-time invitation-link response. Its new Endpoint Fleet was exercised against an isolated authenticated required-signing tenant. The main JavaScript chunk remains a performance warning at approximately 1.73 MB minified / 544 KB gzip.
 - `/auth/me` uses an explicit public-field allowlist, so encrypted 2FA material and future internal database fields cannot be returned accidentally.
 - Raw evidence detail is collection-scoped by role and entitlement: admin receives SIEM plus entitled compliance evidence, auditor receives entitled compliance evidence, and manager/analyst receive SIEM evidence only. Management-audit reads are admin-only.
 - Uploaded CSV source files are temporary parsing artifacts. Successful and failed uploads remove the physical source; failed partial imports are rolled back. `scripts/purge_legacy_upload_sources.py` provides a dry-run-first cleanup for files retained by older releases.
@@ -1018,9 +1064,9 @@ Status meanings:
 | Component | Responsibility and data path | Status | Current production truth |
 |---|---|---|---|
 | DNS and TLS | `warsoc.tech` to Vercel; `api.warsoc.tech` to DigitalOcean/Nginx | PROVEN | DNS separation, HTTPS certificates, HSTS and certificate validity passed preflight `15545d8ce7`. |
-| Vercel frontend | Browser UI, auth hydration, dashboard, compliance and team workflows | CANDIDATE-PROVEN | The previous production baseline passed login and bounded reads. The local candidate now consumes `/incidents`, `/incidents/summary`, and aggregated SIEM evidence; lint/build pass, but the paired production deployment and network-path smoke are still required. |
+| Vercel frontend | Browser UI, auth hydration, dashboard, endpoint fleet, compliance and team workflows | CANDIDATE-PROVEN | The previous production baseline passed login and bounded reads. The local candidate consumes `/incidents`, `/incidents/summary`, aggregated SIEM evidence and backend-owned endpoint/signing health; authenticated local browser smoke plus lint/build pass, but the paired production deployment and network-path smoke are still required. |
 | Nginx gateway | TLS termination, security headers and reverse proxy | PROVEN with observation | Public headers/CORS/private-port checks pass. Real ingest returns 200. Some request bodies are buffered to temporary files; disk impact needs pilot measurement. |
-| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | CANDIDATE-PROVEN | The production baseline is healthy. The candidate adds tenant-scoped incident APIs and startup projection/indexing; all 346 executable backend tests pass with three explicit skips, but the new routes still require production smoke after deployment. |
+| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | CANDIDATE-PROVEN | The production baseline is healthy. The candidate adds tenant-scoped incident APIs, startup projection/indexing and shared endpoint-signing health; all 369 executable backend tests pass with three explicit skips, but the new routes still require production smoke after deployment. |
 | Authentication/session | Login, HttpOnly access cookie, CSRF double-submit and `/auth/me` | PROVEN | Existing tenant login, auth context and profile returned 200. Public signup returned 403. |
 | Manual sales flow | Quote/contact to operator follow-up; no automatic payment | PROVEN | Quote and contact requests returned 200; legacy payment webhook returned 404. No Safepay dependency is required. |
 | Tenant provisioning | Super-admin creates tenant, admin, packs and seat limit | PROVEN | Disposable production tenant provisioning and login passed in run `b87116c8af`. |
@@ -1052,7 +1098,7 @@ Status meanings:
 | Email daemon | Queue, retry, SMTP delivery and DLQ | OPTIONAL/PARTIAL | Security-alert email is disabled. Quote/contact records persist before email queueing. Team invitations return a secure manual handoff link even when SMTP is unavailable. Current SMTP quota/delivery must not be assumed. |
 | Metrics and health | Worker, queue, agent, DLQ, detection and dashboard telemetry | PROVEN | Protected production metrics were read successfully. Dashboard live-read histograms are deployed on the backend. |
 | Independent Mongo backup | Operational disaster recovery separate from evidence archive | CANDIDATE-PROVEN | Drill `20260721T200605Z-7541a279` verified SHA-256, decrypted a production-format archive, and restored 156,671 documents across 18 collections with zero failures into a network-disabled disposable MongoDB. The restore drill is now tracked and uses a temporary disk-backed Docker volume instead of a 2 GiB RAM-backed filesystem; the volume is deleted after the drill. Repeat with the final Azure-hosted production backup during cutover. |
-| Endpoint event authenticity | Per-event Ed25519 signature tied to the enrolled agent key before Redis admission | PROVEN IN OBSERVE MODE | Agent/API tests and exact-machine flow pass with 7,191 verified and zero rejected signatures. Keep `observe` until every active endpoint is 4.2.6 and active unsigned traffic remains zero for the agreed window, then switch to `required`. |
+| Endpoint event authenticity | Per-event Ed25519 signature tied to the enrolled agent key before Redis admission | REQUIRED CANDIDATE | Agent/API tests and exact-machine flow pass with 7,191 verified and zero rejected signatures. Accepted-event signature readiness is exposed per endpoint and gates health/coverage. The candidate defaults to required, while the currently deployed `.env.prod` remains unchanged until the approved deployment. |
 | Physical retention classes | Match actual Azure lock duration to compliance and general retention terms | CODE COMPLETE / CLOUD PENDING | Routing and readback support separate SIEM, PECA, FBR and general containers with safe legacy fallback. Existing blobs remain in the locked 2,190-day container; new routing must not be enabled until target containers and locked policies exist. |
 | Installer code signing | Publisher reputation and Defender trust | PARTIAL | Exact hash allowlisting supports the pilot while Defender stays enabled; the binary remains unsigned. |
 | Capacity ceiling | Maximum 50 active agents per tenant | PROVEN for synthetic soak | Prior production soak registered 50/50, rejected seat 51 and met latency. Real customer mix must still be monitored because event volume per endpoint varies. |
