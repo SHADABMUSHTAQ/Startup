@@ -1,0 +1,268 @@
+/* ============================================
+   WARSOC — ABOUT V2
+   Clean stats + pillars grid layout
+   Color theme: dark bg, --accent-lime, --accent-blue
+============================================ */
+
+:root {
+  --accent-blue: #47A5EF;
+  --accent-lime: #B7EA48;
+  --text-primary: #ffffff;
+  --text-secondary: #94a3b8;
+}
+
+/* ── SECTION WRAPPER ── */
+.about-v2-section {
+  position: relative;
+  padding: 7rem 24px;
+  background: transparent;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 0.7s ease, transform 0.7s ease;
+}
+
+.about-v2-section.about-v2-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── AMBIENT GLOWS ── */
+.about-glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.about-glow-1 {
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(71, 165, 239, 0.10) 0%, transparent 70%);
+  top: -100px;
+  left: -150px;
+}
+
+.about-glow-2 {
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, rgba(183, 234, 72, 0.07) 0%, transparent 70%);
+  bottom: -80px;
+  right: -100px;
+}
+
+/* ── INNER CONTAINER ── */
+.about-v2-container {
+  position: relative;
+  z-index: 1;
+  max-width: 1100px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4rem;
+}
+
+/* ── HEADER ── */
+.about-v2-header {
+  text-align: center;
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.about-v2-tag {
+  display: inline-block;
+  font-family: var(--font-code, monospace);
+  font-size: 0.85rem;
+  color: var(--accent-lime);
+  letter-spacing: 1.5px;
+  margin-bottom: 1.2rem;
+  opacity: 0.9;
+}
+
+.about-v2-title {
+  font-size: 3rem;
+  font-weight: 800;
+  line-height: 1.15;
+  color: var(--text-primary);
+  margin-bottom: 1.2rem;
+}
+
+.about-v2-accent {
+  color: var(--accent-lime);
+}
+
+.about-v2-subtitle {
+  font-size: 1.05rem;
+  color: var(--text-secondary);
+  line-height: 1.75;
+}
+
+/* ── STATS ROW ── */
+.about-v2-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.5rem;
+}
+
+.about-stat-card {
+  background: linear-gradient(145deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));
+  border: 1px solid rgba(71, 165, 239, 0.15);
+  border-radius: 16px;
+  padding: 2rem 1.5rem;
+  text-align: center;
+  transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.about-stat-card:hover {
+  transform: translateY(-6px);
+  border-color: rgba(183, 234, 72, 0.35);
+  box-shadow: 0 16px 40px rgba(71, 165, 239, 0.12), 0 0 0 1px rgba(183,234,72,0.1);
+}
+
+/* Subtle shimmer sweep on stat card hover */
+.about-stat-card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: -75%;
+  width: 50%; height: 100%;
+  background: linear-gradient(120deg, transparent, rgba(183,234,72,0.07), transparent);
+  transition: left 0.55s ease;
+  pointer-events: none;
+}
+.about-stat-card:hover::before {
+  left: 130%;
+}
+
+.about-stat-value {
+  font-size: 2.6rem;
+  font-weight: 800;
+  color: var(--accent-lime);
+  line-height: 1;
+  margin-bottom: 0.5rem;
+}
+
+.about-stat-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+/* ── PILLARS GRID ── */
+.about-v2-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+}
+
+.about-pillar-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1.6rem;
+  background: linear-gradient(145deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+  cursor: default;
+}
+
+.about-pillar-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(183, 234, 72, 0.2);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+/* Left icon circle */
+.pillar-icon-wrap {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(71, 165, 239, 0.15), rgba(183, 234, 72, 0.08));
+  border: 1px solid rgba(71, 165, 239, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-lime);
+  transition: background 0.3s ease, transform 0.3s ease;
+}
+
+.about-pillar-card:hover .pillar-icon-wrap {
+  background: linear-gradient(135deg, rgba(71, 165, 239, 0.25), rgba(183, 234, 72, 0.12));
+  transform: scale(1.1) rotate(-4deg);
+}
+
+.pillar-text h4 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 0.3rem;
+}
+
+.pillar-text p {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  margin: 0;
+}
+
+/* ── STAGGERED SCROLL ANIMATION ── */
+.anim-item {
+  opacity: 0;
+  transform: translateY(22px);
+  transition: opacity 0.55s ease, transform 0.55s ease;
+}
+
+.anim-show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── KEYFRAMES (fallback) ── */
+@keyframes fadeUpCard {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+
+/* ── RESPONSIVE ── */
+@media (max-width: 900px) {
+  .about-v2-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .about-v2-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .about-v2-title {
+    font-size: 2.3rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .about-v2-section {
+    padding: 5rem 16px;
+  }
+
+  .about-v2-stats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+  }
+
+  .about-v2-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .about-v2-title {
+    font-size: 2rem;
+  }
+
+  .about-stat-value {
+    font-size: 2rem;
+  }
+}

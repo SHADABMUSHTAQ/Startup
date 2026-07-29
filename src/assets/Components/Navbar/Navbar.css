@@ -1,0 +1,570 @@
+/* --- WARSOC BRAND VARIABLES --- */
+:root {
+  --nav-bg-glass: rgba(11, 19, 43, 0.85); 
+  --nav-bg-solid: #0B132B; 
+  --nav-dropdown-bg: #131F43; 
+  --nav-border: rgba(71, 165, 239, 0.2); 
+  
+  --nav-text: #f8fafc;
+  --nav-text-muted: #94a3b8;
+  
+  --nav-blue: #47A5EF; 
+  --nav-lime: #B7EA48; 
+}
+
+/* --- BASE NAVBAR --- */
+.navbar-custom {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0; 
+  margin: 0 auto; 
+  width: 100%;
+  max-width: 100%; /* Explicit starting width */
+  height: 90px;
+  z-index: 1000; 
+  
+  /* 🚀 THE FIX 1: Explicitly define ALL base states to prevent snap/flash */
+  background-color: rgba(11, 19, 43, 0); 
+  backdrop-filter: blur(0px);
+  -webkit-backdrop-filter: blur(0px);
+  border-radius: 0px; 
+  border: 1px solid rgba(71, 165, 239, 0); 
+  box-shadow: 0 0px 0px rgba(0,0,0,0);
+  
+  /* 🚀 THE FIX 2: Hardware Acceleration (Forces GPU rendering) */
+  transform: translate3d(0, 0, 0);
+  will-change: max-width, top, background-color, backdrop-filter, padding;
+
+  /* Reverting to 'all' because our base states are now perfectly mapped */
+  transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.home-page > .navbar-custom.navbar-custom {
+  position: fixed;
+  z-index: 10000;
+}
+
+.home-page > .navbar-mobile-overlay.navbar-mobile-overlay {
+  z-index: 9998;
+}
+
+/* Base Container Alignment */
+.navbar-container {
+  display: flex;
+  justify-content: space-between; 
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  max-width: 100%; 
+  margin: 0 auto;
+  padding: 0 7rem; /* Matches your Hero section */
+  transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1); 
+}
+
+/* --- SCROLLED STATE (The Floating Pill) --- */
+.navbar-custom.scrolled {
+  top: 20px; 
+  max-width: 1000px; 
+  height: 70px;
+  border-radius: 50px; 
+  background-color: var(--nav-bg-glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--nav-border); 
+  box-shadow: 0 15px 35px -10px rgba(0, 0, 0, 0.8);
+}
+
+/* Scrolled Container Padding */
+.navbar-custom.scrolled .navbar-container {
+  padding: 0 40px; 
+}
+
+/* --- LOGO SIZING --- */
+.navbar-brand-logo {
+  height: 112px;
+  width: auto;
+  display: block;
+  cursor: pointer;
+  object-fit: contain; /* Stops it from ever squishing */
+  transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.navbar-custom.scrolled .navbar-brand-logo {
+  height: 100px;
+}
+
+.navbar-brand-logo:hover {
+  transform: scale(1.05);
+}
+
+/* --- RIGHT SIDE WRAPPER --- */
+.navbar-right-content {
+  display: flex;
+  align-items: center;
+  gap: 40px;
+}
+
+.navbar-desktop-auth {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* (Leave your links, buttons, and mobile code exactly as they are below here) */
+
+/* --- LINKS --- */
+.navbar-menu-links {
+  display: flex;
+  gap: 30px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  align-items: center;
+}
+
+.navbar-menu-links li a {
+  color: var(--nav-text-muted);
+  text-decoration: none;
+  font-size: 0.95rem;
+  font-weight: 500;
+  position: relative;
+  transition: color 0.3s ease;
+  padding: 5px 0;
+}
+
+.navbar-menu-links li a::after {
+  content: '';
+  position: absolute;
+  width: 0;
+  height: 2px;
+  bottom: 0;
+  left: 0;
+  background-color: var(--nav-lime);
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 2px;
+}
+
+.navbar-menu-links li a:hover {
+  color: #fff;
+}
+
+.navbar-menu-links li a:hover::after {
+  width: 100%;
+}
+
+/* --- DESKTOP LOGIN BUTTON --- */
+.navbar-btn-login {
+  padding: 10px 30px;
+  background: rgba(71, 165, 239, 0.1);
+  color: var(--nav-blue);
+  border: 1px solid var(--nav-blue);
+  border-radius: 30px; 
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.3s ease;
+  letter-spacing: 0.5px;
+}
+
+.navbar-btn-login:hover {
+  background: var(--nav-blue);
+  color: #fff;
+  box-shadow: 0 5px 20px rgba(71, 165, 239, 0.4);
+  transform: translateY(-2px);
+}
+
+.navbar-theme-toggle {
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--nav-text);
+  background: rgba(71, 165, 239, 0.1);
+  border: 1px solid rgba(71, 165, 239, 0.28);
+  border-radius: 50%;
+  box-shadow: none;
+  line-height: 0;
+}
+
+.navbar-theme-toggle::after {
+  display: none;
+}
+
+.navbar-theme-toggle:hover {
+  color: #ffffff;
+  background: rgba(71, 165, 239, 0.22);
+  border-color: rgba(71, 165, 239, 0.5);
+  transform: translateY(-1px);
+  box-shadow: none;
+}
+
+.navbar-theme-toggle span {
+  color: inherit;
+}
+
+/* --- PROFILE DROPDOWN --- */
+.navbar-profile-container { position: relative; padding: 10px 0; }
+.navbar-profile-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.navbar-profile-trigger:hover {
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.navbar-profile-trigger::after {
+  display: none;
+}
+
+.navbar-avatar-circle {
+  width: 40px; height: 40px;
+  background: linear-gradient(135deg, var(--nav-blue), #2563eb);
+  color: white; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 1.1rem;
+  box-shadow: 0 4px 10px rgba(71, 165, 239, 0.3);
+  overflow: hidden;
+}
+
+.navbar-avatar-circle img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.chevron { transition: transform 0.3s ease; }
+.chevron.rotate { transform: rotate(180deg); color: var(--nav-blue); }
+
+.navbar-profile-dropdown {
+  position: absolute; top: 100%; right: 0; width: 240px;
+  background: var(--nav-dropdown-bg); 
+  border: 1px solid var(--nav-border); 
+  border-radius: 12px;
+  opacity: 0; visibility: hidden; transform: translateY(10px);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
+  box-shadow: 0 15px 35px rgba(0,0,0,0.6);
+  z-index: 10001;
+}
+
+.navbar-profile-dropdown.show { opacity: 1; visibility: visible; transform: translateY(0); }
+
+.navbar-dropdown-header { padding: 16px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.navbar-dropdown-header .user-name { color: #fff; font-weight: 600; font-size: 0.95rem; }
+.navbar-dropdown-header .user-email { color: var(--nav-text-muted); font-size: 0.8rem; margin-top: 4px; }
+
+.navbar-dropdown-item { 
+  width: 100%;
+  padding: 14px 16px;
+  color: var(--nav-text-muted);
+  cursor: pointer; 
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  transition: background 0.2s ease, color 0.2s ease;
+  font-size: 0.9rem;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.navbar-dropdown-item::after { display: none; }
+.navbar-dropdown-item:hover {
+  background: rgba(71, 165, 239, 0.1);
+  color: var(--nav-blue);
+  transform: none;
+  box-shadow: none;
+}
+.navbar-dropdown-item svg { flex: 0 0 auto; }
+.navbar-dropdown-item.logout { color: #f87171; border-top: 1px solid rgba(255,255,255,0.05); }
+.navbar-dropdown-item.logout:hover { background: rgba(248, 113, 113, 0.1); color: #fca5a5; }
+
+/* --- SIGN-OUT CONFIRMATION --- */
+.navbar-modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 20000;
+  transform: none;
+  min-height: 100vh;
+}
+
+.navbar-logout-overlay {
+  background: rgba(1, 6, 13, 0.56);
+  backdrop-filter: blur(18px) saturate(82%);
+  -webkit-backdrop-filter: blur(18px) saturate(82%);
+}
+
+.navbar-modal-card {
+  width: 100%;
+  max-width: 480px;
+  color: #f8fafc;
+  overflow: hidden;
+  margin: auto;
+}
+
+.navbar-logout-confirm-modal {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(15, 30, 49, 0.98), rgba(5, 14, 26, 0.99));
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.52), 0 0 0 1px rgba(73, 175, 241, 0.04);
+  animation: navbarLogoutModalIn 0.22s ease-out;
+}
+
+.navbar-logout-confirm-modal button::after {
+  content: none;
+}
+
+.navbar-logout-modal-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 28px 28px 24px;
+}
+
+.navbar-logout-icon {
+  width: 46px;
+  height: 46px;
+  flex: 0 0 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 12px;
+}
+
+.navbar-logout-copy {
+  min-width: 0;
+}
+
+.navbar-logout-copy h3 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 21px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.navbar-logout-copy p {
+  margin: 8px 0 0;
+  color: var(--nav-text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.navbar-logout-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 24px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.navbar-btn-cancel,
+.navbar-btn-danger {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 17px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  cursor: pointer;
+  font-weight: 800;
+  transition: all 0.2s ease;
+  box-shadow: none;
+}
+
+.navbar-btn-cancel {
+  background: transparent;
+  color: #f8fafc;
+}
+
+.navbar-btn-cancel:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(148, 163, 184, 0.42);
+  color: #ffffff;
+}
+
+.navbar-btn-danger {
+  color: #fff1f2;
+  background: linear-gradient(135deg, #e11d48, #be123c);
+  border-color: rgba(251, 113, 133, 0.58);
+}
+
+.navbar-btn-danger:hover {
+  background: linear-gradient(135deg, #f43f5e, #e11d48);
+  box-shadow: 0 10px 22px rgba(225, 29, 72, 0.25);
+  transform: translateY(-1px);
+}
+
+@keyframes navbarLogoutModalIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* =========================================
+   ✅ MOBILE & TABLET RESPONSIVENESS
+========================================= */
+.navbar-mobile-toggle { 
+  display: none; 
+  background: none; 
+  border: none; 
+  cursor: pointer; 
+  padding: 5px;
+  transition: 0.3s;
+}
+
+.navbar-mobile-auth { display: none; }
+.navbar-mobile-overlay { display: none; }
+
+@media (max-width: 992px) {
+  .navbar-container {
+    padding: 0 2rem; /* Mobile devices shouldn't have 7rem padding */
+  }
+
+  .navbar-mobile-toggle { 
+      display: block; 
+      position: relative;
+  z-index: 1001;
+}
+
+.navbar-toggle-icon {
+  color: var(--nav-text-muted);
+}
+
+.navbar-custom.menu-open .navbar-toggle-icon {
+  color: var(--nav-lime);
+}
+  
+  .navbar-desktop-auth { display: none; }
+
+  .navbar-custom.scrolled {
+    max-width: 95%; 
+    border-radius: 20px;
+  }
+
+  .navbar-mobile-overlay {
+      display: block;
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      z-index: 998;
+      opacity: 0; visibility: hidden;
+      transition: all 0.3s ease;
+  }
+  .navbar-mobile-overlay.active { opacity: 1; visibility: visible; }
+
+  .navbar-right-content {
+    position: fixed; top: 0; right: 0; width: 300px; height: 100vh;
+    background: var(--nav-bg-solid);
+    border-left: 1px solid var(--nav-border);
+    flex-direction: column; justify-content: flex-start;
+    padding: 100px 30px 40px; gap: 30px;
+    transform: translateX(100%); 
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: -10px 0 40px rgba(0,0,0,0.8);
+    z-index: 999;
+  }
+
+  .navbar-right-content.active { transform: translateX(0); }
+
+  .navbar-menu-links { flex-direction: column; align-items: flex-start; width: 100%; gap: 30px; }
+  .navbar-menu-links li { width: 100%; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 10px; }
+  .navbar-menu-links li a { font-size: 1.1rem; color: #fff; width: 100%; display: block; }
+  .navbar-menu-links li a::after { display: none; }
+  .navbar-menu-links li a:hover { color: var(--nav-lime); transform: translateX(5px); }
+
+  .navbar-mobile-auth { 
+      display: flex; flex-direction: column; align-items: flex-start; 
+      gap: 20px; width: 100%; margin-top: auto; 
+  }
+
+  .mobile-theme-toggle {
+      width: 100%;
+      height: 48px;
+      border-radius: 8px;
+      justify-content: center;
+      gap: 8px;
+      font-size: 1rem;
+  }
+  
+  .mobile-user-name { color: #fff; font-size: 1.1rem; font-weight: 600; }
+
+  .mobile-profile-btn {
+      width: 100%; padding: 14px; background: rgba(71, 165, 239, 0.1); border: 1px solid rgba(71, 165, 239, 0.35);
+      color: var(--nav-blue); border-radius: 8px; font-size: 1rem; font-weight: 600;
+      display: flex !important; align-items: center; justify-content: center; gap: 8px; cursor: pointer;
+      text-decoration: none;
+  }
+  
+  .mobile-logout-btn {
+      width: 100%; padding: 14px; background: rgba(248, 113, 113, 0.1); border: 1px solid #f87171;
+      color: #f87171; border-radius: 8px; font-size: 1rem; font-weight: 600;
+      display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer;
+  }
+  
+  .navbar-mobile-login-btn { 
+      width: 100%; padding: 14px; background: var(--nav-blue); color: #fff; 
+      border-radius: 8px; text-decoration: none; font-size: 1.1rem; 
+      font-weight: 600; text-align: center; box-shadow: 0 4px 15px rgba(71, 165, 239, 0.4);
+  }
+
+  .navbar-logout-modal-content {
+    flex-direction: column;
+  }
+
+  .navbar-logout-modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .navbar-btn-cancel,
+  .navbar-btn-danger {
+    width: 100%;
+  }
+}
+
+/* =========================================
+   ✅ LOGIN PAGE SPECIFIC NAVBAR STATE
+========================================= */
+.navbar-custom.login-mode {
+  position: relative !important;
+  background-color: transparent !important; 
+  box-shadow: none !important; 
+  backdrop-filter: none !important; 
+  border-bottom: 1px solid rgba(255,255,255,0.05) !important; 
+  top: 0 !important;
+  max-width: 100% !important;
+  height: 90px !important;
+  border-radius: 0 !important;
+}
+
+.navbar-custom.login-mode .navbar-container {
+  max-width: 1300px;
+  padding: 0 24px;
+}

@@ -1,0 +1,390 @@
+/* ==========================================================
+   🚀 ENTERPRISE COMPLIANCE DASHBOARD STYLES
+   ========================================================== */
+
+
+/* Compliance.css mein isay update karein */
+.compliance-dashboard {
+  padding: 20px 0px; /* 100px padding hata di */
+  color: #f8fafc;
+}
+
+.compliance-dashboard, .pack-detail-page {
+  padding: 100px 20px 60px;
+  background: #07111f; /* Deep Enterprise Dark */
+  color: #f8fafc;
+  min-height: 100vh;
+}
+
+.compliance-dashboard h2 {
+  font-size: 2.5rem;
+  font-weight: 800;
+  margin-bottom: 10px;
+  background: linear-gradient(to right, #ffffff, #7ccfff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-align: center;
+}
+
+.compliance-dashboard > p {
+  text-align: center;
+  color: #a6b8c8;
+  font-size: 1.1rem;
+  margin-bottom: 50px;
+}
+
+/* --- Pack Grid & Cards --- */
+.pack-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 30px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.pack-card {
+  background: linear-gradient(145deg, rgba(16, 34, 56, 0.7) 0%, rgba(7, 17, 31, 0.9) 100%);
+  border: 1px solid rgba(73, 175, 241, 0.2);
+  border-radius: 16px;
+  padding: 40px 30px;
+  width: 350px;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.3s ease;
+  box-shadow: 0 10px 30px -10px rgba(0,0,0,0.5);
+}
+
+.pack-card:hover {
+  transform: translateY(-8px);
+  border-color: rgba(73, 175, 241, 0.6);
+  box-shadow: 0 20px 40px -10px rgba(73, 175, 241, 0.2);
+}
+
+.pack-icon {
+  color: #49aff1;
+  margin-bottom: 20px;
+}
+
+.pack-card h3 {
+  font-size: 1.4rem;
+  margin: 0 0 10px 0;
+  color: #ffffff;
+}
+
+.pack-card p {
+  color: #a6b8c8;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  flex-grow: 1;
+}
+
+.pack-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(7, 17, 31, 0.6);
+  padding: 10px 15px;
+  border-radius: 8px;
+  margin-top: 20px;
+  font-size: 0.85rem;
+  color: #d8e6f1;
+  border: 1px solid rgba(166, 184, 200, 0.1);
+}
+
+.pack-card button {
+  margin-top: 25px;
+  background: rgba(73, 175, 241, 0.1);
+  color: #7ccfff;
+  border: 1px solid rgba(73, 175, 241, 0.3);
+  padding: 12px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.pack-card button:hover {
+  background: #49aff1;
+  color: #ffffff;
+}
+
+/* ==========================================================
+   🚀 PACK DETAIL PAGE STYLES
+   ========================================================== */
+.pack-detail-page {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.pack-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 40px;
+  border-bottom: 1px solid rgba(166, 184, 200, 0.1);
+  padding-bottom: 20px;
+}
+
+.pack-header h1 {
+  flex: 1 1 320px;
+  min-width: 0;
+  font-size: 2rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.status-badge {
+  flex: 0 0 auto;
+  max-width: 100%;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  margin-right: 15px;
+}
+
+.status-badge.active {
+  background: rgba(183, 235, 72, 0.15);
+  color: #d3fb67;
+  border: 1px solid rgba(183, 235, 72, 0.3);
+}
+
+.status-badge.degraded {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.status-badge.not-configured {
+  background: rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+/* --- Tabs Navigation --- */
+.tabs-nav {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 30px;
+  border-bottom: 1px solid rgba(166, 184, 200, 0.1);
+}
+
+.tabs-nav button {
+  background: none;
+  border: none;
+  color: #a6b8c8;
+  font-size: 1rem;
+  font-weight: 600;
+  padding: 15px 20px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-bottom: 3px solid transparent;
+}
+
+.tabs-nav button:hover {
+  color: #edf6ff;
+}
+
+.tabs-nav button.active {
+  color: #49aff1;
+  border-bottom: 3px solid #49aff1;
+}
+
+/* --- Tab Content Areas --- */
+.tab-content {
+  background: rgba(16, 34, 56, 0.4);
+  border: 1px solid rgba(166, 184, 200, 0.1);
+  border-radius: 12px;
+  padding: 40px;
+}
+
+.tab-content h3 {
+  margin-top: 0;
+  font-size: 1.3rem;
+  color: #f8fafc;
+  margin-bottom: 25px;
+}
+
+/* --- Enterprise Table --- */
+.enterprise-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.enterprise-table th {
+  background: rgba(7, 17, 31, 0.6);
+  color: #a6b8c8;
+  text-align: left;
+  padding: 15px;
+  font-weight: 600;
+  border-bottom: 2px solid rgba(166, 184, 200, 0.1);
+}
+
+.enterprise-table td {
+  padding: 15px;
+  border-bottom: 1px solid rgba(166, 184, 200, 0.05);
+  color: #edf6ff;
+}
+
+.enterprise-table tr:hover td {
+  background: rgba(73, 175, 241, 0.05);
+}
+
+/* --- Export Buttons --- */
+.reports-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  align-items: flex-start;
+}
+
+.export-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #49aff1;
+  color: white;
+  border: none;
+  padding: 15px 25px;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 15px rgba(73, 175, 241, 0.3);
+}
+
+.export-btn:hover {
+  background: #2f8fe0;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(73, 175, 241, 0.4);
+}
+
+[data-theme="light"] .compliance-dashboard,
+[data-theme="light"] .pack-detail-page {
+  background: #ffffff !important;
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .compliance-dashboard h2 {
+  background: none !important;
+  -webkit-background-clip: initial !important;
+  -webkit-text-fill-color: #0f172a !important;
+  color: #0f172a !important;
+  text-shadow: none !important;
+}
+
+[data-theme="light"] .compliance-dashboard > p,
+[data-theme="light"] .pack-card p,
+[data-theme="light"] .tab-content p,
+[data-theme="light"] .overview-tab p,
+[data-theme="light"] .reports-tab p {
+  color: #334155 !important;
+}
+
+[data-theme="light"] .pack-card,
+[data-theme="light"] .tab-content {
+  background: #ffffff !important;
+  border-color: rgba(15, 23, 42, 0.2) !important;
+  box-shadow: 0 18px 42px -34px rgba(15, 23, 42, 0.42) !important;
+  opacity: 1 !important;
+}
+
+[data-theme="light"] .pack-card:hover {
+  border-color: rgba(37, 99, 235, 0.32) !important;
+  box-shadow: 0 22px 50px -34px rgba(37, 99, 235, 0.45) !important;
+}
+
+[data-theme="light"] .pack-card h3,
+[data-theme="light"] .pack-header h1,
+[data-theme="light"] .tab-content h3,
+[data-theme="light"] .enterprise-table td,
+[data-theme="light"] .enterprise-table td *,
+[data-theme="light"] .tabs-nav button {
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .pack-icon,
+[data-theme="light"] .pack-meta svg,
+[data-theme="light"] .tab-content svg {
+  color: #2563eb !important;
+  stroke: currentColor !important;
+}
+
+[data-theme="light"] .pack-meta,
+[data-theme="light"] .enterprise-table th {
+  background: #f1f5f9 !important;
+  border-color: rgba(15, 23, 42, 0.16) !important;
+  color: #334155 !important;
+}
+
+[data-theme="light"] .pack-meta *,
+[data-theme="light"] .pack-card p *,
+[data-theme="light"] .compliance-dashboard > p * {
+  color: inherit !important;
+}
+
+[data-theme="light"] .enterprise-table td {
+  border-bottom-color: rgba(15, 23, 42, 0.08) !important;
+}
+
+[data-theme="light"] .enterprise-table tr:hover td {
+  background: #eef5ff !important;
+}
+
+[data-theme="light"] .tabs-nav {
+  border-bottom-color: rgba(15, 23, 42, 0.12) !important;
+}
+
+[data-theme="light"] .tabs-nav button:hover,
+[data-theme="light"] .tabs-nav button.active {
+  color: #2563eb !important;
+}
+
+[data-theme="light"] .compliance-dashboard > div:first-child {
+  background: #ecfdf5 !important;
+  border-color: rgba(5, 150, 105, 0.22) !important;
+}
+
+[data-theme="light"] .compliance-dashboard > div:first-child h4 {
+  color: #047857 !important;
+}
+
+[data-theme="light"] .compliance-dashboard > div:first-child p {
+  color: #334155 !important;
+}
+
+[data-theme="light"] .compliance-dashboard > div:first-child button {
+  background: #84cc16 !important;
+  color: #10220b !important;
+}
+
+[data-theme="light"] .pack-card button:not(.export-btn) {
+  background: #eef5ff !important;
+  color: #1d4ed8 !important;
+  border-color: rgba(37, 99, 235, 0.24) !important;
+}
+
+[data-theme="light"] .pack-card button:not(.export-btn):hover {
+  background: #2563eb !important;
+  color: #ffffff !important;
+}
+
+[data-theme="light"] .status-badge.not-configured {
+  background: #f1f5f9 !important;
+  color: #475569 !important;
+  border-color: rgba(15, 23, 42, 0.14) !important;
+}
+
+[data-theme="light"] .evidence-logs-container > div,
+[data-theme="light"] .overview-tab > div:last-child {
+  background: #f8fafc !important;
+  border-color: rgba(15, 23, 42, 0.12) !important;
+  color: #172033 !important;
+}

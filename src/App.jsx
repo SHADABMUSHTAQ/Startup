@@ -1,0 +1,61 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { useAuthStore } from './store/authStore';
+import ProtectedRoute from './components/ProtectedRoute';
+import PublicRoute from './components/PublicRoute';
+import ErrorBoundary from './components/ErrorBoundary';
+import PreLoader from './assets/Components/PreLoader/PreLoader';
+
+// Import all enterprise components for the final end-to-end wiring.
+import Home from './assets/Pages/Home/Home';
+import Login from './assets/Pages/Login/Login';
+import SetPassword from './assets/Pages/SetPassword/SetPassword';
+import Pricing from './assets/Pages/Pricing/Pricing';
+import RequestQuote from './assets/Pages/RequestQuote/RequestQuote';
+import Dashboard from './assets/Pages/Dashboard/Dashboard';
+import Profile from './assets/Pages/Profile/Profile';
+import LegalPage from './assets/Pages/Legal/LegalPage';
+
+function App() {
+    const { checkAuth } = useAuthStore();
+    const [isBooting, setIsBooting] = useState(true);
+    const finishBoot = useCallback(() => setIsBooting(false), []);
+
+    // Fire the hydration check exactly once when the app mounts.
+    useEffect(() => {
+        checkAuth();
+    }, [checkAuth]);
+
+    return (
+        <ErrorBoundary>
+            {isBooting && <PreLoader onFinish={finishBoot} />}
+            <Router>
+                <Routes>
+                    {/* Public marketing perimeter */}
+                    <Route path="/" element={<Home />} />
+                    <Route path="/privacy" element={<LegalPage type="privacy" />} />
+                    <Route path="/terms" element={<LegalPage type="terms" />} />
+                    <Route path="/pricing" element={<Pricing standalone />} />
+                    <Route path="/request-quote" element={<RequestQuote />} />
+                    <Route path="/set-password" element={<SetPassword />} />
+
+                    {/* Gateway / public route */}
+                    <Route element={<PublicRoute />}>
+                        <Route path="/login" element={<Login />} />
+                    </Route>
+
+                    {/* Secure SIEM interior */}
+                    <Route element={<ProtectedRoute />}>
+                        <Route path="/profile" element={<Profile />} />
+                        <Route path="/dashboard" element={<Dashboard />} />
+                    </Route>
+
+                    {/* Fallback */}
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+            </Router>
+        </ErrorBoundary>
+    );
+}
+
+export default App;
