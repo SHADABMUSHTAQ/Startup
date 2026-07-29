@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { HashLink } from "react-router-hash-link";
-import { Menu, X, User, LogOut, ChevronDown, ShieldCheck, Moon, Sun } from "lucide-react";
+import { Menu, X, User, LogOut, ChevronDown, ShieldCheck } from "lucide-react";
 import { useAuthStore } from "../../../store/authStore";
 import "./Navbar.css";
 
@@ -210,13 +210,20 @@ const Navbar = () => {
               <li className="navbar-mobile-auth">
                 <button
                   type="button"
-                  className="navbar-theme-toggle mobile-theme-toggle"
+                  className={`navbar-theme-toggle mobile-theme-toggle ${theme === "light" ? "is-light" : "is-dark"}`}
                   onClick={toggleTheme}
                   aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
                   title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
                 >
-                  {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-                  <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>
+                  <span className="theme-switch-scene" aria-hidden="true">
+                    <span className="theme-switch-orb"></span>
+                    <span className="theme-switch-cloud cloud-one"></span>
+                    <span className="theme-switch-cloud cloud-two"></span>
+                    <span className="theme-switch-star star-one"></span>
+                    <span className="theme-switch-star star-two"></span>
+                    <span className="theme-switch-star star-three"></span>
+                  </span>
+                  <span className="theme-toggle-label">{theme === "light" ? "Light mode" : "Dark mode"}</span>
                 </button>
                 {user && !isLoginPage ? (
                   <>
@@ -251,12 +258,22 @@ const Navbar = () => {
             <div className="navbar-desktop-auth">
               <button
                 type="button"
-                className="navbar-theme-toggle"
+                className={`navbar-theme-toggle ${theme === "light" ? "is-light" : "is-dark"}`}
                 onClick={toggleTheme}
                 aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
                 title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
               >
-                {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+                <span className="theme-switch-scene" aria-hidden="true">
+                  <span className="theme-switch-orb"></span>
+                  <span className="theme-switch-cloud cloud-one"></span>
+                  <span className="theme-switch-cloud cloud-two"></span>
+                  <span className="theme-switch-star star-one"></span>
+                  <span className="theme-switch-star star-two"></span>
+                  <span className="theme-switch-star star-three"></span>
+                </span>
+                <span className="theme-toggle-label">
+                  {theme === "light" ? "Light" : "Dark"}
+                </span>
               </button>
               {user && !isLoginPage ? (
                 <div

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import "./LegalPage.css";
@@ -382,14 +382,30 @@ const LegalTitle = ({ title }) => {
 const LegalPage = ({ type: routeType }) => {
   const { type: paramType } = useParams();
   const type = routeType || paramType;
-  const document = legalDocuments[type];
+  const legalDocument = legalDocuments[type];
+  const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "dark");
 
-  if (!document) {
+  useEffect(() => {
+    window.document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
+  }, [theme]);
+
+  useEffect(() => {
+    const syncTheme = () => setTheme(localStorage.getItem("theme") || "dark");
+    window.addEventListener("storage", syncTheme);
+    window.addEventListener("focus", syncTheme);
+    return () => {
+      window.removeEventListener("storage", syncTheme);
+      window.removeEventListener("focus", syncTheme);
+    };
+  }, []);
+
+  if (!legalDocument) {
     return <Navigate to="/" replace />;
   }
 
   return (
-    <main className="legal-page">
+    <main className={`legal-page legal-${theme}`}>
       <header className="legal-topbar">
         <Link to="/" className="legal-back-link">
           <ArrowLeft size={17} />
@@ -409,32 +425,32 @@ const LegalPage = ({ type: routeType }) => {
       <section className="legal-hero">
         <div className="legal-hero-inner">
           <h1>
-            <LegalTitle title={document.title} />
+            <LegalTitle title={legalDocument.title} />
           </h1>
-          <p>{document.subtitle}</p>
+          <p>{legalDocument.subtitle}</p>
 
           <dl className="legal-meta-grid">
             <div>
               <dt>Effective Date</dt>
-              <dd>{document.effectiveDate}</dd>
+              <dd>{legalDocument.effectiveDate}</dd>
             </div>
             <div>
               <dt>Last Updated</dt>
-              <dd>{document.lastUpdated}</dd>
+              <dd>{legalDocument.lastUpdated}</dd>
             </div>
             <div>
               <dt>Version</dt>
-              <dd>{document.version}</dd>
+              <dd>{legalDocument.version}</dd>
             </div>
           </dl>
         </div>
       </section>
 
       <section className="legal-document-wrap">
-        <aside className="legal-sidebar" aria-label={`${document.title} sections`}>
+        <aside className="legal-sidebar" aria-label={`${legalDocument.title} sections`}>
           <p>On this page</p>
           <a href="#overview">Overview</a>
-          {document.sections.map((section) => (
+          {legalDocument.sections.map((section) => (
             <a href={`#${getSectionId(section.heading)}`} key={section.heading}>
               {section.heading.replace(/^\d+\.\s*/, "")}
             </a>
@@ -443,17 +459,17 @@ const LegalPage = ({ type: routeType }) => {
 
         <article className="legal-document">
           <div className="legal-lead" id="overview">
-            <p>{document.intro}</p>
+            <p>{legalDocument.intro}</p>
           </div>
 
-          {document.sections.map((section) => (
+          {legalDocument.sections.map((section) => (
             <section className="legal-section-row" id={getSectionId(section.heading)} key={section.heading}>
               <h2>{section.heading}</h2>
               <SectionContent section={section} />
             </section>
           ))}
 
-          {document.closing && <p className="legal-closing">{document.closing}</p>}
+          {legalDocument.closing && <p className="legal-closing">{legalDocument.closing}</p>}
 
           <footer className="legal-document-footer">
             <span>© 2026 WarSOC. All Rights Reserved.</span>

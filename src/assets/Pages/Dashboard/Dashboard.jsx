@@ -55,9 +55,7 @@ import {
   AlertTriangle,
   CheckCircle,
   MapPin,
-  Moon,
   Server,
-  Sun,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -119,9 +117,27 @@ const MetricCard = ({
   </div>
 );
 
-const UserMenu = ({ user, role, onProfile, onLogout }) => {
+const UserMenu = ({ user, onProfile, onLogout }) => {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef(null);
+  const displayName =
+    user?.full_name ||
+    user?.name ||
+    user?.username ||
+    "User";
+  const avatar =
+    user?.avatar ||
+    user?.profile_image ||
+    user?.profile_picture ||
+    user?.photo_url ||
+    user?.image;
+  const initials = displayName
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "U";
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -136,11 +152,11 @@ const UserMenu = ({ user, role, onProfile, onLogout }) => {
     <div className="user-menu-container" ref={menuRef}>
       <button className="user-btn" onClick={() => setIsOpen(!isOpen)}>
         <div className="avatar-circle">
-          {user?.username ? user.username.charAt(0).toUpperCase() : "U"}
-        </div>
-        <div className="user-text-info">
-          <span className="user-name-label">{user?.username || "User"}</span>
-          <span className="user-role-label">{role || "User"}</span>
+          {avatar ? (
+            <img src={avatar} alt={`${displayName} avatar`} />
+          ) : (
+            initials
+          )}
         </div>
         <ChevronDown
           size={14}
@@ -150,7 +166,7 @@ const UserMenu = ({ user, role, onProfile, onLogout }) => {
       {isOpen && (
         <div className="dropdown-menu">
           <div className="dropdown-header">
-            <span className="dp-name">{user?.username}</span>
+            <span className="dp-name">{displayName}</span>
             <span className="dp-email">{user?.email}</span>
             {user?.tenant_id && (
               <span
@@ -187,6 +203,7 @@ const UserMenu = ({ user, role, onProfile, onLogout }) => {
 
 function Dashboard() {
   const { user: currentUser, role, logout } = useAuthStore();
+  const [profileUser, setProfileUser] = useState(null);
   const normalizedRole = String(role || currentUser?.role || "").toLowerCase();
   const canViewOperations = ["admin", "manager", "analyst"].includes(normalizedRole);
   const canManageAlerts = ["admin", "manager"].includes(normalizedRole);
@@ -234,6 +251,32 @@ function Dashboard() {
   useEffect(() => {
     isLiveModeRef.current = isLiveMode;
   }, [isLiveMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchProfileUser = async () => {
+      try {
+        const { data } = await apiClient.get("/auth/profile");
+        if (cancelled) return;
+        const apiProfile = data.profile || {};
+        setProfileUser({
+          ...currentUser,
+          ...apiProfile,
+          role: data.role || apiProfile.role || currentUser?.role || role,
+        });
+      } catch (error) {
+        console.error("Dashboard profile fetch failed", error);
+        if (!cancelled) setProfileUser(null);
+      }
+    };
+
+    fetchProfileUser();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser, role]);
 
   useEffect(
     () => () => {
@@ -1337,16 +1380,19 @@ function Dashboard() {
           </div>
           <div className="header-actions">
             <button
-              className="theme-toggle"
+              className={`theme-toggle ${theme === "light" ? "is-light" : "is-dark"}`}
               onClick={toggleTheme}
               title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
               aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
             >
-              {theme === "dark" ? (
-                <Sun size={20} />
-              ) : (
-                <Moon size={20} />
-              )}
+              <span className="theme-switch-scene" aria-hidden="true">
+                <span className="theme-switch-orb"></span>
+                <span className="theme-switch-cloud cloud-one"></span>
+                <span className="theme-switch-cloud cloud-two"></span>
+              <span className="theme-switch-star star-one"></span>
+              <span className="theme-switch-star star-two"></span>
+              <span className="theme-switch-star star-three"></span>
+            </span>
             </button>
             <div
               className={`live-pill ${!isLiveMode || telemetryStatus === "offline" ? "offline" : ""}`}
@@ -1412,8 +1458,7 @@ function Dashboard() {
             </div>
             <div className="divider-v"></div>
             <UserMenu
-              user={currentUser}
-              role={normalizedRole}
+              user={profileUser || currentUser}
               onProfile={() => navigate("/profile")}
               onLogout={() => setShowLogoutModal(true)}
             />
