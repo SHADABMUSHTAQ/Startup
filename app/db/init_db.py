@@ -388,6 +388,56 @@ async def init_compliance_db(db):
             name="idx_user_activation_lifecycle",
         )
 
+        # Customer-side relays are independent principals. Batch receipts make
+        # replay/sequence state recoverable after Redis loss without mixing
+        # relay identities with endpoint-agent seat records.
+        await _aggressive_create_index(
+            db.network_relays,
+            [("relay_id", 1)],
+            unique=True,
+            name="uq_network_relay_id",
+        )
+        await _aggressive_create_index(
+            db.network_relays,
+            [("tenant_id", 1), ("status", 1), ("last_seen", -1)],
+            name="idx_network_relay_tenant_status_seen",
+        )
+        await _aggressive_create_index(
+            db.network_relays,
+            [("registration_nonce", 1)],
+            unique=True,
+            name="uq_network_relay_registration_nonce",
+            partialFilterExpression={"registration_nonce": {"$type": "string"}},
+        )
+        await _aggressive_create_index(
+            db.network_relays,
+            [("activation_digest", 1)],
+            name="idx_network_relay_activation_digest",
+            partialFilterExpression={"activation_digest": {"$type": "string"}},
+        )
+        await _aggressive_create_index(
+            db.network_relay_batches,
+            [("relay_id", 1), ("chain_id", 1), ("key_epoch", 1), ("sequence", 1)],
+            unique=True,
+            name="uq_network_relay_batch_sequence",
+        )
+        await _aggressive_create_index(
+            db.network_relay_batches,
+            [("tenant_id", 1), ("cloud_receipt_time", -1)],
+            name="idx_network_relay_batch_tenant_time",
+        )
+        await _aggressive_create_index(
+            db.network_relay_chain_resets,
+            [("tenant_id", 1), ("relay_id", 1), ("recovered_at", -1)],
+            name="idx_network_relay_chain_resets",
+        )
+        await _aggressive_create_index(
+            db.network_relay_chain_resets,
+            [("relay_id", 1), ("new_key_epoch", 1)],
+            unique=True,
+            name="uq_network_relay_chain_reset_epoch",
+        )
+
         from app.utils.security_incidents import backfill_hot_security_incidents
 
         backfill_limit = max(0, min(50000, int(os.getenv("INCIDENT_BACKFILL_LIMIT", "5000"))))

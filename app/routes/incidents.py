@@ -101,6 +101,18 @@ def _serialize_workflow_entry(document: dict) -> dict:
     return json.loads(json.dumps(safe, default=_json_default))
 
 
+def _workflow_history_sort_key(entry: dict) -> tuple[int, str, str]:
+    try:
+        version = int(entry.get("workflow_version"))
+    except (TypeError, ValueError):
+        version = -1
+    return (
+        version,
+        str(entry.get("timestamp") or ""),
+        str(entry.get("audit_id") or ""),
+    )
+
+
 def _workflow_action(status: AlertStatus | None, *, assignee_changed: bool) -> str:
     if status == AlertStatus.ACKNOWLEDGED:
         return "acknowledged"
@@ -343,7 +355,7 @@ async def get_incident_detail(
         history_by_key[key] = entry
     workflow_history = sorted(
         (_serialize_workflow_entry(entry) for entry in history_by_key.values()),
-        key=lambda entry: str(entry.get("timestamp") or ""),
+        key=_workflow_history_sort_key,
     )[-MAX_INCIDENT_WORKFLOW_HISTORY:]
 
     assignee = None

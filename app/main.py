@@ -27,7 +27,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # ==========================================
 from app.database import init_db, get_db, db_manager
 from app.config.config import get_settings
-from app.routes import auth, ingest_pulse, threat_intel, upload, compliance, logs, alerts, incidents, admin, account, sales, export, pos
+from app.routes import auth, ingest_pulse, threat_intel, upload, compliance, logs, alerts, incidents, admin, account, sales, export, pos, network_relay
 from app.routes import metrics
 from app.db.init_db import init_compliance_db
 from app.api.ws_manager import manager 
@@ -537,6 +537,12 @@ app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin Control Pl
 app.include_router(sales.router, prefix="/api/v1/sales", tags=["Sales"])
 app.include_router(export.router, prefix="/api/v1/export", tags=["Export"])
 app.include_router(metrics.router, prefix="", tags=["Metrics"])
+if settings.network_relay_enabled:
+    app.include_router(
+        network_relay.router,
+        prefix="/api/v1/network-relay",
+        tags=["Network Relay"],
+    )
 
 
 #  CTO FIX: Remove ingestion.router to prevent prefix collision with ingest_pulse.router

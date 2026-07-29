@@ -85,6 +85,10 @@ scripts/*
 !scripts/run_production_acceptance.ps1
 !scripts/warsoc_ops_console.ps1
 !scripts/backup_mongodb.sh
+!scripts/run_backup_restore_drill.ps1
+!scripts/warsoc_relay_service.py
+!scripts/install_warsoc_relay.ps1
+!scripts/uninstall_warsoc_relay.ps1
 !build_agent.bat
 trigger_alerts.py
 verify.py
@@ -100,6 +104,8 @@ surgical_audit.py
 scratch/
 scratch_*.py
 Output/
+relay/build/
+relay/dist/
 
 # Cryptographic Keys
 keys/

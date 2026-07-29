@@ -1,11 +1,13 @@
 # WarSOC Master Evidence and Hybrid SIEM Plan
 
 **Document status:** Approved target-state engineering blueprint  
-**Snapshot date:** 2026-07-20  
+**Snapshot date:** 2026-07-28
 **Companion document:** `WARSOC_CURRENT_STATE_ARCHITECTURE.md` remains the authority for behavior implemented today.  
 **Initial operating scope:** Pakistani SMB pilots, up to 50 Windows endpoints per tenant.
 
 This plan defines how WarSOC evolves from its current Windows endpoint SIEM, FBR evidence, and PECA-oriented forensic monitoring into a cryptographically defensible endpoint-and-network monitoring platform. An item appearing here is not a production claim until its phase acceptance gate has passed and the current-state document has been updated.
+
+**Implementation checkpoint:** The Phase 3 cloud API, strict Fortinet/Cisco ASA/MikroTik/pfSense parsers, bounded encrypted spool/outbox, atomic Redis admission, Windows relay runtime, DPAPI-protected identity, explicit UDP/TCP/TLS listeners, NSSM installer/uninstaller, revocation, dead-key recovery, source isolation, and a narrow subset of Phase 4 correlations are implemented behind `NETWORK_RELAY_ENABLED=false`. The Phase 3 gate remains open for a reproducible Windows build, exact-host security proof, real-device acceptance, capacity measurement, retention approval, and a production pilot. See `NETWORK_RELAY_BACKEND_FOUNDATION.md`.
 
 ## 1. Executive Summary
 
@@ -174,6 +176,8 @@ Original payloads are immutable. Normalization, MITRE/CWE mapping, severity, cor
 
 **Gate:** Internet outage, saturation, spoof flood, disk pressure, power loss, mid-write termination, restart, update, key loss, duplicate delivery, and recovery all produce bounded resource use and explicit evidence status.
 
+**Current status:** Code-complete candidate and disabled. Backend identity, retry-safe activation/registration, status, revocation, MFA-authorized dead-key recovery, signed HTTPS admission, strict Fortinet/Cisco ASA/MikroTik/pfSense parsing, bounded encrypted evidence/control spools, exact-retry outbox, explicit listeners, DPAPI identity, NSSM lifecycle, source-scoped firewall rules, DACL/SACL setup, loss summaries, atomic Redis quota/queue/chain handling, Mongo receipts, and metrics are covered by candidate tests. DPAPI is a declared pilot boundary, not a TPM claim. A Windows build, exact-host proof, real-device fixtures, capacity review, traffic-retention decision, and pilot remain required before the gate can close.
+
 ### Phase 4: PECA-Oriented Correlation and Verification
 
 - Correlate endpoint identity/process activity with firewall, VPN, DNS, DHCP/NAT, and remote-access observations.
@@ -183,6 +187,8 @@ Original payloads are immutable. Normalization, MITRE/CWE mapping, severity, cor
 - Treat the 11 controls as the WarSOC catalog, not statutory controls written into PECA.
 
 **Gate:** Real device and Windows events produce expected correlations; missing, unauthenticated, skewed, or lost sources reduce confidence and coverage rather than silently producing a green state.
+
+**Current status:** A narrow backend subset is implemented and dormant while the relay feature is disabled. Verified relay VPN failures support five-distinct-user/five-minute spraying detection; successful VPN followed by matching Windows Event 4624 is stored as context rather than a threat; Events 1100, 1102, 4697, 4732, and 7045 can correlate to a permitted public connection from the same endpoint IP. DNS, DHCP/NAT identity reconstruction, ordered-flow beaconing, destination baselines, and real-device validation remain open. Relay evidence is not silently counted as an additional PECA control.
 
 ### Phase 5: FBR Evidence Integrity
 
@@ -219,7 +225,7 @@ Original payloads are immutable. Normalization, MITRE/CWE mapping, severity, cor
 - Maintain short hot windows for operational search; target seven days for SIEM, PECA, and FBR hot collections unless a reviewed requirement changes it.
 - Physically separate retention domains instead of applying one six-year Azure policy to every record type.
 - Target FBR cold evidence according to the approved six-year product policy.
-- Apply one-year PECA traffic-data retention only where the customer role and approved policy require it.
+- Apply PECA Section 32's minimum one-year traffic-data retention only where legal review determines that the customer role and approved policy require it; WarSOC must not infer statutory service-provider status from telemetry.
 - Keep general SIEM retention contract-driven and capacity-bounded.
 - Archive only after upload, hash, immutability, ledger, and retrieval verification. On any failure, retain the Mongo copy.
 - Perform scheduled Mongo backup restoration and Azure archive retrieval tests.

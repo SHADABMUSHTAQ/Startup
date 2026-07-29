@@ -219,6 +219,24 @@ def _trusted_telemetry_family(log_data: dict, event_id: str, event_type: str) ->
         return "web"
     if event_type == "firewall" and has_file_origin:
         return "network"
+    if (
+        log_data.get("source_type") == "network_device"
+        and log_data.get("source_assurance") == "relay_attested"
+        and log_data.get("signature_verified") is True
+        and event_type
+        in {
+            "network_connection_permitted",
+            "network_connection_blocked",
+            "vpn_authentication",
+            "vpn_session",
+            "dns_query",
+            "dhcp_lease",
+            "device_admin",
+            "device_health",
+            "network_observation",
+        }
+    ):
+        return "network"
     return "unknown"
 
 
@@ -237,6 +255,11 @@ def _keyword_sources_for_event(
 ) -> tuple[str, ...]:
     """Use generic keyword dictionaries only when no native event rule exists."""
     if family == "windows" and str(event_id or "") in (config.get("event_id_map", {}) or {}):
+        return ()
+    # Relay-normalized records are structured observations. Legacy keyword
+    # dictionaries are not safe detection rules for their raw vendor messages;
+    # Phase 4 owns explicit network correlations and outcomes.
+    if family == "network" and str(event_id or "").startswith("NET-"):
         return ()
     return _keyword_sources_for_family(family)
 
@@ -690,7 +713,8 @@ async def siem_worker():
                                 continue
 
                             if (
-                                _is_unmapped_generic_event(event_id, config)
+                                telemetry_family == "unknown"
+                                and _is_unmapped_generic_event(event_id, config)
                                 and not _has_generic_detection_signal(raw_msg, config)
                             ):
                                 cold_batch.append(log_data)
@@ -796,6 +820,7 @@ async def siem_worker():
 
                             if (
                                 not alert_triggered
+                                and telemetry_family == "unknown"
                                 and _is_unmapped_generic_event(event_id, config)
                                 and not _has_generic_detection_signal(raw_msg, config)
                             ):

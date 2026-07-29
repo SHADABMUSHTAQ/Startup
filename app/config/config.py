@@ -56,6 +56,21 @@ class Settings(BaseSettings):
     agent_event_signature_mode: str = os.getenv(
         "AGENT_EVENT_SIGNATURE_MODE", "observe"
     ).strip().lower()
+    network_relay_enabled: bool = os.getenv(
+        "NETWORK_RELAY_ENABLED", "false"
+    ).strip().lower() in {"1", "true", "yes"}
+    network_relay_activation_ttl_seconds: int = int(
+        os.getenv("NETWORK_RELAY_ACTIVATION_TTL_SECONDS", "3600")
+    )
+    network_relay_max_batch_events: int = int(
+        os.getenv("NETWORK_RELAY_MAX_BATCH_EVENTS", "200")
+    )
+    network_relay_max_body_bytes: int = int(
+        os.getenv("NETWORK_RELAY_MAX_BODY_BYTES", str(1024 * 1024))
+    )
+    network_relay_max_per_tenant: int = int(
+        os.getenv("NETWORK_RELAY_MAX_PER_TENANT", "2")
+    )
 
     # --- TRANSACTIONAL EMAIL (Zoho Mail) ---
     zoho_smtp_host: str = os.getenv("ZOHO_SMTP_HOST", "smtp.zoho.com")
@@ -163,6 +178,22 @@ def get_settings():
             raise RuntimeError("FATAL: AGENT_CDN_URL must be an HTTPS URL that points directly to the Windows installer .exe.")
         if s.agent_event_signature_mode not in {"observe", "required"}:
             raise RuntimeError("FATAL: AGENT_EVENT_SIGNATURE_MODE must be 'observe' or 'required'.")
+        if not 300 <= s.network_relay_activation_ttl_seconds <= 86400:
+            raise RuntimeError(
+                "FATAL: NETWORK_RELAY_ACTIVATION_TTL_SECONDS must be between 300 and 86400."
+            )
+        if not 1 <= s.network_relay_max_batch_events <= 1000:
+            raise RuntimeError(
+                "FATAL: NETWORK_RELAY_MAX_BATCH_EVENTS must be between 1 and 1000."
+            )
+        if not 65536 <= s.network_relay_max_body_bytes <= 5 * 1024 * 1024:
+            raise RuntimeError(
+                "FATAL: NETWORK_RELAY_MAX_BODY_BYTES must be between 65536 and 5242880."
+            )
+        if not 1 <= s.network_relay_max_per_tenant <= 10:
+            raise RuntimeError(
+                "FATAL: NETWORK_RELAY_MAX_PER_TENANT must be between 1 and 10."
+            )
     return s
 
 def load_config(config_file: str = "config.json") -> dict:

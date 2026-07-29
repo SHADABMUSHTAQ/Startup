@@ -1,0 +1,41 @@
+{
+  "schema_version": "warsoc-relay-runtime-v1",
+  "backend_url": "https://api.warsoc.tech",
+  "relay_version": "1.0.0",
+  "data_directory": "C:\\ProgramData\\WarSOCRelay",
+  "identity_file": "identity.dpapi",
+  "activation_file": "activation.secret",
+  "devices": [
+    {
+      "device_id": "branch-pfsense-01",
+      "vendor": "pfsense",
+      "source_addresses": [
+        "192.0.2.1/32"
+      ],
+      "transport": "udp",
+      "expected_eps": 100
+    }
+  ],
+  "listeners": [
+    {
+      "transport": "udp",
+      "bind_host": "192.0.2.10",
+      "port": 5514,
+      "tls_certificate": null,
+      "tls_private_key": null
+    }
+  ],
+  "evidence_spool_bytes": 2147483648,
+  "control_spool_bytes": 67108864,
+  "minimum_free_disk_bytes": 1073741824,
+  "max_message_bytes": 8192,
+  "global_eps": 2000,
+  "global_bytes_per_second": 5242880,
+  "parser_budget_ms": 25.0,
+  "batch_events": 200,
+  "delivery_idle_seconds": 1.0,
+  "loss_flush_seconds": 5.0,
+  "health_interval_seconds": 60.0,
+  "graceful_drain_seconds": 30,
+  "request_timeout_seconds": 15.0
+}

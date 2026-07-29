@@ -1,0 +1,3 @@
+# Windows-only packaging dependency. Runtime libraries remain pinned in
+# requirements.txt and must be installed into the same Python environment.
+pyinstaller==6.21.0

@@ -1,8 +1,8 @@
 # WarSOC Current-State Architecture and Operational Contract
 
 **Document status:** Authoritative as-built map
-**Snapshot date:** 2026-07-26
-**Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, and launch proof.
+**Snapshot date:** 2026-07-29
+**Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, and the disabled network-relay backend candidate.
 
 This document describes what the current source code does. It is not a sales claim and it does not treat an implemented path as production-proven unless verification evidence exists.
 
@@ -24,7 +24,9 @@ WarSOC currently has a coherent end-to-end architecture for a maximum of 50 Wind
 
 The current source release is Windows agent `4.2.6-Native-Signed`. Exact-machine validation on 2026-07-21 proved enrollment, fresh heartbeats, SIEM alerting, PECA Event 4688 evidence, FBR invoice evidence, native FBR database-deletion correlation, 7,191 verified endpoint signatures and zero rejected signatures. The installer is 17,471,600 bytes with SHA-256 `F80C22FCD65FD5755B8483F105FCA4AA3FFFFFBAB4E29B807828D4CC406CDAE0`.
 
-The complete current backend suite closes with 330 passed, 3 explicitly skipped and zero application failures. The current frontend passes ESLint and the production Vite build. These local facts do not by themselves prove that a remote backend, Vercel deployment or CDN object runs the same commit/artifact; production acceptance must compare the deployed commit, API behavior and downloaded artifact hash.
+The disabled network-relay candidate has also passed 32 focused parser, schema, signing, encrypted-spool, outbox, Redis-admission, lifecycle, source-isolation and hybrid-correlation tests. A locally built 29,263,064-byte Windows relay candidate had SHA-256 `04602CBBCEEA8EF2BE18D5FD1C9DC2F89DADD0B9B8BA140C9B4444264BE055E3` and produced no detection in an enabled Microsoft Defender custom scan. It is unsigned, was not installed as a Windows service, and has not received real-device traffic; these facts keep its production gate closed.
+
+The complete current backend suite closes with 346 passed, 3 explicitly skipped and zero application failures. The current frontend passes ESLint and the production Vite build. These local facts do not by themselves prove that a remote backend, Vercel deployment or CDN object runs the same commit/artifact; production acceptance must compare the deployed commit, API behavior and downloaded artifact hash.
 
 ## 2. Product Boundary
 
@@ -56,10 +58,19 @@ The complete current backend suite closes with 330 passed, 3 explicitly skipped 
 - It does not use Safepay or self-service payment for the current commercial flow.
 - It does not use Sysmon.
 - It does not currently ingest Linux or network-device syslog. The receiver remains a disabled future profile and is outside the Windows SMB pilot contract.
+- A feature-gated customer network relay exists in the source tree with strict vendor parsers, encrypted bounded spools, exact retries, a separate Windows service runtime, DPAPI identity, explicit listeners, source-scoped installer controls, lifecycle recovery, and source-isolated SIEM correlations. `NETWORK_RELAY_ENABLED` defaults to `false`; no production network-device claim exists until physical acceptance passes.
 - It does not guarantee that every normal Windows event becomes an alert. Normal events are evidence and correlation inputs; only dangerous or contextually suspicious activity alerts.
 - It does not make a PDF cryptographically signed. The PECA source records contain the forensic signatures; the PDF is a human-readable summary.
 - It does not automatically email an agent installer link to analysts. Agent activation and download are tenant-admin actions.
 - Manual log injection is disabled by default in production and returns 404 unless operations explicitly enables `ENABLE_MANUAL_LOG_INJECTION` for a controlled exercise.
+
+### 2.3 Disabled network-relay candidate
+
+The candidate is documented in `NETWORK_RELAY_BACKEND_FOUNDATION.md`. It does not change the current Windows pilot path, public ports, FBR truth sources, PECA 11-control catalog, hot/cold retention, or frontend.
+
+Candidate capabilities include separate relay identities, retry-safe one-time activation, Ed25519-signed HTTPS batches, atomic Redis admission, strict Fortinet/Cisco ASA/MikroTik/pfSense metadata parsing, encrypted bounded evidence/control spools, exact retry bodies, Windows DPAPI protection, NSSM lifecycle, revocation and dead-key recovery, network-source isolation, VPN spray detection, non-alert VPN-to-Windows context, and same-host high-risk-to-public-network correlation.
+
+The feature must remain disabled until the exact Windows build passes service/ACL/DPAPI/crash tests, every offered vendor has real-device proof, tenant EPS and disk behavior are measured, traffic-data retention is legally approved and configured, and a controlled pilot completes.
 
 ## 3. End-to-End Data Flow
 
@@ -104,6 +115,28 @@ flowchart TD
     Z --> V
     Z --> AA["Search, CSV and PDF"]
 ```
+
+### 3.1 Disabled network-device candidate flow
+
+This path exists in source but is not part of the enabled customer product:
+
+```mermaid
+flowchart LR
+    ND["Registered firewall or VPN device"] -->|"LAN syslog metadata"| RC["Customer-side relay collector"]
+    RC --> EL["Source allowlist, EPS and byte limits"]
+    EL --> VP["Strict vendor parser"]
+    VP --> ES["Encrypted bounded evidence spool"]
+    EL --> CS["Independent encrypted control spool"]
+    ES --> SB["Deterministic Ed25519-signed batch"]
+    CS --> SB
+    SB -->|"Authenticated HTTPS"| RA["Feature-gated relay API"]
+    RA --> AV["Tenant, relay, device, schema, signature and chain verification"]
+    AV --> AR["Atomic Redis admission"]
+    AR --> NS["Network-source SIEM isolation"]
+    NS --> HE["Network evidence and approved hybrid correlations"]
+```
+
+No packet capture or general network payload collection is performed. The candidate accepts metadata fields and the original syslog record under a strict vendor contract. UDP evidence is described as `relay_attested`, not device-authenticated, because legacy UDP devices do not cryptographically sign their messages.
 
 ## 4. Tenant and Commercial Flow
 
@@ -276,6 +309,18 @@ This is at-least-once delivery with event-level duplicate suppression, not fire-
 - Production may switch to `AGENT_EVENT_SIGNATURE_MODE=required` only after every active agent is upgraded and the unsigned-event metric remains zero for the agreed observation window.
 - Signature verification proves which enrolled endpoint key signed the accepted payload. It does not prove that an endpoint was uncompromised or that a DPAPI-protected software key could not be abused by a SYSTEM-level attacker.
 
+### 8.2 Agent 4.2.6 release delta
+
+Agent `4.2.6-Native-Signed` is a compatibility and key-protection release over `4.2.5-Native-Signed`; it is not a new detection-catalog release.
+
+1. It retains native Windows Security/System XML collection, durable bounded spooling, POS JSONL handling, heartbeat health, Ed25519 payload signing and NSSM service behavior from the existing native-signed agent line.
+2. It introduces a strict DPAPI result normalizer for both `CryptProtectData` and `CryptUnprotectData` so supported pywin32 releases that return different tuple/byte shapes are handled consistently.
+3. It rejects incomplete or non-byte DPAPI results instead of writing or loading invalid key material.
+4. It protects new Ed25519 private keys with Windows DPAPI and loads existing protected keys through the same validated compatibility layer.
+5. It updates the installer and pilot hash-manifest names from 4.2.5 to 4.2.6.
+
+The release does **not** add Sysmon, packet capture, firewall-device collection, proprietary POS database parsing or new customer-facing SIEM rules. Detection behavior is controlled by the backend catalogs and worker logic, not by the installer version alone.
+
 ## 9. API Ingestion Contract
 
 ### 9.1 Agent telemetry
@@ -435,7 +480,28 @@ Incident storage contracts:
 | `security_incident_occurrences` | Idempotency and interpretation links. Unique by tenant plus occurrence UID; TTL is 30 days by default because it is not evidence. |
 | `incident_audit_log` | Workflow-change audit rows for acknowledgement, assignment and closure. |
 
+Incident detail orders workflow entries by the monotonic `workflow_version`, with timestamp and audit ID only as tie-breakers. This prevents equal-precision or differently serialized timestamps from displaying closure before detection.
+
 The projector fails closed with respect to evidence processing: worker persistence/projection failures leave the Redis stream event retryable. Before `security_alerts` can be removed from Mongo, the archiver also verifies that projection succeeds. Production Compose starts incident-writing workers and the archiver only after the API is healthy and has created the required indexes.
+
+### 11.7 Attack and suspicious-behavior coverage matrix
+
+The word "coverage" means that WarSOC has an enabled rule with the required input contract. It does not mean prevention, guaranteed compromise attribution or complete MITRE ATT&CK coverage.
+
+| Family | Enabled or directly actionable coverage | Required source/context | Important boundary |
+|---|---|---|---|
+| Credential attacks | High-velocity brute force, low-and-slow brute force, five-user password spraying, RDP brute force and concurrent remote sessions | Native failed/successful logon events with source IP, user and logon type | Impossible travel and new-location detection are disabled without trusted GeoIP data. |
+| Account and privilege abuse | Account creation/deletion, privileged-group membership, special-privilege evidence, account storms, dormant-account activation and ghost-admin sequence | Events 4720, 4726, 4732, 4672, 4624 and 1102 | A generic "privilege escalation spike" rule is disabled; precise native-event rules remain active. |
+| Execution and malware behavior | Suspicious PowerShell/command-line execution, obfuscation, reverse-shell patterns, credential-dumping patterns, Defender-evasion commands, LOLBin download behavior, malware patterns and shadow-copy deletion | Structured Event 4688 process path, command line, parent and actor context | These are behavior/signature detections, not a replacement for antivirus, memory inspection or EDR. |
+| Persistence | New service installation, scheduled-task creation and registry persistence | Security/System Events 4697/7045, 4698 and 4657 | Registry alerts require reviewed persistence paths; ordinary registry writes must not be labelled persistence. |
+| Anti-forensics | Audit log clearing, Event Log service shutdown, audit-policy change and log-evasion commands | Events 1102, 1100, 4719 and structured process telemetry | Evidence of shutdown/clearing does not prove who compromised the host without supporting identity context. |
+| Discovery and lateral movement | Reconnaissance commands, user enumeration, SMB lateral movement, SMB share enumeration and SMB access storms | Events 4798, 4648, 4769 and 5140 plus process telemetry | Full east-west flow analytics are not claimed from endpoint telemetry alone. |
+| Ransomware and destructive file activity | Mass deletion, database deletion correlation, permission tamper, ransomware commands and FBR database-file tamper | Configured Windows SACLs, Events 4663/4660/4670 and Event 4688 | Mass ordinary-write and extension-change rules are disabled because the pilot SACL does not collect reliable write/rename telemetry. |
+| Network behavior | Blocked connection evidence, vertical blocked-port scan, horizontal blocked-host scan | Event 5157 with structured destination fields | C2 beaconing, tunnel duration, rare-port baselines and DNS tunnelling are disabled without complete flow/DNS telemetry. |
+| Web attacks | SQL injection, XSS, command injection, path traversal, XXE, web-shell and WAF-evasion patterns/floods | A reviewed structured HTTP log source classified as `http_request` | Windows messages never enter Web-WAF rules. The Windows agent does not itself provide web-server access logs. |
+| Hybrid endpoint/network candidate | VPN password spray and high-risk host activity followed by a permitted public connection; VPN-to-Windows logon is non-alert context | Verified relay metadata plus native Windows evidence | Candidate only; `NETWORK_RELAY_ENABLED=false` and no production claim exists. |
+
+Explicitly disabled or unavailable categories include trusted-location analytics, byte-counted exfiltration, ordered beaconing, long-connection tunnelling, tenant rare-port baselines, native DNS tunnelling, general Linux detection, packet-payload inspection and device-authenticated legacy UDP attribution.
 
 ## 12. PECA Pipeline
 
@@ -853,7 +919,10 @@ The API creates the incident collections and indexes and performs the bounded ho
 
 - DigitalOcean commit `526c55b` and Vercel commit `952e96b` are retained only as historical verified baselines. They are not evidence of the currently deployed commit after later pushes.
 - The 2026-07-22 working release contains agent `4.2.6-Native-Signed`, the custom-contract quote correction, non-cacheable invitation handoff, production-disabled manual injection and optional duration-aware archive-container routing.
-- The complete backend regression closed with `330 passed`, `3 skipped`, and zero application failures. The mega-suite closed with 116 passes and 2 skips; the remaining current tests closed with 214 passes and 1 skip. The focused security closure has 12 passing tests covering public auth response fields, signed POS replay protection, heartbeat freshness, 2FA throttling, evidence RBAC, CSV formula safety, upload cleanup, and purge path containment.
+- The complete backend regression closed on 2026-07-28 with `346 passed`, `3 skipped`, and zero application failures. The skips were the explicitly opt-in `E2E=1` grand-master test and two Git tracking checks when Git was unavailable inside the runtime image. The focused security closure has 12 passing tests covering public auth response fields, signed POS replay protection, heartbeat freshness, 2FA throttling, evidence RBAC, CSV formula safety, upload cleanup, and purge path containment.
+- The same 349 collected tests were rerun in bounded groups after the single-process Docker wrapper exceeded six minutes while remaining CPU-active. The bounded result was `346 passed` and `3 skipped`: 116 mega-suite passes with two skips, plus 230 non-mega passes with one skip. No test was removed or reclassified. This is a test-runner resource/isolation observation, not evidence of an application failure.
+- The PECA worker integration test now submits and verifies all 11 catalog controls through authenticated signed ingestion, Redis, the PECA consumer and `peca_forensic_logs`; an FBR control event remains excluded from the PECA vault.
+- `pip-audit` reported no known vulnerability in the pinned backend dependency set on 2026-07-28. Bandit reported no high-severity issue. Its medium findings were the local Windows Event XML `ElementTree` parser and uses of `0.0.0.0`; most `0.0.0.0` findings are sentinel values or allow/block safety entries, while the disabled syslog profile intentionally binds inside its container. Windows Event XML is obtained from the native Windows Event Log API rather than an upload endpoint, but the parser trust boundary remains an accepted hardening item rather than a claim of arbitrary-XML safety.
 - SIEM source routing now requires trusted web-log provenance for web and phishing signatures while preserving native Event `4688` command-line detection. This prevents Windows events from being mislabeled as Web-WAF or phishing detections.
 - The `security_alerts` unique index now applies only to documents with a string `alert_uid`; the startup migration handles both Mongo index options and key-spec conflicts, while legacy rows without `alert_uid` remain readable.
 - Compliance evidence responses expose safe hot/cold provenance, and the frontend evidence tab no longer treats an API/archive failure as a valid empty vault.
@@ -951,7 +1020,7 @@ Status meanings:
 | DNS and TLS | `warsoc.tech` to Vercel; `api.warsoc.tech` to DigitalOcean/Nginx | PROVEN | DNS separation, HTTPS certificates, HSTS and certificate validity passed preflight `15545d8ce7`. |
 | Vercel frontend | Browser UI, auth hydration, dashboard, compliance and team workflows | CANDIDATE-PROVEN | The previous production baseline passed login and bounded reads. The local candidate now consumes `/incidents`, `/incidents/summary`, and aggregated SIEM evidence; lint/build pass, but the paired production deployment and network-path smoke are still required. |
 | Nginx gateway | TLS termination, security headers and reverse proxy | PROVEN with observation | Public headers/CORS/private-port checks pass. Real ingest returns 200. Some request bodies are buffered to temporary files; disk impact needs pilot measurement. |
-| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | CANDIDATE-PROVEN | The production baseline is healthy. The candidate adds tenant-scoped incident APIs and startup projection/indexing; all 292 backend tests pass, but the new routes still require production smoke after deployment. |
+| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | CANDIDATE-PROVEN | The production baseline is healthy. The candidate adds tenant-scoped incident APIs and startup projection/indexing; all 346 executable backend tests pass with three explicit skips, but the new routes still require production smoke after deployment. |
 | Authentication/session | Login, HttpOnly access cookie, CSRF double-submit and `/auth/me` | PROVEN | Existing tenant login, auth context and profile returned 200. Public signup returned 403. |
 | Manual sales flow | Quote/contact to operator follow-up; no automatic payment | PROVEN | Quote and contact requests returned 200; legacy payment webhook returned 404. No Safepay dependency is required. |
 | Tenant provisioning | Super-admin creates tenant, admin, packs and seat limit | PROVEN | Disposable production tenant provisioning and login passed in run `b87116c8af`. |
@@ -982,12 +1051,13 @@ Status meanings:
 | PDF report | Human-readable compliance summary | PROVEN | Current PECA PDF returned HTTP 200 and a valid PDF payload. The PDF itself is not cryptographically signed. |
 | Email daemon | Queue, retry, SMTP delivery and DLQ | OPTIONAL/PARTIAL | Security-alert email is disabled. Quote/contact records persist before email queueing. Team invitations return a secure manual handoff link even when SMTP is unavailable. Current SMTP quota/delivery must not be assumed. |
 | Metrics and health | Worker, queue, agent, DLQ, detection and dashboard telemetry | PROVEN | Protected production metrics were read successfully. Dashboard live-read histograms are deployed on the backend. |
-| Independent Mongo backup | Operational disaster recovery separate from evidence archive | CANDIDATE-PROVEN | Drill `20260721T200605Z-7541a279` verified SHA-256, decrypted a production-format archive, and restored 156,671 documents across 18 collections with zero failures into a network-disabled disposable MongoDB. Repeat with the final Azure-hosted production backup during cutover. |
+| Independent Mongo backup | Operational disaster recovery separate from evidence archive | CANDIDATE-PROVEN | Drill `20260721T200605Z-7541a279` verified SHA-256, decrypted a production-format archive, and restored 156,671 documents across 18 collections with zero failures into a network-disabled disposable MongoDB. The restore drill is now tracked and uses a temporary disk-backed Docker volume instead of a 2 GiB RAM-backed filesystem; the volume is deleted after the drill. Repeat with the final Azure-hosted production backup during cutover. |
 | Endpoint event authenticity | Per-event Ed25519 signature tied to the enrolled agent key before Redis admission | PROVEN IN OBSERVE MODE | Agent/API tests and exact-machine flow pass with 7,191 verified and zero rejected signatures. Keep `observe` until every active endpoint is 4.2.6 and active unsigned traffic remains zero for the agreed window, then switch to `required`. |
 | Physical retention classes | Match actual Azure lock duration to compliance and general retention terms | CODE COMPLETE / CLOUD PENDING | Routing and readback support separate SIEM, PECA, FBR and general containers with safe legacy fallback. Existing blobs remain in the locked 2,190-day container; new routing must not be enabled until target containers and locked policies exist. |
 | Installer code signing | Publisher reputation and Defender trust | PARTIAL | Exact hash allowlisting supports the pilot while Defender stays enabled; the binary remains unsigned. |
 | Capacity ceiling | Maximum 50 active agents per tenant | PROVEN for synthetic soak | Prior production soak registered 50/50, rejected seat 51 and met latency. Real customer mix must still be monitored because event volume per endpoint varies. |
-| Linux/syslog | Linux and network-device telemetry | OUT OF SCOPE | The syslog receiver is bound only to loopback and is not part of the Windows SMB pilot contract. Preserve it only as future work. |
+| Linux/syslog | Linux endpoint telemetry | OUT OF SCOPE | Linux remains outside the Windows SMB pilot and no Linux agent/intake is claimed. |
+| Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | CODE-COMPLETE CANDIDATE / DISABLED | Cloud API, strict Fortinet/Cisco ASA/MikroTik/pfSense parsers, bounded encrypted spools, exact retry, DPAPI identity, separate Windows service/installer, lifecycle recovery, atomic Redis admission, source isolation, and limited hybrid correlations are implemented and tested. `NETWORK_RELAY_ENABLED=false`; Windows-host, real-device, retention and pilot proof remain open. |
 | External threat-intelligence enrichment | Third-party reputation/provider lookups | OUT OF SCOPE | No live provider integration is claimed for the current pilot. Native SIEM/FBR/PECA operation does not depend on it. |
 
 ## 23. Failure Map
@@ -1090,6 +1160,10 @@ Do not declare the current release fully accepted until all of the following are
 | Azure retrieval | `app/utils/archive_reader.py` |
 | Endpoint event signature verification | `app/utils/agent_crypto.py` and `app/routes/ingest_pulse.py` |
 | Windows event signing and protected key storage | `agent/windows_agent.py` |
+| Network-relay API and admission | `app/routes/network_relay.py` |
+| Network-relay parsing, spooling, signing and runtime | `app/network_relay/` and `scripts/warsoc_relay_service.py` |
+| Network-relay as-built candidate contract | `docs/NETWORK_RELAY_BACKEND_FOUNDATION.md` |
+| Sanitized customer capability statement | `docs/WARSOC_CUSTOMER_FEATURES.md` |
 | Azure backend migration | `docs/AZURE_BACKEND_MIGRATION_RUNBOOK.md` and `deploy/azure/` |
 | Operational backup and restore drill | `scripts/backup_mongodb.sh` and `scripts/run_backup_restore_drill.ps1` |
 | Legacy uploaded-source cleanup | `scripts/purge_legacy_upload_sources.py` |

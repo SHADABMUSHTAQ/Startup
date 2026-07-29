@@ -1,6 +1,6 @@
 # WarSOC End-to-End Current-State and Priority Map
 
-**Snapshot date:** 2026-07-22  
+**Snapshot date:** 2026-07-28
 **Purpose:** Freeze the current system truth before further implementation.  
 **Scope:** Commercial flow, frontend, identity, RBAC, Windows agent, ingestion, SIEM, PECA, FBR, incidents, storage, Azure, reports, email, infrastructure, security and future phases.  
 **Rule:** An implemented feature is not called proven unless a current test or production artifact supports it.
@@ -13,7 +13,7 @@ The 2026-07-22 high-priority implementation pass completed the following without
 - The public quote path now records requested scope for a custom contract/manual invoice and does not generate authoritative prices from browser or hardcoded formulas. Mongo lead persistence remains successful when the email queue is unavailable.
 - Team invitations retain hashed, 24-hour, single-use activation tokens and now return a non-cacheable setup URL once to the authenticated admin, removing SMTP as an onboarding dependency.
 - Archive writes support fixed FBR/PECA targets and duration-aware SIEM/general Azure targets; new ledger rows record the physical container and readback follows that ledger. All overrides fall back to the existing locked container until cloud operators explicitly configure separately locked targets.
-- Backend verification closes with 314 passed, 3 skipped and zero application failures. Frontend ESLint and production build pass. Production Compose renders successfully and changed Python modules compile.
+- Backend verification closes with 346 passed, 3 skipped and zero application failures. All 11 PECA controls now pass the signed ingestion-to-worker-to-vault integration test. Frontend ESLint and production build remain the previous verified baseline; no frontend source was changed by this backend closure pass.
 
 Still external: verify the live CDN object hash, deploy matching backend/frontend commits, provision and lock FBR/PECA and duration-specific SIEM/general Azure containers before setting routing overrides, and later move backend hosting before the DigitalOcean deadline. Legal content was not modified by this engineering pass.
 
@@ -422,15 +422,15 @@ The frontend legal page currently states that data moves from DigitalOcean to Pa
 | 0. Scope/baseline | Partial | Strong documentation exists, but release/config/claim drift prevents a frozen baseline. |
 | 1. Cryptographic source identity | Partial | Endpoint Ed25519/DPAPI works; required mode, sequence/key lifecycle and relay identity remain. |
 | 2. Canonical envelope/verification | Partial | Signature verification before Redis works; full chain/replay/export/archive verification contract remains. |
-| 3. Customer network relay | Not implemented | Future architecture only. |
-| 4. PECA hybrid correlation | Partial | Endpoint catalog works; network-assisted correlations do not. |
+| 3. Customer network relay | Partial and disabled | Backend activation, signed admission, parsers, bounded spool/outbox and metrics exist behind `NETWORK_RELAY_ENABLED=false`; no installable relay service or real-device proof exists. |
+| 4. PECA hybrid correlation | Narrow candidate and disabled | Endpoint catalog works. A limited relay-assisted correlation subset exists but is dormant; full network identity reconstruction and real-device proof remain. |
 | 5. FBR evidence integrity | Operational for current scope | Strict invoice and native FIM paths are implemented and exact-machine tested. |
 | 6. External daily anchoring | Partial | Mongo daily roots exist; independent Azure anchor does not. |
 | 7. Custody/JIT/break glass | Mostly unimplemented | Basic audit/RBAC exists; JIT support architecture does not. |
 | 8. Retention/archive/DR | Partial but operational | Archive/retrieval, ledger-aware multi-container readback, duration-aware routing and a disposable restore drill exist; Azure bucket provisioning and final cutover restore remain. |
-| 9. SIEM detection/enrichment | Partial | Current source-isolated SIEM works; complete rule-native proof and MITRE/CWE enrichment remain. |
+| 9. SIEM detection/enrichment | Partial | Every enabled regex rule has an executable contract and source isolation passes. Complete clean-VM native proof and broader MITRE/CWE enrichment remain. |
 | 10. Exposure monitoring | Not implemented | Deliberately last and isolated. |
-| 11. Integrated acceptance | Partial | Core exact-machine and prior soak proofs exist; all current release gates are not frozen into one dated bundle. |
+| 11. Integrated acceptance | Partial | Backend closure is 346 passed and 3 explicit skips; exact-machine and prior soak proofs exist. Current paired production browser, final Azure segmentation and cutover restore artifacts remain. |
 
 ## 18. Prioritized Gap Register
 
@@ -482,7 +482,7 @@ The frontend legal page currently states that data moves from DigitalOcean to Pa
 
 ### P3: Expand only after current gates close
 
-1. Build customer-side authenticated network relay.
+1. Complete the disabled customer-side authenticated network relay candidate: Windows service, listener, protected keys, installer lifecycle and real-device proof.
 2. Add firewall/VPN/DNS/DHCP/NAT PECA correlations.
 3. Add JIT support and break-glass controls.
 4. Finish MITRE/CWE enrichment.

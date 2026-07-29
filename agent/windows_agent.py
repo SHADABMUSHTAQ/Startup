@@ -900,7 +900,16 @@ def _xml_local_name(tag):
 
 def parse_windows_event_xml(xml_text):
     """Parse Windows Event XML into locale-independent system and event fields."""
-    root = ET.fromstring(xml_text)
+    if not isinstance(xml_text, str) or not xml_text.strip():
+        raise ValueError("Windows event XML must be non-empty text")
+    if len(xml_text) > 1024 * 1024:
+        raise ValueError("Windows event XML exceeds the 1 MiB safety limit")
+    lowered_xml = xml_text.lower()
+    if "<!doctype" in lowered_xml or "<!entity" in lowered_xml:
+        raise ValueError("Windows event XML cannot contain DTD or entity declarations")
+    # Windows Event Log supplies the envelope. The explicit size and DTD/entity
+    # guards above prevent entity expansion and external-entity parser abuse.
+    root = ET.fromstring(xml_text)  # nosec B314
     namespace = {"e": "http://schemas.microsoft.com/win/2004/08/events/event"}
     system_node = root.find("e:System", namespace)
     if system_node is None:

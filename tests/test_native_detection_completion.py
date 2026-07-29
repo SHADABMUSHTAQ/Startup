@@ -530,6 +530,15 @@ def test_native_xml_and_jsonl_parsers(monkeypatch, tmp_path):
     assert parsed["processed_data"]["target_user"] == "admin"
     assert parsed["event_uid"] == "Security:1234"
 
+    with pytest.raises(ValueError, match="DTD or entity"):
+        agent.parse_windows_event_xml(
+            '<!DOCTYPE Event [<!ENTITY xxe SYSTEM "file:///C:/Windows/win.ini">]>'
+            '<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">'
+            '<System><EventID>4625</EventID></System><EventData>&xxe;</EventData></Event>'
+        )
+    with pytest.raises(ValueError, match="1 MiB"):
+        agent.parse_windows_event_xml("<Event>" + ("x" * (1024 * 1024)) + "</Event>")
+
     def xml_event(event_id, channel, fields):
         data = "".join(
             f'<Data Name="{name}">{value}</Data>'

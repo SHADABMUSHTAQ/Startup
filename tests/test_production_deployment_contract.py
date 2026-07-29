@@ -93,6 +93,8 @@ def test_database_backup_is_encrypted_offsite_and_fail_closed():
 
     restore_drill = _read("scripts/run_backup_restore_drill.ps1")
     assert "--network none" in restore_drill
+    assert "type=volume,source=$restoreVolume,target=/data/db" in restore_drill
+    assert "docker volume rm -f $restoreVolume" in restore_drill
     assert "mongorestore" in restore_drill
     assert "Get-FileHash" in restore_drill
     assert 'requiredCollection in @("tenants", "users")' in restore_drill
@@ -161,3 +163,25 @@ def test_production_acceptance_is_gated_and_verifies_real_artifacts():
     assert "warsoc_email_delivered_total" in validator
     assert "--manifest-path" in validator
     assert "--report-path" in validator
+
+
+def test_network_relay_is_separate_bounded_and_not_public_cloud_syslog():
+    config = _read("deploy/network-relay-config.example.json")
+    installer = _read("scripts/install_warsoc_relay.ps1")
+    uninstaller = _read("scripts/uninstall_warsoc_relay.ps1")
+    runtime = _read("app/network_relay/runtime.py")
+    compose = _read("docker-compose.prod.yml")
+
+    assert '"vendor": "pfsense"' in config
+    assert '"bind_host": "192.0.2.10"' in config
+    assert '"evidence_spool_bytes": 2147483648' in config
+    assert "$serviceName = \"WarSOC_Relay\"" in installer
+    assert "[switch]$AllowEndpointColocation" in installer
+    assert "if ($endpointService -and -not $AllowEndpointColocation)" in installer
+    assert "Set-RelayDirectorySecurity" in installer
+    assert "New-NetFirewallRule" in installer
+    assert "RemoteAddress $sources" in installer
+    assert "evidence were preserved intentionally" in uninstaller
+    assert "relay listeners must bind an explicit approved interface address" in runtime
+    assert "profiles: [\"network-syslog\"]" in compose
+    assert "127.0.0.1}:5140:5140/udp" in compose

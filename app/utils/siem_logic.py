@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import ipaddress
 import json
+import os
 import re
 import uuid
 import time
@@ -764,6 +765,295 @@ class CorrelationEngine:
         ]
         normalized_source = str(source_ip).strip()
         return any(str(candidate or "").strip() == normalized_source for candidate in evidence_candidates)
+
+    @staticmethod
+    def _hybrid_ip(value: object, *, require_public: bool = False) -> str | None:
+        candidate = str(value or "").strip()
+        try:
+            parsed = ipaddress.ip_address(candidate)
+        except ValueError:
+            return None
+        if parsed.is_loopback or parsed.is_unspecified or parsed.is_multicast:
+            return None
+        if require_public and not parsed.is_global:
+            return None
+        return str(parsed)
+
+    @staticmethod
+    def _hybrid_identity(value: object) -> str | None:
+        identity = str(value or "").strip().lower()
+        if identity in {"", "-", "*", "unknown", "network_device", "none", "null"}:
+            return None
+        return identity
+
+    @staticmethod
+    def _hybrid_key_token(value: str) -> str:
+        return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:32]
+
+    @staticmethod
+    def _verified_relay_event(log_entry: dict | None) -> bool:
+        return bool(
+            isinstance(log_entry, dict)
+            and log_entry.get("telemetry_family") == "network"
+            and log_entry.get("source_type") == "network_device"
+            and log_entry.get("source_assurance") == "relay_attested"
+            and log_entry.get("signature_verified") is True
+        )
+
+    async def check_hybrid_network_correlations(
+        self,
+        tenant_id: str,
+        source_ip: str,
+        user: str,
+        event_id: str,
+        event_type: str,
+        timestamp_iso: str,
+        log_entry: dict | None,
+    ) -> list[dict]:
+        """Correlate only verified relay metadata with native Windows evidence.
+
+        A successful VPN-to-Windows sequence is attached as evidence context and
+        does not become a threat by itself. Alerts require either a real
+        multi-user VPN rejection pattern or a high-risk host event followed by
+        a permitted public-network connection from the same endpoint address.
+        """
+        if not self.redis or not isinstance(log_entry, dict):
+            return []
+        if os.getenv("NETWORK_RELAY_ENABLED", "false").strip().lower() not in {
+            "1",
+            "true",
+            "yes",
+        }:
+            return []
+        config = self.config.get("hybrid_network_correlation", {}) or {}
+        if not config.get("enabled", False):
+            return []
+
+        family = str(log_entry.get("telemetry_family") or "").strip().lower()
+        event_id = str(event_id or "").strip()
+        event_type = self._normalize_token(event_type)
+        processed = (
+            log_entry.get("processed_data")
+            if isinstance(log_entry.get("processed_data"), dict)
+            else {}
+        )
+        now_epoch = int(datetime.now(timezone.utc).timestamp())
+        triggered: list[dict] = []
+
+        if self._verified_relay_event(log_entry):
+            action = self._normalize_token(processed.get("action"))
+            remote_ip = self._hybrid_ip(processed.get("src_ip"))
+            identity = self._hybrid_identity(processed.get("user") or user)
+
+            spray = config.get("vpn_password_spray", {}) or {}
+            if (
+                event_type == "vpn_authentication"
+                and action == "rejected"
+                and remote_ip
+                and identity
+            ):
+                window = max(60, int(spray.get("window_seconds", 300)))
+                threshold = max(2, int(spray.get("threshold_users", 5)))
+                source_token = self._hybrid_key_token(remote_ip)
+                spray_key = f"warsoc:hybrid:vpn_spray:{tenant_id}:{source_token}"
+                try:
+                    unique_count = int(
+                        await self.redis.eval(
+                            "redis.call('ZADD',KEYS[1],ARGV[1],ARGV[2]); "
+                            "redis.call('ZREMRANGEBYSCORE',KEYS[1],'-inf',ARGV[3]); "
+                            "redis.call('EXPIRE',KEYS[1],ARGV[4]); "
+                            "return redis.call('ZCARD',KEYS[1])",
+                            1,
+                            spray_key,
+                            now_epoch,
+                            identity,
+                            now_epoch - window,
+                            window,
+                        )
+                    )
+                except Exception as exc:
+                    corr_logger.warning(f"[CORR][HYBRID][VPN-SPRAY] Redis error: {exc}")
+                    unique_count = 0
+                if unique_count >= threshold:
+                    bucket = now_epoch // window
+                    event_uid = (
+                        "hybrid-vpn-spray-"
+                        + self._hybrid_key_token(f"{tenant_id}:{remote_ip}:{bucket}")
+                    )
+                    triggered.append(
+                        self._alert(
+                            alert_type="HYBRID_VPN_PASSWORD_SPRAY",
+                            severity=str(spray.get("severity") or "HIGH").upper(),
+                            summary=(
+                                f"VPN password spray observed: {remote_ip} targeted "
+                                f"{unique_count} distinct accounts within {window // 60} minutes."
+                            ),
+                            tenant_id=tenant_id,
+                            source_ip=remote_ip,
+                            user=identity,
+                            event_id=event_id,
+                            mitre="T1110.003",
+                            extra={
+                                "event_uid": event_uid,
+                                "unique_targets": unique_count,
+                                "window_seconds": window,
+                                "source_assurance": "relay_attested",
+                                "confidence": "high",
+                                "compliance_context": ["peca_oriented"],
+                                "recommended_action": (
+                                    "Review the VPN device and source before using the guarded Block action."
+                                ),
+                            },
+                        )
+                    )
+
+            vpn_logon = config.get("vpn_to_windows_logon", {}) or {}
+            if (
+                event_type == "vpn_authentication"
+                and action == "successful"
+                and remote_ip
+                and identity
+            ):
+                window = max(60, int(vpn_logon.get("window_seconds", 600)))
+                identity_token = self._hybrid_key_token(identity)
+                marker = {
+                    "remote_ip": remote_ip,
+                    "user": identity,
+                    "event_uid": log_entry.get("event_uid"),
+                    "network_device_id": log_entry.get("network_device_id"),
+                    "timestamp": timestamp_iso,
+                }
+                try:
+                    await self.redis.set(
+                        f"warsoc:hybrid:vpn_success:{tenant_id}:{identity_token}",
+                        json.dumps(marker, separators=(",", ":"), default=str),
+                        ex=window,
+                    )
+                except Exception as exc:
+                    corr_logger.warning(f"[CORR][HYBRID][VPN-LOGON] Redis error: {exc}")
+
+            host_network = config.get("high_risk_host_to_public_network", {}) or {}
+            if event_type == "network_connection_permitted" and remote_ip:
+                destination_ip = self._hybrid_ip(
+                    processed.get("dst_ip"), require_public=True
+                )
+                if destination_ip:
+                    window = max(60, int(host_network.get("window_seconds", 300)))
+                    source_token = self._hybrid_key_token(remote_ip)
+                    for host_event_id, rule in (host_network.get("events", {}) or {}).items():
+                        marker_key = (
+                            f"warsoc:hybrid:host_marker:{tenant_id}:"
+                            f"{source_token}:{host_event_id}"
+                        )
+                        try:
+                            raw_marker = await self.redis.get(marker_key)
+                            if not raw_marker:
+                                continue
+                            marker = json.loads(raw_marker)
+                        except Exception as exc:
+                            corr_logger.warning(
+                                f"[CORR][HYBRID][HOST-NETWORK] Marker read error: {exc}"
+                            )
+                            continue
+                        marker_uid = str(marker.get("event_uid") or marker_key)
+                        kind = str(rule.get("kind") or "high_risk_host_event")
+                        triggered.append(
+                            self._alert(
+                                alert_type=f"HYBRID_{kind.upper()}_TO_PUBLIC_NETWORK",
+                                severity=str(rule.get("severity") or "HIGH").upper(),
+                                summary=(
+                                    f"{kind.replace('_', ' ').title()} was followed by a permitted "
+                                    f"connection from {remote_ip} to {destination_ip} within "
+                                    f"{window // 60} minutes."
+                                ),
+                                tenant_id=tenant_id,
+                                source_ip=remote_ip,
+                                user=str(marker.get("user") or user or "unknown"),
+                                event_id=event_id,
+                                mitre="T1071",
+                                extra={
+                                    "event_uid": (
+                                        "hybrid-host-network-"
+                                        + self._hybrid_key_token(
+                                            f"{tenant_id}:{marker_uid}:{kind}"
+                                        )
+                                    ),
+                                    "host_event_id": str(host_event_id),
+                                    "host_event_uid": marker.get("event_uid"),
+                                    "network_event_uid": log_entry.get("event_uid"),
+                                    "agent_id": marker.get("agent_id"),
+                                    "computer": marker.get("computer"),
+                                    "destination_ip": destination_ip,
+                                    "destination_port": processed.get("dst_port"),
+                                    "source_assurance": "relay_attested",
+                                    "confidence": "high",
+                                    "compliance_context": ["peca_oriented"],
+                                    "recommended_action": (
+                                        "Validate the host change and destination before containment."
+                                    ),
+                                },
+                            )
+                        )
+            return triggered
+
+        if family != "windows":
+            return []
+
+        vpn_logon = config.get("vpn_to_windows_logon", {}) or {}
+        if event_id == "4624":
+            identity = self._hybrid_identity(processed.get("user") or user)
+            logon_type = str(processed.get("logon_type") or "").strip()
+            allowed_types = {
+                str(value) for value in vpn_logon.get("allowed_logon_types", ["3", "10"])
+            }
+            endpoint_source = self._hybrid_ip(
+                processed.get("source_network_address") or source_ip
+            )
+            if identity and endpoint_source and logon_type in allowed_types:
+                identity_token = self._hybrid_key_token(identity)
+                try:
+                    raw_marker = await self.redis.get(
+                        f"warsoc:hybrid:vpn_success:{tenant_id}:{identity_token}"
+                    )
+                    marker = json.loads(raw_marker) if raw_marker else None
+                except Exception as exc:
+                    corr_logger.warning(f"[CORR][HYBRID][VPN-LOGON] Marker read error: {exc}")
+                    marker = None
+                if marker and marker.get("remote_ip") == endpoint_source:
+                    log_entry.setdefault("hybrid_correlations", []).append(
+                        {
+                            "type": "vpn_to_windows_logon",
+                            "outcome": "observed",
+                            "source_assurance": "relay_attested",
+                            "vpn_event_uid": marker.get("event_uid"),
+                            "network_device_id": marker.get("network_device_id"),
+                            "remote_ip": endpoint_source,
+                        }
+                    )
+
+        host_network = config.get("high_risk_host_to_public_network", {}) or {}
+        host_rule = (host_network.get("events", {}) or {}).get(event_id)
+        endpoint_ip = self._hybrid_ip(source_ip)
+        if host_rule and endpoint_ip:
+            window = max(60, int(host_network.get("window_seconds", 300)))
+            source_token = self._hybrid_key_token(endpoint_ip)
+            marker = {
+                "event_id": event_id,
+                "event_uid": log_entry.get("event_uid"),
+                "agent_id": log_entry.get("agent_id"),
+                "computer": self._extract_field(log_entry, "computer"),
+                "user": user,
+                "timestamp": timestamp_iso,
+            }
+            try:
+                await self.redis.set(
+                    f"warsoc:hybrid:host_marker:{tenant_id}:{source_token}:{event_id}",
+                    json.dumps(marker, separators=(",", ":"), default=str),
+                    ex=window,
+                )
+            except Exception as exc:
+                corr_logger.warning(f"[CORR][HYBRID][HOST-NETWORK] Redis error: {exc}")
+        return triggered
 
     # ----------------------------------------------------------
     # HELPER: Automated SOAR Mitigation (Multi-Login Revocation)
@@ -1657,7 +1947,16 @@ class CorrelationEngine:
         """
         Executes config-driven stateful behavioral rules.
         """
-        return await self.run_dynamic_rules(
+        hybrid_alerts = await self.check_hybrid_network_correlations(
+            tenant_id,
+            source_ip,
+            user,
+            event_id,
+            event_type,
+            timestamp_iso,
+            log_entry,
+        )
+        dynamic_alerts = await self.run_dynamic_rules(
             tenant_id,
             source_ip,
             user,
@@ -1668,6 +1967,7 @@ class CorrelationEngine:
             lat=lat,
             lon=lon,
         )
+        return [*hybrid_alerts, *dynamic_alerts]
 
     async def run_dynamic_rules(
         self,

@@ -256,6 +256,28 @@ SIEM_RULES = {
         "FBR-INV-MOD": {"event_type": "invoice_modified", "severity": "CRITICAL", "frameworks": ["fbr_pos"], "alert_on_event": False},
         "FIM-DB-MOD": {"event_type": "database_tampered", "severity": "CRITICAL", "frameworks": ["fbr_pos"], "alert_on_event": False}
     },
+    "hybrid_network_correlation": {
+        "enabled": True,
+        "vpn_password_spray": {
+            "threshold_users": 5,
+            "window_seconds": 300,
+            "severity": "HIGH",
+        },
+        "vpn_to_windows_logon": {
+            "window_seconds": 600,
+            "allowed_logon_types": ["3", "10"],
+        },
+        "high_risk_host_to_public_network": {
+            "window_seconds": 300,
+            "events": {
+                "1100": {"kind": "event_logging_stopped", "severity": "CRITICAL"},
+                "1102": {"kind": "audit_log_cleared", "severity": "CRITICAL"},
+                "4697": {"kind": "service_installed", "severity": "HIGH"},
+                "4732": {"kind": "administrator_membership_changed", "severity": "HIGH"},
+                "7045": {"kind": "service_installed", "severity": "HIGH"},
+            },
+        },
+    },
     "detection": {
         "siem_rules": [
             {
