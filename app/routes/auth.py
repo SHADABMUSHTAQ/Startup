@@ -926,7 +926,7 @@ async def activate_invite(request: Request, payload: ActivateInviteRequest, db=D
         raise HTTPException(status_code=400, detail="Invitation link is invalid, expired, or already used")
 
     try:
-        result = await db["users"].update_one(
+        activated_user = await db["users"].find_one_and_update(
             {
                 "_id": token_doc["user_id"],
                 "tenant_id": token_doc["tenant_id"],
@@ -940,8 +940,9 @@ async def activate_invite(request: Request, payload: ActivateInviteRequest, db=D
                 },
                 "$unset": {"must_set_password": ""},
             },
+            return_document=ReturnDocument.AFTER,
         )
-        if result.modified_count != 1:
+        if not activated_user:
             raise RuntimeError("Pending invited user was not found")
     except Exception:
         await db["user_activation_tokens"].update_one(
@@ -958,7 +959,11 @@ async def activate_invite(request: Request, payload: ActivateInviteRequest, db=D
         },
         {"$set": {"used_at": now, "invalidated_reason": "account_activated"}},
     )
-    return {"status": "success", "message": "Password set. You can now sign in."}
+    return {
+        "status": "success",
+        "message": "Password set successfully.",
+        "login_identifier": activated_user.get("email") or activated_user.get("username"),
+    }
 
 
 @router.get("/team")
