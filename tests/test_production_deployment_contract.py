@@ -42,9 +42,17 @@ def test_production_compose_is_private_fail_fast_and_sized_for_pilot():
     assert "ZOHO_SMTP_USER required" in compose
     assert "ZOHO_SMTP_PASS required" in compose
     assert "--maxmemory-policy noeviction" in compose
+    assert "INGEST_DAILY_BYTES_FLOOR: ${INGEST_DAILY_BYTES_FLOOR:-52428800}" in compose
+    assert "RAW_STREAM_MAX_BYTES: ${RAW_STREAM_MAX_BYTES:-201326592}" in compose
+    assert "REDIS_INGEST_MEMORY_HIGH_WATERMARK_PERCENT" in compose
+    assert "REDIS_INGEST_MEMORY_RESERVE_BYTES" in compose
     assert 'max-size: "10m"' in compose
     assert 'max-file: "5"' in compose
-    assert compose.count("logging: *warsoc-logging") == 9
+    assert compose.count("logging: *warsoc-logging") >= 10
+    assert 'profiles: ["wazuh-detection"]' in compose
+    assert "container_name: warsoc-wazuh-dispatch-prod" in compose
+    assert "container_name: warsoc-wazuh-candidate-api-prod" in compose
+    assert '${WAZUH_CANDIDATE_BIND_IP:-127.0.0.1}:${WAZUH_CANDIDATE_PORT:-8443}:8010' in compose
 
 
 def test_backend_contains_only_the_cdn_agent_download_route():
@@ -64,13 +72,15 @@ def test_backend_contains_only_the_cdn_agent_download_route():
     assert "StreamingResponse" not in threat_intel
     assert "COPY ./agent ./agent" not in dockerfile
     assert "COPY ./scripts/launch_readiness_validator.py" in dockerfile
+    assert "COPY ./scripts/seed_wazuh_shadow_registry.py" in dockerfile
+    assert "COPY ./deploy/wazuh/registry /app/deploy/wazuh/registry" in dockerfile
     assert "!scripts/launch_readiness_validator.py" in dockerignore
     assert "agent/" in dockerignore
 
 
 def test_pilot_manifest_covers_complete_executable_installation_chain():
     manifest_script = _read("scripts/generate_pilot_hash_manifest.ps1")
-    assert '[string]$Version = "4.2.7"' in manifest_script
+    assert '[string]$Version = "4.2.8"' in manifest_script
     assert '"Output\\warsoc_installer-$Version.exe"' in manifest_script
     assert '"Output\\pilot_hash_manifest-$Version.json"' in manifest_script
     assert "warsoc_agent.exe" in manifest_script

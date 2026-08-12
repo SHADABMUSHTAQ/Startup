@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
@@ -71,6 +72,72 @@ class Settings(BaseSettings):
     network_relay_max_per_tenant: int = int(
         os.getenv("NETWORK_RELAY_MAX_PER_TENANT", "2")
     )
+    network_relay_device_silence_seconds: int = int(
+        os.getenv("NETWORK_RELAY_DEVICE_SILENCE_SECONDS", "900")
+    )
+    # Generic external detection remains isolated and disabled until every
+    # shadow acceptance gate has passed. It never owns FBR or PECA evidence.
+    wazuh_detection_mode: str = os.getenv(
+        "WAZUH_DETECTION_MODE", "disabled"
+    ).strip().lower()
+    wazuh_connector_id: str = os.getenv("WAZUH_CONNECTOR_ID", "wazuh-shadow-01").strip()
+    wazuh_engine_instance_id: str = os.getenv(
+        "WAZUH_ENGINE_INSTANCE_ID", "wazuh-node-01"
+    ).strip()
+    wazuh_engine_version: str = os.getenv("WAZUH_ENGINE_VERSION", "4.14.7").strip()
+    wazuh_ruleset_version: str = os.getenv("WAZUH_RULESET_VERSION", "").strip()
+    wazuh_rule_registry_sha256: str = os.getenv(
+        "WAZUH_RULE_REGISTRY_SHA256", ""
+    ).strip().lower()
+    wazuh_dispatch_url: str = os.getenv("WAZUH_DISPATCH_URL", "").strip()
+    wazuh_dispatch_signing_secret: str = os.getenv(
+        "WAZUH_DISPATCH_SIGNING_SECRET", ""
+    )
+    wazuh_candidate_signing_secret: str = os.getenv(
+        "WAZUH_CANDIDATE_SIGNING_SECRET", ""
+    )
+    wazuh_outbox_encryption_key: str = os.getenv(
+        "WAZUH_OUTBOX_ENCRYPTION_KEY", ""
+    )
+    wazuh_correlation_hmac_key: str = os.getenv(
+        "WAZUH_CORRELATION_HMAC_KEY", ""
+    )
+    wazuh_correlation_key_version: str = os.getenv(
+        "WAZUH_CORRELATION_KEY_VERSION", "corr-v1"
+    ).strip()
+    wazuh_max_batch_events: int = int(os.getenv("WAZUH_MAX_BATCH_EVENTS", "100"))
+    wazuh_max_body_bytes: int = int(os.getenv("WAZUH_MAX_BODY_BYTES", str(512 * 1024)))
+    wazuh_live_event_max_age_seconds: int = int(
+        os.getenv("WAZUH_LIVE_EVENT_MAX_AGE_SECONDS", "60")
+    )
+    wazuh_projector_batch_size: int = int(os.getenv("WAZUH_PROJECTOR_BATCH_SIZE", "250"))
+    wazuh_dispatch_batch_size: int = int(os.getenv("WAZUH_DISPATCH_BATCH_SIZE", "100"))
+    wazuh_dispatch_max_attempts: int = int(os.getenv("WAZUH_DISPATCH_MAX_ATTEMPTS", "8"))
+    wazuh_dispatch_timeout_seconds: int = int(os.getenv("WAZUH_DISPATCH_TIMEOUT_SECONDS", "10"))
+    wazuh_outbox_max_bytes: int = int(
+        os.getenv("WAZUH_OUTBOX_MAX_BYTES", str(256 * 1024 * 1024))
+    )
+    wazuh_outbox_record_ttl_days: int = int(os.getenv("WAZUH_OUTBOX_RECORD_TTL_DAYS", "30"))
+    wazuh_shadow_retention_days: int = int(os.getenv("WAZUH_SHADOW_RETENTION_DAYS", "30"))
+    wazuh_candidate_clock_skew_seconds: int = int(
+        os.getenv("WAZUH_CANDIDATE_CLOCK_SKEW_SECONDS", "30")
+    )
+    wazuh_candidate_delivery_max_age_seconds: int = int(
+        os.getenv("WAZUH_CANDIDATE_DELIVERY_MAX_AGE_SECONDS", "86400")
+    )
+    wazuh_dispatch_ca_file: str = os.getenv("WAZUH_DISPATCH_CA_FILE", "").strip()
+    wazuh_dispatch_cert_file: str = os.getenv("WAZUH_DISPATCH_CERT_FILE", "").strip()
+    wazuh_dispatch_key_file: str = os.getenv("WAZUH_DISPATCH_KEY_FILE", "").strip()
+    wazuh_candidate_ca_file: str = os.getenv("WAZUH_CANDIDATE_CA_FILE", "").strip()
+    wazuh_candidate_server_cert_file: str = os.getenv(
+        "WAZUH_CANDIDATE_SERVER_CERT_FILE", ""
+    ).strip()
+    wazuh_candidate_server_key_file: str = os.getenv(
+        "WAZUH_CANDIDATE_SERVER_KEY_FILE", ""
+    ).strip()
+    wazuh_primary_approved: bool = os.getenv(
+        "WAZUH_PRIMARY_APPROVED", "false"
+    ).strip().lower() in {"1", "true", "yes"}
 
     # --- TRANSACTIONAL EMAIL (Zoho Mail) ---
     zoho_smtp_host: str = os.getenv("ZOHO_SMTP_HOST", "smtp.zoho.com")
@@ -194,6 +261,92 @@ def get_settings():
             raise RuntimeError(
                 "FATAL: NETWORK_RELAY_MAX_PER_TENANT must be between 1 and 10."
             )
+        if not 180 <= s.network_relay_device_silence_seconds <= 86400:
+            raise RuntimeError(
+                "FATAL: NETWORK_RELAY_DEVICE_SILENCE_SECONDS must be between 180 and 86400."
+            )
+        if s.wazuh_detection_mode not in {"disabled", "shadow", "primary"}:
+            raise RuntimeError(
+                "FATAL: WAZUH_DETECTION_MODE must be 'disabled', 'shadow', or 'primary'."
+            )
+        if s.wazuh_detection_mode == "primary" and not s.wazuh_primary_approved:
+            raise RuntimeError(
+                "FATAL: WAZUH primary mode requires WAZUH_PRIMARY_APPROVED=true."
+            )
+        if s.wazuh_detection_mode != "disabled":
+            from cryptography.fernet import Fernet
+
+            wazuh_required_values = {
+                "WAZUH_RULESET_VERSION": s.wazuh_ruleset_version,
+                "WAZUH_RULE_REGISTRY_SHA256": s.wazuh_rule_registry_sha256,
+                "WAZUH_DISPATCH_URL": s.wazuh_dispatch_url,
+                "WAZUH_DISPATCH_SIGNING_SECRET": s.wazuh_dispatch_signing_secret,
+                "WAZUH_CANDIDATE_SIGNING_SECRET": s.wazuh_candidate_signing_secret,
+                "WAZUH_OUTBOX_ENCRYPTION_KEY": s.wazuh_outbox_encryption_key,
+                "WAZUH_CORRELATION_HMAC_KEY": s.wazuh_correlation_hmac_key,
+                "WAZUH_DISPATCH_CA_FILE": s.wazuh_dispatch_ca_file,
+                "WAZUH_DISPATCH_CERT_FILE": s.wazuh_dispatch_cert_file,
+                "WAZUH_DISPATCH_KEY_FILE": s.wazuh_dispatch_key_file,
+                "WAZUH_CANDIDATE_CA_FILE": s.wazuh_candidate_ca_file,
+                "WAZUH_CANDIDATE_SERVER_CERT_FILE": s.wazuh_candidate_server_cert_file,
+                "WAZUH_CANDIDATE_SERVER_KEY_FILE": s.wazuh_candidate_server_key_file,
+            }
+            missing_wazuh = [
+                name for name, value in wazuh_required_values.items() if not str(value or "").strip()
+            ]
+            if missing_wazuh:
+                raise RuntimeError(
+                    f"FATAL: Missing Wazuh integration configuration: {', '.join(missing_wazuh)}"
+                )
+            parsed_wazuh_url = urlparse(s.wazuh_dispatch_url)
+            if parsed_wazuh_url.scheme != "https" or not parsed_wazuh_url.netloc:
+                raise RuntimeError("FATAL: WAZUH_DISPATCH_URL must be a private HTTPS URL.")
+            if not re.fullmatch(r"[a-f0-9]{64}", s.wazuh_rule_registry_sha256):
+                raise RuntimeError(
+                    "FATAL: WAZUH_RULE_REGISTRY_SHA256 must be a SHA-256 hex digest."
+                )
+            if len(s.wazuh_dispatch_signing_secret.encode("utf-8")) < 32:
+                raise RuntimeError("FATAL: WAZUH_DISPATCH_SIGNING_SECRET must be at least 32 bytes.")
+            if len(s.wazuh_candidate_signing_secret.encode("utf-8")) < 32:
+                raise RuntimeError("FATAL: WAZUH_CANDIDATE_SIGNING_SECRET must be at least 32 bytes.")
+            if len(s.wazuh_correlation_hmac_key.encode("utf-8")) < 32:
+                raise RuntimeError("FATAL: WAZUH_CORRELATION_HMAC_KEY must be at least 32 bytes.")
+            try:
+                Fernet(s.wazuh_outbox_encryption_key.encode("ascii"))
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("FATAL: WAZUH_OUTBOX_ENCRYPTION_KEY must be a Fernet key.") from exc
+            if not 1 <= s.wazuh_max_batch_events <= 500:
+                raise RuntimeError("FATAL: WAZUH_MAX_BATCH_EVENTS must be between 1 and 500.")
+            if not 65536 <= s.wazuh_max_body_bytes <= 5 * 1024 * 1024:
+                raise RuntimeError("FATAL: WAZUH_MAX_BODY_BYTES must be between 65536 and 5242880.")
+            if not 10 <= s.wazuh_live_event_max_age_seconds <= 900:
+                raise RuntimeError(
+                    "FATAL: WAZUH_LIVE_EVENT_MAX_AGE_SECONDS must be between 10 and 900."
+                )
+            if not 1 <= s.wazuh_projector_batch_size <= 1000:
+                raise RuntimeError("FATAL: WAZUH_PROJECTOR_BATCH_SIZE must be between 1 and 1000.")
+            if not 1 <= s.wazuh_dispatch_batch_size <= s.wazuh_max_batch_events:
+                raise RuntimeError(
+                    "FATAL: WAZUH_DISPATCH_BATCH_SIZE must be between 1 and WAZUH_MAX_BATCH_EVENTS."
+                )
+            if not 1 <= s.wazuh_dispatch_max_attempts <= 20:
+                raise RuntimeError("FATAL: WAZUH_DISPATCH_MAX_ATTEMPTS must be between 1 and 20.")
+            if not 2 <= s.wazuh_dispatch_timeout_seconds <= 60:
+                raise RuntimeError("FATAL: WAZUH_DISPATCH_TIMEOUT_SECONDS must be between 2 and 60.")
+            if not 16 * 1024 * 1024 <= s.wazuh_outbox_max_bytes <= 2 * 1024 * 1024 * 1024:
+                raise RuntimeError("FATAL: WAZUH_OUTBOX_MAX_BYTES must be between 16 MiB and 2 GiB.")
+            if not 1 <= s.wazuh_outbox_record_ttl_days <= 365:
+                raise RuntimeError("FATAL: WAZUH_OUTBOX_RECORD_TTL_DAYS must be between 1 and 365.")
+            if not 1 <= s.wazuh_shadow_retention_days <= 180:
+                raise RuntimeError("FATAL: WAZUH_SHADOW_RETENTION_DAYS must be between 1 and 180.")
+            if not 0 <= s.wazuh_candidate_clock_skew_seconds <= 300:
+                raise RuntimeError(
+                    "FATAL: WAZUH_CANDIDATE_CLOCK_SKEW_SECONDS must be between 0 and 300."
+                )
+            if not 300 <= s.wazuh_candidate_delivery_max_age_seconds <= 7 * 24 * 60 * 60:
+                raise RuntimeError(
+                    "FATAL: WAZUH_CANDIDATE_DELIVERY_MAX_AGE_SECONDS must be between 300 and 604800."
+                )
     return s
 
 def load_config(config_file: str = "config.json") -> dict:

@@ -142,6 +142,11 @@ async def init_db():
             ("peca_forensic_logs", [("tenant_id", 1), ("timestamp", -1)], None),
             ("fbr_pos_logs", [("tenant_id", 1), ("timestamp", -1)], None),
             ("csv_uploads", [("tenant_id", 1), ("timestamp", -1)], None),
+            (
+                "csv_uploads",
+                [("tenant_id", 1), ("_retention_ts", -1)],
+                "idx_csv_uploads_tenant_retention",
+            ),
             # These two indexes are required by ingestion and the dashboard.
             # Keep them in the fast startup phase so a later compliance
             # backfill timeout cannot leave the live SIEM vault unindexed.
@@ -160,14 +165,28 @@ async def init_db():
             ("analysis_results", "tenant_id", None),
             ("firewall_rules", [("tenant_id", 1), ("ip", 1)], None),
             ("users", "tenant_id", "idx_users_tenant_id_1"),
+            (
+                "archive_retrieval_requests",
+                [("tenant_id", 1), ("created_at", -1)],
+                "idx_archive_retrieval_tenant_created",
+            ),
+            (
+                "archive_retrieval_allowances",
+                [("tenant_id", 1), ("billing_month", 1)],
+                "uq_archive_retrieval_allowance_month",
+            ),
         ]
         for coll, idx, explicit_name in indexes:
             try:
                 # Use a specific name to avoid collision with default generated names
                 idx_str = str(idx).replace(' ', '').replace('[', '').replace(']', '').replace('(', '').replace(')', '').replace(',', '_').replace("'", '')
                 index_name = explicit_name or f"idx_{coll}_{idx_str}"
+                expected_unique = index_name == "uq_archive_retrieval_allowance_month"
                 try:
-                    await db_manager.db[coll].create_index(idx, name=index_name)
+                    create_options = {"name": index_name}
+                    if expected_unique:
+                        create_options["unique"] = True
+                    await db_manager.db[coll].create_index(idx, **create_options)
                 except Exception as e:
                     # Handle IndexOptionsConflict (existing same-key index with different name/options)
                     is_conflict = getattr(e, 'code', None) == 85 or 'IndexOptionsConflict' in str(e)
@@ -185,20 +204,18 @@ async def init_db():
                                 # Index names are operational metadata. Do not
                                 # rebuild a large equivalent non-TTL index just
                                 # to rename it during API startup.
-                                equivalent = not any(
-                                    (
-                                        info.get('unique'),
-                                        info.get('sparse'),
-                                        info.get('expireAfterSeconds') is not None,
-                                        info.get('partialFilterExpression'),
-                                    )
+                                equivalent = (
+                                    bool(info.get('unique')) == expected_unique
+                                    and not info.get('sparse')
+                                    and info.get('expireAfterSeconds') is None
+                                    and not info.get('partialFilterExpression')
                                 )
                                 if equivalent:
                                     print(f"    - Using equivalent index {coll}.{name}")
                                 else:
                                     await db_manager.db[coll].drop_index(name)
                                     print(f"    - Dropped incompatible index {coll}.{name}")
-                                    await db_manager.db[coll].create_index(idx, name=index_name)
+                                    await db_manager.db[coll].create_index(idx, **create_options)
                                     print(f"    - Recreated compound index {index_name}")
                                 handled = True
                                 break

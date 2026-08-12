@@ -12,7 +12,6 @@ import redis.asyncio as aioredis
 from app.routes.auth import get_current_user
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Depends, Request, status, WebSocketException, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
@@ -27,7 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # ==========================================
 from app.database import init_db, get_db, db_manager
 from app.config.config import get_settings
-from app.routes import auth, ingest_pulse, threat_intel, upload, compliance, logs, alerts, incidents, admin, account, sales, export, pos, network_relay
+from app.routes import auth, ingest_pulse, threat_intel, upload, compliance, logs, alerts, incidents, admin, account, sales, export, pos, network_relay, archive_retrieval
 from app.routes import metrics
 from app.db.init_db import init_compliance_db
 from app.api.ws_manager import manager 
@@ -76,10 +75,20 @@ class MemoryLimitMiddleware(BaseHTTPMiddleware):
                 self._last_check_at = now
             memory_percent = self._last_memory_percent
         except Exception:
-            return JSONResponse(status_code=503, content={"detail": "The service is temporarily unavailable."})
+            return _public_error_response(
+                request,
+                status_code=503,
+                code="service_unavailable",
+                message="The service is temporarily unavailable.",
+            )
 
         if memory_percent >= self.threshold:
-            return JSONResponse(status_code=503, content={"detail": "The service is temporarily unavailable."})
+            return _public_error_response(
+                request,
+                status_code=503,
+                code="service_unavailable",
+                message="The service is temporarily unavailable.",
+            )
 
         return await call_next(request)
 
@@ -397,7 +406,12 @@ app.state.limiter = limiter
 
 @app.exception_handler(RateLimitExceeded)
 async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
-    return JSONResponse(status_code=429, content={"detail": "Too many requests. Please try again later."})
+    return _public_error_response(
+        request,
+        status_code=429,
+        code="rate_limited",
+        message="Too many requests. Please try again later.",
+    )
 
 
 
@@ -418,6 +432,62 @@ def _request_reference(request: Request) -> str:
     return str(getattr(request.state, "request_id", "") or uuid.uuid4().hex[:16])
 
 
+_PUBLIC_ERROR_CODES = {
+    400: "invalid_request",
+    401: "authentication_failed",
+    403: "access_denied",
+    404: "not_found",
+    409: "conflict",
+    413: "payload_too_large",
+    422: "invalid_request",
+    429: "rate_limited",
+}
+
+
+def _public_error_response(
+    request: Request,
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    headers: dict | None = None,
+) -> JSONResponse:
+    request_id = _request_reference(request)
+    response_headers = dict(headers or {})
+    response_headers["X-Request-ID"] = request_id
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "detail": message,
+            "error": {
+                "code": code,
+                "message": message,
+                "request_id": request_id,
+            },
+            "request_id": request_id,
+        },
+        headers=response_headers,
+    )
+
+
+def _safe_http_detail(detail, status_code: int) -> str:
+    if isinstance(detail, str):
+        cleaned = " ".join(detail.split())[:240]
+        if cleaned and status_code < 500:
+            return cleaned
+    defaults = {
+        400: "The request could not be processed.",
+        401: "Authentication is required.",
+        403: "You do not have access to this operation.",
+        404: "The requested resource was not found.",
+        409: "The request conflicts with the current state.",
+        413: "The request is too large.",
+        422: "Some request fields are invalid.",
+        429: "Too many requests. Try again later.",
+    }
+    return defaults.get(status_code, "The service is temporarily unavailable.")
+
+
 @app.middleware("http")
 async def request_reference_middleware(request: Request, call_next):
     request.state.request_id = uuid.uuid4().hex[:16]
@@ -428,27 +498,22 @@ async def request_reference_middleware(request: Request, call_next):
 
 @app.exception_handler(HTTPException)
 async def sanitized_http_exception_handler(request: Request, exc: HTTPException):
-    if exc.status_code < 500:
-        return await fastapi_http_exception_handler(request, exc)
-
     request_id = _request_reference(request)
-    logger.error(
-        "Request failed: request_id=%s method=%s path=%s status=%s detail=%r",
-        request_id,
-        request.method,
-        request.url.path,
-        exc.status_code,
-        exc.detail,
+    log_method = logger.error if exc.status_code >= 500 else logger.info
+    log_method(
+        "Request rejected: request_id=%s method=%s path=%s status=%s detail=%r",
+        request_id, request.method, request.url.path, exc.status_code, exc.detail,
     )
-    headers = dict(exc.headers or {})
-    headers["X-Request-ID"] = request_id
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "detail": "The service is temporarily unavailable.",
-            "request_id": request_id,
-        },
-        headers=headers,
+    status_code = int(exc.status_code)
+    return _public_error_response(
+        request,
+        status_code=status_code,
+        code=_PUBLIC_ERROR_CODES.get(
+            status_code,
+            "service_unavailable" if status_code >= 500 else "request_rejected",
+        ),
+        message=_safe_http_detail(exc.detail, status_code),
+        headers=exc.headers,
     )
 
 
@@ -461,42 +526,29 @@ async def sanitized_unhandled_exception_handler(request: Request, exc: Exception
         request.method,
         request.url.path,
     )
-    return JSONResponse(
+    return _public_error_response(
+        request,
         status_code=500,
-        content={
-            "detail": "The service is temporarily unavailable.",
-            "request_id": request_id,
-        },
-        headers={"X-Request-ID": request_id},
+        code="service_unavailable",
+        message="The service is temporarily unavailable.",
     )
-
-
-def _sanitize_validation_errors(errors: list[dict]) -> list[dict]:
-    sanitized = []
-    for error in errors:
-        item = dict(error)
-        ctx = item.get("ctx")
-        if isinstance(ctx, dict):
-            clean_ctx = {}
-            for key, value in ctx.items():
-                clean_ctx[key] = str(value) if isinstance(value, BaseException) else value
-            item["ctx"] = clean_ctx
-        sanitized.append(item)
-    return sanitized
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    errors = _sanitize_validation_errors(exc.errors())
+    request_id = _request_reference(request)
     logger.warning(
-        "Request validation failed: method=%s path=%s errors=%s",
+        "Request validation failed: request_id=%s method=%s path=%s errors=%s",
+        request_id,
         request.method,
         request.url.path,
-        errors,
+        exc.errors(),
     )
-    return JSONResponse(
+    return _public_error_response(
+        request,
         status_code=422,
-        content={"detail": errors},
+        code="invalid_request",
+        message="Some request fields are invalid.",
     )
 
 @app.middleware("http")
@@ -536,6 +588,11 @@ app.include_router(logs.router, prefix="/api/v1/logs", tags=["Dashboard Logs"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin Control Plane"])
 app.include_router(sales.router, prefix="/api/v1/sales", tags=["Sales"])
 app.include_router(export.router, prefix="/api/v1/export", tags=["Export"])
+app.include_router(
+    archive_retrieval.router,
+    prefix="/api/v1/archive-retrievals",
+    tags=["Archive Retrieval"],
+)
 app.include_router(metrics.router, prefix="", tags=["Metrics"])
 if settings.network_relay_enabled:
     app.include_router(

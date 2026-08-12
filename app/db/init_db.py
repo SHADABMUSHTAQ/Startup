@@ -184,6 +184,11 @@ async def init_compliance_db(db):
             partialFilterExpression={"alert_uid": {"$type": "string"}},
             name="idx_alerts_tenant_alert_uid",
         )
+        await _aggressive_create_index(
+            db.security_alerts,
+            [("tenant_id", 1), ("timestamp", -1)],
+            name="idx_security_alerts_tenant_timestamp",
+        )
         # Legacy FBR/correlation alerts used a non-indexed retention field. Give
         # them a full hot-retention window before the absolute TTL applies.
         await db.security_alerts.update_many(
@@ -275,6 +280,160 @@ async def init_compliance_db(db):
             [("tenant_id", 1), ("timestamp", -1)],
             name="idx_siem_vault_tenant_timestamp",
         )
+        await _aggressive_create_index(
+            db.siem_cold_vault,
+            [("ingested_at", 1), ("_id", 1)],
+            name="idx_siem_vault_detection_projector_scan",
+        )
+
+        # External detection is an optional post-persistence consumer. These
+        # queues and ledgers are isolated from canonical SIEM/FBR/PECA writes.
+        await _aggressive_create_index(
+            db.detection_projector_state,
+            [("projector_id", 1)],
+            unique=True,
+            name="uq_detection_projector_id",
+        )
+        await _aggressive_create_index(
+            db.detection_rule_registry,
+            [("engine", 1), ("ruleset_version", 1), ("rule_id", 1)],
+            unique=True,
+            name="uq_detection_rule_registry_version",
+        )
+        await _aggressive_create_index(
+            db.detection_rule_registry,
+            [
+                ("engine", 1),
+                ("status", 1),
+                ("dispatch_enabled", 1),
+                ("ruleset_version", 1),
+                ("source_family", 1),
+                ("event_ids", 1),
+            ],
+            name="idx_detection_rule_dispatch_lookup",
+        )
+        await _aggressive_create_index(
+            db.detection_engine_connectors,
+            [("connector_id", 1), ("engine_instance_id", 1)],
+            unique=True,
+            name="uq_detection_engine_connector",
+        )
+        await _aggressive_create_index(
+            db.detection_engine_connectors,
+            [("status", 1), ("ruleset_version", 1)],
+            name="idx_detection_engine_connector_status",
+        )
+        await _aggressive_create_index(
+            db.detection_engine_health_events,
+            [("connector_id", 1), ("engine_instance_id", 1), ("event_uid", 1)],
+            unique=True,
+            name="uq_detection_engine_health_event",
+        )
+        await _aggressive_create_index(
+            db.detection_engine_health_events,
+            [("status", 1), ("last_received_at", -1)],
+            name="idx_detection_engine_health_status",
+        )
+        await _aggressive_create_index(
+            db.detection_engine_health_events,
+            [("record_expires_at", 1)],
+            expireAfterSeconds=0,
+            name="ttl_detection_engine_health_events",
+        )
+        await _aggressive_create_index(
+            db.detection_dispatch_outbox,
+            [("dispatch_uid", 1)],
+            unique=True,
+            name="uq_detection_dispatch_uid",
+        )
+        await _aggressive_create_index(
+            db.detection_dispatch_outbox,
+            [("status", 1), ("next_attempt_at", 1), ("created_at", 1)],
+            name="idx_detection_dispatch_queue",
+        )
+        await _aggressive_create_index(
+            db.detection_dispatch_outbox,
+            [("record_expires_at", 1)],
+            expireAfterSeconds=0,
+            name="ttl_detection_dispatch_outbox",
+        )
+        await _aggressive_create_index(
+            db.detection_dispatch_dlq,
+            [("dispatch_uid", 1)],
+            unique=True,
+            name="uq_detection_dispatch_dlq_uid",
+        )
+        await _aggressive_create_index(
+            db.detection_dispatch_dlq,
+            [("tenant_id", 1), ("failed_at", -1)],
+            name="idx_detection_dispatch_dlq_tenant",
+        )
+        await _aggressive_create_index(
+            db.detection_dispatch_dlq,
+            [("record_expires_at", 1)],
+            expireAfterSeconds=0,
+            name="ttl_detection_dispatch_dlq",
+        )
+        await _aggressive_create_index(
+            db.detection_coverage_gaps,
+            [("gap_type", 1), ("tenant_id", 1), ("event_uid", 1), ("ruleset_version", 1)],
+            unique=True,
+            name="uq_detection_coverage_gap_event",
+        )
+        await _aggressive_create_index(
+            db.detection_coverage_gaps,
+            [("status", 1), ("last_seen_at", -1)],
+            name="idx_detection_coverage_gap_status",
+        )
+        await _aggressive_create_index(
+            db.detection_engine_observations,
+            [
+                ("engine_instance_id", 1),
+                ("engine_alert_id", 1),
+                ("ruleset_version", 1),
+            ],
+            unique=True,
+            name="uq_detection_engine_delivery",
+        )
+        await _aggressive_create_index(
+            db.detection_engine_observations,
+            [("tenant_id", 1), ("candidate_fingerprint", 1)],
+            unique=True,
+            name="uq_detection_candidate_fingerprint",
+        )
+        await _aggressive_create_index(
+            db.detection_engine_observations,
+            [("tenant_id", 1), ("created_at", -1)],
+            name="idx_detection_observation_tenant_created",
+        )
+        await _aggressive_create_index(
+            db.detection_engine_observations,
+            [("record_expires_at", 1)],
+            expireAfterSeconds=0,
+            name="ttl_detection_engine_observations",
+        )
+        await _aggressive_create_index(
+            db.detection_candidates_quarantine,
+            [
+                ("connector_id", 1),
+                ("engine_instance_id", 1),
+                ("engine_alert_id", 1),
+                ("ruleset_version", 1),
+            ],
+            unique=True,
+            name="uq_detection_candidate_quarantine_delivery",
+        )
+        await _aggressive_create_index(
+            db.detection_candidates_quarantine,
+            [("connector_id", 1), ("received_at", -1)],
+            name="idx_detection_candidate_quarantine_connector",
+        )
+        await _aggressive_create_index(
+            db.detection_candidates_quarantine,
+            [("record_expires_at", 1)],
+            expireAfterSeconds=0,
+            name="ttl_detection_candidate_quarantine",
+        )
 
         # 4. Raw uploads/results are also archive-managed. Remove every legacy
         # TTL so an Azure outage causes visible hot-storage growth, not data loss.
@@ -328,6 +487,11 @@ async def init_compliance_db(db):
                 }
             ],
         )
+        await _aggressive_create_index(
+            db.csv_uploads,
+            [("tenant_id", 1), (RAW_RETENTION_ANCHOR_FIELD, -1)],
+            name="idx_csv_uploads_tenant_retention",
+        )
 
         # 5. CTO VETO ENFORCEMENT: Audit trails are excluded from raw TTL policy.
         await _drop_ttl_indexes(db.management_audit, "management_audit")
@@ -369,6 +533,45 @@ async def init_compliance_db(db):
             unique=True,
             sparse=True,
             name="uq_storage_archive_key",
+        )
+        await _aggressive_create_index(
+            db.archive_retrieval_requests,
+            [("request_id", 1)],
+            unique=True,
+            name="uq_archive_retrieval_request_id",
+        )
+        await _aggressive_create_index(
+            db.archive_retrieval_requests,
+            [("tenant_id", 1), ("created_at", -1)],
+            name="idx_archive_retrieval_tenant_created",
+        )
+        await _aggressive_create_index(
+            db.archive_retrieval_requests,
+            [("status", 1), ("created_at", 1)],
+            name="idx_archive_retrieval_worker_queue",
+        )
+        await _aggressive_create_index(
+            db.archive_retrieval_requests,
+            [("tenant_id", 1), ("billing_month", 1), ("status", 1)],
+            name="idx_archive_retrieval_monthly_allowance",
+        )
+        await _aggressive_create_index(
+            db.archive_retrieval_usage,
+            [("tenant_id", 1), ("billing_month", 1)],
+            unique=True,
+            name="uq_archive_retrieval_usage_month",
+        )
+        await _aggressive_create_index(
+            db.archive_retrieval_allowances,
+            [("tenant_id", 1), ("billing_month", 1)],
+            unique=True,
+            name="uq_archive_retrieval_allowance_month",
+        )
+        await _aggressive_create_index(
+            db.archive_storage_daily,
+            [("tenant_id", 1), ("day", 1), ("retention_class", 1)],
+            unique=True,
+            name="uq_archive_storage_daily",
         )
         await _aggressive_create_index(
             db.user_activation_tokens,
@@ -425,6 +628,17 @@ async def init_compliance_db(db):
             db.network_relay_batches,
             [("tenant_id", 1), ("cloud_receipt_time", -1)],
             name="idx_network_relay_batch_tenant_time",
+        )
+        await _aggressive_create_index(
+            db.network_relay_device_status,
+            [("tenant_id", 1), ("relay_id", 1), ("device_id", 1)],
+            unique=True,
+            name="uq_network_relay_device_status",
+        )
+        await _aggressive_create_index(
+            db.network_relay_device_status,
+            [("tenant_id", 1), ("last_event_at", -1)],
+            name="idx_network_relay_device_last_event",
         )
         await _aggressive_create_index(
             db.network_relay_chain_resets,

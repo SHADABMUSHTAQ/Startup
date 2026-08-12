@@ -113,6 +113,10 @@ async def db(mongo_client, settings):
     collections = [
         "agents",
         "analysis_results",
+        "archive_retrieval_allowances",
+        "archive_retrieval_requests",
+        "archive_retrieval_usage",
+        "archive_storage_daily",
         "billing",
         "csv_uploads",
         "dead_letter_logs",
@@ -125,6 +129,7 @@ async def db(mongo_client, settings):
         "notifications",
         "network_relay_batches",
         "network_relay_chain_resets",
+        "network_relay_device_status",
         "network_relays",
         "peca_forensic_logs",
         "incident_audit_log",

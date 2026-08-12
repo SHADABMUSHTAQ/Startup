@@ -30,6 +30,11 @@ services:
       SALES_EMAIL: ${SALES_EMAIL:?SALES_EMAIL required}
       AGENT_EVENT_SIGNATURE_MODE: ${AGENT_EVENT_SIGNATURE_MODE:-required}
       INGEST_PLATFORM_DAILY_BYTES_MAX: ${INGEST_PLATFORM_DAILY_BYTES_MAX:-3221225472}
+      INGEST_DAILY_BYTES_FLOOR: ${INGEST_DAILY_BYTES_FLOOR:-52428800}
+      RAW_STREAM_MAX_ENTRIES: ${RAW_STREAM_MAX_ENTRIES:-500000}
+      RAW_STREAM_MAX_BYTES: ${RAW_STREAM_MAX_BYTES:-201326592}
+      REDIS_INGEST_MEMORY_HIGH_WATERMARK_PERCENT: ${REDIS_INGEST_MEMORY_HIGH_WATERMARK_PERCENT:-70}
+      REDIS_INGEST_MEMORY_RESERVE_BYTES: ${REDIS_INGEST_MEMORY_RESERVE_BYTES:-134217728}
       ENABLE_MANUAL_LOG_INJECTION: ${ENABLE_MANUAL_LOG_INJECTION:-false}
     volumes:
       - reports_data_prod:/app/data/reports
@@ -142,6 +147,88 @@ services:
           memory: 256M
           pids: 256
 
+  wazuh-dispatch-worker:
+    <<: *warsoc-process-security
+    build: .
+    container_name: warsoc-wazuh-dispatch-prod
+    profiles: ["wazuh-detection"]
+    command: python -m app.workers.wazuh_dispatch_worker
+    restart: always
+    logging: *warsoc-logging
+    env_file:
+      - ${WARSOC_ENV_FILE:-.env.prod}
+    environment:
+      APP_ENV: production
+      MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+    volumes:
+      - ${WAZUH_MTLS_DIR:-./keys/wazuh}:/app/keys/wazuh:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      warsoc-api:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - warsoc-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+          pids: 128
+
+  wazuh-candidate-api:
+    <<: *warsoc-process-security
+    build: .
+    container_name: warsoc-wazuh-candidate-api-prod
+    profiles: ["wazuh-detection"]
+    command:
+      - uvicorn
+      - app.wazuh_integration.candidate_api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8010"
+      - --ssl-keyfile
+      - ${WAZUH_CANDIDATE_SERVER_KEY_FILE:-/app/keys/wazuh/compute-a-server.key}
+      - --ssl-certfile
+      - ${WAZUH_CANDIDATE_SERVER_CERT_FILE:-/app/keys/wazuh/compute-a-server.crt}
+      - --ssl-ca-certs
+      - ${WAZUH_CANDIDATE_CA_FILE:-/app/keys/wazuh/compute-b-ca.crt}
+      - --ssl-cert-reqs
+      - "2"
+    restart: always
+    logging: *warsoc-logging
+    env_file:
+      - ${WARSOC_ENV_FILE:-.env.prod}
+    environment:
+      APP_ENV: production
+      MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+    volumes:
+      - ${WAZUH_MTLS_DIR:-./keys/wazuh}:/app/keys/wazuh:ro
+    ports:
+      - "${WAZUH_CANDIDATE_BIND_IP:-127.0.0.1}:${WAZUH_CANDIDATE_PORT:-8443}:8010"
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - warsoc-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+          pids: 128
+
   compliance-cron:
     <<: *warsoc-process-security
     build: .
@@ -223,6 +310,43 @@ services:
           cpus: '0.75'
           memory: 768M
           pids: 256
+
+  archive-retrieval-worker:
+    <<: *warsoc-process-security
+    build: .
+    container_name: warsoc-archive-retrieval-prod
+    profiles: ["archive-retrieval"]
+    command: python -m app.workers.archive_retrieval_worker
+    restart: always
+    logging: *warsoc-logging
+    env_file:
+      - ${WARSOC_ENV_FILE:-.env.prod}
+    environment:
+      APP_ENV: production
+      MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:?MONGODB_DB_NAME required}
+      ARCHIVE_RETRIEVAL_ENABLED: ${ARCHIVE_RETRIEVAL_ENABLED:-false}
+      AZURE_RETRIEVAL_STAGING_CONTAINER: ${AZURE_RETRIEVAL_STAGING_CONTAINER:-warsoc-retrieval-staging}
+      AZURE_STORAGE_ACCOUNT_URL: ${AZURE_STORAGE_ACCOUNT_URL:-}
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
+      AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      warsoc-api:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      - warsoc-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+          pids: 128
 
   mongodb:
     image: mongo:7
