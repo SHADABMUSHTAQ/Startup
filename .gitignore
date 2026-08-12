@@ -32,6 +32,7 @@ node_modules/
 .env.*
 !.env.example
 !.env.pilot.example
+!.env.wazuh-bridge.example
 agent/.env
 agent/spool/
 
@@ -89,6 +90,8 @@ scripts/*
 !scripts/warsoc_relay_service.py
 !scripts/install_warsoc_relay.ps1
 !scripts/uninstall_warsoc_relay.ps1
+!scripts/prepare_wazuh_lab_integration.ps1
+!scripts/seed_wazuh_shadow_registry.py
 !build_agent.bat
 trigger_alerts.py
 verify.py

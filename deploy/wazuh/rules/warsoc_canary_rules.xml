@@ -1,0 +1,10 @@
+<group name="warsoc_shadow,warsoc_integration,">
+  <rule id="100500" level="3">
+    <decoded_as>json</decoded_as>
+    <field name="warsoc_schema">^warsoc.wazuh-local-input/v1$</field>
+    <field name="warsoc_event_id">^4688$</field>
+    <field name="warsoc_field_new_process_name" type="pcre2">(?i)(?:^|[\\/])whoami\.exe$</field>
+    <description>WarSOC external detection integration canary</description>
+    <group>warsoc_canary,</group>
+  </rule>
+</group>

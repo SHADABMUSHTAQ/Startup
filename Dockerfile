@@ -41,6 +41,8 @@ COPY ./scripts/migrate_fbr_encryption.py /app/scripts/migrate_fbr_encryption.py
 COPY ./scripts/launch_readiness_validator.py /app/scripts/launch_readiness_validator.py
 COPY ./scripts/measure_dashboard_reads.py /app/scripts/measure_dashboard_reads.py
 COPY ./scripts/purge_legacy_upload_sources.py /app/scripts/purge_legacy_upload_sources.py
+COPY ./scripts/seed_wazuh_shadow_registry.py /app/scripts/seed_wazuh_shadow_registry.py
+COPY ./deploy/wazuh/registry /app/deploy/wazuh/registry
 RUN mkdir -p /app/Output
 RUN chmod +x /app/scripts/entrypoint.sh
 

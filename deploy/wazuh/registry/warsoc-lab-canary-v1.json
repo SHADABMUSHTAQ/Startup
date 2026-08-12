@@ -1,0 +1,22 @@
+{
+  "schema": "warsoc.wazuh-rule-registry/v1",
+  "ruleset_version": "warsoc-lab-canary-v1",
+  "rules": [
+    {
+      "rule_id": "100500",
+      "category": "integration_canary",
+      "severity": "INFO",
+      "mitre_ids": [],
+      "allowed_engine_levels": [3],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4688"],
+      "input_field_map": {
+        "new_process_name": "processed_data.new_process_name"
+      },
+      "candidate_context_fields": [
+        "wazuh_timestamp",
+        "wazuh_manager"
+      ]
+    }
+  ]
+}
