@@ -39,6 +39,12 @@ _MIKROTIK_FLOW = re.compile(
     re.IGNORECASE,
 )
 _PFSENSE_FILTERLOG = re.compile(r"(?:^|\s)filterlog(?:\[\d+\])?:\s*(?P<data>.*)$", re.IGNORECASE)
+_PFSENSE_BSD_NO_HOST = re.compile(
+    r"^(?:<(?P<pri>\d{1,3})>)?"
+    r"(?P<timestamp>[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+"
+    r"filterlog(?:\[\d+\])?:\s*(?P<data>.*)$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -211,7 +217,10 @@ def parse_fortinet(raw_message: str) -> ParsedNetworkEvent:
             "vpn_tunnel": values.get("tunnelid") or values.get("tunneltype"),
             "hostname": values.get("devname") or values.get("hostname"),
             "severity": values.get("level"),
-            "message": values.get("msg") or values.get("eventtype") or message[:1000],
+            "message": (
+                f"Fortinet {event_type.replace('_', ' ')} "
+                f"{action or 'observed'}"
+            )[:1000],
         },
         envelope,
     )
@@ -229,7 +238,7 @@ def parse_cisco_asa(raw_message: str) -> ParsedNetworkEvent:
         "event_type": "network_observation",
         "severity": int(matched.group("severity")),
         "message_id": message_id,
-        "message": body[:1000],
+        "message": f"Cisco ASA event {message_id} observed",
     }
     denied = _CISCO_DENY.search(body)
     built = _CISCO_BUILT.search(body)
@@ -272,6 +281,11 @@ def parse_cisco_asa(raw_message: str) -> ParsedNetworkEvent:
     if remote_ip_match:
         normalized["src_ip"] = remote_ip_match.group(1)
 
+    normalized["message"] = (
+        f"Cisco ASA {normalized['event_type'].replace('_', ' ')} "
+        f"event {message_id}"
+    )[:1000]
+
     for key in ("src_port", "dst_port"):
         if key in normalized:
             normalized[key] = _port(normalized[key])
@@ -297,7 +311,7 @@ def parse_mikrotik(raw_message: str) -> ParsedNetworkEvent:
     normalized: dict[str, Any] = {
         "event_type": event_type,
         "action": action,
-        "message": message[:1000],
+        "message": f"MikroTik firewall {action or 'observation'}",
     }
     if flow:
         normalized.update(flow.groupdict())
@@ -327,14 +341,33 @@ def parse_pfsense(raw_message: str) -> ParsedNetworkEvent:
     must never be guessed from free-form text.
     """
 
-    message, envelope, device_time = _strip_syslog_envelope(raw_message)
-    matched = _PFSENSE_FILTERLOG.search(message)
-    if matched:
-        csv_data = matched.group("data")
-    elif str(envelope.get("app_name") or "").lower() == "filterlog":
-        csv_data = message
+    # pfSense's default BSD remote-syslog format intentionally omits the
+    # hostname: ``<PRI>Mon DD HH:MM:SS filterlog[pid]: CSV``. Handle that
+    # documented appliance-specific envelope before generic RFC 3164 parsing,
+    # which would otherwise mistake ``filterlog[pid]:`` for the hostname.
+    no_host = _PFSENSE_BSD_NO_HOST.match(raw_message.strip("\x00\r\n "))
+    if no_host:
+        priority_text = no_host.group("pri")
+        envelope = {"app_name": "filterlog"}
+        if priority_text is not None:
+            priority = int(priority_text)
+            if priority > 191:
+                raise NetworkParseError("invalid syslog priority")
+            envelope["syslog_facility"] = priority // 8
+            envelope["syslog_severity"] = priority % 8
+        csv_data = no_host.group("data")
+        # BSD syslog has no year or timezone, so relay receipt time remains
+        # authoritative rather than guessing a device timestamp.
+        device_time = None
     else:
-        raise NetworkParseError("not a pfSense filterlog event")
+        message, envelope, device_time = _strip_syslog_envelope(raw_message)
+        matched = _PFSENSE_FILTERLOG.search(message)
+        if matched:
+            csv_data = matched.group("data")
+        elif str(envelope.get("app_name") or "").lower() == "filterlog":
+            csv_data = message
+        else:
+            raise NetworkParseError("not a pfSense filterlog event")
     try:
         rows = list(csv.reader([csv_data], strict=True))
     except csv.Error as exc:

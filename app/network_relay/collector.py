@@ -293,6 +293,7 @@ class RelayCollector:
                 "event_type": "device_health",
                 "state": "DEGRADED",
                 "reason": loss["reason"],
+                "affected_device_id": loss["device_id"],
                 "dropped_events": loss["dropped_events"],
                 "dropped_bytes": loss["dropped_bytes"],
                 "interval_start": loss["interval_start"].isoformat(),

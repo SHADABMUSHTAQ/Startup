@@ -3,12 +3,13 @@ import json
 import os
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import orjson
 import pytest
 import httpx
 from pydantic import ValidationError
+from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
@@ -34,6 +35,7 @@ from app.routes.network_relay import (
     RelayEvent,
     _admit_batch,
     _queue_event,
+    settings as relay_settings,
 )
 from app.utils.siem_catalog import SIEM_RULES
 from app.utils.siem_logic import CorrelationEngine
@@ -88,13 +90,15 @@ def test_fortinet_traffic_and_vpn_are_normalized_without_packet_payload():
     denied = parse_fortinet(
         '<189>1 2026-07-27T10:00:00Z fw1 fortigate - TRAFFIC - '
         'type=traffic subtype=forward action=deny srcip=10.0.0.4 srcport=52000 '
-        'dstip=8.8.8.8 dstport=53 proto=17 sentbyte=120 rcvdbyte=0 policyid=7'
+        'dstip=8.8.8.8 dstport=53 proto=17 sentbyte=120 rcvdbyte=0 policyid=7 '
+        'msg="confidential-payload-marker"'
     )
     assert denied.device_event_time == datetime(2026, 7, 27, 10, 0, tzinfo=timezone.utc)
     assert denied.normalized["event_type"] == "network_connection_blocked"
     assert denied.normalized["src_ip"] == "10.0.0.4"
     assert denied.normalized["dst_port"] == 53
     assert "payload" not in denied.normalized
+    assert "confidential-payload-marker" not in json.dumps(denied.normalized)
 
     vpn = parse_fortinet(
         'date=2026-07-27 time=10:01:00 type=event subtype=vpn '
@@ -114,6 +118,7 @@ def test_cisco_asa_and_mikrotik_preserve_conservative_outcomes():
     assert cisco.normalized["event_type"] == "network_connection_blocked"
     assert cisco.normalized["message_id"] == "106023"
     assert cisco.normalized["dst_port"] == 443
+    assert "access-group" not in cisco.normalized["message"]
 
     mikrotik = parse_mikrotik(
         '<134>Jul 27 10:03:00 router1 firewall,info forward: in:ether2 out:ether1, '
@@ -123,6 +128,7 @@ def test_cisco_asa_and_mikrotik_preserve_conservative_outcomes():
     # not be relabelled as an allow event.
     assert mikrotik.normalized["event_type"] == "network_observation"
     assert mikrotik.normalized["dst_ip"] == "198.51.100.20"
+    assert "connection-state" not in mikrotik.normalized["message"]
 
     vpn = parse_cisco_asa(
         '<166>Jul 27 10:03:01 asa1 %ASA-6-113012: AAA user authentication '
@@ -196,6 +202,22 @@ def test_pfsense_filterlog_ipv4_ipv6_and_fail_closed_contract():
     assert permitted.normalized["interface_out"] == "em1"
     assert permitted.normalized["dst_ip"] == "2001:4860:4860::8888"
     assert "payload" not in permitted.normalized
+
+    # pfSense's default remote BSD format omits the hostname. This exact
+    # envelope shape is emitted by pfSense CE 2.8.1 over UDP syslog.
+    bsd_no_host = parse_pfsense(
+        '<134>Aug  2 15:12:05 filterlog[55624]: '
+        '4,,,1000000103,hn0,match,block,in,4,0x0,,128,49872,0,none,17,udp,78,'
+        '172.19.224.1,172.19.239.255,137,137,58'
+    )
+    assert bsd_no_host.device_event_time is None
+    assert bsd_no_host.normalized["event_type"] == "network_connection_blocked"
+    assert bsd_no_host.normalized["src_ip"] == "172.19.224.1"
+    assert bsd_no_host.normalized["dst_ip"] == "172.19.239.255"
+    assert bsd_no_host.normalized["src_port"] == 137
+    assert bsd_no_host.normalized["dst_port"] == 137
+    assert bsd_no_host.normalized["severity"] == 6
+    assert "hostname" not in bsd_no_host.normalized
 
     with pytest.raises(NetworkParseError):
         parse_pfsense("openvpn[123]: peer connected")
@@ -275,6 +297,46 @@ def test_relay_batch_builder_matches_cloud_schema_and_signature_contract():
     assert validated.events[0].event_uid == "relay-event-stable-0001"
     assert signed.batch_hash == hashlib.sha256(signed.body).hexdigest()
     private_key.public_key().verify(bytes.fromhex(signed.signature), signed.body)
+
+
+def test_relay_batch_preserves_signed_raw_message_whitespace():
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    raw_message = (
+        " <134>Aug  2 15:12:05 filterlog[55624]: "
+        "4,,,1000000103,hn0,match,block,in,4,0x0,,128,49872,0,none,17,udp,78,"
+        "172.19.224.1,172.19.239.255,137,137,58   "
+    )
+    parsed = parse_pfsense(raw_message.strip())
+    event = relay_event_from_parsed(
+        parsed,
+        device_id="pfsense-lab",
+        transport="udp",
+        source_address="192.0.2.1",
+        raw_message=raw_message,
+        relay_receipt_time=datetime.now(timezone.utc),
+        event_uid="relay-event-whitespace-0001",
+    )
+    signed = build_signed_batch(
+        relay_id=f"WARSOC_RELAY_{uuid.uuid4().hex}",
+        chain_id=uuid.uuid4().hex,
+        key_epoch=1,
+        sequence=1,
+        previous_batch_hash=RELAY_GENESIS_HASH,
+        events=[event],
+        private_key_pem=private_pem,
+    )
+
+    validated = RelayBatch.model_validate_json(signed.body)
+
+    assert validated.events[0].raw_message == raw_message
+    assert validated.events[0].raw_message_hash == hashlib.sha256(
+        raw_message.encode("utf-8")
+    ).hexdigest()
 
 
 def test_encrypted_spools_are_fifo_bounded_and_independent(tmp_path):
@@ -379,6 +441,16 @@ def test_collector_limits_before_parse_and_reports_loss_in_control_spool(tmp_pat
     assert {row.payload["normalized"]["reason"] for row in controls} == {
         "edge_rate_limit",
         "unregistered_or_ambiguous_source",
+    }
+    affected = {
+        row.payload["normalized"]["reason"]: row.payload["normalized"][
+            "affected_device_id"
+        ]
+        for row in controls
+    }
+    assert affected == {
+        "edge_rate_limit": "fw-1",
+        "unregistered_or_ambiguous_source": "unknown",
     }
     assert all(row.payload["record_class"] == "control" for row in controls)
     evidence.close()
@@ -644,7 +716,53 @@ async def test_redis_batch_admission_is_atomic_and_duplicate_safe(redis_client):
     assert await redis_client.xlen("raw_logs_queue") == 2
 
 
-def test_relay_events_are_source_isolated_from_legacy_keyword_rules():
+def test_relay_events_encrypt_raw_vendor_evidence_before_queueing(monkeypatch):
+    key = Fernet.generate_key()
+    monkeypatch.setattr(relay_settings, "encryption_key", key.decode("ascii"))
+    batch = _relay_batch()
+    event = _queue_event(
+        batch.events[0],
+        {
+            "tenant_id": "WARSOC_TEST_RELAY",
+            "relay_id": batch.relay_id,
+            "relay": {"signing_key_id": "key-1", "version": "relay-test"},
+        },
+        batch,
+        "b" * 64,
+        "c" * 128,
+        datetime.now(timezone.utc),
+    )
+    plaintext = json.loads(Fernet(key).decrypt(event["raw_data"].encode("ascii")))
+
+    assert event["raw_data_encryption_version"] == "fernet-v1"
+    assert plaintext["raw_message"] == batch.events[0].raw_message
+    assert plaintext["raw_message_hash"] == batch.events[0].raw_message_hash
+    assert batch.events[0].raw_message not in orjson.dumps(event).decode("utf-8")
+
+
+def test_relay_event_queueing_fails_closed_without_evidence_key(monkeypatch):
+    monkeypatch.setattr(relay_settings, "encryption_key", "")
+    batch = _relay_batch()
+
+    with pytest.raises(RuntimeError, match="encryption is not configured"):
+        _queue_event(
+            batch.events[0],
+            {
+                "tenant_id": "WARSOC_TEST_RELAY",
+                "relay_id": batch.relay_id,
+                "relay": {"signing_key_id": "key-1", "version": "relay-test"},
+            },
+            batch,
+            "b" * 64,
+            "c" * 128,
+            datetime.now(timezone.utc),
+        )
+
+
+def test_relay_events_are_source_isolated_from_legacy_keyword_rules(monkeypatch):
+    monkeypatch.setattr(
+        relay_settings, "encryption_key", Fernet.generate_key().decode("ascii")
+    )
     batch = _relay_batch()
     event = _queue_event(
         batch.events[0],
@@ -682,6 +800,7 @@ def _network_log(event_type: str, *, action: str, src_ip: str | None, user: str)
         "source_type": "network_device",
         "source_assurance": "relay_attested",
         "signature_verified": True,
+        "time_confidence": "high",
         "telemetry_family": "network",
         "event_id": "NET-VPN-AUTH" if event_type == "vpn_authentication" else "NET-CONNECTION-ALLOW",
         "event_type": event_type,
@@ -853,10 +972,27 @@ async def test_hybrid_high_risk_host_event_requires_same_source_and_public_desti
         event_type=unrelated["event_type"], log_entry=unrelated,
     ) == []
 
+    stale = _network_log(
+        "network_connection_permitted", action="built", src_ip="10.0.0.20", user="-"
+    )
+    stale["tenant_id"] = tenant_id
+    stale["timestamp"] = (
+        datetime.fromisoformat(host_event["timestamp"]) - timedelta(hours=1)
+    ).isoformat()
+    stale_alerts = await engine.run_all(
+        tenant_id, "10.0.0.20", "-", stale["event_id"],
+        event_type=stale["event_type"], timestamp_iso=stale["timestamp"], log_entry=stale,
+    )
+    assert not any(
+        alert["type"] == "HYBRID_AUDIT_LOG_CLEARED_TO_PUBLIC_NETWORK"
+        for alert in stale_alerts
+    )
+
     outbound = _network_log(
         "network_connection_permitted", action="built", src_ip="10.0.0.20", user="-"
     )
     outbound["tenant_id"] = tenant_id
+    outbound["time_confidence"] = "low"
     alerts = await engine.run_all(
         tenant_id, "10.0.0.20", "-", outbound["event_id"],
         event_type=outbound["event_type"], timestamp_iso=outbound["timestamp"], log_entry=outbound,
@@ -868,3 +1004,5 @@ async def test_hybrid_high_risk_host_event_requires_same_source_and_public_desti
     assert len(hybrid) == 1
     assert hybrid[0]["host_event_uid"] == host_event["event_uid"]
     assert hybrid[0]["destination_ip"] == "8.8.8.8"
+    assert hybrid[0]["confidence"] == "medium"
+    assert hybrid[0]["clock_confidence"] == "low"

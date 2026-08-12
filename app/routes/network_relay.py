@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 import jwt
 import orjson
+from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -32,6 +33,7 @@ from app.routes.ingest_pulse import (
     INGEST_DAILY_QUOTA_TTL_SECONDS,
     PLATFORM_DAILY_INGEST_BYTES_MAX,
     _resolve_daily_ingest_quota_bytes,
+    _enforce_raw_stream_capacity,
 )
 from app.utils.agent_crypto import public_key_id
 from app.utils.limiter import limiter
@@ -49,6 +51,7 @@ RELAY_SCHEMA_VERSION = "warsoc-relay-batch-v1"
 RELAY_GENESIS_HASH = "0" * 64
 RAW_LOGS_QUEUE = "raw_logs_queue"
 RAW_STREAM_MAX_ENTRIES = max(1, int(os.getenv("RAW_STREAM_MAX_ENTRIES", "500000")))
+DEVICE_SILENCE_SECONDS = settings.network_relay_device_silence_seconds
 INACTIVE_TENANT_STATUSES = {"inactive", "suspended", "cancelled", "canceled", "past_due"}
 INACTIVE_RELAY_STATUSES = {"inactive", "revoked"}
 RELAY_ID_PATTERN = re.compile(r"^WARSOC_RELAY_[a-f0-9]{32}$")
@@ -111,6 +114,7 @@ NORMALIZED_NETWORK_FIELDS = {
     "icmp_type",
     "evidence_spool_records",
     "control_spool_records",
+    "affected_device_id",
 }
 
 
@@ -233,6 +237,18 @@ def _time_confidence(device_time: datetime | None, relay_time: datetime) -> tupl
     return "low", offset
 
 
+def _encrypt_relay_raw_data(raw_data: dict[str, Any]) -> str:
+    """Protect raw vendor evidence before it enters shared cloud infrastructure."""
+    key = str(settings.encryption_key or "").strip()
+    if not key:
+        raise RuntimeError("Network relay evidence encryption is not configured")
+    try:
+        cipher = Fernet(key.encode("ascii"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Network relay evidence encryption is invalid") from exc
+    return cipher.encrypt(orjson.dumps(raw_data, option=orjson.OPT_SORT_KEYS)).decode("ascii")
+
+
 def _reject_future_time(value: datetime, now: datetime, *, seconds: int = 300) -> None:
     # Historical signed batches are valid after an outage. Chain sequence and
     # exact-batch hashes provide replay protection; only impossible future
@@ -306,7 +322,9 @@ class RelayRecoverRequest(RelayRegisterRequest):
 
 
 class RelayEvent(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    # Raw syslog text is signed evidence. Normalizing its whitespace before
+    # hash verification changes the evidence and makes valid events fail.
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
 
     event_uid: str = Field(min_length=8, max_length=200)
     record_class: Literal["evidence", "control"] = "evidence"
@@ -325,6 +343,13 @@ class RelayEvent(BaseModel):
     def validate_event_uid(cls, value: str) -> str:
         if not EVENT_UID_PATTERN.fullmatch(value):
             raise ValueError("Invalid relay event UID")
+        return value
+
+    @field_validator("device_id")
+    @classmethod
+    def validate_device_id(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("Relay device ID must not contain surrounding whitespace")
         return value
 
     @field_validator("source_address")
@@ -694,7 +719,67 @@ async def register_relay(request: Request, body: RelayRegisterRequest, db=Depend
     }
 
 
-def _relay_public_status(relay: dict[str, Any], now: datetime) -> dict[str, Any]:
+def _device_public_status(
+    device: dict[str, Any],
+    observation: dict[str, Any] | None,
+    relay_health: str,
+    now: datetime,
+) -> dict[str, Any]:
+    observation = observation or {}
+    last_event_at = observation.get("last_event_at")
+    last_failure_at = observation.get("last_failure_at")
+    age_seconds = None
+    if isinstance(last_event_at, datetime):
+        age_seconds = max(0, int((now - _parse_utc(last_event_at)).total_seconds()))
+
+    if relay_health in {"REVOKED", "INACTIVE", "OFFLINE"}:
+        health = "RELAY_OFFLINE"
+    elif age_seconds is None:
+        health = "NOT_SEEN"
+    elif age_seconds > DEVICE_SILENCE_SECONDS:
+        health = "SILENT"
+    elif (
+        isinstance(last_failure_at, datetime)
+        and _parse_utc(last_failure_at) >= _parse_utc(last_event_at)
+    ):
+        health = "DEGRADED"
+    else:
+        health = "ACTIVE"
+
+    return {
+        "device_id": device.get("device_id"),
+        "vendor": device.get("vendor"),
+        "model": device.get("model"),
+        "transport": device.get("transport"),
+        "expected_eps": device.get("expected_eps"),
+        "health": health,
+        "last_event_at": (
+            last_event_at.isoformat() if isinstance(last_event_at, datetime) else None
+        ),
+        "last_event_age_seconds": age_seconds,
+        "last_event_type": observation.get("last_event_type"),
+        "time_confidence": observation.get("time_confidence"),
+        "detected_clock_offset_seconds": observation.get(
+            "detected_clock_offset_seconds"
+        ),
+        "last_failure_at": (
+            last_failure_at.isoformat()
+            if isinstance(last_failure_at, datetime)
+            else None
+        ),
+        "last_failure_reason": observation.get("last_failure_reason"),
+        "last_reported_drops": int(observation.get("last_reported_drops") or 0),
+        "last_reported_dropped_bytes": int(
+            observation.get("last_reported_dropped_bytes") or 0
+        ),
+    }
+
+
+def _relay_public_status(
+    relay: dict[str, Any],
+    now: datetime,
+    observations: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     status = str(relay.get("status") or "active").lower()
     last_seen = relay.get("last_seen")
     age_seconds = None
@@ -708,6 +793,21 @@ def _relay_public_status(relay: dict[str, Any], now: datetime) -> dict[str, Any]
         health = "DEGRADED"
     else:
         health = "ACTIVE"
+    observations = observations or {}
+    devices = [
+        _device_public_status(
+            device,
+            observations.get(str(device.get("device_id") or "")),
+            health,
+            now,
+        )
+        for device in relay.get("devices") or []
+    ]
+    device_health_summary: dict[str, int] = {}
+    for device in devices:
+        device_health = str(device["health"])
+        device_health_summary[device_health] = device_health_summary.get(device_health, 0) + 1
+
     return {
         "relay_id": relay.get("relay_id"),
         "relay_name": relay.get("relay_name"),
@@ -723,15 +823,9 @@ def _relay_public_status(relay: dict[str, Any], now: datetime) -> dict[str, Any]
         "chain_id": relay.get("chain_id"),
         "last_sequence": int(relay.get("last_sequence") or 0),
         "device_count": len(relay.get("devices") or []),
-        "devices": [
-            {
-                "device_id": device.get("device_id"),
-                "vendor": device.get("vendor"),
-                "model": device.get("model"),
-                "transport": device.get("transport"),
-            }
-            for device in relay.get("devices") or []
-        ],
+        "device_silence_threshold_seconds": DEVICE_SILENCE_SECONDS,
+        "device_health_summary": device_health_summary,
+        "devices": devices,
     }
 
 
@@ -746,8 +840,28 @@ async def list_relay_status(
     rows = await db["network_relays"].find({"tenant_id": tenant_id}).sort(
         "created_at", -1
     ).to_list(length=100)
+    relay_ids = [str(row.get("relay_id") or "") for row in rows if row.get("relay_id")]
+    observations_by_relay: dict[str, dict[str, dict[str, Any]]] = {}
+    if relay_ids:
+        observations = await db["network_relay_device_status"].find(
+            {"tenant_id": tenant_id, "relay_id": {"$in": relay_ids}}
+        ).to_list(length=5000)
+        for observation in observations:
+            relay_id = str(observation.get("relay_id") or "")
+            device_id = str(observation.get("device_id") or "")
+            if relay_id and device_id:
+                observations_by_relay.setdefault(relay_id, {})[device_id] = observation
     now = datetime.now(timezone.utc)
-    return {"relays": [_relay_public_status(row, now) for row in rows]}
+    return {
+        "relays": [
+            _relay_public_status(
+                row,
+                now,
+                observations_by_relay.get(str(row.get("relay_id") or "")),
+            )
+            for row in rows
+        ]
+    }
 
 
 @router.post("/{relay_id}/revoke")
@@ -1036,6 +1150,14 @@ def _queue_event(
         normalized.get("message")
         or f"{event.vendor} {event_type.replace('_', ' ')} observed"
     )[:1000]
+    encrypted_raw_data = _encrypt_relay_raw_data(
+        {
+            "raw_message": event.raw_message,
+            "raw_message_hash": event.raw_message_hash,
+            "transport": event.transport,
+            "observed_source_address": event.source_address,
+        }
+    )
     return {
         "tenant_id": relay_context["tenant_id"],
         "agent_id": relay_context["relay_id"],
@@ -1057,12 +1179,8 @@ def _queue_event(
         "cloud_receipt_time": cloud_receipt_time.isoformat(),
         "time_confidence": confidence,
         "detected_clock_offset_seconds": offset,
-        "raw_data": {
-            "raw_message": event.raw_message,
-            "raw_message_hash": event.raw_message_hash,
-            "transport": event.transport,
-            "observed_source_address": event.source_address,
-        },
+        "raw_data": encrypted_raw_data,
+        "raw_data_encryption_version": "fernet-v1",
         "raw_event_data": {
             "vendor": event.vendor,
             "device_id": event.device_id,
@@ -1214,6 +1332,89 @@ async def _persist_batch_receipt(
         {"$setOnInsert": receipt},
         upsert=True,
     )
+    configured_devices = {
+        str(device.get("device_id") or ""): device
+        for device in relay_context["relay"].get("devices", [])
+        if device.get("device_id")
+    }
+    latest_by_device: dict[str, RelayEvent] = {}
+    for event in batch.events:
+        if event.record_class != "evidence" or event.device_id not in configured_devices:
+            continue
+        previous = latest_by_device.get(event.device_id)
+        if previous is None or _parse_utc(event.relay_receipt_time) > _parse_utc(
+            previous.relay_receipt_time
+        ):
+            latest_by_device[event.device_id] = event
+
+    for device_id, event in latest_by_device.items():
+        device = configured_devices[device_id]
+        event_time = _parse_utc(event.relay_receipt_time)
+        device_time = _parse_utc(event.device_event_time) if event.device_event_time else None
+        confidence, offset = _time_confidence(device_time, event_time)
+        await db["network_relay_device_status"].update_one(
+            {
+                "tenant_id": relay_context["tenant_id"],
+                "relay_id": relay_context["relay_id"],
+                "device_id": device_id,
+            },
+            {
+                "$set": {
+                    "vendor": device.get("vendor"),
+                    "model": device.get("model"),
+                    "transport": device.get("transport"),
+                    "expected_eps": device.get("expected_eps"),
+                    "last_event_at": event_time,
+                    "last_device_event_at": device_time,
+                    "last_cloud_receipt_at": cloud_receipt_time,
+                    "last_event_type": event.normalized.get("event_type"),
+                    "last_source_address": event.source_address,
+                    "time_confidence": confidence,
+                    "detected_clock_offset_seconds": offset,
+                    "updated_at": cloud_receipt_time,
+                },
+                "$setOnInsert": {"created_at": cloud_receipt_time},
+            },
+            upsert=True,
+        )
+
+    for event in batch.events:
+        if (
+            event.record_class != "control"
+            or event.normalized.get("event_type") != "device_health"
+        ):
+            continue
+        affected_device_id = str(event.normalized.get("affected_device_id") or "")
+        if affected_device_id not in configured_devices:
+            continue
+        await db["network_relay_device_status"].update_one(
+            {
+                "tenant_id": relay_context["tenant_id"],
+                "relay_id": relay_context["relay_id"],
+                "device_id": affected_device_id,
+            },
+            {
+                "$set": {
+                    "vendor": configured_devices[affected_device_id].get("vendor"),
+                    "model": configured_devices[affected_device_id].get("model"),
+                    "transport": configured_devices[affected_device_id].get("transport"),
+                    "expected_eps": configured_devices[affected_device_id].get(
+                        "expected_eps"
+                    ),
+                    "last_failure_at": _parse_utc(event.relay_receipt_time),
+                    "last_failure_reason": event.normalized.get("reason"),
+                    "last_reported_drops": int(
+                        event.normalized.get("dropped_events") or 0
+                    ),
+                    "last_reported_dropped_bytes": int(
+                        event.normalized.get("dropped_bytes") or 0
+                    ),
+                    "updated_at": cloud_receipt_time,
+                },
+                "$setOnInsert": {"created_at": cloud_receipt_time},
+            },
+            upsert=True,
+        )
     relay_updates: dict[str, Any] = {
         "chain_id": batch.chain_id,
         "key_epoch": batch.key_epoch,
@@ -1329,26 +1530,48 @@ async def ingest_relay_batch(
         raise HTTPException(status_code=503, detail="Relay ingest queue unavailable")
     try:
         quota_bytes = await _resolve_daily_ingest_quota_bytes(
-            redis, relay_context["tenant_id"]
+            redis, relay_context["tenant_id"], db
         )
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Ingest quota service unavailable") from exc
     batch_hash = hashlib.sha256(raw_body).hexdigest()
-    payloads = [
-        orjson.dumps(
-            _queue_event(event, relay_context, batch, batch_hash, signature, now)
-        ).decode("utf-8")
-        for event in batch.events
-    ]
-    admission = await _admit_batch(
+    try:
+        payloads = [
+            orjson.dumps(
+                _queue_event(event, relay_context, batch, batch_hash, signature, now)
+            ).decode("utf-8")
+            for event in batch.events
+        ]
+    except RuntimeError as exc:
+        logger.exception("Relay evidence encryption failed before queue admission")
+        raise HTTPException(
+            status_code=503,
+            detail="Relay evidence protection unavailable; relay must retain and retry",
+        ) from exc
+    raw_stream_bytes = sum(len(payload.encode("utf-8")) for payload in payloads)
+    await _enforce_raw_stream_capacity(
         redis,
-        relay_context,
-        batch,
-        batch_hash,
-        payloads,
-        quota_bytes=quota_bytes,
-        payload_bytes=len(raw_body),
+        incoming_entries=len(payloads),
+        incoming_stream_bytes=raw_stream_bytes,
+        incoming_redis_bytes=raw_stream_bytes,
     )
+    try:
+        admission = await _admit_batch(
+            redis,
+            relay_context,
+            batch,
+            batch_hash,
+            payloads,
+            quota_bytes=quota_bytes,
+            payload_bytes=len(raw_body),
+        )
+    except Exception as exc:
+        if "maxmemory" in str(exc).lower() or "out of memory" in str(exc).lower():
+            raise HTTPException(
+                status_code=503,
+                detail="Ingest queue is under pressure; relay must retain and retry",
+            ) from exc
+        raise
     if admission == -4:
         raise HTTPException(status_code=429, detail="Tenant daily ingest quota exceeded")
     if admission == -5:

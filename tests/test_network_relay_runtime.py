@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 import socket
@@ -31,13 +32,16 @@ from app.network_relay.spool import EncryptedBoundedSpool
 from app.routes.network_relay import (
     RELAY_GENESIS_HASH,
     RelayActivationRequest,
+    RelayBatch,
     RelayDeviceSpec,
+    RelayEvent,
     RelayRecoverRequest,
     RelayRegisterRequest,
     RelayRevokeRequest,
     _admit_batch,
     _claim_one_time_secret,
     _consume_claimed_secret,
+    _persist_batch_receipt,
     _reject_future_time,
     generate_relay_activation,
     list_relay_status,
@@ -514,3 +518,130 @@ async def test_cloud_registration_status_revocation_and_dead_key_recovery(
     ) == 1
     chain = await redis_client.hgetall(f"warsoc:relay_chain:{first['relay_id']}")
     assert int(chain[b"key_epoch"] if b"key_epoch" in chain else chain["key_epoch"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_relay_status_tracks_device_events_losses_and_silence(db, monkeypatch):
+    monkeypatch.setattr(relay_settings, "network_relay_enabled", True)
+    tenant_id = "WARSOC_RELAY_DEVICE_STATUS"
+    relay_id = f"WARSOC_RELAY_{'a' * 32}"
+    now = datetime.now(timezone.utc)
+    device = {
+        "device_id": "branch-pfsense",
+        "vendor": "pfsense",
+        "model": "CE-2.8.1",
+        "source_addresses": ["192.0.2.1/32"],
+        "transport": "udp",
+        "timezone": "UTC",
+        "expected_eps": 100,
+    }
+    relay = {
+        "tenant_id": tenant_id,
+        "relay_id": relay_id,
+        "relay_name": "Branch Relay",
+        "hostname": "RELAY-01",
+        "version": "1.0.0",
+        "status": "active",
+        "key_epoch": 1,
+        "last_sequence": 0,
+        "devices": [device],
+        "created_at": now,
+    }
+    await db["network_relays"].insert_one(relay)
+    raw_message = (
+        "<134>Aug  2 15:12:05 filterlog[55624]: "
+        "4,,,1000000103,hn0,match,block,in,4,0x0,,128,49872,0,none,17,udp,78,"
+        "172.19.224.1,172.19.239.255,137,137,58"
+    )
+    evidence = RelayEvent(
+        event_uid="relay-device-status-evidence-0001",
+        record_class="evidence",
+        device_id=device["device_id"],
+        vendor="pfsense",
+        transport="udp",
+        source_address="192.0.2.1",
+        device_event_time=now,
+        relay_receipt_time=now,
+        raw_message=raw_message,
+        raw_message_hash=hashlib.sha256(raw_message.encode("utf-8")).hexdigest(),
+        normalized={
+            "event_type": "network_connection_blocked",
+            "action": "block",
+            "src_ip": "172.19.224.1",
+            "dst_ip": "172.19.239.255",
+            "src_port": 137,
+            "dst_port": 137,
+            "protocol": "udp",
+        },
+    )
+    first_batch = RelayBatch(
+        schema_version="warsoc-relay-batch-v1",
+        relay_id=relay_id,
+        chain_id="b" * 32,
+        key_epoch=1,
+        sequence=1,
+        previous_batch_hash=RELAY_GENESIS_HASH,
+        created_at=now,
+        events=[evidence],
+    )
+    context = {"tenant_id": tenant_id, "relay_id": relay_id, "relay": relay}
+    await _persist_batch_receipt(db, context, first_batch, "c" * 64, now)
+
+    status = await list_relay_status(
+        current_user={"tenant_id": tenant_id}, _="admin", db=db
+    )
+    assert status["relays"][0]["health"] == "ACTIVE"
+    assert status["relays"][0]["devices"][0]["health"] == "ACTIVE"
+    assert status["relays"][0]["devices"][0]["time_confidence"] == "high"
+
+    failure_data = {
+        "event_type": "device_health",
+        "state": "DEGRADED",
+        "reason": "parser_rejected",
+        "affected_device_id": device["device_id"],
+        "dropped_events": 4,
+        "dropped_bytes": 400,
+    }
+    failure_raw = json.dumps(failure_data, sort_keys=True, separators=(",", ":"))
+    failure_time = now + timedelta(seconds=1)
+    failure = RelayEvent(
+        event_uid="relay-device-status-control-0001",
+        record_class="control",
+        device_id=relay_id,
+        vendor="generic",
+        transport="api",
+        source_address="127.0.0.1",
+        device_event_time=None,
+        relay_receipt_time=failure_time,
+        raw_message=failure_raw,
+        raw_message_hash=hashlib.sha256(failure_raw.encode("utf-8")).hexdigest(),
+        normalized=failure_data,
+    )
+    second_batch = RelayBatch(
+        schema_version="warsoc-relay-batch-v1",
+        relay_id=relay_id,
+        chain_id="b" * 32,
+        key_epoch=1,
+        sequence=2,
+        previous_batch_hash="c" * 64,
+        created_at=failure_time,
+        events=[failure],
+    )
+    await _persist_batch_receipt(db, context, second_batch, "d" * 64, failure_time)
+
+    status = await list_relay_status(
+        current_user={"tenant_id": tenant_id}, _="admin", db=db
+    )
+    device_status = status["relays"][0]["devices"][0]
+    assert device_status["health"] == "DEGRADED"
+    assert device_status["last_failure_reason"] == "parser_rejected"
+    assert device_status["last_reported_drops"] == 4
+
+    await db["network_relay_device_status"].update_one(
+        {"tenant_id": tenant_id, "relay_id": relay_id, "device_id": device["device_id"]},
+        {"$set": {"last_event_at": now - timedelta(seconds=901)}},
+    )
+    status = await list_relay_status(
+        current_user={"tenant_id": tenant_id}, _="admin", db=db
+    )
+    assert status["relays"][0]["devices"][0]["health"] == "SILENT"
