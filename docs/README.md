@@ -1,27 +1,34 @@
 # WarSOC Documentation Index
 
-**Current as of:** 2026-07-15
+**Current as of:** 2026-08-12
 
 Use these documents as the production source of truth:
 
-1. `WARSOC_CURRENT_STATE_ARCHITECTURE.md`
+1. `WARSOC_CURRENT_IMPLEMENTATION_AND_FUTURE_SCOPE.md`
+   - Consolidated status register separating the active product, source-proven
+     candidates, lab-only proof, deployment gates, future phases, and explicit
+     exclusions.
+2. `WARSOC_BUILD_VALIDATE_FREEZE_EXECUTION_PLAN.md`
+   - Approved scope-freeze, reproducible-candidate, validation, pentest, and
+     production-freeze sequence.
+3. `WARSOC_CURRENT_STATE_ARCHITECTURE.md`
    - Detailed as-built architecture, pipeline contracts, retention behavior,
      production proof, and remaining controlled-pilot obligations.
-2. `WARSOC_END_TO_END_PRODUCT_AND_OPERATOR_GUIDE.md`
+4. `WARSOC_END_TO_END_PRODUCT_AND_OPERATOR_GUIDE.md`
    - Shorter product, onboarding, agent, detection, dashboard, retention, and
      operating guide.
-3. `PRODUCTION_ACCEPTANCE_TEST.md`
+5. `PRODUCTION_ACCEPTANCE_TEST.md`
    - Current production acceptance evidence and the remaining human or
      infrastructure proofs.
-4. `OPS_ACCOUNT_PROVISIONING.md`
+6. `OPS_ACCOUNT_PROVISIONING.md`
    - Creating a new customer tenant, handing over its first admin account, and
      inviting customer team users.
-5. `PRODUCTION_BACKUP_RUNBOOK.md`
+7. `PRODUCTION_BACKUP_RUNBOOK.md`
    - MongoDB backup and restore operations. Azure evidence archival is not a
      substitute for this backup process.
-6. `FBR_POS_Integration_Contract.md`
+8. `FBR_POS_Integration_Contract.md`
    - Strict POS JSONL and authenticated FBR integration boundary.
-7. `PILOT_UNSIGNED_AGENT_POLICY.md`
+9. `PILOT_UNSIGNED_AGENT_POLICY.md`
    - Controlled-pilot installer hash allowlisting while production code
      signing remains outstanding.
 

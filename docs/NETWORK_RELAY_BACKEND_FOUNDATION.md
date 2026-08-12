@@ -1,8 +1,8 @@
 # WarSOC Network Relay Backend Foundation
 
-**Status:** Backend candidate implemented; disabled by default; not production enabled  
-**Snapshot:** 2026-07-28  
-**Scope:** Customer-LAN network-device metadata ingestion and PECA-oriented SIEM correlation  
+**Status:** Backend candidate implemented; disabled by default; not production enabled
+**Snapshot:** 2026-07-28
+**Scope:** Customer-LAN network-device metadata ingestion and PECA-oriented SIEM correlation
 **Non-scope:** Linux endpoints, PCAP, packet payload capture, public UDP syslog, and new FBR invoice truth
 
 ## 1. Decision
@@ -121,6 +121,14 @@ Each event contains:
 - Raw syslog message and SHA-256 hash.
 - A scalar-only normalized metadata object.
 
+The signed request necessarily contains the raw record while the API verifies
+the exact batch. Before Redis admission, WarSOC encrypts the raw record, hash,
+transport, and observed source address as one Fernet-protected field. Redis and
+MongoDB therefore receive no plaintext raw vendor message. Authorized evidence
+detail reads decrypt that field; list and search projections exclude it. The
+normalized `message` is a deterministic metadata summary and never a copy of
+the Fortinet, Cisco ASA, MikroTik, or pfSense message body.
+
 The API verifies the Ed25519 signature over the exact raw request body before schema admission. It rejects unknown fields, nested normalized objects, malformed IP/port/count values, unsupported event types, duplicate event UIDs, unregistered devices, vendor/transport mismatches, source-address mismatches, impossible future times, excessive event counts, excessive body size, wrong chain state, and wrong sequence. Historical signed batches remain valid after an outage; sequence and batch hashes provide replay protection.
 
 The Redis Lua transaction performs these operations atomically:
@@ -159,6 +167,7 @@ Spool behavior is fail-bounded:
 - Already accepted evidence is never evicted to make room.
 - At capacity, new datagrams are dropped.
 - Drops are coalesced into control records with reason, interval, event count, byte count, EPS, and spool state.
+- Each loss summary identifies the affected registered device when attribution is possible.
 - The control spool remains separate so evidence saturation cannot hide health loss.
 - Records are removed only after a valid cloud acknowledgement.
 - A retry resends the exact same body and signature.
@@ -186,7 +195,7 @@ Supported candidate vendors are intentionally limited:
 
 ### Fortinet
 
-The parser accepts key/value event logs and extracts source/destination IP and port, protocol/service, user, bytes, policy, session, interfaces, VPN metadata, hostname, severity, and message. VPN outcomes are normalized to `successful` or `rejected` only when the vendor fields support that conclusion.
+The parser accepts key/value event logs and extracts source/destination IP and port, protocol/service, user, bytes, policy, session, interfaces, VPN metadata, hostname, and severity. It generates a bounded metadata summary instead of copying the vendor message body. VPN outcomes are normalized to `successful` or `rejected` only when the vendor fields support that conclusion.
 
 ### Cisco ASA
 
@@ -234,12 +243,14 @@ Implemented candidate correlations:
 - Required attribution: vendor-reported remote client IP and a non-hidden username.
 - Threshold: five distinct usernames from one remote IP within five minutes.
 - State: Redis sorted set with expired members removed before counting.
+- Window time: signed relay receipt time, not cloud replay/processing time.
 - Outcome: one stable SIEM alert identity per source/window; no automatic blocking.
 
 ### VPN to Windows logon
 
 - Source: successful VPN authentication followed by Windows Event 4624.
 - Match: same tenant, normalized username, remote IP, and Windows logon type 3 or 10 within ten minutes.
+- Chronology is checked explicitly so delayed backlog replay cannot match a current Windows logon.
 - Outcome: context is attached to the Windows evidence record.
 - It does not create a threat alert because this sequence is often normal remote access.
 
@@ -247,8 +258,32 @@ Implemented candidate correlations:
 
 - Host inputs: 1100, 1102, 4697, 4732, or 7045.
 - Network input: a verified permitted connection from the exact same endpoint IP to a public destination within five minutes.
+- Chronology uses the host and signed relay-receipt timestamps; delayed backlog cannot create a current correlation.
 - Outcome: a high/critical hybrid SIEM alert with endpoint and network evidence references.
 - It does not automatically block the address.
+
+Device-vs-relay clock confidence and detected offset remain visible. A low or
+unknown device-clock result can still produce a relay-receipt correlation, but
+the resulting alert is capped at medium confidence rather than being labelled
+high confidence.
+
+## 8A. Per-Device Coverage State
+
+Every accepted signed batch updates an idempotent, tenant-scoped observation
+record for each registered device. `GET /api/v1/network-relay/status` reports:
+
+- `ACTIVE`: the relay and device are current.
+- `NOT_SEEN`: the device is registered but has not produced an accepted record.
+- `SILENT`: no accepted device record arrived within
+  `NETWORK_RELAY_DEVICE_SILENCE_SECONDS` (default 900 seconds).
+- `DEGRADED`: the latest device observation is a signed parser, rate-limit,
+  datagram, or spool-loss report.
+- `RELAY_OFFLINE`: the relay itself is inactive, revoked, or offline.
+
+The status includes the last accepted event type/time, clock confidence,
+latest loss reason, and latest reported dropped event/byte counts. This closes
+the backend visibility gap; proactive external notification and customer UI
+remain deployment/frontend gates rather than being falsely claimed here.
 
 Not implemented:
 
@@ -292,14 +327,36 @@ This avoids two false claims: that every firewall message is court-authenticated
 
 ## 11. Verification Performed
 
-Selected backend validation through 2026-07-29:
+Selected backend validation through 2026-08-10:
 
-- 32 focused relay parser, schema, signing, spool, outbox, outage, lifecycle,
+- 36 focused relay parser, schema, signing, spool, outbox, outage, lifecycle,
   registration, status, revocation, recovery, source-isolation, feature-gate,
   and hybrid-correlation tests passed.
 - 122 selected security, ingestion, worker, SIEM, FBR, PECA, stream-retention, archive, and relay tests passed together in the writable Docker test harness.
-- The complete maintained backend suite passed with 369 passed, 3 skipped, and 0 failed on 2026-07-29. Default discovery is intentionally limited to `tests/`; live-fire and scratch scripts are not part of this regression claim.
+- The complete maintained backend suite passed with 397 passed, 1 skipped, and 0 failed on 2026-08-10. Default discovery is intentionally limited to `tests/`; live-fire and scratch scripts are not part of this regression claim.
 - `git diff --check` is clean except informational Windows line-ending warnings.
+
+Physical pfSense lab validation on 2026-08-02 added the following evidence:
+
+- pfSense CE 2.8.1 on Hyper-V forwarded its native BSD `filterlog` UDP output
+  to the Windows relay. The parser now handles pfSense's documented
+  hostname-omitting envelope without guessing a device timestamp.
+- A logged pass and logged block traversed pfSense and were stored as
+  `NET-CONNECTION-ALLOW` and `NET-CONNECTION-BLOCK` with tenant binding,
+  `source_assurance=relay_attested`, and a verified Ed25519 relay signature.
+- With the lab API stopped, the relay retained six network evidence records in
+  the encrypted evidence spool and kept outage health in the separate control
+  spool. After an unclean relay restart and API recovery, both spools drained
+  to zero without duplicate event UIDs.
+- Cloud batch receipts covered sequences 1 through 83 with no sequence gaps
+  and no previous-hash continuity errors.
+- The focused relay suites passed with 36 passed and 0 failed against isolated,
+  authenticated MongoDB and Redis services.
+
+The 2026-08-02 hardening pass additionally proved raw-message cloud encryption,
+fail-closed behavior when the evidence key is unavailable, per-device
+active/degraded/silent state, affected-device loss attribution, metadata-only
+vendor summaries, and backlog-safe hybrid correlation chronology.
 
 The suite verifies parser conservatism, packet/raw rejection, schema rejection, signing compatibility, encrypted spool bounds, FIFO retention, tamper detection, exact outbox retries, control priority, atomic Redis admission, duplicate suppression, quota rejection, VPN spraying, non-alert VPN context, same-host hybrid correlation, source-family isolation, worker behavior, FBR, PECA, retention, and archive contracts.
 
@@ -311,63 +368,59 @@ The Windows relay candidate was built locally as a 29,263,064-byte executable wi
 
 Do not set `NETWORK_RELAY_ENABLED=true` yet.
 
+The vendor-validation model and first executable lab gate are defined in:
+
+- `docs/NETWORK_FIREWALL_VALIDATION_RESEARCH.md`
+- `docs/PFSENSE_NETWORK_RELAY_LAB_RUNBOOK.md`
+
+Virtual appliances provide parser, transport, durability, and functional
+correlation proof. Free/evaluation VM throughput limits are not production
+capacity evidence, and an exact physical/customer model still requires its own
+controlled acceptance.
+
 The gate remains closed until all of these pass:
 
 1. Reproduce the Windows relay build in the pinned/release environment, code-sign or formally hash-allowlist it, and repeat malware scanning on the exact release artifact. The local unsigned candidate build is evidence, not release certification.
 2. On a disposable Windows Server, prove NSSM restart, DPAPI identity reload, source-scoped firewall rules, DACL/SACL behavior, graceful stop, crash recovery, and uninstall evidence preservation.
-3. Replay approved vendor fixtures and then obtain real-device proof for every vendor offered to a tenant: Fortinet, Cisco ASA, MikroTik, and pfSense.
+3. Replay approved vendor fixtures and then obtain real-device proof for every vendor offered to a tenant. pfSense CE 2.8.1 virtual-appliance transport, parsing, pass/block, signing, outage, and recovery proof passed on 2026-08-02; exact customer hardware/model acceptance remains required. Fortinet, Cisco ASA, and MikroTik physical/evaluation-appliance proof remains open.
 4. Prove outage, saturation, spoof flood, disk reserve, parser pressure, cloud quota, revocation, and dead-key recovery under the tenant's measured EPS.
 5. Run one non-POS pilot relay for at least 24 hours and review drops, spool growth, detection latency, and false positives.
 6. Decide and configure the legally reviewed Azure retention class for PECA-oriented traffic metadata. Until then it remains SIEM evidence and must not be marketed as a one-year PECA traffic vault.
 
 Current Windows endpoint, SIEM, FBR, and PECA production paths do not depend on this feature and remain unchanged while it is disabled.
 
-## 13. Frontend Plan - No Frontend Code Changed
+## 13. Feature-Gated Frontend Candidate
 
-The frontend should remain hidden behind the same feature flag until the backend production gate passes.
+The current frontend candidate contains a `Network Relays` workspace guarded by
+`VITE_NETWORK_RELAY_ENABLED`. The production default remains `false`, so the
+navigation and relay API calls are absent from the active customer interface
+until the backend production gate is deliberately opened.
 
-Recommended components:
+Implemented behavior:
 
-1. `NetworkRelayPage`
-   - Admin-only route.
-   - Shows enrolled relays, state, last receipt, version, source assurance, and device count.
+1. Admins can generate a one-time relay activation for explicitly registered
+   pfSense, Fortinet, Cisco ASA, or MikroTik device contracts.
+2. Admins can revoke a relay with a required reason. Managers, analysts, and
+   auditors have read-only relay-health access. Backend tenant isolation and
+   mutation RBAC remain authoritative.
+3. The page shows relay state, last cloud receipt, version, device count,
+   accepted sequence, per-device state, last event time, and reported drops.
+4. Empty, loading, unavailable, active, degraded, silent, offline, not-seen,
+   and revoked states are represented without exposing backend exceptions.
+5. The UI displays firewall metadata and health only. It does not display packet
+   payloads or claim that UDP sources are device-authenticated.
+6. Activation and revocation dialogs provide close controls and Escape-key
+   dismissal, and the layout is constrained for desktop and mobile widths.
 
-2. `RelayActivationWizard`
-   - Collects relay name and registered device contracts.
-   - Generates the one-time activation only after a confirmation summary.
+Still intentionally absent:
 
-3. `NetworkDeviceForm`
-   - Vendor selector limited to Fortinet, Cisco ASA, MikroTik, and pfSense.
-   - Inputs for device ID, model, source IP/CIDR, transport, timezone, and expected EPS.
-   - No generic vendor or payload-capture option.
+- raw vendor-message browsing;
+- archive retrieval controls inside the relay workspace;
+- automatic firewall configuration;
+- production enablement; and
+- a claim that every supported parser has passed physical-device acceptance.
 
-4. `RelayHealthPanel`
-   - Displays Active, Degraded, Saturated, Offline, Revoked, or Not Configured.
-   - Shows evidence spool, control spool, drops, parser failures, clock confidence, and last cloud acknowledgement.
-
-5. `NetworkCoverageBadge`
-   - Separates endpoint coverage from relay/network coverage.
-   - Never shows PECA network coverage as active when the relay is missing or unhealthy.
-
-6. `NetworkEvidenceTable`
-   - Displays metadata only: device, source/destination, port, protocol, action, user when supplied, timestamps, and assurance.
-   - Raw vendor message is restricted to authorized detail views.
-
-7. `HybridIncidentDetail`
-   - Shows endpoint event reference, network event reference, match keys, clock confidence, outcome, and why WarSOC correlated them.
-   - Uses `relay_attested` wording instead of `device authenticated` for UDP.
-
-8. API client additions
-   - Activation generation, relay list/status, revoke, device contract read, health, and evidence/incident detail.
-   - Existing authenticated API wrapper, CSRF behavior, and generic user-safe error formatter must be reused.
-
-9. RBAC and states
-   - Admin configures/revokes.
-   - Manager and analyst view health/evidence according to existing permissions.
-   - Auditor receives read-only evidence and custody views.
-   - Empty, loading, degraded, stale, quota, and unavailable states must be explicit.
-
-10. Acceptance
-   - Desktop/mobile layout, modal close/escape, keyboard focus, no raw backend exceptions, tenant isolation, role denial, stale health, source assurance, and incident evidence links.
-
-No frontend work should begin until the backend service/runtime contract is frozen and the feature remains disabled in production.
+Backend `NETWORK_RELAY_ENABLED=true` and frontend
+`VITE_NETWORK_RELAY_ENABLED=true` must only be enabled together after Section 12
+is closed. Until then, the endpoint, SIEM, FBR, and PECA user flows remain
+unchanged.

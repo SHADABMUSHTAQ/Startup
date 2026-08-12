@@ -1,14 +1,14 @@
 # WarSOC Current-State Architecture and Operational Contract
 
 **Document status:** Authoritative as-built map
-**Snapshot date:** 2026-07-29
-**Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, and the disabled network-relay backend candidate.
+**Snapshot date:** 2026-08-10
+**Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, and the disabled network-relay backend/frontend candidate.
 
 This document describes what the current source code does. It is not a sales claim and it does not treat an implemented path as production-proven unless verification evidence exists.
 
 ## 1. Current Verdict
 
-WarSOC currently has a coherent end-to-end architecture. The application enforces a maximum of 50 Windows agents per tenant, while the current single-host infrastructure proof covers 50 aggregate concurrent agents rather than an unlimited number of 50-agent tenants:
+WarSOC currently has a coherent end-to-end architecture. The application enforces both a maximum of 50 Windows agents per tenant and a default hard ceiling of 50 active agents across the current shared deployment. The second limit protects the 8 GiB single host and prevents several tenants from each consuming 50 seats:
 
 1. A tenant admin generates a one-time activation code.
 2. The Windows installer validates that code, configures native Windows auditing, and installs the agent as an NSSM service.
@@ -19,16 +19,137 @@ WarSOC currently has a coherent end-to-end architecture. The application enforce
 7. FBR creates encrypted invoice evidence and database-file tamper evidence for the entitled six-control catalog.
 8. MongoDB holds seven days of operational SIEM, PECA, and FBR data.
 9. The storage archiver uploads expired hot records to immutable Azure Blob storage, verifies integrity and immutability, writes a Mongo archive ledger, and only then removes the Mongo copies.
-10. Compliance views, search, CSV exports, and PDF reports can merge Mongo hot records with verified Azure archive records.
+10. Normal compliance views, search, CSV exports, and PDF reports read bounded hot Mongo data and archive-ledger availability. Historical bytes require the feature-gated asynchronous retrieval workflow.
 11. The dashboard separates normal endpoint telemetry, immutable detection evidence, and mutable operator incidents.
 
 The approved published release is Windows agent `4.2.6-Native-Signed`. Exact-machine validation on 2026-07-21 proved enrollment, fresh heartbeats, SIEM alerting, PECA Event 4688 evidence, FBR invoice evidence, native FBR database-deletion correlation, 7,191 verified endpoint signatures and zero rejected signatures. The installer is 17,471,600 bytes with SHA-256 `F80C22FCD65FD5755B8483F105FCA4AA3FFFFFBAB4E29B807828D4CC406CDAE0`.
 
-The working source is now `4.2.7-Native-Signed` because it adds a bounded, DTD/entity-rejecting native Windows XML parser guard after the 4.2.6 artifact was published. Version 4.2.7 is an unbuilt candidate: it has no approved installer, manifest or CDN object and is not a production claim. Existing 4.2.6 agents remain supported. This version split prevents different binary bytes from being released again under the already published 4.2.6 identity.
+The working source is now `4.2.8-Native-Signed`. It contains the bounded, DTD/entity-rejecting native Windows XML parser guard introduced after 4.2.6 plus bounded historical spool replay. A local release candidate was built on 2026-08-10 only after the build was changed to fail when mandatory pywin32 telemetry/DPAPI modules are unavailable. The unsigned installer is 17,797,778 bytes with SHA-256 `781CEFB43ECE08155FDF5EDC734FADBB1D6BDA3AD4A9B9B6898799176F9BC142`. It has a matching local manifest, but it is not a published production release until exact-binary Defender/hash review, Azure upload, clean-machine installation, and production preflight pass. Existing 4.2.6 agents remain supported.
 
-The disabled network-relay candidate has also passed 32 focused parser, schema, signing, encrypted-spool, outbox, Redis-admission, lifecycle, source-isolation and hybrid-correlation tests. A locally built 29,263,064-byte Windows relay candidate had SHA-256 `04602CBBCEEA8EF2BE18D5FD1C9DC2F89DADD0B9B8BA140C9B4444264BE055E3` and produced no detection in an enabled Microsoft Defender custom scan. It is unsigned, was not installed as a Windows service, and has not received real-device traffic; these facts keep its production gate closed.
+The disabled network-relay candidate has also passed 36 focused parser, schema, signing, encrypted-spool, outbox, Redis-admission, lifecycle, source-isolation and hybrid-correlation tests. A locally built 29,263,064-byte Windows relay candidate had SHA-256 `04602CBBCEEA8EF2BE18D5FD1C9DC2F89DADD0B9B8BA140C9B4444264BE055E3` and produced no detection in an enabled Microsoft Defender custom scan. It is unsigned and was not installed as a Windows service. A pfSense CE 2.8.1 Hyper-V appliance supplied native pass/block syslog proof, but this is not exact customer-hardware acceptance; these facts keep the production gate closed.
 
-The complete current backend suite closes with 369 passed, 3 explicitly skipped and zero application failures. The current frontend passes ESLint and the production Vite build. These local facts do not by themselves prove that a remote backend, Vercel deployment or CDN object runs the same commit/artifact; production acceptance must compare the deployed commit, API behavior and downloaded artifact hash.
+The complete current backend suite closes with 397 passed, 1 explicitly skipped and zero application failures on 2026-08-10. The current frontend candidate passes targeted ESLint and the production Vite build. These local facts do not by themselves prove that a remote backend, Vercel deployment or CDN object runs the same commit/artifact; production acceptance must compare the deployed commit, API behavior and downloaded artifact hash.
+
+### 1.1 SIEM architecture and scope decision (2026-08-02)
+
+WarSOC follows the same logical layers used by mature SIEM platforms, but it does
+not claim their source breadth, scale, or product maturity:
+
+| SIEM responsibility | WarSOC owner | Current boundary |
+|---|---|---|
+| Collection | Windows agent; disabled customer-side network relay candidate | Native Windows Security/System events are active. Firewall metadata is not active. |
+| Parsing and normalization | Windows XML parser, POS JSONL parser, network vendor parsers | Network parsers are candidate-only. No packet payload or PCAP is collected. |
+| Buffering | Redis Streams with independent consumer groups | SIEM, FBR, and PECA acknowledge independently. |
+| Detection and correlation | `siem_worker.py`, `siem_logic.py`, `siem_catalog.py` | Rules run only when their required trusted telemetry family and fields exist. |
+| Evidence projection | `siem_cold_vault`, `fbr_pos_logs`, `peca_forensic_logs` | Evidence remains event-granular and separate by purpose. |
+| Operator incidents | `security_incidents` and occurrence ledger | Repeated detections are grouped for operations without deleting evidence. |
+| Console and reporting | API, WebSocket, dashboard, CSV/PDF exports | Tenant and role boundaries apply to every read/export path. |
+| Hot/cold storage | Seven-day Mongo hot tier and immutable Azure archive | Archive retrieval remains feature-gated until its production acceptance is complete. |
+
+The capacity contract has two independent limits:
+
+- Every tenant has a contracted `max_agents` value, capped at 50.
+- The shared deployment has an atomic `PLATFORM_ACTIVE_AGENT_LIMIT=50` across all tenants.
+- Examples such as 30 agents for tenant A, 10 for tenant B, and 10 for tenant C exhaust the shared host. A further registration must fail even when that tenant still has contractual seats.
+
+The focused Docker-backed architecture suite was rerun on 2026-08-02 with the
+actual password-protected Redis service. After the detector-provenance, public
+error-contract, and service-install correlation patch, it closed with 89 passed
+tests covering rule contracts, source isolation, per-tenant and shared endpoint
+limits, atomic activation, relay admission/correlation while feature-gated,
+incident isolation/workflow, provenance bounds, validation-error sanitization,
+and Event 4697/7045 incident identity. An earlier run that connected to Redis
+without its password was an invalid environment run, not a product failure.
+An additional 33 native-detection and incident-presentation tests passed in a
+separate focused run, including Redis-backed FBR retry/correlation behavior and
+Windows event normalization. These runs validate working source against local
+Docker dependencies; they do not replace post-deployment production acceptance.
+
+### 1.2 Detection ownership and claim boundary
+
+| Domain | Current truth source | What may alert | What must not be claimed |
+|---|---|---|---|
+| SIEM | Trusted normalized Windows events and approved imported web/network metadata | Direct high-risk events, precise command patterns, and Redis-backed multi-event correlations | WarSOC does not detect every attack or inspect plaintext passwords. |
+| PECA | The entitled 11-event native Windows catalog | Inherently dangerous controls alert through SIEM; normal controls remain evidence/correlation context | The 11 controls are a WarSOC evidence profile, not statutory text or blanket PECA certification. |
+| FBR | Strict `FBR-INV-MOD`/`FBR-INV-DEL` application records plus configured POS/database FIM | Valid invoice changes and confirmed protected database deletion/permission tamper | Native file telemetry is not invoice truth, and no POS path means no FIM coverage. |
+
+Windows does not expose a user's plaintext password to WarSOC. A defensible
+credential-access capability can observe credential validation, explicit
+credential use, known credential-dumping process behavior, and a future
+contextual Credential Manager read signal. Event 5379 is not collected in the
+current release and must not be advertised. If approved later, it must be
+evidence/correlation input first, not a direct alert, because legitimate
+Credential Manager activity can be frequent.
+
+General file-read monitoring is also not a current claim. Event 4663 is emitted
+only for objects with a matching SACL, and the installer deliberately applies
+delete/change-permission auditing only to configured POS paths. Broad read SACLs
+would create excessive volume. File and directory discovery should therefore be
+detected from high-context Event 4688 process behavior, not from every normal
+`dir` or file-open operation.
+
+Event 4688 command lines can themselves contain credentials or other sensitive
+arguments. WarSOC currently redacts common secret assignments in operator-facing
+alert context, while the event-granular SIEM vault preserves the raw source fields
+for forensic use. Unlike the FBR and PECA evidence collections, the SIEM raw
+fields do not currently use the application-level Fernet field-encryption layer.
+Access control and infrastructure encryption at rest are necessary but do not
+replace a documented raw-evidence privacy decision.
+
+### 1.3 Approval-gated current-scope hardening
+
+The statuses below describe the working source, not the deployed production
+release:
+
+1. **OPEN:** Align collection policy with declared rules. Event 4776 requires Credential Validation auditing; Event 5140 requires File Share auditing; Event 4657 requires a Set Value SACL on approved registry keys. Kerberos Events 4768/4769 are domain-controller telemetry and must not be promised for normal workstations. File Share and domain-controller profiles need explicit volume acceptance rather than blanket enablement.
+2. **IMPLEMENTED / LOCAL-PROVEN:** Every persisted SIEM, FBR, DLQ, correlation, and legacy-detector finding receives internal `rule_id`, `rule_version`, `detector_module`, required telemetry family, and bounded non-raw evidence references. The provenance schema is `detector-provenance-v1`.
+3. **NOT APPROVED:** Event 5379 remains outside collection and claims. If approved later, it must be credential-access evidence/context with noise measurement, never password disclosure.
+4. **NOT APPROVED:** A future file-discovery rule must be limited to recursive or sensitive-path enumeration from unusual process/privilege context. Ordinary Explorer and shell listing must not alert.
+5. **IMPLEMENTED / LOCAL-PROVEN:** Security Event 4697 and System Event 7045 use one canonical `WINDOWS_SERVICE_INSTALLED` incident identity when tenant, endpoint, service identity, and the bounded five-minute window match. The original event-granular records and both event references remain separate; only the operator incident is grouped.
+6. **IMPLEMENTED / LOCAL-PROVEN:** HTTP failures now return a backward-compatible `detail` plus a stable `error.code`, generic/safe message, and request ID. Validation responses do not expose Pydantic field names or internal schema errors. Full details remain in server logs under the request ID.
+7. **OPEN:** Decide and implement the SIEM raw-evidence privacy boundary: application-level encryption for raw message/event fields, minimal normalized searchable fields, authorized decryption, and a bounded idempotent migration. Measure search and worker cost before release.
+
+Items 2, 5, and 6 still require deployment of the reviewed commit and production
+acceptance before they become production-proven. Items 1 and 7 require separate
+approval because they change telemetry volume, search behavior, or evidence
+privacy. Items 3 and 4 remain explicitly outside the current patch.
+
+### 1.4 Future firewall onboarding boundary
+
+Network-device support remains a disabled module. The approved business flow is:
+
+1. Record the customer's vendor, model, firmware, device count, expected EPS, NTP state, and approved source addresses.
+2. Install a separate WarSOC Relay on an approved Windows Server or back-office host, not silently on a POS terminal.
+3. Configure each firewall to send metadata-only syslog over the customer LAN to the relay.
+4. Enroll the relay with its own Ed25519 identity; an endpoint activation code is not valid for a relay.
+5. Apply source allowlists, per-device/global rate limits, bounded encrypted evidence/control spools, and signed HTTPS batches.
+6. Admit batches only after tenant, relay, source, signature, sequence, quota, and queue-capacity validation.
+7. Prove parsing and timestamps on every offered physical vendor, then prove endpoint/network correlations and loss reporting.
+8. Enable `NETWORK_RELAY_ENABLED` only for the accepted tenant after rollback and retention checks pass.
+
+Supported candidate parsers exist for Fortinet, Cisco ASA, MikroTik, and pfSense.
+Parser unit tests and simulated correlations do not equal real-device proof.
+
+### 1.5 Wazuh detection target boundary
+
+`WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md` defines the reviewed target for
+using the Wazuh manager as a replaceable generic detection subsystem. The
+disabled backend and Compute-B bridge foundation is implemented and its focused
+contract suite passes, but it is not deployed, two-host live-tested, promoted,
+or customer-visible. A local isolated Wazuh 4.14.7 stack and the colleague's
+separate Wazuh laptop are lab candidates; neither is an approved production
+Compute B. The current WarSOC SIEM remains authoritative. Wazuh must not own
+endpoint enrollment, tenant identity,
+canonical evidence, FBR, PECA, incidents, storage, retrieval, customer access,
+or response. No production feature or claim changes until the recorded shadow
+acceptance gates pass.
+
+The hardened bridge foundation uses encrypted byte/age-bounded spools, bounded
+retry and receipt metadata, truncation/digest-safe `alerts.json` checkpoints,
+strict per-source projection fields, opaque tenant correlation HMACs, candidate
+event-time validation, pinned registry hashes, signed health/loss records and
+stage counters. This is implementation readiness, not evidence of live Wazuh
+detection quality.
 
 ## 2. Product Boundary
 
@@ -46,7 +167,7 @@ The complete current backend suite closes with 369 passed, 3 explicitly skipped 
 - Tenant isolation and role-based access.
 - Seven-day Mongo hot storage for operational SIEM, FBR, and PECA data.
 - Immutable Azure archive storage with hashes and an archive ledger.
-- Hot-plus-cold compliance retrieval and CSV/PDF export.
+- Hot compliance/search/export paths plus archive availability metadata; historical blob retrieval is implemented but disabled pending Azure and UI acceptance.
 - Email queue processing for configured operational messages and high/critical alert notifications.
 - Manual B2B sales, manual payment/invoicing, and administrative tenant provisioning.
 
@@ -59,8 +180,8 @@ The complete current backend suite closes with 369 passed, 3 explicitly skipped 
 - It does not require customers to disable Windows Defender.
 - It does not use Safepay or self-service payment for the current commercial flow.
 - It does not use Sysmon.
-- It does not currently ingest Linux or network-device syslog. The receiver remains a disabled future profile and is outside the Windows SMB pilot contract.
-- A feature-gated customer network relay exists in the source tree with strict vendor parsers, encrypted bounded spools, exact retries, a separate Windows service runtime, DPAPI identity, explicit listeners, source-scoped installer controls, lifecycle recovery, and source-isolated SIEM correlations. `NETWORK_RELAY_ENABLED` defaults to `false`; no production network-device claim exists until physical acceptance passes.
+- It does not currently ingest Linux telemetry. A separate network relay candidate exists, but network-device ingestion remains disabled and outside the active Windows SMB pilot contract.
+- A feature-gated customer network relay exists in the source tree with strict metadata-only vendor parsers, encrypted bounded spools, pre-queue Fernet protection for raw vendor records, exact retries, a separate Windows service runtime, DPAPI identity, explicit listeners, source-scoped installer controls, lifecycle recovery, per-device coverage state, and source-isolated SIEM correlations. `NETWORK_RELAY_ENABLED` defaults to `false`; no production network-device claim exists until physical acceptance passes.
 - It does not guarantee that every normal Windows event becomes an alert. Normal events are evidence and correlation inputs; only dangerous or contextually suspicious activity alerts.
 - It does not make a PDF cryptographically signed. The PECA source records contain the forensic signatures; the PDF is a human-readable summary.
 - It does not automatically email an agent installer link to analysts. Agent activation and download are tenant-admin actions.
@@ -68,9 +189,9 @@ The complete current backend suite closes with 369 passed, 3 explicitly skipped 
 
 ### 2.3 Disabled network-relay candidate
 
-The candidate is documented in `NETWORK_RELAY_BACKEND_FOUNDATION.md`. It does not change the current Windows pilot path, public ports, FBR truth sources, PECA 11-control catalog, hot/cold retention, or frontend.
+The candidate is documented in `NETWORK_RELAY_BACKEND_FOUNDATION.md`. It does not change the current Windows pilot path, public ports, FBR truth sources, PECA 11-control catalog, or hot/cold retention. A matching frontend workspace exists behind `VITE_NETWORK_RELAY_ENABLED=false`; it is hidden and makes no relay API calls by default. Every relay source file, parser, worker, installer, test and configuration migrates with the backend; the backend `NETWORK_RELAY_ENABLED=false` default keeps the deployed capability inactive until deliberate acceptance and activation.
 
-Candidate capabilities include separate relay identities, retry-safe one-time activation, Ed25519-signed HTTPS batches, atomic Redis admission, strict Fortinet/Cisco ASA/MikroTik/pfSense metadata parsing, encrypted bounded evidence/control spools, exact retry bodies, Windows DPAPI protection, NSSM lifecycle, revocation and dead-key recovery, network-source isolation, VPN spray detection, non-alert VPN-to-Windows context, and same-host high-risk-to-public-network correlation.
+Candidate capabilities include separate relay identities, retry-safe one-time activation, Ed25519-signed HTTPS batches, atomic Redis admission, strict Fortinet/Cisco ASA/MikroTik/pfSense metadata parsing, encrypted bounded evidence/control spools, encrypted raw cloud evidence, exact retry bodies, Windows DPAPI protection, NSSM lifecycle, revocation and dead-key recovery, per-device active/degraded/silent state, network-source isolation, receipt-time VPN spray detection, non-alert VPN-to-Windows context, and chronology-checked same-host high-risk-to-public-network correlation.
 
 The feature must remain disabled until the exact Windows build passes service/ACL/DPAPI/crash tests, every offered vendor has real-device proof, tenant EPS and disk behavior are measured, traffic-data retention is legally approved and configured, and a controlled pilot completes.
 
@@ -112,10 +233,12 @@ flowchart TD
     R --> W
     W --> X["Immutable Azure Blob plus SHA-256"]
     W --> Y["storage_archives ledger"]
-    X --> Z["Verified archive reader"]
-    Y --> Z
-    Z --> V
-    Z --> AA["Search, CSV and PDF"]
+    Y --> AM["Archive availability metadata"]
+    AM --> V
+    X --> RW["Disabled async retrieval worker candidate"]
+    Y --> RW
+    RW --> ST["Private temporary staging"]
+    ST --> SAS["Short-lived read-only user-delegation SAS"]
 ```
 
 ### 3.1 Disabled network-device candidate flow
@@ -138,7 +261,7 @@ flowchart LR
     NS --> HE["Network evidence and approved hybrid correlations"]
 ```
 
-No packet capture or general network payload collection is performed. The candidate accepts metadata fields and the original syslog record under a strict vendor contract. UDP evidence is described as `relay_attested`, not device-authenticated, because legacy UDP devices do not cryptographically sign their messages.
+No packet capture or general network payload collection is performed. The candidate accepts metadata fields and the original syslog record under a strict vendor contract. Raw records are encrypted before Redis/Mongo persistence and excluded from list/search projections; normalized vendor messages are generated summaries rather than raw-body copies. UDP evidence is described as `relay_attested`, not device-authenticated, because legacy UDP devices do not cryptographically sign their messages.
 
 ## 4. Tenant and Commercial Flow
 
@@ -328,13 +451,15 @@ Agent `4.2.6-Native-Signed` is a compatibility and key-protection release over `
 
 The release does **not** add Sysmon, packet capture, firewall-device collection, proprietary POS database parsing or new customer-facing SIEM rules. Detection behavior is controlled by the backend catalogs and worker logic, not by the installer version alone.
 
-### 8.3 Agent 4.2.7 candidate state
+### 8.3 Agent 4.2.8 candidate state
 
-The repository source is labelled `4.2.7-Native-Signed` so a future installer rebuilt
-from the post-4.2.6 XML-guard source cannot be confused with the already published
-4.2.6 bytes. No 4.2.7 installer or manifest was built, uploaded or declared production
-by this local closure. The approved public artifact remains 4.2.6 until the normal
-build, Defender/hash, manifest, Azure-upload and production-preflight gates pass.
+The repository source is labelled `4.2.8-Native-Signed` so an installer rebuilt
+from the post-4.2.6 XML-guard and replay-bounded source cannot be confused with the
+already published 4.2.6 bytes. A local unsigned installer and manifest were built
+on 2026-08-10 after enforcing mandatory pywin32 build dependencies. Nothing in
+this local build uploaded the artifact or declared it production. The approved
+public artifact remains 4.2.6 until the Defender/hash, Azure-upload, clean-machine
+installation, and production-preflight gates pass.
 
 ## 9. API Ingestion Contract
 
@@ -346,7 +471,10 @@ build, Defender/hash, manifest, Azure-upload and production-preflight gates pass
 - Enforces request-size, event-count, rate, tenant daily-ingest and deployment-wide daily-ingest controls.
 - Tenant and deployment counters are admitted atomically in Redis. A tenant limit returns HTTP 429; the deployment ceiling returns HTTP 503 so the agent retains and retries instead of overloading the single host.
 - `INGEST_PLATFORM_DAILY_BYTES_MAX` defaults to 3 GiB/day, matching the current 50-agent aggregate sizing model. It is a host-protection boundary, not a customer entitlement and not proof that every event mix can sustain that volume.
-- Rejects new batches with HTTP 503 when `raw_logs_queue` reaches the configured admission boundary; the agent retains and retries them.
+- Without an explicit contracted byte override, tenant allowance is calculated from the tenant's active agent count, not its maximum purchased seats. The default is 50 MiB/day per active agent with a 50 MiB minimum and a 3 GiB tenant ceiling.
+- Redis admission is bounded independently by stream entries, `raw_logs_queue` memory, and total Redis memory. The default raw-stream byte ceiling is 192 MiB and the default whole-Redis high-water mark is 70% while preserving at least 128 MiB below `maxmemory`.
+- Rejects new batches with retryable HTTP 503 before those boundaries are crossed; the agent retains and retries them.
+- Agent 4.2.8 distinguishes current telemetry from events at least five minutes old. Acknowledged historical backlog replays at no more than ten events/second by default, while current telemetry retains the normal low-latency sender cadence.
 - Rejects banned sources according to the active mitigation state.
 - Accepted events enter Redis Streams.
 
@@ -395,7 +523,7 @@ build, Defender/hash, manifest, Azure-upload and production-preflight gates pass
 - FBR/PECA DLQ: `warsoc:dlq:{tenant_id}`.
 - Stream trimming runs only when all required consumer groups exist and their pending state permits safe progress.
 - The trim boundary considers only the active required groups: `siem_group`, `fbr_group`, and `eto_group`. Historical/profile-gated groups such as `threat_hunters` cannot pin the active pipeline.
-- The raw stream is never blindly trimmed to enforce memory. `RAW_STREAM_MAX_ENTRIES` applies admission backpressure while acknowledged-entry retention performs safe trimming.
+- The raw stream is never blindly trimmed to enforce memory. Entry, stream-byte, and whole-Redis memory admission limits apply backpressure while acknowledged-entry retention performs safe trimming.
 - Metrics expose raw depth, cumulative safe trims, and the stream-retention worker heartbeat so retention can be proven rather than inferred.
 - Production Redis uses a 640 MB `noeviction` dataset ceiling inside a 1 GB container, leaving allocator/AOF headroom while preserving fail-closed admission behavior.
 - Endpoint and disabled relay admission share the same deployment-wide daily byte counter, so later network enablement cannot bypass the host budget.
@@ -701,8 +829,10 @@ Retention segmentation is intentionally deferred until the current pilot trial c
 2. Create private `warsoc-retention-90`, `warsoc-retention-180`, `warsoc-retention-270`, `warsoc-retention-360`, `warsoc-peca-365` and `warsoc-fbr-2190` containers in the private evidence account.
 3. Validate each policy while unlocked with harmless data, then lock the exact approved duration.
 4. Add the duration-specific environment variables only after all referenced containers exist and are locked.
-5. Recreate only `storage-archiver`, archive controlled samples for every class, verify the recorded container/hash/immutability and retrieve them through authorized APIs.
-6. Leave existing blobs in the original 2,190-day container. They cannot be shortened or moved as a way to evade the original lock.
+5. Recreate only `storage-archiver`, archive controlled samples for every class, and verify the recorded container/hash/immutability.
+6. Create a separate private `warsoc-retrieval-staging` container with no immutability lock and an Azure lifecycle rule that deletes staged objects after three days.
+7. Assign the retrieval identity least-privilege Blob Data Contributor access plus permission to generate user-delegation keys, enable the opt-in retrieval worker, and prove one request from `REQUESTED` through `READY`, SAS download, SHA-256 validation, and `EXPIRED`.
+8. Leave existing blobs in the original 2,190-day container. They cannot be shortened or moved as a way to evade the original lock.
 
 Storage separation and compute migration are separate changes. Do not alter archive routing during the DigitalOcean-to-Azure cutover.
 
@@ -753,45 +883,39 @@ The public agent-artifact account/container must remain separate from the privat
 
 ## 16. Cold Archive Retrieval
 
-### 16.1 Reader safety
+Archive retrieval exists so an authorized tenant can request historical evidence after it has left hot MongoDB and been retained in Azure Cold or Archive storage. It is not used for live dashboards, detection, ingestion or routine seven-day searches.
 
-The archive reader:
+The complete retrieval implementation migrates with every backend release even while `ARCHIVE_RETRIEVAL_ENABLED=false`. The flag prevents request execution and worker activation; it does not remove routes, ledgers, indexes, tests, the Compose profile or configuration from the deployed software.
 
-1. Queries `storage_archives` for the authenticated tenant and permitted collections.
-2. Narrows ledger entries by date, event ID, event UID, or document ID when filters exist.
-3. Downloads the referenced private Azure blob.
-4. Recomputes and verifies SHA-256 before parsing.
-5. Rejects invalid JSON, failed hashes, and records whose tenant does not match the authenticated tenant.
-6. Applies date/event/search filters.
-7. Marks records as archived and records their source collection/blob.
-8. Deduplicates hot and cold identities and sorts newest first.
+### 16.1 API memory boundary
 
-The internal reader preserves `_archived`, source collection, physical container, and blob identity while verifying the payload. Compliance response curation exposes only `storage_tier: "hot" | "cold_archive"` and `archived: true | false`; internal container/blob names, paths, and credentials remain hidden. The evidence tab distinguishes a retrieval failure from a valid empty vault instead of silently displaying "No forensic evidence" for both conditions.
+Normal API routes never download, deserialize, proxy, or stream Azure archive bytes. They may query only the tenant-scoped `storage_archives` Mongo ledger to report that historical material exists. Dashboard, search, compliance, CSV, and PDF routes remain hot-Mongo operations; they cannot silently materialize a multi-year vault inside the 1 GiB API container.
 
-Compliance list routes use hot-first pagination. They read the requested Mongo page first and obtain an unfiltered archive count from the local `storage_archives` ledger. When Mongo completely satisfies the requested page, no Azure blob is downloaded. Azure is read only when the page crosses beyond the available hot rows or a filtered request cannot be satisfied from hot data. This removes private-blob network latency from normal dashboard loads without changing archive integrity verification, exports, or retention behavior.
+The global operational search is also bounded to one through seven hot days and exact indexed fields (`event_id`, event/alert UID, source IP, user, and agent). It performs no wildcard or case-insensitive message regex scan.
 
-Responses expose `meta.archive_read_performed`, `meta.archive_rows`, and `meta.total_is_exact`. An unfiltered ledger count is exact when every archive ledger row contains `document_count`. A filtered request that is satisfied entirely from hot storage deliberately reports `total_is_exact: false` rather than claiming a count for archive blobs that were not scanned.
+### 16.2 Asynchronous retrieval ledger
 
-### 16.2 Routes that read hot plus cold
+Historical retrieval is an explicit, opt-in workflow:
 
-- Compliance evidence detail/list routes.
-- Global data search.
-- CSV export.
-- PDF audit report.
+1. An authenticated admin, manager, or auditor requests permitted collections and a bounded UTC interval.
+2. The backend estimates blob count and bytes from the tenant-scoped immutable archive ledger.
+3. One exact request of at most 10 GiB may use the included monthly allowance. A unique `(tenant_id, billing_month)` reservation prevents concurrent double use.
+4. Wider, additional, or legacy unknown-size requests enter `PENDING_APPROVAL`.
+5. WarSOC operations approves a paid/manual request using the super-admin control.
+6. An isolated 256 MiB worker performs an Azure server-side copy from immutable Archive storage to a private Cool-tier staging object using Microsoft Entra source authorization. No archive byte passes through the API or local disk.
+7. The request becomes `READY` only after every copy reports success.
+8. The API creates short-lived, read-only user-delegation SAS URLs for exact staged objects and returns each expected SHA-256.
+9. Staged copies expire after 48 to 72 hours. The worker deletes them; an Azure lifecycle rule is a mandatory independent cleanup backstop.
 
-The dashboard's live SIEM feed intentionally reads Mongo hot data only. It is an operational screen, not a six-year archive browser.
+The immutable source blob is never modified or deleted by retrieval.
 
-### 16.3 Bounded retrieval
+### 16.3 Deployment gate
 
-- Default archive-ledger scan: 100 blobs.
-- Hard code cap: 500 blobs.
-- API result limits still apply.
-- Normal first-page compliance reads do not open Azure when the hot tier fills the page.
-- A page that crosses the hot/cold boundary requests only the missing cold slice and applies the correct archive offset.
-- CSV default: 5,000 rows; maximum: 50,000 rows.
-- PDF considers the newest 500 matching records and prints a 50-row evidence preview.
+`ARCHIVE_RETRIEVAL_ENABLED=false` is the default. Do not enable it until the private staging container, lifecycle cleanup, service-principal/managed-identity RBAC, user-delegation permission, exact-duration retention containers, and an end-to-end rehydration proof exist. The worker is behind the Compose `archive-retrieval` profile, so a normal deployment does not start it accidentally.
 
-For deep historical work, users must apply date/event filters or use CSV in bounded exports. A single unfiltered browser request is not intended to materialize an entire multi-year vault.
+The frontend request/status/download interface is a separate integration task. Until that interface is deployed, authorized operations may call the backend retrieval endpoints, but the standard dashboard exposes only hot data and archive metadata counts.
+
+For the selected clean production launch, legacy pilot archives are not attached to the new tenant database or retrieval ledger. A locked legacy pilot container remains isolated until its policy expires; it cannot be destroyed early merely because the pilot data is no longer commercially required.
 
 ## 17. Dashboard Data Contract
 
@@ -802,13 +926,13 @@ For deep historical work, users must apply date/event filters or use CSV in boun
 | Omni Agent Feed | `GET /api/v1/logs/live?source=siem&limit=100&aggregate=true` | Latest hot endpoint evidence from `siem_cold_vault`, display-grouped conservatively by minute and context. |
 | Live Inspection / open incidents | `GET /api/v1/incidents?limit=500&include_closed=false` | Mutable tenant-scoped incidents with occurrence counts and operator context. |
 | Incident metrics | `GET /api/v1/incidents/summary` | Server-derived open, critical, recent and correlation/rule-match counts. |
-| Incident detail | `GET /api/v1/incidents/{incident_id}` | SOC investigation view: identity, process/network context, detection rationale, explicit evidence coverage, bounded linked hot/Azure evidence, assignee and chronological workflow history. |
+| Incident detail | `GET /api/v1/incidents/{incident_id}` | SOC investigation view over linked hot evidence, identity, process/network context, detection rationale, assignee, and workflow history. Historical blobs require an archive retrieval request. |
 | Incident assignees | `GET /api/v1/incidents/assignees` | Active tenant admin/manager/analyst candidates available only to incident-managing roles. |
 | Historical charts | Dashboard history/search endpoints | Tenant-scoped aggregates for selected time window. |
 | Agent health badge | `GET /api/v1/data/status` | Active, degraded, or offline/not-configured telemetry state. |
 | Compliance catalog | `GET /api/v1/compliance/packs` and `GET /api/v1/auth/my-packs` | Available and entitled packs. |
 | Compliance coverage | `GET /api/v1/compliance/coverage` | Sensor/control coverage status. |
-| PECA/FBR evidence | `GET /api/v1/compliance/evidence/{pack_id}` | Merged hot and Azure evidence for authorized roles. |
+| PECA/FBR evidence | `GET /api/v1/compliance/evidence/{pack_id}` | Authorized hot evidence plus archive-ledger availability metadata. Historical bytes require an archive retrieval request. |
 
 The Agent Feed and Live Inspection must not use the same dataset. Normal endpoint evidence belongs in the feed; actionable detections belong in incidents. Historical search rows are explicitly typed and cannot expose acknowledgement, closure, or block actions.
 
@@ -821,7 +945,7 @@ The Agent Feed and Live Inspection must not use the same dataset. Normal endpoin
 - It fetches at most the requested limit plus one row to return `has_more`.
 - It performs no `count_documents` scan and returns no misleading total.
 - It does not create a management-audit record for every automatic browser refresh.
-- Historical `/logs`, forensic detail, compliance evidence, search, CSV, and PDF retain their existing complete/audited contracts.
+- Historical availability is represented by the archive ledger; archive bytes are delivered only through the asynchronous retrieval workflow.
 
 ### 17.2 Live updates
 
@@ -924,7 +1048,11 @@ flowchart LR
     W --> SMTP["Zoho SMTP"]
     M --> AR["Daily storage archiver"]
     AR --> AZ["Private immutable Azure evidence storage"]
-    API --> AZ
+    M --> RL["Archive retrieval request ledger"]
+    RL -. "disabled profile" .-> RR["Isolated retrieval worker"]
+    RR -. "server-side copy" .-> AZ
+    RR -.-> ST["Private temporary staging"]
+    API -. "short-lived SAS metadata" .-> ST
     V -->|"Agent redirect"| PUB["Public Azure artifact storage"]
 ```
 
@@ -935,11 +1063,12 @@ flowchart LR
 | `warsoc-api` | Required | HTTPS API behind Nginx. |
 | `unified-worker` | Required | SIEM, FBR, PECA, email, stream retention. |
 | `storage-archiver` | Required | Daily immutable Azure archival. |
+| `archive-retrieval-worker` | Disabled optional profile | Asynchronous Azure rehydration; blocked until staging, lifecycle, RBAC, real-copy, and UI acceptance pass. |
 | `compliance-cron` | Required | Scheduled compliance/report activity. |
 | `mongodb` | Required/private | Hot operational data and archive ledger. |
 | `redis` | Required/private | Streams, correlation, sessions/tickets, cache, mitigation. |
 | `nginx` | Required/public 80/443 | TLS termination and reverse proxy. |
-| `syslog-receiver` | Disabled future profile | Reserved for a separately reviewed Linux/network-device intake; not part of the Windows SMB pilot. |
+| `syslog-receiver` | Disabled legacy/future profile | Not the customer network-relay design and not part of the Windows SMB pilot. |
 | `threat-hunter` | Legacy optional profile | Legacy detector, not the primary unified SIEM path. |
 
 The API creates the incident collections and indexes and performs the bounded hot-alert projection before incident-producing workers start. Production Compose therefore gates `unified-worker`, `storage-archiver`, and the optional threat-hunter profile on a healthy `warsoc-api`. This ordering prevents a worker from publishing incident records before the required indexes and migration marker exist.
@@ -953,9 +1082,10 @@ The API creates the incident collections and indexes and performs the bounded ho
 - Docker JSON logs rotate at 10 MB with five files per service.
 - API and workers use read-only filesystems with explicit writable volumes/tmpfs.
 - Application containers run as a non-root user with `no-new-privileges`, all Linux capabilities dropped, and a 256-process ceiling.
-- Production target: DigitalOcean 4 vCPU / 8 GB RAM.
+- Current production source: DigitalOcean 4 vCPU / 8 GB RAM until the emergency cutover.
+- Immediate production target: one hardened Azure Ubuntu VM with 4 vCPU / 8 GiB RAM. This changes the host, not the Docker application topology.
 - Frontend target: Vercel at `https://warsoc.tech`.
-- API target: DigitalOcean at `https://api.warsoc.tech`.
+- API hostname: `https://api.warsoc.tech`; its A record moves from DigitalOcean to the Azure static IP after stateful restore acceptance.
 - Agent artifact: separate public Azure storage.
 - Evidence: separate private immutable Azure storage.
 
@@ -965,13 +1095,13 @@ The API creates the incident collections and indexes and performs the bounded ho
 
 - DigitalOcean commit `526c55b` and Vercel commit `952e96b` are retained only as historical verified baselines. They are not evidence of the currently deployed commit after later pushes.
 - The 2026-07-22 working release contains agent `4.2.6-Native-Signed`, the custom-contract quote correction, non-cacheable invitation handoff, production-disabled manual injection and optional duration-aware archive-container routing.
-- The complete maintained backend regression closed on 2026-07-29 with `369 passed`, `3 skipped`, and zero application failures. The skips are explicit environment-dependent checks; no failed test was reclassified as skipped. The focused security closure covers public auth response fields, signed POS replay protection, heartbeat freshness, 2FA throttling, evidence RBAC, CSV formula safety, upload cleanup, purge path containment, tenant/deployment quotas, endpoint-signing readiness and the shared endpoint/relay ingest ceiling.
+- The complete maintained backend regression closed on 2026-08-10 with `397 passed`, `1 skipped`, and zero application failures. The skip is explicitly environment-dependent; no failed test was reclassified as skipped. The focused security closure covers public auth response fields, signed POS replay protection, heartbeat freshness, 2FA throttling, evidence RBAC, CSV formula safety, upload cleanup, purge path containment, tenant/deployment quotas, endpoint-signing readiness, bounded indexed search, asynchronous archive-retrieval controls, and the shared endpoint/relay ingest ceiling.
 - Pytest discovery is now bounded to the maintained `tests/` tree. Root-level live-fire, scratch, browser and binary-output files remain outside the default regression run instead of causing unrelated collection failures. This changes test discovery hygiene, not application behavior.
 - The PECA worker integration test now submits and verifies all 11 catalog controls through authenticated signed ingestion, Redis, the PECA consumer and `peca_forensic_logs`; an FBR control event remains excluded from the PECA vault.
 - On 2026-07-29, a fresh candidate image built from the current Dockerfile contained `cryptography 49.0.0`, `setuptools 83.0.0`, `wheel 0.46.2`, and no `ecdsa`; its installed-environment `pip-audit` emitted `No known vulnerabilities found`. A direct pinned-requirements audit also reported no known vulnerability. The older cached development image is not release evidence and must not be promoted. Bandit reported no high-severity/high-confidence issue across `app`, `agent`, and `scripts`. Windows Event XML is obtained from the native Windows Event Log API and the current bounded parser rejects DTD/entity declarations before parsing.
 - SIEM source routing now requires trusted web-log provenance for web and phishing signatures while preserving native Event `4688` command-line detection. This prevents Windows events from being mislabeled as Web-WAF or phishing detections.
 - The `security_alerts` unique index now applies only to documents with a string `alert_uid`; the startup migration handles both Mongo index options and key-spec conflicts, while legacy rows without `alert_uid` remain readable.
-- Compliance evidence responses expose safe hot/cold provenance, and the frontend evidence tab no longer treats an API/archive failure as a valid empty vault.
+- Compliance evidence responses distinguish a valid empty hot vault from API failure and expose archive availability metadata without downloading historical blobs.
 - Frontend lint and the production Vite build pass. Vercel declares HSTS, CSP, clickjacking, MIME-sniffing, referrer, and browser-permission headers. The PDF sanitizer is pinned to DOMPurify 3.4.12 and React Router is pinned to 7.18.2. The registry still reports the React Router RSC server-action CSRF advisory; that code path is not reachable in this Vite client-only SPA, which defines no React Server Components or Router actions. The frontend uses `/incidents`, `/incidents/summary`, `/logs/live?source=siem&aggregate=true`, `/data/status`, the custom-contract quote payload and the one-time invitation-link response. Its new Endpoint Fleet was exercised against an isolated authenticated required-signing tenant. The main JavaScript chunk remains a performance warning at approximately 1.73 MB minified / 544 KB gzip.
 - `/auth/me` uses an explicit public-field allowlist, so encrypted 2FA material and future internal database fields cannot be returned accidentally.
 - Raw evidence detail is collection-scoped by role and entitlement: admin receives SIEM plus entitled compliance evidence, auditor receives entitled compliance evidence, and manager/analyst receive SIEM evidence only. Management-audit reads are admin-only.
@@ -1040,7 +1170,7 @@ Additional production-assisted lifecycle proof remains recorded:
 | Customer-style invitation activation | Pending-login denial, token activation, replay rejection and active login are covered. SMTP is no longer required because the authenticated admin receives the link once. | Copy one link in the deployed browser, activate it as the invited role and confirm the intended role view. |
 | Independent backup recovery | The production-format encrypted Mongo drill now verifies SHA-256 and restores into a network-disabled disposable MongoDB container. | Repository proof `20260721T200605Z-7541a279` restored 156,671 documents with zero failures and recorded collection/index counts. Repeat against the final production backup during the Azure cutover. |
 | Physical retention segmentation | One locked 2,190-day container currently governs all evidence blobs. | Route future FBR, PECA, and general/SIEM archives to containers whose locked policy matches the promised retention class. |
-| Archive provenance presentation | Backend hot/cold provenance, Azure retrieval and explicit reader failures are implemented. Runtime cold retrieval passed and the repaired frontend is deployed. | Confirm one hot row, one cold row and one simulated reader failure in the production browser. |
+| Archive retrieval rollout | A prior synchronous reader proved that existing blobs and hashes were readable, but normal API hot/cold merging has been removed to protect API memory. | Configure private staging/lifecycle/RBAC, enable the isolated worker in a non-production acceptance environment, prove rehydration/SAS/hash/expiry, then build the frontend request/status UI. |
 | Dashboard post-deploy resources | The deployed frontend uses the intended 30-second alert and 10-second evidence schedule. Before deployment, Mongo used approximately 55.91% CPU and 1.639 GiB of its 2 GiB container limit. In the first post-deploy snapshot it used 1.55% CPU and 939.6 MiB; API, Redis and the unified worker were also low-use and healthy. A brief 502 and two legacy 499 cancellations occurred while the API container restarted at 21:30; no `/logs/live` 499 or 5xx appeared after deployment. | Measure Mongo CPU/memory and Nginx status codes for at least 15 continuous minutes after deployment; require no live-read 499s and p95 below two seconds. |
 | Ingest request buffering | Real agent ingestion is returning HTTP 200, but Nginx reports that some request bodies spill to its temporary request-body files. This is bounded buffering, not evidence loss, but it creates disk I/O. | Record agent batch sizes and temporary-file/disk growth during the 50-agent pilot; tune `client_body_buffer_size` or request batching only from measured data. |
 | Intermittent ingest exception | The deployed API logs `repr` plus traceback. No recurrence appeared during the current real-agent and acceptance windows; surrounding ingestion remained HTTP 200. | If it recurs, preserve the complete traceback and resolve that exact failure before declaring the incident closed. |
@@ -1066,7 +1196,7 @@ Status meanings:
 | DNS and TLS | `warsoc.tech` to Vercel; `api.warsoc.tech` to DigitalOcean/Nginx | PROVEN | DNS separation, HTTPS certificates, HSTS and certificate validity passed preflight `15545d8ce7`. |
 | Vercel frontend | Browser UI, auth hydration, dashboard, endpoint fleet, compliance and team workflows | CANDIDATE-PROVEN | The previous production baseline passed login and bounded reads. The local candidate consumes `/incidents`, `/incidents/summary`, aggregated SIEM evidence and backend-owned endpoint/signing health; authenticated local browser smoke plus lint/build pass, but the paired production deployment and network-path smoke are still required. |
 | Nginx gateway | TLS termination, security headers and reverse proxy | PROVEN with observation | Public headers/CORS/private-port checks pass. Real ingest returns 200. Some request bodies are buffered to temporary files; disk impact needs pilot measurement. |
-| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | CANDIDATE-PROVEN | The production baseline is healthy. The candidate adds tenant-scoped incident APIs, startup projection/indexing and shared endpoint-signing health; all 369 executable backend tests pass with three explicit skips, but the new routes still require production smoke after deployment. |
+| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | CANDIDATE-PROVEN | The production baseline is healthy. The candidate adds tenant-scoped incident APIs, startup projection/indexing, shared endpoint-signing health, bounded exact search, and a feature-gated retrieval ledger; all 380 executable backend tests pass with three explicit skips, but the new routes still require production smoke after deployment. |
 | Authentication/session | Login, HttpOnly access cookie, CSRF double-submit and `/auth/me` | PROVEN | Existing tenant login, auth context and profile returned 200. Public signup returned 403. |
 | Manual sales flow | Quote/contact to operator follow-up; no automatic payment | PROVEN | Quote and contact requests returned 200; legacy payment webhook returned 404. No Safepay dependency is required. |
 | Tenant provisioning | Super-admin creates tenant, admin, packs and seat limit | PROVEN | Disposable production tenant provisioning and login passed in run `b87116c8af`. |
@@ -1092,8 +1222,8 @@ Status meanings:
 | MongoDB hot tier | Seven-day operational store and tenant-scoped indexes | PROVEN with capacity watch | Both live queries use `IXSCAN` and examine only requested rows. The first repaired-frontend snapshot showed Mongo at 1.55% CPU and 939.6 MiB/2 GiB, down from the pre-deploy 55.91% CPU and 1.639 GiB observation. Continue time-window monitoring rather than treating one snapshot as capacity proof. |
 | Daily storage archiver | Archive-before-delete transaction from Mongo to Azure | PROVEN | Service is running; latest cycle completed without errors. It verifies upload/hash/immutability/ledger before exact Mongo deletion. |
 | Azure immutable evidence | Private blob storage, SHA companion and locked retention | PROVEN | Runtime probe verified ledger, SHA-256, immutability and actual Azure retrieval for SIEM, alerts, FBR and PECA. |
-| Hot-plus-cold retrieval | Merge Mongo and SHA-verified Azure records | PROVEN in API; browser provenance presentation pending | Current authenticated FBR/PECA reads return data; runtime cold samples were returned and marked archived. The frontend is deployed, but a hot/cold/error provenance visual exercise remains an acceptance obligation. |
-| CSV export | Bounded detailed export from hot and cold sources | PROVEN | Current production CSV returned HTTP 200 and 204,350 bytes; validator CSV also passed. |
+| Archive retrieval | Asynchronous rehydration and direct Azure download | CODE COMPLETE / DISABLED | Request ledger, one-job/10-GiB monthly allowance, approval path, isolated server-side-copy worker, short-lived user-delegation SAS, and expiry logic are implemented. `ARCHIVE_RETRIEVAL_ENABLED=false`; Azure staging/lifecycle/RBAC, real rehydration, and frontend workflow remain mandatory. |
+| CSV export | Bounded detailed export from hot operational data | PROVEN | Current production CSV returned HTTP 200 and 204,350 bytes; validator CSV also passed. Historical export requires the separate retrieval workflow. |
 | PDF report | Human-readable compliance summary | PROVEN | Current PECA PDF returned HTTP 200 and a valid PDF payload. The PDF itself is not cryptographically signed. |
 | Email daemon | Queue, retry, SMTP delivery and DLQ | OPTIONAL/PARTIAL | Security-alert email is disabled. Quote/contact records persist before email queueing. Team invitations return a secure manual handoff link even when SMTP is unavailable. Current SMTP quota/delivery must not be assumed. |
 | Metrics and health | Worker, queue, agent, DLQ, detection and dashboard telemetry | PROVEN | Protected production metrics were read successfully. Dashboard live-read histograms are deployed on the backend. |
@@ -1101,9 +1231,9 @@ Status meanings:
 | Endpoint event authenticity | Per-event Ed25519 signature tied to the enrolled agent key before Redis admission | REQUIRED CANDIDATE | Agent/API tests and exact-machine flow pass with 7,191 verified and zero rejected signatures. Accepted-event signature readiness is exposed per endpoint and gates health/coverage. The candidate defaults to required, while the currently deployed `.env.prod` remains unchanged until the approved deployment. |
 | Physical retention classes | Match actual Azure lock duration to compliance and general retention terms | CODE COMPLETE / CLOUD PENDING | Routing and readback support separate SIEM, PECA, FBR and general containers with safe legacy fallback. Existing blobs remain in the locked 2,190-day container; new routing must not be enabled until target containers and locked policies exist. |
 | Installer code signing | Publisher reputation and Defender trust | PARTIAL | Exact hash allowlisting supports the pilot while Defender stays enabled; the binary remains unsigned. |
-| Capacity ceiling | Maximum 50 active agents per tenant | PROVEN for synthetic soak | Prior production soak registered 50/50, rejected seat 51 and met latency. Real customer mix must still be monitored because event volume per endpoint varies. |
+| Capacity ceiling | Maximum 50 active agents per tenant and 50 aggregate active agents on the shared host | PROVEN by contract tests; prior synthetic soak | Mongo-backed floors prevent Redis restarts from bypassing either boundary. Real customer mix must still be monitored because event volume per endpoint varies. |
 | Linux/syslog | Linux endpoint telemetry | OUT OF SCOPE | Linux remains outside the Windows SMB pilot and no Linux agent/intake is claimed. |
-| Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | CODE-COMPLETE CANDIDATE / DISABLED | Cloud API, strict Fortinet/Cisco ASA/MikroTik/pfSense parsers, bounded encrypted spools, exact retry, DPAPI identity, separate Windows service/installer, lifecycle recovery, atomic Redis admission, source isolation, and limited hybrid correlations are implemented and tested. `NETWORK_RELAY_ENABLED=false`; Windows-host, real-device, retention and pilot proof remain open. |
+| Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | PFSENSE LAB-PROVEN CANDIDATE / DISABLED | Cloud API, strict metadata-only Fortinet/Cisco ASA/MikroTik/pfSense parsers, bounded encrypted spools, Fernet-protected raw cloud evidence, exact retry, DPAPI identity, separate Windows service/installer, lifecycle recovery, atomic Redis admission, per-device coverage state, source isolation, and backlog-safe limited hybrid correlations are implemented. A pfSense CE 2.8.1 Hyper-V lab proved native BSD syslog parsing, logged pass/block evidence, Ed25519 relay attestation, encrypted outage retention, unclean restart recovery, zero duplicate event UIDs, and continuous batch hashes. `NETWORK_RELAY_ENABLED=false`; packaged Windows-service acceptance, exact customer hardware, Fortinet/Cisco ASA/MikroTik appliance proof, retention, capacity, proactive external notification, and pilot proof remain open. |
 | External threat-intelligence enrichment | Third-party reputation/provider lookups | OUT OF SCOPE | No live provider integration is claimed for the current pilot. Native SIEM/FBR/PECA operation does not depend on it. |
 
 ## 23. Failure Map
@@ -1203,14 +1333,21 @@ Do not declare the current release fully accepted until all of the following are
 | Unified supervision | `app/workers/unified_worker.py` |
 | Stream trimming safety | `app/workers/stream_retention.py` |
 | Storage archival | `app/workers/storage_archiver.py` |
-| Azure retrieval | `app/utils/archive_reader.py` |
+| Azure archive availability | `app/utils/archive_reader.py` |
+| Asynchronous archive retrieval | `app/routes/archive_retrieval.py`, `app/utils/archive_retrieval.py`, and `app/workers/archive_retrieval_worker.py` |
 | Endpoint event signature verification | `app/utils/agent_crypto.py` and `app/routes/ingest_pulse.py` |
+| Redis ingest memory admission | `app/utils/ingest_capacity.py` |
 | Windows event signing and protected key storage | `agent/windows_agent.py` |
 | Network-relay API and admission | `app/routes/network_relay.py` |
 | Network-relay parsing, spooling, signing and runtime | `app/network_relay/` and `scripts/warsoc_relay_service.py` |
 | Network-relay as-built candidate contract | `docs/NETWORK_RELAY_BACKEND_FOUNDATION.md` |
+| Future generic detection engine and Wazuh integration | `docs/WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md` |
+| Wazuh execution mind map and gate status | `docs/WARSOC_WAZUH_EXECUTION_MIND_MAP.md` |
+| Disabled Wazuh contracts, projector, outbox, bridge and candidate validator | `app/wazuh_integration/`, `app/workers/wazuh_dispatch_worker.py`, and `docker-compose.wazuh-bridge.yml` |
+| Wazuh lab implementation and acceptance procedure | `docs/WARSOC_WAZUH_IMPLEMENTATION_AND_LAB_RUNBOOK.md` |
 | Sanitized customer capability statement | `docs/WARSOC_CUSTOMER_FEATURES.md` |
 | Azure backend migration | `docs/AZURE_BACKEND_MIGRATION_RUNBOOK.md` and `deploy/azure/` |
+| Azure account, storage, immutability, and expiry controls | `docs/AZURE_ACCOUNT_AND_STORAGE_CREATION_RUNBOOK.md` |
 | Operational backup and restore drill | `scripts/backup_mongodb.sh` and `scripts/run_backup_restore_drill.ps1` |
 | Legacy uploaded-source cleanup | `scripts/purge_legacy_upload_sources.py` |
 | Fast startup database indexes | `app/database.py` |

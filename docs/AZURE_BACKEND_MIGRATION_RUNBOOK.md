@@ -1,28 +1,34 @@
 # WarSOC Backend Migration: DigitalOcean to Azure VM
 
 **Status:** Authoritative cutover runbook
-**Updated:** 2026-07-29
-**Scope:** Move the existing Docker Compose backend from DigitalOcean to one hardened Azure Ubuntu VM without changing the public API hostname or the application topology.
+**Updated:** 2026-07-30
+**Scope:** Move the complete Docker Compose application and every shipped capability from DigitalOcean to one hardened Azure Ubuntu VM without changing the public API hostname or application topology. Start with fresh production data because the business has declared the pilot identities and operational data disposable.
 
-This is a stateful migration, not a fresh deployment. MongoDB, Redis, customer uploads, generated reports, TLS material, cryptographic keys, secrets, archive configuration and release identity must cross the boundary together.
+This is a clean production launch for application data. The approved backend release, TLS configuration, production secrets, archive configuration and release identity cross the boundary; the pilot MongoDB/Redis data, pilot accounts, pilot agents, uploads and generated reports do not enter the new production database.
 
-**Execution timing:** Deferred until the current pilot trial ends. Until a cutover window is approved, DigitalOcean remains the writable production backend, the Azure VM must not accept production writes, and this document is preparation only.
+**Execution timing:** Emergency continuity migration before the DigitalOcean entitlement ends. DigitalOcean remains the only writable production backend until the final cutover freeze. Azure must not accept production writes before the restore rehearsal passes.
 
-**Current project decision:** Pilot tenants and pilot evidence are disposable. If no pilot contract requires continuity, the preferred Azure path is a clean production launch with new tenant IDs and no pilot Mongo/Redis restore. The stateful procedure in Sections 5-8 remains available only if a signed contract, investigation or retention obligation later requires existing data to move.
+**Default project decision:** Use the clean production launch because the business owner has declared the pilot accounts and operational data disposable. This declaration does not override a locked Azure immutability policy: already-archived pilot evidence remains isolated in its legacy account until the policy expires.
 
 ## 0. Non-Negotiable Boundaries
 
 - `warsoc.tech` remains on Vercel.
 - `api.warsoc.tech` remains the API hostname; only its DNS A record changes.
-- The public Azure agent-artifact account and private Azure evidence account remain where they are.
+- Replace the pilot artifact account with the approved production artifact account and versioned installer URL before deleting the old public artifact object/account.
+- Create and validate the new private production evidence account. Stop new writes to the legacy pilot evidence account after cutover.
 - MongoDB and Redis remain private Docker services on the Azure VM for this cutover.
-- Do not rotate JWT, encryption, RSA signing, agent-auth, Mongo, Redis or administrator secrets during the migration.
+- Generate fresh production tenant/database credentials for the clean environment. Preserve only release-level keys that are intentionally required to verify a retained chain or approved artifact; record every such exception.
 - Do not introduce a new retention policy, application release or agent build during the cutover window.
 - Do not run DigitalOcean and Azure as writable WarSOC backends at the same time.
-- Keep DigitalOcean stopped but intact for at least 24 hours after acceptance.
+- Keep DigitalOcean stopped but intact for at least 24 hours after acceptance, then execute the approved pilot-disposal record.
 - A failed migration must preserve evidence. Abort before DNS cutover whenever a pre-cutover gate fails.
-- Retention-container separation is a separate post-pilot operation. Complete and prove it before migration or leave the current locked 2,190-day fallback unchanged until after migration; never combine both changes in one cutover.
+- Create and prove the production retention containers before accepting contracted data. The legacy 2,190-day pilot container is not imported into the production evidence account.
 - Treat archived telemetry, backups, uploads, reports and Mongo volumes as potentially containing PII. Do not place them in the public agent-artifact account.
+- Migrate the network-relay API, parsers, workers, installers, tests and configuration, but keep `NETWORK_RELAY_ENABLED=false` until an approved activation.
+- Migrate the archive-retrieval routes, ledger, worker, tests and configuration, but keep `ARCHIVE_RETRIEVAL_ENABLED=false` until staging, RBAC, lifecycle and rehydration acceptance pass.
+- A false feature flag means the capability is deployed but inactive. It never authorizes omitting its files, dependencies, Compose profile, indexes or configuration from the release.
+- A DigitalOcean snapshot and encrypted final pilot backup remain short-term rollback/disposal evidence. They are not restored into the clean production database.
+- Promotional Azure credit is not a production continuity guarantee. Create a T-7/T-3/T-1 exit plan before the credit expiry date.
 
 ### 0.1 PII and Azure security boundary
 
@@ -63,29 +69,30 @@ Never use a branch name such as `main` as the release identity. Push the approve
 
 ### Current release evidence
 
-- Windows agent: `4.2.6-Native-Signed`.
-- Installer: `warsoc_installer-4.2.6.exe`.
-- Installer size: `17,471,600` bytes.
-- Installer SHA-256: `F80C22FCD65FD5755B8483F105FCA4AA3FFFFFBAB4E29B807828D4CC406CDAE0`.
-- Agent URL: `https://warsocartifacts.blob.core.windows.net/warsoc-agent-public/warsoc_installer-4.2.6.exe`.
-- Local manifest: `output/pilot_hash_manifest-4.2.6.json`.
-- Backend regression: `369 passed`, `3 skipped`, zero failures (2026-07-29 maintained-suite run).
+- Current source candidate: Windows agent `4.2.8-Native-Signed`.
+- Last locally available approved binary: `warsoc_installer-4.2.6.exe`, 17,471,600 bytes, SHA-256 `F80C22FCD65FD5755B8483F105FCA4AA3FFFFFBAB4E29B807828D4CC406CDAE0`.
+- A `4.2.8` production artifact does not exist merely because source files say `4.2.8`. Build, manifest, Azure upload, and public hash acceptance must complete before recording `4.2.8` as the release.
+- Backend regression: `380 passed`, `3 skipped`, zero failures (latest maintained-suite run before this document update).
 - Frontend ESLint and production build: passed.
 
-These facts describe the approved working release. The commit fields above must identify the commits that actually contain it.
+The cutover record must identify one exact backend commit and one exact installer version/hash. Do not mix a newer source commit with an older unrecorded artifact claim.
 
 ## 2. Readiness Gates
 
 Complete every gate before provisioning or changing DNS.
 
-### 2.0 Select the cutover mode
+### 2.0 Confirm the cutover mode
 
 Record one mode before any Azure backend is made writable:
 
-- **Clean production launch (current preference):** provision fresh MongoDB/Redis volumes, preserve the approved application cryptographic configuration required by the release, provision new contracted tenants, install backup automation from day one, run acceptance, then change DNS. Pilot tenants and evidence remain on the stopped DigitalOcean host only for the short rollback window and are destroyed through an approved cleanup record afterward.
-- **Stateful migration:** use the complete backup, drain, restore and verification procedure in this runbook. This mode is mandatory if any existing tenant data has contractual, investigative or legal retention value.
+- **Clean production launch (selected):** provision fresh MongoDB/Redis volumes and new tenant IDs after recording the pilot-disposal decision. Install backup automation from day one, run acceptance, then change DNS. Do not restore the pilot Mongo archive or Redis state.
+- **Stateful migration (not selected):** use the complete drain, restore and continuity procedure only if the business reverses the disposal decision before cutover and must preserve accounts, agents, evidence, queues, reports and workflow state.
 
 A clean launch does not require importing the disposable pilot database, but it still requires a backup/restore capability test on Azure before accepting contracted customer data. Do not confuse "no pilot restore" with "no production backup."
+
+The old public artifact can be deleted only after the new versioned artifact and manifest pass the production preflight. Old Azure evidence protected by a locked policy cannot be deleted early. Remove it from application routing, deny routine access, label it as a legacy pilot archive, and delete it only after every protected blob has expired.
+
+Sections that create and verify encrypted source backups remain mandatory as rollback and disposal evidence. Sections that restore pilot MongoDB, Redis, uploads or reports are skipped in the selected clean-launch path; instead, initialize fresh volumes and run the empty-environment acceptance suite.
 
 ### 2.1 Repository and artifact gate
 
@@ -124,9 +131,12 @@ Before migration, run the archiver on DigitalOcean and confirm that:
 
 - no archive log contains `Failed to archive`;
 - each enabled route writes to the intended container;
-- a known archived record can be retrieved through an authorized compliance/search/export route;
+- a known archived record is visible in the tenant-scoped archive ledger;
+- if retrieval is enabled, a request reaches `READY`, produces a short-lived user-delegation SAS URL, and the downloaded bytes match the ledger SHA-256;
 - Mongo records are deleted only after the archive ledger is written;
 - existing blobs in the original six-year container remain untouched.
+
+Archive retrieval additionally requires a private `warsoc-retrieval-staging` container with no immutability policy and a lifecycle rule that deletes staged blobs after three days. The backend identity requires least-privilege Blob Data Contributor access to evidence/staging plus permission to generate user-delegation keys. Do not enable the `archive-retrieval` Compose profile until those controls are proven.
 
 ### 2.3 Backup gate
 
@@ -147,9 +157,29 @@ Azure cold evidence is not a database backup. The encrypted MongoDB backup is ma
 - Ensure the DigitalOcean VM has enough free disk for the final encrypted backup and volume archives.
 - Pull `alpine:3.20` on both hosts before the outage; it is used only to transfer Docker volume contents.
 
+### 2.5 Temporary Azure subscription gate
+
+The compute subscription must be `Enabled`, have enough remaining credit for the migration window, and have a documented exit date. Microsoft states that an expired credit or reached spending limit can disable the subscription and deallocate VMs.
+
+```bash
+az login --use-device-code
+az account set --subscription '<temporary-compute-subscription-id>'
+az account show --query '{name:name,id:id,state:state,tenantId:tenantId}' --output table
+az consumption budget list --output table
+```
+
+For an entitlement ending on 2026-08-19:
+
+- T-7 (2026-08-12): choose a durable commercial destination or controlled shutdown; verify a fresh encrypted off-host backup.
+- T-3 (2026-08-16): rehearse restore in the destination and lower DNS TTL.
+- T-1 (2026-08-18): cut over or stop accepting new production writes.
+- Expiry day: do not assume the VM remains allocated or writable.
+
+Serial promotional-account migration is not an operating model. It repeats identity, DNS, secret, evidence, and backup risk and may violate offer eligibility. A paying customer must use a durable commercial subscription.
+
 ## 3. Provision Azure Without Changing Production
 
-Run from a trusted Linux shell with Azure CLI installed:
+Subscription enrollment itself is a browser/billing operation. After the subscription exists, run this section from Azure Cloud Shell or a trusted Linux shell with Azure CLI installed:
 
 ```bash
 export AZURE_SUBSCRIPTION_ID='<subscription-id>'
@@ -252,19 +282,25 @@ sudo tar --numeric-owner -C / -xzf letsencrypt.tgz
 sudo chown -R root:root /etc/letsencrypt
 ```
 
-The copied `.env.prod` must preserve the existing values for at least:
+Do not copy the pilot `.env.prod` into the clean production environment. Use it only as an inventory so no required variable is forgotten. Build a new root-owned `/opt/warsoc/Startup-backend/.env.prod` with this decision matrix:
 
-- `JWT_SECRET_KEY`;
-- `ENCRYPTION_KEY`;
-- `PRIVATE_KEY_B64` and `PUBLIC_KEY_B64`;
-- `SUPER_ADMIN_API_KEY` and `METRICS_BEARER_TOKEN`;
-- Mongo and Redis credentials;
-- Azure evidence and backup settings;
-- agent authentication/signature settings;
-- SMTP settings;
-- retention-container routing.
+| Environment group | Clean-launch action | Required result |
+|---|---|---|
+| `APP_ENV`, public URL and CORS | Set explicitly | `APP_ENV=production`, `BACKEND_PUBLIC_URL=https://api.warsoc.tech`, and only approved Vercel origins in `ALLOWED_ORIGINS`. Do not retain temporary localhost origins. |
+| MongoDB and Redis | Generate fresh passwords and URLs | New private Docker volumes, authenticated internal service URLs, Redis memory limits and no public host ports. Do not restore pilot data. |
+| JWT and API administration | Generate fresh high-entropy values | New `JWT_SECRET_KEY`, matching `SECRET_KEY` where required by the release, `SUPER_ADMIN_API_KEY`, `METRICS_BEARER_TOKEN` and agent master/authentication secret. |
+| Evidence encryption/signing | Generate a recorded production key set | New `ENCRYPTION_KEY`, PECA `PRIVATE_KEY_B64`/`PUBLIC_KEY_B64`, and optional private-key password. Store the private material outside Git and back it up securely. The isolated legacy pilot archive keeps its historical verification material until expiry. |
+| Agent distribution | Replace | `AGENT_CDN_URL` points to the new versioned production artifact whose bytes match the approved manifest. |
+| Agent event admission | Preserve the approved release policy | `AGENT_EVENT_SIGNATURE_MODE=required`. New production agents must enroll and sign; do not import stale pilot identities. |
+| Network relay | Deploy inactive | Include all relay code/configuration and set `NETWORK_RELAY_ENABLED=false`; retain bounded batch/body/tenant limits from `.env.example`. |
+| Archive retrieval | Deploy inactive | Include routes/ledger/worker/profile and set `ARCHIVE_RETRIEVAL_ENABLED=false`. Set the new storage account URL and staging container, but do not start the profile before acceptance. |
+| Azure archive routing | Replace with new production account values | New private evidence connection/identity, fallback container, FBR/PECA fixed containers, duration-specific SIEM/general containers and matching locked-policy declarations. |
+| Ingestion protection | Set explicitly | Keep the 50-agent aggregate operating boundary and the approved tenant/platform daily-byte ceilings from `.env.example`. |
+| Email | Keep non-alert delivery optional | `ENABLE_SECURITY_ALERT_EMAILS=false`. Configure SMTP only if quote/contact/invitation delivery has quota and acceptance proof. |
+| Dangerous compatibility flags | Force off | `ENABLE_SELF_SIGNUP=false`, `ENABLE_LEGACY_ROUTES=false`, and `ENABLE_MANUAL_LOG_INJECTION=false`. |
+| Metrics | Restrict | New bearer token and loopback/private monitoring allowlist only. |
 
-Do not generate a new PECA RSA key on Azure. Existing evidence must remain verifiable with the same signing identity.
+Before starting Compose, compare the new file to `.env.example`, resolve every production placeholder, then run `docker compose ... config --quiet`. Never print the resulting secret values into the terminal transcript or migration artifact.
 
 Validate and build without starting production:
 
@@ -492,6 +528,43 @@ Transfer `/root/warsoc-transfer` to `/secure-transfer` on Azure through the trus
 
 Redis migration preserves stream state, sessions, activation/invitation tokens, mitigation sets, whitelists, FIM correlation state and email queues. The same Redis password and application cryptographic secrets are therefore mandatory on Azure.
 
+### 6.6 Create a powered-off DigitalOcean snapshot
+
+This is an additional rollback image only. It does not replace the encrypted Mongo backup, and this runbook does not treat a DigitalOcean snapshot as an importable Azure VM image.
+
+Install and authenticate `doctl` on the trusted operator machine, not inside the stopped Droplet:
+
+```bash
+sudo snap install doctl
+doctl auth init --context warsoc-cutover
+doctl account get --context warsoc-cutover
+doctl compute droplet list --context warsoc-cutover
+```
+
+Record the Droplet ID. Then power down cleanly from the DigitalOcean SSH session:
+
+```bash
+sudo shutdown -h now
+```
+
+Wait until the Droplet is off, then run on the operator machine:
+
+```bash
+export DO_DROPLET_ID='<digitalocean-droplet-id>'
+export SNAPSHOT_NAME="warsoc-pre-azure-$(date -u +%Y%m%dT%H%M%SZ)"
+
+doctl compute droplet-action snapshot "$DO_DROPLET_ID" \
+  --snapshot-name "$SNAPSHOT_NAME" \
+  --wait \
+  --context warsoc-cutover
+
+doctl compute droplet snapshots "$DO_DROPLET_ID" \
+  --context warsoc-cutover \
+  --output table
+```
+
+DigitalOcean recommends powering off database hosts before snapshotting for consistency. Record the snapshot ID and completion time. If the source must remain available for rollback, power it on but keep Nginx and all writers stopped. Never expose both backends as writable.
+
 ## 7. Final Restore on Azure
 
 First verify every transferred hash:
@@ -648,14 +721,15 @@ Run from the approved local backend repository with Docker not required:
 
 ```powershell
 cd C:\Users\Lenovo\Desktop\Startup-backend
+$AgentVersion = '<approved-version>'
 
 .\scripts\run_production_acceptance.ps1 `
   -Phase Preflight `
   -FrontendUrl "https://warsoc.tech" `
   -BackendUrl "https://api.warsoc.tech" `
-  -ManifestPath ".\output\pilot_hash_manifest-4.2.6.json" `
-  -InstallerPath ".\output\warsoc_installer-4.2.6.exe" `
-  -ArtifactUrl "https://warsocartifacts.blob.core.windows.net/warsoc-agent-public/warsoc_installer-4.2.6.exe"
+  -ManifestPath ".\output\pilot_hash_manifest-$AgentVersion.json" `
+  -InstallerPath ".\output\warsoc_installer-$AgentVersion.exe" `
+  -ArtifactUrl "https://warsocartifacts.blob.core.windows.net/warsoc-agent-public/warsoc_installer-$AgentVersion.exe"
 ```
 
 Require zero failures for TLS, DNS isolation, Vercel assets, frontend API binding, CORS, backend health, security headers, private ports and installer hash.
@@ -676,9 +750,9 @@ $metricsToken = [System.Net.NetworkCredential]::new("", $metricsSecure).Password
   -FrontendUrl "https://warsoc.tech" `
   -AdminKey $adminKey `
   -MetricsToken $metricsToken `
-  -ManifestPath ".\output\pilot_hash_manifest-4.2.6.json" `
-  -InstallerPath ".\output\warsoc_installer-4.2.6.exe" `
-  -ArtifactUrl "https://warsocartifacts.blob.core.windows.net/warsoc-agent-public/warsoc_installer-4.2.6.exe" `
+  -ManifestPath ".\output\pilot_hash_manifest-$AgentVersion.json" `
+  -InstallerPath ".\output\warsoc_installer-$AgentVersion.exe" `
+  -ArtifactUrl "https://warsocartifacts.blob.core.windows.net/warsoc-agent-public/warsoc_installer-$AgentVersion.exe" `
   -ConfirmProductionDataCreation
 
 $adminKey = $null
@@ -691,13 +765,13 @@ If SMTP quota is still unavailable, pass `-SkipEmailDeliveryCheck` and record em
 
 Before accepting cutover:
 
-1. Confirm one existing 4.2.6 Windows agent reconnects without reinstalling.
+1. Confirm one existing agent running the exact approved version reconnects without reinstalling.
 2. Confirm its heartbeat becomes current and endpoint health is Active.
 3. Generate one harmless native Windows event and confirm new SIEM evidence and an appropriate incident when the rule conditions are met.
 4. Confirm a PECA-entitled tenant receives a fresh entitled PECA control record.
 5. Confirm a configured FBR test path/JSONL source produces the expected FBR evidence; do not claim line-item monitoring without the JSONL contract.
-6. Open one known Azure-archived record through compliance/search.
-7. Export one CSV and one PDF containing verified hot/cold data.
+6. Confirm one known Azure archive ledger entry and SHA-256. If archive retrieval is deliberately disabled for cutover, record that state rather than enabling it.
+7. Export one hot-data CSV and one hot-data PDF. Historical archive download has a separate asynchronous acceptance gate.
 8. Acknowledge and close a disposable incident, then refresh to confirm persistence.
 9. Confirm an existing blocked-IP policy and whitelist still exist after Redis migration.
 
@@ -791,5 +865,28 @@ Never start DigitalOcean Nginx before Azure Nginx is stopped. Never restore an o
 - The unsigned pilot installer still requires customer-managed hash allowlisting or a future code-signing certificate.
 - Existing blobs locked in the original 2,190-day container cannot have their retention shortened.
 - Security-alert email remains disabled. Transactional email acceptance depends on provider quota.
-- Network syslog relay, hybrid network correlation and external exposure scanning are future scope and are not enabled by this migration.
+- Network relay and hybrid-correlation code migrate in full but remain disabled. External exposure scanning is separate future scope and is not part of this release.
 - The migration does not make unproven FBR or PECA legal claims. It preserves the current Windows evidence scope described in `WARSOC_CURRENT_STATE_ARCHITECTURE.md`.
+- The temporary Azure-credit subscription can stop the VM when credit expires or the spending limit is reached. Cost alerts do not provide failover.
+- A DigitalOcean snapshot remains in DigitalOcean and is only a short rollback aid. The encrypted off-host Mongo backup is the portable recovery source.
+
+### 12.1 Network capability closure after migration
+
+Azure cutover does not complete the physical network-device acceptance. The following remain explicit activation gates, not hidden migration work:
+
+1. Build the exact relay release in the pinned environment, code-sign it or approve its SHA-256 through customer IT, and repeat malware scanning on those exact bytes.
+2. Install `WarSOC_Relay` as its separate Windows service and prove service ACLs, DPAPI key protection, bounded evidence/control spools, restart recovery and uninstall behavior.
+3. Validate real metadata from every vendor offered commercially: Fortinet, Cisco ASA, MikroTik and pfSense. An untested parser is not a supported-device claim.
+4. Prove tenant source allowlists, clock-skew handling, device EPS circuit breakers, duplicate suppression, outage replay, spool saturation/loss reporting and Redis backpressure.
+5. Prove metadata-only retention and source-assurance wording. UDP input is `relay_attested`, not cryptographically `device_authenticated`; packet payload capture remains out of scope.
+6. Run a non-POS relay for at least 24 hours and review drops, disk growth, detection latency, false positives and quota behavior.
+7. Complete the frontend relay activation/status/revoke and network-coverage views before offering self-service network onboarding.
+8. Only after these gates pass may operations set `NETWORK_RELAY_ENABLED=true`, recreate the API/worker services and run the network acceptance suite. No public UDP port is opened on the Azure VM; customer devices send local syslog to the relay, and the relay forwards signed HTTPS batches over port 443.
+
+## 13. Official References
+
+- [Azure Linux VM creation with CLI](https://learn.microsoft.com/en-us/azure/virtual-machines/linux/quick-create-cli)
+- [Azure subscription states](https://learn.microsoft.com/en-us/azure/cost-management-billing/manage/subscription-states)
+- [Azure spending limits](https://learn.microsoft.com/en-us/azure/cost-management-billing/manage/spending-limit)
+- [DigitalOcean powered-off snapshots](https://docs.digitalocean.com/products/snapshots/how-to/snapshot-droplets/)
+- [DigitalOcean `doctl` snapshot command](https://docs.digitalocean.com/reference/doctl/reference/compute/droplet-action/snapshot/)
