@@ -411,6 +411,7 @@ async def _archive_batch(
     event_ids = sorted({str(doc.get("event_id")) for doc in docs if doc.get("event_id") is not None})
     event_uids = sorted({str(doc.get("event_uid")) for doc in docs if doc.get("event_uid")})
     alert_uids = sorted({str(doc.get("alert_uid")) for doc in docs if doc.get("alert_uid")})
+    archived_at = datetime.now(timezone.utc)
     resolved_container_name = container_name or _archive_container_name(
         collection_name,
         vault_retention_days,
@@ -425,6 +426,8 @@ async def _archive_batch(
         "run_id": run_id,
         "batch_number": batch_number,
         "sha256": sha256_hash,
+        "blob_size_bytes": len(json_dump),
+        "hash_blob_size_bytes": len(hash_payload),
         "document_count": len(document_ids),
         "first_document_id": str(document_ids[0]),
         "last_document_id": str(document_ids[-1]),
@@ -438,10 +441,10 @@ async def _archive_batch(
         "vault_retention_days": vault_retention_days,
         "retain_until": retain_until,
         "immutability": immutability_status,
-        "created_at": datetime.now(timezone.utc),
+        "created_at": archived_at,
         "status": "archived",
     }
-    await db["storage_archives"].update_one(
+    ledger_result = await db["storage_archives"].update_one(
         {
             "tenant_id": tenant_id,
             "collection": collection_name,
@@ -450,6 +453,42 @@ async def _archive_batch(
         {"$setOnInsert": archive_doc},
         upsert=True,
     )
+    if ledger_result.upserted_id is not None:
+        retention_class = _archive_retention_class(collection_name)
+        try:
+            await db["archive_storage_daily"].update_one(
+                {
+                    "tenant_id": tenant_id,
+                    "day": f"{archived_at:%Y-%m-%d}",
+                    "retention_class": retention_class,
+                },
+                {
+                    "$setOnInsert": {
+                        "tenant_id": tenant_id,
+                        "day": f"{archived_at:%Y-%m-%d}",
+                        "retention_class": retention_class,
+                        "created_at": archived_at,
+                    },
+                    "$inc": {
+                        "archived_bytes": len(json_dump),
+                        "hash_bytes": len(hash_payload),
+                        "archive_blobs": 1,
+                        "documents": len(document_ids),
+                    },
+                    "$set": {"updated_at": archived_at},
+                },
+                upsert=True,
+            )
+        except Exception:
+            # The immutable archive ledger remains the billing source of truth.
+            # A derived daily rollup must never block hot-data cleanup after the
+            # Azure blob and its ledger record have been committed.
+            logger.exception(
+                "Unable to update archive storage rollup for %s/%s/%s",
+                tenant_id,
+                collection_name,
+                archive_key,
+            )
 
     delete_result = await db[collection_name].delete_many({
         "tenant_id": tenant_id,

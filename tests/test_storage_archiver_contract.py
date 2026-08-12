@@ -31,21 +31,6 @@ def test_compliance_evidence_exposes_safe_storage_tier_provenance():
     assert "_archive_blob_name" not in archived
 
 
-def test_archive_reader_search_matches_title_and_message_substrings():
-    assert archive_reader._search_matches(
-        {"title": "Potential command injection activity detected"},
-        "command injection",
-    )
-    assert archive_reader._search_matches(
-        {"message": "Security Event: Network Connection Blocked"},
-        "connection blocked",
-    )
-    assert not archive_reader._search_matches(
-        {"title": "Successful login"},
-        "command injection",
-    )
-
-
 @pytest.mark.asyncio
 async def test_archive_ledger_count_does_not_download_blobs():
     class FakeAggregateCursor:
@@ -500,6 +485,7 @@ def test_async_azure_transport_is_packaged_for_archive_runtime():
 
 
 def test_archive_managed_collections_have_no_independent_ttl_deletion():
+    import re
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
@@ -521,209 +507,68 @@ def test_archive_managed_collections_have_no_independent_ttl_deletion():
         assert f'_drop_ttl_indexes(db.{collection_name}, "{collection_name}")' in init_text
     assert 'name="ttl_user_activation_tokens"' in init_text
     assert 'name="ttl_security_incident_occurrences"' in init_text
-    # Only short-lived activation tokens and the incident idempotency ledger
-    # use TTL deletion. Evidence collections remain archive-before-delete.
-    assert init_text.count("expireAfterSeconds=") == 2
+    ttl_index_names = set(re.findall(r'name="(ttl_[^"]+)"', init_text))
+    assert ttl_index_names == {
+        "ttl_user_activation_tokens",
+        "ttl_security_incident_occurrences",
+        "ttl_detection_engine_health_events",
+        "ttl_detection_dispatch_outbox",
+        "ttl_detection_dispatch_dlq",
+        "ttl_detection_engine_observations",
+        "ttl_detection_candidate_quarantine",
+    }
+    # TTL is limited to short-lived workflow/transport ledgers. Canonical
+    # evidence remains archive-before-delete and never receives an independent
+    # MongoDB expiry path.
+    for collection_name in (
+        "logs",
+        "siem_cold_vault",
+        "security_alerts",
+        "fbr_pos_logs",
+        "peca_forensic_logs",
+        "csv_uploads",
+        "analysis_results",
+    ):
+        assert f'ttl_{collection_name}' not in ttl_index_names
 
 
 @pytest.mark.asyncio
-async def test_archive_reader_verifies_integrity_filters_and_deduplicates(monkeypatch):
-    document = {
-        "_id": "abc123",
-        "tenant_id": "TENANT-A",
-        "event_id": "4625",
-        "event_uid": "Security:42",
-        "timestamp": "2026-07-01T10:00:00+00:00",
-        "source_ip": "203.0.113.10",
-    }
-    valid_blob = json.dumps([document]).encode("utf-8")
-    tampered_blob = json.dumps([{**document, "source_ip": "198.51.100.9"}]).encode("utf-8")
-    entries = [
-        {
-            "blob_name": "valid.json",
-            "container_name": "siem-vault",
-            "collection": "siem_cold_vault",
-            "sha256": hashlib.sha256(valid_blob).hexdigest(),
-        },
-        {
-            "blob_name": "duplicate.json",
-            "container_name": "siem-vault",
-            "collection": "siem_cold_vault",
-            "sha256": hashlib.sha256(valid_blob).hexdigest(),
-        },
-        {
-            "blob_name": "tampered.json",
-            "container_name": "siem-vault",
-            "collection": "siem_cold_vault",
-            "sha256": "0" * 64,
-        },
-    ]
-
-    class FakeCursor:
-        def __init__(self, rows):
-            self.rows = rows
-
-        def sort(self, *_args):
-            return self
-
-        def limit(self, value):
-            self.rows = self.rows[:value]
-            return self
-
+async def test_archive_reader_returns_metadata_only_and_never_reads_azure_bytes():
+    class FakeAggregateCursor:
         async def to_list(self, length):
-            return self.rows[:length]
+            return [{"_id": None, "total": 25}][:length]
 
     class FakeLedger:
-        def __init__(self):
-            self.query = None
-
-        def find(self, query):
-            self.query = query
-            return FakeCursor(list(entries))
-
-    class FakeDownloader:
-        def __init__(self, payload):
-            self.payload = payload
-
-        async def readall(self):
-            return self.payload
-
-    class FakeBlob:
-        def __init__(self, payload):
-            self.payload = payload
-
-        async def download_blob(self):
-            return FakeDownloader(self.payload)
-
-    class FakeContainer:
-        def get_blob_client(self, name):
-            payloads = {
-                "valid.json": valid_blob,
-                "duplicate.json": valid_blob,
-                "tampered.json": tampered_blob,
-            }
-            return FakeBlob(payloads[name])
-
-    requested_containers = []
-
-    class FakeBlobService:
-        @classmethod
-        def from_connection_string(cls, _connection_string):
-            return cls()
-
-        def get_container_client(self, container_name):
-            requested_containers.append(container_name)
-            return FakeContainer()
-
-        async def close(self):
-            return None
+        def aggregate(self, pipeline):
+            self.pipeline = pipeline
+            return FakeAggregateCursor()
 
     ledger = FakeLedger()
-    fake_db = {"storage_archives": ledger}
-    monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "UseDevelopmentStorage=true")
-    monkeypatch.setattr(archive_reader, "BlobServiceClient", FakeBlobService)
-
     docs, total = await archive_reader.fetch_archived_documents(
-        fake_db,
+        {"storage_archives": ledger},
         tenant_id="TENANT-A",
         collections=["siem_cold_vault"],
         start_dt=datetime(2026, 7, 1, tzinfo=timezone.utc),
         event_id="4625",
-        search_term="203.0",
+        search_term="203.0.113.10",
         limit=10,
     )
 
-    assert requested_containers == ["siem-vault", "siem-vault", "siem-vault"]
+    assert docs == []
+    assert total == 25
+    query = ledger.pipeline[0]["$match"]
+    assert query["tenant_id"] == "TENANT-A"
+    assert query["collection"] == {"$in": ["siem_cold_vault"]}
+    assert "$and" in query
 
-    assert total == 1
-    assert docs[0]["event_uid"] == "Security:42"
-    assert docs[0]["_archived"] is True
-    assert "$and" in ledger.query
 
+def test_archive_reader_has_no_azure_blob_download_dependency():
+    from pathlib import Path
 
-@pytest.mark.asyncio
-async def test_unfiltered_archive_page_stops_after_enough_newest_records(monkeypatch):
-    newest_document = {
-        "_id": "newest",
-        "tenant_id": "TENANT-A",
-        "event_uid": "Security:newest",
-        "timestamp": "2026-07-02T10:00:00+00:00",
-    }
-    older_document = {
-        "_id": "older",
-        "tenant_id": "TENANT-A",
-        "event_uid": "Security:older",
-        "timestamp": "2026-07-01T10:00:00+00:00",
-    }
-    payloads = {
-        "newest.json": json.dumps([newest_document]).encode("utf-8"),
-        "older.json": json.dumps([older_document]).encode("utf-8"),
-    }
-    entries = [
-        {
-            "blob_name": name,
-            "collection": "peca_forensic_logs",
-            "sha256": hashlib.sha256(payload).hexdigest(),
-        }
-        for name, payload in payloads.items()
-    ]
+    source = (
+        Path(__file__).resolve().parents[1] / "app" / "utils" / "archive_reader.py"
+    ).read_text(encoding="utf-8")
 
-    class FakeCursor:
-        def sort(self, *_args):
-            return self
-
-        def limit(self, _value):
-            return self
-
-        async def to_list(self, length):
-            return entries[:length]
-
-    class FakeLedger:
-        def find(self, _query):
-            return FakeCursor()
-
-    class FakeDownloader:
-        def __init__(self, payload):
-            self.payload = payload
-
-        async def readall(self):
-            return self.payload
-
-    downloads = []
-
-    class FakeBlob:
-        def __init__(self, name):
-            self.name = name
-
-        async def download_blob(self):
-            downloads.append(self.name)
-            return FakeDownloader(payloads[self.name])
-
-    class FakeContainer:
-        def get_blob_client(self, name):
-            return FakeBlob(name)
-
-    class FakeBlobService:
-        @classmethod
-        def from_connection_string(cls, _connection_string):
-            return cls()
-
-        def get_container_client(self, _container_name):
-            return FakeContainer()
-
-        async def close(self):
-            return None
-
-    monkeypatch.setenv("AZURE_STORAGE_CONNECTION_STRING", "UseDevelopmentStorage=true")
-    monkeypatch.setattr(archive_reader, "BlobServiceClient", FakeBlobService)
-
-    docs, total = await archive_reader.fetch_archived_documents(
-        {"storage_archives": FakeLedger()},
-        tenant_id="TENANT-A",
-        collections=["peca_forensic_logs"],
-        limit=1,
-    )
-
-    assert total == 1
-    assert docs[0]["event_uid"] == "Security:newest"
-    assert downloads == ["newest.json"]
+    assert "BlobServiceClient" not in source
+    assert "download_blob" not in source
+    assert "readall" not in source
