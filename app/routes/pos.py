@@ -15,6 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.utils.rate_limiter import redis_ingest_rate_limit
 from app.routes.auth import verify_agent_token
+from app.database import get_db
+from app.routes.ingest_pulse import _enforce_daily_ingest_quota, _enforce_raw_stream_capacity
 from app.utils.agent_crypto import AgentEventSignatureError, public_key_id
 
 logger = logging.getLogger("fbr_pos")
@@ -64,6 +66,7 @@ async def ingest_pos_logs(
     request: Request,
     x_warsoc_signature: str = Header(..., alias="X-WarSOC-Signature"),
     agent_context: dict = Depends(verify_agent_token),
+    db=Depends(get_db),
     _rate_limit=Depends(redis_ingest_rate_limit)
 ):
     try:
@@ -134,63 +137,84 @@ async def ingest_pos_logs(
         if not redis:
             raise HTTPException(status_code=503, detail="Redis unavailable for ingest queue")
 
+        payload_hash = hashlib.sha256(bytes(buffer)).hexdigest()
+        signing_key_id = public_key_id(public_key_pem)
+
+        stream_payloads = []
+        for event in raw_events:
+            if not isinstance(event, dict):
+                raise HTTPException(status_code=422, detail="Every POS event must be an object")
+
+            try:
+                validated = PosAuditEvent.model_validate(event)
+            except Exception as exc:
+                errors = exc.errors() if hasattr(exc, "errors") else [{"msg": str(exc)}]
+                raise HTTPException(status_code=422, detail=errors) from exc
+
+            event_data = validated.model_dump(mode="json")
+            event_data["tenant_id"] = verified_tenant_id
+            event_data["agent_id"] = verified_agent_id
+            event_data["type"] = "fbr_pos"
+            event_data["event_type"] = "fbr_pos"
+            event_data["source_ip"] = request.client.host if request.client else "unknown"
+            event_data["user"] = validated.actor
+            event_data["message"] = validated.reason or (
+                f"{validated.event_id} for invoice {validated.invoice_id}"
+            )
+            event_data["processed_data"] = {
+                "invoice_id": validated.invoice_id,
+                "actor": validated.actor,
+                "source_system": validated.source_system,
+                "reason": validated.reason,
+                "before_hash": validated.before_hash,
+                "after_hash": validated.after_hash,
+                "metadata": validated.metadata,
+            }
+            event_data["raw_event_data"] = validated.model_dump(mode="json")
+            event_data.update({
+                "agent_signature": signature_hex,
+                "payload_hash": payload_hash,
+                "signature_version": POS_SIGNATURE_VERSION,
+                "signature_algorithm": "Ed25519",
+                "signing_key_id": signing_key_id,
+                "signature_verified": True,
+                "source_assurance": "agent_signed",
+                "signature_verification_status": "verified",
+                "signature_verified_at": datetime.now(timezone.utc).isoformat(),
+            })
+
+            stream_payloads.append(orjson.dumps(event_data).decode("utf-8"))
+
+        if not stream_payloads:
+            raise HTTPException(status_code=400, detail="No POS events were supplied")
+
+        stream_bytes = sum(len(payload.encode("utf-8")) for payload in stream_payloads)
+        await _enforce_raw_stream_capacity(
+            redis,
+            incoming_entries=len(stream_payloads),
+            incoming_stream_bytes=stream_bytes,
+            incoming_redis_bytes=stream_bytes,
+        )
+
         nonce_key = f"warsoc:pos_nonce:{verified_agent_id}:{nonce}"
         try:
-            nonce_claimed = await redis.set(nonce_key, "1", ex=POS_NONCE_TTL_SECONDS, nx=True)
+            nonce_claimed = await redis.set(
+                nonce_key,
+                "1",
+                ex=POS_NONCE_TTL_SECONDS,
+                nx=True,
+            )
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Replay protection unavailable") from exc
         if not nonce_claimed:
             raise HTTPException(status_code=409, detail="POS request replay detected")
 
-        payload_hash = hashlib.sha256(bytes(buffer)).hexdigest()
-        signing_key_id = public_key_id(public_key_pem)
+        await _enforce_daily_ingest_quota(redis, verified_tenant_id, len(buffer), db)
 
         queued_count = 0
         async with redis.pipeline(transaction=True) as pipe:
-            for event in raw_events:
-                if not isinstance(event, dict):
-                    raise HTTPException(status_code=422, detail="Every POS event must be an object")
-
-                try:
-                    validated = PosAuditEvent.model_validate(event)
-                except Exception as exc:
-                    errors = exc.errors() if hasattr(exc, "errors") else [{"msg": str(exc)}]
-                    raise HTTPException(status_code=422, detail=errors) from exc
-
-                event_data = validated.model_dump(mode="json")
-                event_data["tenant_id"] = verified_tenant_id
-                event_data["agent_id"] = verified_agent_id
-                event_data["type"] = "fbr_pos"
-                event_data["event_type"] = "fbr_pos"
-                event_data["source_ip"] = request.client.host if request.client else "unknown"
-                event_data["user"] = validated.actor
-                event_data["message"] = validated.reason or (
-                    f"{validated.event_id} for invoice {validated.invoice_id}"
-                )
-                event_data["processed_data"] = {
-                    "invoice_id": validated.invoice_id,
-                    "actor": validated.actor,
-                    "source_system": validated.source_system,
-                    "reason": validated.reason,
-                    "before_hash": validated.before_hash,
-                    "after_hash": validated.after_hash,
-                    "metadata": validated.metadata,
-                }
-                event_data["raw_event_data"] = validated.model_dump(mode="json")
-                event_data.update({
-                    "agent_signature": signature_hex,
-                    "payload_hash": payload_hash,
-                    "signature_version": POS_SIGNATURE_VERSION,
-                    "signature_algorithm": "Ed25519",
-                    "signing_key_id": signing_key_id,
-                    "signature_verified": True,
-                    "source_assurance": "agent_signed",
-                    "signature_verification_status": "verified",
-                    "signature_verified_at": datetime.now(timezone.utc).isoformat(),
-                })
-
-                payload_to_stream = {"payload": orjson.dumps(event_data).decode("utf-8")}
-                
+            for serialized_payload in stream_payloads:
+                payload_to_stream = {"payload": serialized_payload}
                 await pipe.xadd(
                     RAW_LOGS_QUEUE,
                     payload_to_stream,
@@ -199,9 +223,6 @@ async def ingest_pos_logs(
 
             if queued_count > 0:
                 await pipe.execute()
-
-        if queued_count == 0:
-            raise HTTPException(status_code=400, detail="No POS events were supplied")
 
         return ORJSONResponse(
             {
@@ -214,5 +235,11 @@ async def ingest_pos_logs(
     except HTTPException:
         raise
     except Exception as exc:
+        if "maxmemory" in str(exc).lower() or "out of memory" in str(exc).lower():
+            logger.error("Redis rejected POS ingest at its memory ceiling")
+            raise HTTPException(
+                status_code=503,
+                detail="Ingest queue is under pressure. Agent must retain and retry the batch.",
+            ) from exc
         logger.error("FBR POS ingestion error: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to queue POS logs")

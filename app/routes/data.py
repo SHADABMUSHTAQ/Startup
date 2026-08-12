@@ -1,11 +1,9 @@
-import re as _re
 import json
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from datetime import datetime, timedelta, timezone
 from app.database import get_db
 from app.routes.auth import get_current_user
 from app.utils.rbac import RoleChecker
-from app.utils.archive_reader import fetch_archived_documents
 from app.utils.endpoint_health import (
     EVENT_SIGNATURE_STATUS_KEY_PREFIX,
     decode_event_signature_status,
@@ -16,6 +14,8 @@ from app.utils.security_policy import effective_agent_limit
 router = APIRouter()
 RAW_RETENTION_ANCHOR_FIELD = "_retention_ts"
 AGENT_ONLINE_WINDOW_SECONDS = 600
+DEFAULT_HOT_SEARCH_DAYS = 1
+MAX_HOT_SEARCH_DAYS = 7
 
 
 def _serialize_docs(docs: list[dict]) -> list[dict]:
@@ -69,28 +69,25 @@ def _sort_key(doc: dict):
     )
 
 
-def _time_filter(days: str) -> dict:
-    if not days or not str(days).isdigit():
-        return {}
-    day_count = max(1, min(int(days), 365))
+def _hot_search_days(days: str | int | None) -> int:
+    raw = str(days or "").strip().lower()
+    if not raw:
+        return DEFAULT_HOT_SEARCH_DAYS
+    if raw in {"all", "all-time", "all_time"}:
+        return MAX_HOT_SEARCH_DAYS
+    if not raw.isdigit():
+        raise HTTPException(status_code=400, detail="Search window must be between 1 and 7 days.")
+    day_count = int(raw)
+    if not 1 <= day_count <= MAX_HOT_SEARCH_DAYS:
+        raise HTTPException(status_code=400, detail="Search window must be between 1 and 7 days.")
+    return day_count
+
+
+def _time_filter(days: str | int | None, collection_name: str) -> dict:
+    day_count = _hot_search_days(days)
     cutoff = datetime.now(timezone.utc) - timedelta(days=day_count)
-    return {
-        "$or": [
-            {"timestamp": {"$gte": cutoff}},
-            {"timestamp": {"$gte": cutoff.isoformat()}},
-            {"ingested_at": {"$gte": cutoff}},
-            {"ingested_at": {"$gte": cutoff.isoformat()}},
-            {"uploaded_at": {"$gte": cutoff}},
-            {"uploaded_at": {"$gte": cutoff.isoformat()}},
-        ]
-    }
-
-
-def _archive_start(days: str):
-    if not days or not str(days).isdigit():
-        return None
-    day_count = max(1, min(int(days), 365))
-    return datetime.now(timezone.utc) - timedelta(days=day_count)
+    time_field = RAW_RETENTION_ANCHOR_FIELD if collection_name == "csv_uploads" else "timestamp"
+    return {time_field: {"$gte": cutoff}}
 
 
 def _exact_search_query(tenant_id: str, term: str) -> dict:
@@ -106,33 +103,7 @@ def _exact_search_query(tenant_id: str, term: str) -> dict:
             {"source_ip": term},
             {"ip": term},
             {"user": term},
-            {"processed_data.source_network_address": term},
-            {"raw_event_data.event_uid": term},
-            {"raw_data.event_uid": term},
-            {"raw_data.source_ip": term},
-            {"raw_data.ip": term},
-            {"raw_data.processed_data.source_network_address": term},
-        ],
-    }
-
-
-def _text_search_query(tenant_id: str, term: str) -> dict:
-    contains = _re.escape(term)
-    return {
-        "tenant_id": tenant_id,
-        "$or": [
-            {"event_uid": {"$regex": contains, "$options": "i"}},
-            {"alert_uid": {"$regex": contains, "$options": "i"}},
-            {"event_id": {"$regex": contains, "$options": "i"}},
-            {"source_ip": {"$regex": contains, "$options": "i"}},
-            {"ip": {"$regex": contains, "$options": "i"}},
-            {"user": {"$regex": contains, "$options": "i"}},
-            {"title": {"$regex": contains, "$options": "i"}},
-            {"message": {"$regex": contains, "$options": "i"}},
-            {"raw_message": {"$regex": contains, "$options": "i"}},
-            {"event_id_meaning": {"$regex": contains, "$options": "i"}},
-            {"engine_source": {"$regex": contains, "$options": "i"}},
-            {"severity": {"$regex": contains, "$options": "i"}},
+            {"agent_id": term},
         ],
     }
 
@@ -147,51 +118,28 @@ async def _run_safe_global_search(db, tenant_id: str, q: str, days: str, skip: i
     if search_term and len(search_term) < 2:
         raise HTTPException(status_code=400, detail="Search term must be at least 2 characters.")
 
-    time_clause = _time_filter(days)
     docs = []
     # This is the operational dashboard search. Compliance evidence stays
     # behind the dedicated compliance routes and their stricter RBAC contract.
     collections = ("security_alerts", "siem_cold_vault", "csv_uploads")
     for coll_name in collections:
+        time_clause = _time_filter(days, coll_name)
+        sort_field = RAW_RETENTION_ANCHOR_FIELD if coll_name == "csv_uploads" else "timestamp"
         if search_term:
             exact_query = _exact_search_query(tenant_id, search_term)
-            if time_clause:
-                exact_query = {"$and": [exact_query, time_clause]}
-            cursor = db[coll_name].find(exact_query).sort([("timestamp", -1), ("_id", -1)]).limit(limit)
+            exact_query = {"$and": [exact_query, time_clause]}
+            cursor = db[coll_name].find(exact_query).sort([(sort_field, -1), ("_id", -1)]).limit(limit)
             rows = await cursor.to_list(length=limit)
             for row in rows:
                 row["_hot_source_collection"] = coll_name
             docs.extend(rows)
-
-            if len(search_term) >= 3:
-                text_query = _text_search_query(tenant_id, search_term)
-                if time_clause:
-                    text_query = {"$and": [text_query, time_clause]}
-                cursor = db[coll_name].find(text_query).sort([("timestamp", -1), ("_id", -1)]).limit(limit)
-                rows = await cursor.to_list(length=limit)
-                for row in rows:
-                    row["_hot_source_collection"] = coll_name
-                docs.extend(rows)
         else:
-            latest_query = {"tenant_id": tenant_id}
-            if time_clause:
-                latest_query = {"$and": [latest_query, time_clause]}
-            cursor = db[coll_name].find(latest_query).sort([("timestamp", -1), ("_id", -1)]).limit(limit)
+            latest_query = {"$and": [{"tenant_id": tenant_id}, time_clause]}
+            cursor = db[coll_name].find(latest_query).sort([(sort_field, -1), ("_id", -1)]).limit(limit)
             rows = await cursor.to_list(length=limit)
             for row in rows:
                 row["_hot_source_collection"] = coll_name
             docs.extend(rows)
-
-    archived_docs, _ = await fetch_archived_documents(
-        db,
-        tenant_id=tenant_id,
-        collections=("security_alerts", "siem_cold_vault"),
-        start_dt=_archive_start(days),
-        event_id=search_term if search_term.isdigit() else None,
-        search_term=search_term or None,
-        limit=skip + limit,
-    )
-    docs.extend(archived_docs)
 
     deduped = {
         f"{doc.get('_source_collection') or doc.get('_hot_source_collection') or 'unknown'}:{doc.get('_id')}": doc
@@ -386,9 +334,9 @@ async def agent_status(
 @router.get("/search")
 async def global_search(
     q: str = "", 
-    days: str = "", 
+    days: str = str(DEFAULT_HOT_SEARCH_DAYS),
     skip: int = Query(0, ge=0),
-    limit: int = Query(500, ge=1, le=500),
+    limit: int = Query(100, ge=1, le=200),
     db=Depends(get_db), 
     current_user=Depends(get_current_user),
     _role: str = Depends(RoleChecker(["admin", "manager", "analyst"])),
@@ -396,81 +344,6 @@ async def global_search(
     try:
         tenant_id = current_user.get("tenant_id")
         return await _run_safe_global_search(db, tenant_id, q, days, skip, limit)
-        query = {"tenant_id": tenant_id}
-        
-        # 🕒 1. Time Filter Setup
-        cutoff_date = None
-        if days and days.isdigit():
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=int(days))
-            query["timestamp"] = {"$gte": cutoff_date.isoformat()}
-            
-        # 🔍 2. Text Search Setup
-        if q and q.strip() != "":
-            raw_search_term = q.strip()
-            exact_query = {
-                "tenant_id": tenant_id,
-                "$or": [
-                    {"event_uid": raw_search_term},
-                    {"alert_uid": raw_search_term},
-                    {"source_ip": raw_search_term},
-                    {"ip": raw_search_term},
-                    {"processed_data.source_network_address": raw_search_term},
-                    {"raw_event_data.event_uid": raw_search_term},
-                    {"raw_data.event_uid": raw_search_term},
-                    {"raw_data.source_ip": raw_search_term},
-                    {"raw_data.ip": raw_search_term},
-                    {"raw_data.processed_data.source_network_address": raw_search_term},
-                ],
-            }
-            exact_docs = []
-            for coll_name in ("siem_cold_vault", "security_alerts", "csv_uploads"):
-                cursor = db[coll_name].find(exact_query).sort([("timestamp", -1), ("_id", -1)]).limit(limit)
-                exact_docs.extend(await cursor.to_list(length=limit))
-                if len(exact_docs) >= limit:
-                    break
-
-            if exact_docs:
-                final_results = _serialize_docs(exact_docs[:limit])
-                return {
-                    "status": "success",
-                    "data": final_results,
-                    "pagination": {
-                        "count": len(final_results),
-                        "skip": skip,
-                        "limit": limit,
-                    },
-                }
-
-            search_term = _re.escape(raw_search_term)
-            query["$or"] = [
-                {"event_uid": {"$regex": search_term, "$options": "i"}},
-                {"alert_uid": {"$regex": search_term, "$options": "i"}},
-                {"event_id": {"$regex": search_term, "$options": "i"}},
-                {"source_ip": {"$regex": search_term, "$options": "i"}},
-                {"ip": {"$regex": search_term, "$options": "i"}},
-                {"user": {"$regex": search_term, "$options": "i"}},
-                {"message": {"$regex": search_term, "$options": "i"}},
-                {"raw_message": {"$regex": search_term, "$options": "i"}},
-                {"raw_event_data.event_uid": {"$regex": search_term, "$options": "i"}},
-                {"raw_data.event_uid": {"$regex": search_term, "$options": "i"}},
-                {"event_id_meaning": {"$regex": search_term, "$options": "i"}},
-                {"engine_source": {"$regex": search_term, "$options": "i"}},
-                {"severity": {"$regex": search_term, "$options": "i"}}
-            ]
-        
-        docs = []
-        final_results = _serialize_docs(docs)
-            
-        return {
-            "status": "success",
-            "data": final_results,
-            "pagination": {
-                "count": len(final_results),
-                "skip": skip,
-                "limit": limit,
-            },
-        }
-        
     except HTTPException:
         raise
     except Exception as e:

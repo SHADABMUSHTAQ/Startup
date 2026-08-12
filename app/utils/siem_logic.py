@@ -791,6 +791,19 @@ class CorrelationEngine:
         return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:32]
 
     @staticmethod
+    def _hybrid_event_epoch(value: object, *, fallback: int | None = None) -> int:
+        try:
+            if isinstance(value, datetime):
+                parsed = value
+            else:
+                parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return int(parsed.astimezone(timezone.utc).timestamp())
+        except (TypeError, ValueError, OverflowError):
+            return int(fallback if fallback is not None else datetime.now(timezone.utc).timestamp())
+
+    @staticmethod
     def _verified_relay_event(log_entry: dict | None) -> bool:
         return bool(
             isinstance(log_entry, dict)
@@ -837,10 +850,15 @@ class CorrelationEngine:
             if isinstance(log_entry.get("processed_data"), dict)
             else {}
         )
-        now_epoch = int(datetime.now(timezone.utc).timestamp())
+        processing_epoch = int(datetime.now(timezone.utc).timestamp())
+        event_epoch = self._hybrid_event_epoch(timestamp_iso, fallback=processing_epoch)
         triggered: list[dict] = []
 
         if self._verified_relay_event(log_entry):
+            clock_confidence = str(log_entry.get("time_confidence") or "unknown").lower()
+            correlation_confidence = (
+                "high" if clock_confidence in {"high", "medium"} else "medium"
+            )
             action = self._normalize_token(processed.get("action"))
             remote_ip = self._hybrid_ip(processed.get("src_ip"))
             identity = self._hybrid_identity(processed.get("user") or user)
@@ -865,9 +883,9 @@ class CorrelationEngine:
                             "return redis.call('ZCARD',KEYS[1])",
                             1,
                             spray_key,
-                            now_epoch,
+                            event_epoch,
                             identity,
-                            now_epoch - window,
+                            event_epoch - window,
                             window,
                         )
                     )
@@ -875,7 +893,7 @@ class CorrelationEngine:
                     corr_logger.warning(f"[CORR][HYBRID][VPN-SPRAY] Redis error: {exc}")
                     unique_count = 0
                 if unique_count >= threshold:
-                    bucket = now_epoch // window
+                    bucket = event_epoch // window
                     event_uid = (
                         "hybrid-vpn-spray-"
                         + self._hybrid_key_token(f"{tenant_id}:{remote_ip}:{bucket}")
@@ -898,7 +916,8 @@ class CorrelationEngine:
                                 "unique_targets": unique_count,
                                 "window_seconds": window,
                                 "source_assurance": "relay_attested",
-                                "confidence": "high",
+                                "confidence": correlation_confidence,
+                                "clock_confidence": clock_confidence,
                                 "compliance_context": ["peca_oriented"],
                                 "recommended_action": (
                                     "Review the VPN device and source before using the guarded Block action."
@@ -922,6 +941,7 @@ class CorrelationEngine:
                     "event_uid": log_entry.get("event_uid"),
                     "network_device_id": log_entry.get("network_device_id"),
                     "timestamp": timestamp_iso,
+                    "event_epoch": event_epoch,
                 }
                 try:
                     await self.redis.set(
@@ -950,6 +970,11 @@ class CorrelationEngine:
                             if not raw_marker:
                                 continue
                             marker = json.loads(raw_marker)
+                            marker_epoch = self._hybrid_event_epoch(
+                                marker.get("timestamp"), fallback=event_epoch
+                            )
+                            if not 0 <= event_epoch - marker_epoch <= window:
+                                continue
                         except Exception as exc:
                             corr_logger.warning(
                                 f"[CORR][HYBRID][HOST-NETWORK] Marker read error: {exc}"
@@ -986,7 +1011,8 @@ class CorrelationEngine:
                                     "destination_ip": destination_ip,
                                     "destination_port": processed.get("dst_port"),
                                     "source_assurance": "relay_attested",
-                                    "confidence": "high",
+                                    "confidence": correlation_confidence,
+                                    "clock_confidence": clock_confidence,
                                     "compliance_context": ["peca_oriented"],
                                     "recommended_action": (
                                         "Validate the host change and destination before containment."
@@ -1001,6 +1027,7 @@ class CorrelationEngine:
 
         vpn_logon = config.get("vpn_to_windows_logon", {}) or {}
         if event_id == "4624":
+            window = max(60, int(vpn_logon.get("window_seconds", 600)))
             identity = self._hybrid_identity(processed.get("user") or user)
             logon_type = str(processed.get("logon_type") or "").strip()
             allowed_types = {
@@ -1020,16 +1047,20 @@ class CorrelationEngine:
                     corr_logger.warning(f"[CORR][HYBRID][VPN-LOGON] Marker read error: {exc}")
                     marker = None
                 if marker and marker.get("remote_ip") == endpoint_source:
-                    log_entry.setdefault("hybrid_correlations", []).append(
-                        {
-                            "type": "vpn_to_windows_logon",
-                            "outcome": "observed",
-                            "source_assurance": "relay_attested",
-                            "vpn_event_uid": marker.get("event_uid"),
-                            "network_device_id": marker.get("network_device_id"),
-                            "remote_ip": endpoint_source,
-                        }
+                    marker_epoch = self._hybrid_event_epoch(
+                        marker.get("timestamp"), fallback=event_epoch
                     )
+                    if 0 <= event_epoch - marker_epoch <= window:
+                        log_entry.setdefault("hybrid_correlations", []).append(
+                            {
+                                "type": "vpn_to_windows_logon",
+                                "outcome": "observed",
+                                "source_assurance": "relay_attested",
+                                "vpn_event_uid": marker.get("event_uid"),
+                                "network_device_id": marker.get("network_device_id"),
+                                "remote_ip": endpoint_source,
+                            }
+                        )
 
         host_network = config.get("high_risk_host_to_public_network", {}) or {}
         host_rule = (host_network.get("events", {}) or {}).get(event_id)
@@ -1044,6 +1075,7 @@ class CorrelationEngine:
                 "computer": self._extract_field(log_entry, "computer"),
                 "user": user,
                 "timestamp": timestamp_iso,
+                "event_epoch": event_epoch,
             }
             try:
                 await self.redis.set(

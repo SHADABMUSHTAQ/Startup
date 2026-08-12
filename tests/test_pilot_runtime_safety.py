@@ -66,17 +66,66 @@ def test_agent_online_status_requires_fresh_timestamp():
 
 
 class _QueueLengthRedis:
-    def __init__(self, length):
+    def __init__(self, length, *, stream_bytes=0, used_memory=0, maxmemory=640 * 1024 * 1024):
         self.length = length
+        self.stream_bytes = stream_bytes
+        self.used_memory = used_memory
+        self.maxmemory = maxmemory
 
     async def xlen(self, _stream):
         return self.length
 
+    async def memory_usage(self, _stream, samples=None):
+        return self.stream_bytes
+
+    async def info(self, section):
+        assert section == "memory"
+        return {"used_memory": self.used_memory, "maxmemory": self.maxmemory}
+
 
 @pytest.mark.asyncio
 async def test_raw_stream_pressure_fails_closed(monkeypatch):
-    monkeypatch.setattr("app.routes.ingest_pulse.RAW_STREAM_MAX_ENTRIES", 10)
+    monkeypatch.setattr("app.utils.ingest_capacity.RAW_STREAM_MAX_ENTRIES", 10)
     await _enforce_raw_stream_capacity(_QueueLengthRedis(9))
     with pytest.raises(HTTPException) as exc:
         await _enforce_raw_stream_capacity(_QueueLengthRedis(10))
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_raw_stream_byte_pressure_rejects_large_entries(monkeypatch):
+    monkeypatch.setattr("app.utils.ingest_capacity.RAW_STREAM_MAX_ENTRIES", 500000)
+    monkeypatch.setattr("app.utils.ingest_capacity.RAW_STREAM_MAX_BYTES", 1000)
+
+    with pytest.raises(HTTPException) as exc:
+        await _enforce_raw_stream_capacity(
+            _QueueLengthRedis(2, stream_bytes=950),
+            incoming_entries=1,
+            incoming_stream_bytes=100,
+        )
+
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_total_redis_high_watermark_preserves_memory_reserve(monkeypatch):
+    monkeypatch.setattr("app.utils.ingest_capacity.RAW_STREAM_MAX_ENTRIES", 500000)
+    monkeypatch.setattr("app.utils.ingest_capacity.RAW_STREAM_MAX_BYTES", 10_000)
+    monkeypatch.setattr(
+        "app.utils.ingest_capacity.REDIS_INGEST_MEMORY_HIGH_WATERMARK_PERCENT",
+        70,
+    )
+    monkeypatch.setattr(
+        "app.utils.ingest_capacity.REDIS_INGEST_MEMORY_RESERVE_BYTES",
+        100,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await _enforce_raw_stream_capacity(
+            _QueueLengthRedis(2, used_memory=690, maxmemory=1000),
+            incoming_entries=1,
+            incoming_stream_bytes=20,
+            incoming_redis_bytes=20,
+        )
+
     assert exc.value.status_code == 503

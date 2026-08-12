@@ -22,6 +22,7 @@ from app.utils.rate_limiter import incr_count, set_flag, get_flag
 from app.actions.alerting import dispatch_alert_if_entitled, is_email_trigger_severity
 from app.utils.agent_crypto import timestamp_age_seconds
 from app.utils.security_incidents import project_and_publish_incident, project_security_incident
+from app.utils.detection_provenance import attach_detection_provenance
 
 
 from cryptography.fernet import Fernet
@@ -500,6 +501,12 @@ async def _upsert_fbr_vault_and_alerts(
             "status": "NEW",
             "_retention_ts": now,
         }
+        attach_detection_provenance(
+            meta,
+            item,
+            detector_module="fbr.evidence",
+            rule_id=str(item.get("matched_rule_id") or item.get("event_id") or "fbr_evidence"),
+        )
         incident_meta.append((meta, item))
         meta_ops.append(
             UpdateOne(

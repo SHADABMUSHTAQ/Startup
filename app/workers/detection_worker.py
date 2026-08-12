@@ -21,6 +21,7 @@ from typing import Optional
 
 import httpx
 from redis.asyncio import Redis
+from app.utils.detection_provenance import attach_detection_provenance
 from app.utils.security_incidents import project_and_publish_incident
 
 logger = logging.getLogger("Detection-Worker")
@@ -475,6 +476,11 @@ async def main():
 
                         # Persist and broadcast each generated alert
                         for alert in alerts:
+                            attach_detection_provenance(
+                                alert,
+                                log_data,
+                                detector_module="legacy.detection_worker",
+                            )
                             try:
                                 await db.security_alerts.insert_one(alert)
                                 await project_and_publish_incident(

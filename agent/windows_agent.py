@@ -52,7 +52,7 @@ if not env_loaded:
     print(f"[WARN] .env not found in any standard location. Using system environment variables.")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-AGENT_VERSION = "4.2.7-Native-Signed"
+AGENT_VERSION = "4.2.8-Native-Signed"
 TENANT_ID = os.getenv("TENANT_ID", "provision").strip() or "provision"
 PROGRAM_DATA_DIR = Path(os.getenv("PROGRAMDATA", str(_AGENT_DIR))) / "WarSOC"
 JWT_TOKEN_PATH = PROGRAM_DATA_DIR / ".agent_jwt"
@@ -118,6 +118,11 @@ POLL_INTERVAL = float(os.getenv("WINDOWS_EVENT_POLL_INTERVAL", "2"))
 HEARTBEAT_INTERVAL = 300
 OUTBOUND_BATCH_SIZE = int(os.getenv("OUTBOUND_BATCH_SIZE", "25"))
 OUTBOUND_BATCH_WAIT_SECONDS = float(os.getenv("OUTBOUND_BATCH_WAIT_SECONDS", "0.25"))
+REPLAY_AGE_SECONDS = max(0.0, float(os.getenv("AGENT_REPLAY_AGE_SECONDS", "300")))
+REPLAY_MAX_EVENTS_PER_SECOND = max(
+    0.1,
+    float(os.getenv("AGENT_REPLAY_MAX_EVENTS_PER_SECOND", "10")),
+)
 INGEST_URL = f"{BACKEND_URL}/api/v1/ingest/pulse"
 LOCAL_IP = "127.0.0.1"
 WEB_LOG_PATHS = [WEB_LOG_PATH, str(POS_AUDIT_LOG_PATH), "firewall.log"]
@@ -1382,6 +1387,36 @@ def _truncate_single_log_payload(single_log):
 
     return log
 
+
+def _event_age_seconds(event, now=None):
+    timestamp = event.get("timestamp") if isinstance(event, dict) else None
+    if not timestamp:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        current = now or datetime.now(timezone.utc)
+        return max(0.0, (current - parsed.astimezone(timezone.utc)).total_seconds())
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _successful_delivery_delay_seconds(events, now=None):
+    """Bound historical replay without slowing current live telemetry."""
+    if not events:
+        return OUTBOUND_BATCH_WAIT_SECONDS
+    historical = any(
+        _event_age_seconds(event, now=now) >= REPLAY_AGE_SECONDS
+        for event in events
+    )
+    if not historical:
+        return OUTBOUND_BATCH_WAIT_SECONDS
+    return max(
+        OUTBOUND_BATCH_WAIT_SECONDS,
+        len(events) / REPLAY_MAX_EVENTS_PER_SECOND,
+    )
+
 def ingest_sender_thread():
     global OUTBOUND_BATCH_SIZE, REQUEST_SESSION
     ORIGINAL_BATCH_SIZE = OUTBOUND_BATCH_SIZE # Store the baseline (e.g., 25)
@@ -1439,7 +1474,7 @@ def ingest_sender_thread():
                     # SUCCESS: Reset batch size back to max if it was previously throttled
                     if OUTBOUND_BATCH_SIZE < ORIGINAL_BATCH_SIZE:
                         OUTBOUND_BATCH_SIZE = ORIGINAL_BATCH_SIZE
-                    time.sleep(OUTBOUND_BATCH_WAIT_SECONDS)
+                    time.sleep(_successful_delivery_delay_seconds(chunk))
                     continue
 
                 elif resp and resp.status_code == 422:
@@ -1449,6 +1484,7 @@ def ingest_sender_thread():
                     for single_log in chunk:
                         sr = secure_request("POST", INGEST_URL, json=_build_ingest_envelope([single_log]), timeout=10)
                         if sr and sr.status_code in (200, 202):
+                            time.sleep(_successful_delivery_delay_seconds([single_log]))
                             continue
 
                         status = sr.status_code if sr else "timeout"

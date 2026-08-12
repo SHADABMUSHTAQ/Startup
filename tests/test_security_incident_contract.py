@@ -80,6 +80,49 @@ def test_incident_identity_never_merges_different_process_or_target():
     assert len(identities) == 3
 
 
+def test_service_install_channels_form_one_service_specific_incident():
+    security_event = _alert(
+        alert_uid="service-4697",
+        event_uid="Security:4697:100",
+        event_id="4697",
+        type="WIN_EVENT_4697_DETECTED",
+        timestamp=datetime(2026, 7, 17, 12, 30, 10, tzinfo=timezone.utc),
+        processed_data={
+            "SubjectUserName": "installer-admin",
+            "ServiceName": "WarSOC-Test-Service",
+            "ServiceFileName": r"C:\Program Files\WarSOC\service.exe",
+        },
+    )
+    system_event = _alert(
+        alert_uid="service-7045",
+        event_uid="System:7045:101",
+        event_id="7045",
+        type="WIN_EVENT_7045_DETECTED",
+        timestamp=security_event["timestamp"] + timedelta(minutes=2),
+        processed_data={
+            "ServiceName": "WarSOC-Test-Service",
+            "ImagePath": r"C:\Program Files\WarSOC\service.exe",
+        },
+    )
+    different_service = _alert(
+        alert_uid="service-7045-other",
+        event_uid="System:7045:102",
+        event_id="7045",
+        type="WIN_EVENT_7045_DETECTED",
+        timestamp=security_event["timestamp"] + timedelta(minutes=2),
+        processed_data={"ServiceName": "Another-Service"},
+    )
+
+    security_identity = build_incident_identity(security_event)
+    system_identity = build_incident_identity(system_event)
+    other_identity = build_incident_identity(different_service)
+
+    assert security_identity["rule_id"] == "WINDOWS_SERVICE_INSTALLED"
+    assert security_identity["incident_id"] == system_identity["incident_id"]
+    assert security_identity["incident_id"] != other_identity["incident_id"]
+    assert security_identity["bucket_end"] - security_identity["bucket_start"] == timedelta(minutes=5)
+
+
 def test_fbr_projection_accepts_only_actionable_native_or_invoice_controls():
     assert should_project_security_incident(
         _alert(pack="fbr_pos", event_id="FIM-DB-MOD")
@@ -159,11 +202,18 @@ async def test_incident_api_groups_evidence_isolates_tenant_and_persists_workflo
     current_user = await db.users.find_one({"email": {"$regex": "^test_integ_"}})
     assert current_user is not None
     tenant_id = current_user["tenant_id"]
-    await db.security_incident_occurrences.create_index(
-        [("tenant_id", 1), ("occurrence_uid", 1)],
-        unique=True,
-        name="uq_test_incident_occurrence",
+    indexes = await db.security_incident_occurrences.index_information()
+    has_occurrence_index = any(
+        index.get("key") == [("tenant_id", 1), ("occurrence_uid", 1)]
+        and bool(index.get("unique"))
+        for index in indexes.values()
     )
+    if not has_occurrence_index:
+        await db.security_incident_occurrences.create_index(
+            [("tenant_id", 1), ("occurrence_uid", 1)],
+            unique=True,
+            name="uq_security_incident_occurrence",
+        )
 
     minute = datetime.now(timezone.utc).replace(second=5, microsecond=0)
     alerts = [

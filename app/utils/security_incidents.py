@@ -51,6 +51,9 @@ _GENERIC_ALERT_PATTERNS = (
     re.compile(r".*_KEYWORD_MATCH$", re.IGNORECASE),
 )
 _FBR_OPERATIONAL_EVENT_IDS = {"FBR-INV-MOD", "FBR-INV-DEL", "FIM-DB-MOD"}
+_SERVICE_INSTALL_EVENT_IDS = {"4697", "7045"}
+_SERVICE_INSTALL_RULE_ID = "WINDOWS_SERVICE_INSTALLED"
+_SERVICE_INSTALL_BUCKET_MINUTES = 5
 
 
 def _text(value: Any, default: str = "") -> str:
@@ -139,8 +142,6 @@ def build_incident_identity(alert: Mapping[str, Any]) -> dict[str, Any]:
     timestamp = _coerce_datetime(
         alert.get("timestamp") or alert.get("ingested_at") or alert.get("created_at")
     )
-    bucket_start = timestamp.replace(second=0, microsecond=0)
-    bucket_end = bucket_start + timedelta(minutes=1)
     context = build_alert_context(alert)
     rule_id = _text(
         alert.get("matched_rule_id")
@@ -149,27 +150,65 @@ def build_incident_identity(alert: Mapping[str, Any]) -> dict[str, Any]:
         or alert.get("event_id")
         or "security_event"
     )
+    event_id = _text(alert.get("event_id"))
+    is_service_install = event_id in _SERVICE_INSTALL_EVENT_IDS
+    if is_service_install:
+        bucket_start = timestamp.replace(
+            minute=(timestamp.minute // _SERVICE_INSTALL_BUCKET_MINUTES)
+            * _SERVICE_INSTALL_BUCKET_MINUTES,
+            second=0,
+            microsecond=0,
+        )
+        bucket_end = bucket_start + timedelta(minutes=_SERVICE_INSTALL_BUCKET_MINUTES)
+        identity_rule_id = _SERVICE_INSTALL_RULE_ID
+        identity_event_id = "service_installed"
+    else:
+        bucket_start = timestamp.replace(second=0, microsecond=0)
+        bucket_end = bucket_start + timedelta(minutes=1)
+        identity_rule_id = rule_id
+        identity_event_id = event_id
     pack = _normalized(alert.get("pack") or alert.get("compliance_pack") or "siem")
-    fields = (
-        _text(alert.get("tenant_id")),
-        bucket_start.isoformat(),
-        pack,
-        _normalized(rule_id),
-        _normalized(alert.get("event_id")),
-        _normalized(context.get("endpoint") or alert.get("computer") or alert.get("agent_id")),
-        _normalized(context.get("agent_id") or alert.get("agent_id")),
-        _normalized(context.get("actor") or context.get("user") or alert.get("user")),
-        _normalized(context.get("target_user") or context.get("target") or alert.get("target")),
-        _normalized(context.get("process_name")),
-        _normalized(context.get("parent_process")),
-        _command_fingerprint(context),
-        _normalized(context.get("source_address") or alert.get("source_ip")),
-        _normalized(context.get("source_port")),
-        _normalized(context.get("destination_address")),
-        _normalized(context.get("destination_port")),
-        _normalized(context.get("protected_object") or context.get("target") or alert.get("target_fingerprint")),
-        _normalized(context.get("outcome")),
-    )
+    if is_service_install:
+        service_object = _normalized(
+            context.get("protected_object")
+            or context.get("target")
+            or alert.get("target_fingerprint")
+        )
+        # Without a service identity, preserve separate incidents rather than
+        # risk merging unrelated installations on the same endpoint.
+        service_identity = service_object or _normalized(
+            alert.get("alert_uid") or alert.get("event_uid") or event_id
+        )
+        fields = (
+            _text(alert.get("tenant_id")),
+            bucket_start.isoformat(),
+            pack,
+            _normalized(identity_rule_id),
+            _normalized(context.get("endpoint") or alert.get("computer") or alert.get("agent_id")),
+            _normalized(context.get("agent_id") or alert.get("agent_id")),
+            service_identity,
+        )
+    else:
+        fields = (
+            _text(alert.get("tenant_id")),
+            bucket_start.isoformat(),
+            pack,
+            _normalized(identity_rule_id),
+            _normalized(identity_event_id),
+            _normalized(context.get("endpoint") or alert.get("computer") or alert.get("agent_id")),
+            _normalized(context.get("agent_id") or alert.get("agent_id")),
+            _normalized(context.get("actor") or context.get("user") or alert.get("user")),
+            _normalized(context.get("target_user") or context.get("target") or alert.get("target")),
+            _normalized(context.get("process_name")),
+            _normalized(context.get("parent_process")),
+            _command_fingerprint(context),
+            _normalized(context.get("source_address") or alert.get("source_ip")),
+            _normalized(context.get("source_port")),
+            _normalized(context.get("destination_address")),
+            _normalized(context.get("destination_port")),
+            _normalized(context.get("protected_object") or context.get("target") or alert.get("target_fingerprint")),
+            _normalized(context.get("outcome")),
+        )
     digest = hashlib.sha256("|".join(fields).encode("utf-8")).hexdigest()
     return {
         "incident_key": digest,
@@ -177,7 +216,7 @@ def build_incident_identity(alert: Mapping[str, Any]) -> dict[str, Any]:
         "bucket_start": bucket_start,
         "bucket_end": bucket_end,
         "timestamp": timestamp,
-        "rule_id": rule_id,
+        "rule_id": identity_rule_id,
         "pack": pack,
         "context": context,
     }

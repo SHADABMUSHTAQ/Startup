@@ -55,6 +55,17 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM Native Windows telemetry and DPAPI are mandatory agent capabilities.
+REM PyInstaller reports missing hidden imports as warnings, so fail before the
+REM build instead of producing an installer that cannot collect events.
+"%PYTHON_EXE%" -c "import win32evtlog, win32security, win32crypt, pythoncom, pywintypes" 2>nul
+if errorlevel 1 (
+    echo [ERROR] Mandatory pywin32 modules are unavailable for %PYTHON_EXE%
+    echo Install the agent build dependencies with:
+    echo   "%PYTHON_EXE%" -m pip install -r "%AGENT_DIR%\requirements-build.txt"
+    exit /b 1
+)
+
 if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 

@@ -19,6 +19,10 @@ class FakeQuotaRedis:
     async def get(self, key):
         return self.values.get(key)
 
+    async def set(self, key, value, **_kwargs):
+        self.values[key] = value
+        return True
+
     async def eval(
         self,
         _script,
@@ -68,12 +72,52 @@ async def test_daily_ingest_quota_caps_oversized_contract_override():
 
 
 @pytest.mark.asyncio
-async def test_daily_ingest_quota_scales_from_agent_limit_when_no_override():
-    redis = FakeQuotaRedis({"tenant_agent_limit:WARSOC_QUOTA": b"50"})
+async def test_daily_ingest_quota_scales_from_active_agents_not_purchased_seats():
+    redis = FakeQuotaRedis(
+        {
+            "tenant:WARSOC_QUOTA:active_count": b"1",
+            "tenant_agent_limit:WARSOC_QUOTA": b"50",
+        }
+    )
 
     quota = await _resolve_daily_ingest_quota_bytes(redis, "WARSOC_QUOTA")
 
-    assert quota == 50 * DEFAULT_DAILY_INGEST_BYTES_PER_AGENT
+    assert quota == DEFAULT_DAILY_INGEST_BYTES_PER_AGENT
+
+
+@pytest.mark.asyncio
+async def test_daily_ingest_quota_scales_with_multiple_active_agents():
+    redis = FakeQuotaRedis({"tenant:WARSOC_QUOTA:active_count": b"3"})
+
+    quota = await _resolve_daily_ingest_quota_bytes(redis, "WARSOC_QUOTA")
+
+    assert quota == 3 * DEFAULT_DAILY_INGEST_BYTES_PER_AGENT
+
+
+class _AgentCollection:
+    async def count_documents(self, query):
+        assert query["tenant_id"] == "WARSOC_QUOTA"
+        return 2
+
+
+class _QuotaDatabase:
+    def __getitem__(self, name):
+        assert name == "agents"
+        return _AgentCollection()
+
+
+@pytest.mark.asyncio
+async def test_daily_ingest_quota_recovers_active_count_from_database():
+    redis = FakeQuotaRedis()
+
+    quota = await _resolve_daily_ingest_quota_bytes(
+        redis,
+        "WARSOC_QUOTA",
+        _QuotaDatabase(),
+    )
+
+    assert quota == 2 * DEFAULT_DAILY_INGEST_BYTES_PER_AGENT
+    assert redis.values["tenant:WARSOC_QUOTA:active_count"] == 2
 
 
 @pytest.mark.asyncio

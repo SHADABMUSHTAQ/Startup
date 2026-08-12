@@ -113,6 +113,7 @@ def build_alert_context(alert: Mapping[str, Any], source_event: Mapping[str, Any
         "file_path",
         "registry_key",
         "service_name",
+        "ServiceName",
         "task_name",
         "share_name",
         "target_fingerprint",

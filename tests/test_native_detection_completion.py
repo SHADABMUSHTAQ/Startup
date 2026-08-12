@@ -667,6 +667,34 @@ def test_native_spool_hard_limit_blocks_without_deleting_unacknowledged_data(mon
     assert status["usage_bytes"] <= status["max_bytes"]
 
 
+def test_historical_spool_replay_is_rate_limited_after_success(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    monkeypatch.setattr(agent, "REPLAY_AGE_SECONDS", 300.0)
+    monkeypatch.setattr(agent, "REPLAY_MAX_EVENTS_PER_SECOND", 10.0)
+    monkeypatch.setattr(agent, "OUTBOUND_BATCH_WAIT_SECONDS", 0.25)
+    now = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
+    historical = [
+        {"timestamp": "2026-08-04T11:00:00+00:00"}
+        for _ in range(25)
+    ]
+
+    assert agent._successful_delivery_delay_seconds(historical, now=now) == 2.5
+
+
+def test_current_telemetry_keeps_normal_sender_latency(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    monkeypatch.setattr(agent, "REPLAY_AGE_SECONDS", 300.0)
+    monkeypatch.setattr(agent, "REPLAY_MAX_EVENTS_PER_SECOND", 10.0)
+    monkeypatch.setattr(agent, "OUTBOUND_BATCH_WAIT_SECONDS", 0.25)
+    now = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
+    current = [
+        {"timestamp": "2026-08-04T11:59:30+00:00"}
+        for _ in range(25)
+    ]
+
+    assert agent._successful_delivery_delay_seconds(current, now=now) == 0.25
+
+
 def test_malformed_spool_lines_are_quarantined_before_processing_file_cleanup(monkeypatch, tmp_path):
     agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
     spooler = agent.DiskSpooler(tmp_path / "durable-spool")

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Request, HTTPException, Header
 from pydantic import BaseModel, Field
 import json
 import logging
+import os
 import uuid
 import secrets
 import ipaddress
@@ -33,6 +34,11 @@ logger = logging.getLogger(__name__)
 
 ACTIVE_AGENT_QUERY = {"status": {"$nin": ["inactive", "revoked"]}}
 INACTIVE_TENANT_STATUSES = {"inactive", "suspended", "cancelled", "canceled", "past_due"}
+PLATFORM_ACTIVE_AGENT_LIMIT = max(
+    1,
+    int(os.getenv("PLATFORM_ACTIVE_AGENT_LIMIT", "50")),
+)
+PLATFORM_ACTIVE_COUNT_KEY = "warsoc:platform:active_agent_count"
 
 
 def _tenant_accepts_agents(tenant: dict | None) -> bool:
@@ -46,8 +52,11 @@ def _tenant_accepts_agents(tenant: dict | None) -> bool:
     )
 
 
-async def _database_active_agent_count(db, tenant_id: str) -> int:
-    return int(await db["agents"].count_documents({"tenant_id": tenant_id, **ACTIVE_AGENT_QUERY}))
+async def _database_active_agent_count(db, tenant_id: str | None = None) -> int:
+    query = dict(ACTIVE_AGENT_QUERY)
+    if tenant_id:
+        query["tenant_id"] = tenant_id
+    return int(await db["agents"].count_documents(query))
 
 
 async def _sync_active_count_floor(redis_client, count_key: str, database_count: int) -> int:
@@ -229,6 +238,17 @@ async def generate_activation(
             status_code=403, 
             detail=f"Agent contract limit ({limit}) reached. Contact WarSOC operations to increase the contracted agent limit."
         )
+    platform_database_count = await _database_active_agent_count(db)
+    platform_count = await _sync_active_count_floor(
+        redis_client,
+        PLATFORM_ACTIVE_COUNT_KEY,
+        platform_database_count,
+    )
+    if platform_count >= PLATFORM_ACTIVE_AGENT_LIMIT:
+        raise HTTPException(
+            status_code=503,
+            detail="The current deployment has reached its active endpoint capacity.",
+        )
 
     alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     code = "WARSOC-" + "".join(secrets.choice(alphabet) for _ in range(8))
@@ -325,31 +345,59 @@ async def register_agent(
         raise HTTPException(status_code=401, detail="Activation code is not bound to an active tenant")
     limit = effective_agent_limit(tenant.get("max_agents", tenant.get("agent_limit", 10)))
     database_count = await _database_active_agent_count(db, tenant_id)
+    platform_database_count = await _database_active_agent_count(db)
     
     lua_script = """
     local current_count = tonumber(redis.call('GET', KEYS[1]) or '0')
-    local limit = tonumber(ARGV[1])
-    local database_count = tonumber(ARGV[2])
+    local platform_count = tonumber(redis.call('GET', KEYS[2]) or '0')
+    local tenant_limit = tonumber(ARGV[1])
+    local platform_limit = tonumber(ARGV[2])
+    local database_count = tonumber(ARGV[3])
+    local platform_database_count = tonumber(ARGV[4])
 
     if current_count < database_count then
         current_count = database_count
         redis.call('SET', KEYS[1], current_count)
     end
-
-    if current_count < limit then
-        redis.call('SET', KEYS[1], current_count + 1)
-        return 1
-    else
-        return 0
+    if platform_count < platform_database_count then
+        platform_count = platform_database_count
+        redis.call('SET', KEYS[2], platform_count)
     end
+
+    if current_count >= tenant_limit then
+        return -1
+    end
+    if platform_count >= platform_limit then
+        return -2
+    end
+
+    redis.call('SET', KEYS[1], current_count + 1)
+    redis.call('SET', KEYS[2], platform_count + 1)
+    return 1
     """
     
     count_key = f"tenant:{tenant_id}:active_count"
-    success = await redis_client.eval(lua_script, 1, count_key, limit, database_count)
-    if not success:
+    success = int(
+        await redis_client.eval(
+            lua_script,
+            2,
+            count_key,
+            PLATFORM_ACTIVE_COUNT_KEY,
+            limit,
+            PLATFORM_ACTIVE_AGENT_LIMIT,
+            database_count,
+            platform_database_count,
+        )
+    )
+    if success == -1:
         raise HTTPException(
             status_code=403, 
             detail=f"Agent contract limit ({limit}) reached. Registration denied."
+        )
+    if success == -2:
+        raise HTTPException(
+            status_code=503,
+            detail="The current deployment has reached its active endpoint capacity.",
         )
     
     agent_id = f"WARSOC_AGENT_{uuid.uuid4().hex}"
@@ -371,15 +419,24 @@ async def register_agent(
         await db["agents"].insert_one(agent_doc)
     except Exception as exc:
         rollback_script = """
-        local current_count = tonumber(redis.call('GET', KEYS[1]) or '0')
-        if current_count > 0 then
-            return redis.call('DECR', KEYS[1])
+        local tenant_count = tonumber(redis.call('GET', KEYS[1]) or '0')
+        local platform_count = tonumber(redis.call('GET', KEYS[2]) or '0')
+        if tenant_count > 0 then
+            redis.call('DECR', KEYS[1])
         end
-        return 0
+        if platform_count > 0 then
+            redis.call('DECR', KEYS[2])
+        end
+        return 1
         """
         rollback_failed = False
         try:
-            await redis_client.eval(rollback_script, 1, count_key)
+            await redis_client.eval(
+                rollback_script,
+                2,
+                count_key,
+                PLATFORM_ACTIVE_COUNT_KEY,
+            )
         except Exception:
             rollback_failed = True
         detail = "Agent registration failed before completion; license seat was not consumed."
@@ -624,13 +681,22 @@ async def deregister_agent(
     seat_freed = result.modified_count > 0
     if seat_freed:
         decrement_script = """
-        local current_count = tonumber(redis.call('GET', KEYS[1]) or '0')
-        if current_count > 0 then
-            return redis.call('DECR', KEYS[1])
+        local tenant_count = tonumber(redis.call('GET', KEYS[1]) or '0')
+        local platform_count = tonumber(redis.call('GET', KEYS[2]) or '0')
+        if tenant_count > 0 then
+            redis.call('DECR', KEYS[1])
         end
-        return 0
+        if platform_count > 0 then
+            redis.call('DECR', KEYS[2])
+        end
+        return 1
         """
-        await redis_client.eval(decrement_script, 1, count_key)
+        await redis_client.eval(
+            decrement_script,
+            2,
+            count_key,
+            PLATFORM_ACTIVE_COUNT_KEY,
+        )
     
     return {
         "status": "ok",

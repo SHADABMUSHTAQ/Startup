@@ -1,0 +1,5 @@
+cryptography==49.0.0
+pywin32==312
+requests==2.34.2
+python-dotenv==1.2.2
+pyinstaller==6.21.0

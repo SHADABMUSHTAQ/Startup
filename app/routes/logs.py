@@ -407,6 +407,7 @@ async def get_forensic_evidence(
     return {
         "status": "success",
         "raw_event_data": _decrypt_evidence_field(raw_event_data),
+        "raw_data": _decrypt_evidence_field(doc.get("raw_data")),
         "processed_data": _decrypt_evidence_field(doc.get("processed_data")),
     }
 

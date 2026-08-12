@@ -14,7 +14,10 @@ import redis.asyncio as aioredis
 from ipaddress import ip_address, ip_network
 from app.config.config import get_settings, load_config
 from app.utils.siem_catalog import SIEM_RULES
-from app.utils.security_policy import effective_agent_limit
+from app.utils.ingest_capacity import (
+    IngestCapacityError,
+    enforce_redis_ingest_capacity,
+)
 
 from app.database import get_db
 #  Secures the Dashboard endpoints below
@@ -39,15 +42,13 @@ RAW_RETENTION_ANCHOR_FIELD = "_retention_ts"
 STATUS_KEY_PREFIX = "status"
 STATUS_TTL_SECONDS = 600
 MAX_INGEST_BODY_BYTES = 5 * 1024 * 1024
-DEFAULT_AGENT_LIMIT_FOR_QUOTA = 10
 DEFAULT_DAILY_INGEST_BYTES_PER_AGENT = int(os.getenv("INGEST_DAILY_BYTES_PER_AGENT", str(50 * 1024 * 1024)))
-DEFAULT_DAILY_INGEST_BYTES_FLOOR = int(os.getenv("INGEST_DAILY_BYTES_FLOOR", str(1024 * 1024 * 1024)))
+DEFAULT_DAILY_INGEST_BYTES_FLOOR = int(os.getenv("INGEST_DAILY_BYTES_FLOOR", str(50 * 1024 * 1024)))
 MAX_DAILY_INGEST_BYTES = int(os.getenv("INGEST_DAILY_BYTES_MAX", str(3 * 1024 * 1024 * 1024)))
 PLATFORM_DAILY_INGEST_BYTES_MAX = int(
     os.getenv("INGEST_PLATFORM_DAILY_BYTES_MAX", str(3 * 1024 * 1024 * 1024))
 )
 INGEST_DAILY_QUOTA_TTL_SECONDS = int(os.getenv("INGEST_DAILY_QUOTA_TTL_SECONDS", str(3 * 24 * 60 * 60)))
-RAW_STREAM_MAX_ENTRIES = int(os.getenv("RAW_STREAM_MAX_ENTRIES", "500000"))
 
 
 def _agent_event_signature_mode() -> str:
@@ -249,30 +250,49 @@ def _positive_int(value, default: int = 0) -> int:
     return parsed if parsed > 0 else default
 
 
-async def _resolve_daily_ingest_quota_bytes(redis_client, tenant_id: str) -> int:
+async def _resolve_active_agent_count(redis_client, tenant_id: str, db=None) -> int:
+    count_key = f"tenant:{tenant_id}:active_count"
+    cached_count = _positive_int(_redis_text(await redis_client.get(count_key)))
+    if cached_count:
+        return cached_count
+
+    if db is not None:
+        database_count = int(
+            await db["agents"].count_documents(
+                {
+                    "tenant_id": tenant_id,
+                    "status": {"$nin": ["inactive", "revoked"]},
+                }
+            )
+        )
+        if database_count > 0:
+            await redis_client.set(count_key, database_count, nx=True)
+            return database_count
+
+    # An authenticated ingest request proves at least one active producer.
+    return 1
+
+
+async def _resolve_daily_ingest_quota_bytes(redis_client, tenant_id: str, db=None) -> int:
     tenant_override = _redis_text(await redis_client.get(f"tenant_ingest_quota_bytes:{tenant_id}"))
     override_quota = _positive_int(tenant_override)
     if override_quota:
         return min(override_quota, MAX_DAILY_INGEST_BYTES) if MAX_DAILY_INGEST_BYTES > 0 else override_quota
 
-    cached_limit = _redis_text(await redis_client.get(f"tenant_agent_limit:{tenant_id}"))
-    agent_limit = effective_agent_limit(
-        _positive_int(cached_limit, DEFAULT_AGENT_LIMIT_FOR_QUOTA),
-        DEFAULT_AGENT_LIMIT_FOR_QUOTA,
-    )
+    active_agent_count = await _resolve_active_agent_count(redis_client, tenant_id, db)
     quota = max(
         DEFAULT_DAILY_INGEST_BYTES_FLOOR,
-        agent_limit * max(1, DEFAULT_DAILY_INGEST_BYTES_PER_AGENT),
+        active_agent_count * max(1, DEFAULT_DAILY_INGEST_BYTES_PER_AGENT),
     )
     return min(quota, MAX_DAILY_INGEST_BYTES) if MAX_DAILY_INGEST_BYTES > 0 else quota
 
 
-async def _enforce_daily_ingest_quota(redis_client, tenant_id: str, payload_bytes: int) -> None:
+async def _enforce_daily_ingest_quota(redis_client, tenant_id: str, payload_bytes: int, db=None) -> None:
     if payload_bytes <= 0:
         return
 
     try:
-        quota_bytes = await _resolve_daily_ingest_quota_bytes(redis_client, tenant_id)
+        quota_bytes = await _resolve_daily_ingest_quota_bytes(redis_client, tenant_id, db)
         day_bucket = datetime.now(timezone.utc).strftime("%Y%m%d")
         quota_key = f"warsoc:ingest:bytes:{tenant_id}:{day_bucket}"
         platform_quota_key = f"warsoc:ingest:bytes:platform:{day_bucket}"
@@ -343,24 +363,31 @@ return {1, tenant_updated, tenant_limit, platform_updated, platform_limit, 0}
         )
 
 
-async def _enforce_raw_stream_capacity(redis_client) -> None:
-    if RAW_STREAM_MAX_ENTRIES <= 0:
-        return
+async def _enforce_raw_stream_capacity(
+    redis_client,
+    *,
+    incoming_entries: int = 1,
+    incoming_stream_bytes: int = 0,
+    incoming_redis_bytes: int | None = None,
+) -> None:
     try:
-        stream_length = int(await redis_client.xlen(RAW_LOGS_QUEUE))
-    except Exception as exc:
-        logger.error("Raw ingest stream capacity check failed: %s", exc)
-        raise HTTPException(status_code=503, detail="Ingest queue capacity check unavailable") from exc
-    if stream_length >= RAW_STREAM_MAX_ENTRIES:
+        await enforce_redis_ingest_capacity(
+            redis_client,
+            RAW_LOGS_QUEUE,
+            incoming_entries=incoming_entries,
+            incoming_stream_bytes=incoming_stream_bytes,
+            incoming_redis_bytes=incoming_redis_bytes,
+        )
+    except IngestCapacityError as exc:
         logger.error(
-            "Raw ingest stream reached its admission limit: length=%s limit=%s",
-            stream_length,
-            RAW_STREAM_MAX_ENTRIES,
+            "Raw ingest admission rejected: reason=%s snapshot=%s",
+            exc.reason,
+            exc.snapshot,
         )
         raise HTTPException(
             status_code=503,
             detail="Ingest queue is under pressure. Agent must retain and retry the batch.",
-        )
+        ) from exc
 
 
 def _classify_clock_integrity(
@@ -550,8 +577,8 @@ def _build_event_signature_status(
     }
 
 
-async def _consume_agent_ingest_envelope(raw_payload, agent_id: str, redis_client):
-    """Validate and atomically consume the required anti-replay envelope."""
+def _validate_agent_ingest_envelope(raw_payload, agent_id: str) -> tuple[list, str]:
+    """Validate the envelope without mutating replay state."""
     if not isinstance(raw_payload, dict) or set(raw_payload) != {
         "nonce",
         "timestamp",
@@ -580,9 +607,17 @@ async def _consume_agent_ingest_envelope(raw_payload, agent_id: str, redis_clien
             status_code=400,
             detail="Payload timestamp out of acceptable 5-minute window",
         )
+    events_data = raw_payload.get("payload")
+    if isinstance(events_data, dict):
+        return [events_data], nonce
+    if not isinstance(events_data, list):
+        raise HTTPException(status_code=422, detail="Envelope payload must be an event or list")
+    return events_data, nonce
+
+
+async def _consume_agent_ingest_nonce(nonce: str, agent_id: str, redis_client) -> None:
     if not redis_client:
         raise HTTPException(status_code=503, detail="Redis unavailable for replay protection")
-
     nonce_key = f"warsoc:nonce:{agent_id}:{nonce}"
     nonce_accepted = await redis_client.set(
         nonce_key,
@@ -597,12 +632,12 @@ async def _consume_agent_ingest_envelope(raw_payload, agent_id: str, redis_clien
             detail="Conflict: Replay attack detected (Nonce already consumed)",
         )
 
-    events_data = raw_payload.get("payload")
-    if isinstance(events_data, dict):
-        return [events_data]
-    if not isinstance(events_data, list):
-        raise HTTPException(status_code=422, detail="Envelope payload must be an event or list")
-    return events_data
+
+async def _consume_agent_ingest_envelope(raw_payload, agent_id: str, redis_client):
+    """Compatibility helper that validates and consumes the anti-replay envelope."""
+    events, nonce = _validate_agent_ingest_envelope(raw_payload, agent_id)
+    await _consume_agent_ingest_nonce(nonce, agent_id, redis_client)
+    return events
 
 
 from app.utils.limiter import limiter
@@ -616,6 +651,7 @@ from app.utils.rate_limiter import redis_ingest_rate_limit
 async def ingest_pulse_logs(
     request: Request,
     agent_context: dict = Depends(verify_agent_token),
+    db=Depends(get_db),
     _rate_limit=Depends(redis_ingest_rate_limit)
 ):
     try:
@@ -641,12 +677,9 @@ async def ingest_pulse_logs(
         raw_payload = await _read_json_body_with_limit(request)
         raw_payload_bytes = len(orjson.dumps(raw_payload))
 
-        await _enforce_raw_stream_capacity(redis_client)
-
-        raw_events = await _consume_agent_ingest_envelope(
+        raw_events, envelope_nonce = _validate_agent_ingest_envelope(
             raw_payload,
             verified_agent_id,
-            redis_client,
         )
         original_raw_payload = raw_payload
 
@@ -675,10 +708,48 @@ async def ingest_pulse_logs(
 
         # Invalid or unauthenticated endpoint evidence must not consume the
         # tenant's legitimate daily ingest allowance.
+        prepared_payloads = []
+        for log_data in payload_items:
+            log_data.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+            log_data["tenant_id"] = verified_tenant_id
+            log_data["agent_id"] = verified_agent_id
+            log_data.pop("agent_hmac_signature", None)
+            siem_hot_event = _is_siem_hot_event(log_data)
+            if siem_hot_event:
+                log_data["siem_hot_enqueued"] = True
+            prepared_payloads.append(
+                (
+                    log_data,
+                    orjson.dumps(log_data).decode("utf-8"),
+                    siem_hot_event,
+                )
+            )
+
+        raw_stream_bytes = sum(
+            len(serialized_payload.encode("utf-8"))
+            for _, serialized_payload, _ in prepared_payloads
+        )
+        hot_stream_bytes = sum(
+            len(serialized_payload.encode("utf-8"))
+            for _, serialized_payload, siem_hot_event in prepared_payloads
+            if siem_hot_event
+        )
+        await _enforce_raw_stream_capacity(
+            redis_client,
+            incoming_entries=len(payload_items),
+            incoming_stream_bytes=raw_stream_bytes,
+            incoming_redis_bytes=raw_stream_bytes + hot_stream_bytes,
+        )
+        await _consume_agent_ingest_nonce(
+            envelope_nonce,
+            verified_agent_id,
+            redis_client,
+        )
         await _enforce_daily_ingest_quota(
             redis_client,
             verified_tenant_id,
             raw_payload_bytes,
+            db,
         )
 
 
@@ -703,18 +774,8 @@ async def ingest_pulse_logs(
         verified_signature_count = 0
         unsigned_legacy_count = 0
         async with redis.pipeline(transaction=True) as pipe:
-            for log_data in payload_items:
-                log_data.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
-
-                # Ensure tenant/agent identity while preserving verified provenance.
-                log_data["tenant_id"] = verified_tenant_id
-                log_data["agent_id"] = verified_agent_id
-                log_data.pop("agent_hmac_signature", None)
-                siem_hot_event = _is_siem_hot_event(log_data)
-                if siem_hot_event:
-                    log_data["siem_hot_enqueued"] = True
-
-                payload_to_stream = {"payload": orjson.dumps(log_data).decode("utf-8")}
+            for log_data, serialized_payload, siem_hot_event in prepared_payloads:
+                payload_to_stream = {"payload": serialized_payload}
 
                 await pipe.xadd(
                     RAW_LOGS_QUEUE,
@@ -768,6 +829,12 @@ async def ingest_pulse_logs(
     except HTTPException:
         raise
     except Exception as exc:
+        if "maxmemory" in str(exc).lower() or "out of memory" in str(exc).lower():
+            logger.error("Redis rejected ingest at its memory ceiling: %r", exc)
+            raise HTTPException(
+                status_code=503,
+                detail="Ingest queue is under pressure. Agent must retain and retry the batch.",
+            ) from exc
         logger.error("Bulk ingestion error: %r", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to queue log batch")
 

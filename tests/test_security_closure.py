@@ -96,7 +96,9 @@ async def test_heartbeat_timestamp_is_required(async_client, mock_tenant_a):
         },
     )
     assert response.status_code == 422
-    assert "timestamp" in response.text
+    payload = response.json()
+    assert payload["error"]["code"] == "invalid_request"
+    assert "timestamp" not in response.text
 
 
 @pytest.mark.asyncio

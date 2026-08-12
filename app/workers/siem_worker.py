@@ -23,6 +23,7 @@ from app.utils.observability import increment_redis_counter, record_worker_heart
 from app.utils.custom_json import dumps as json_dumps
 from app.utils.alert_incidents import operator_message
 from app.utils.alert_context import build_alert_context
+from app.utils.detection_provenance import attach_detection_provenance
 from app.utils.security_incidents import project_and_publish_incident
 from app.actions.alerting import dispatch_alert_if_entitled, is_email_trigger_severity
 
@@ -514,6 +515,11 @@ async def siem_worker():
                         "_expire_at": datetime.now(timezone.utc) + timedelta(days=7),
                     }
                     _normalize_document_timestamps(alert_payload)
+                    attach_detection_provenance(
+                        alert_payload,
+                        detector_module="siem.dlq_guard",
+                        telemetry_family="unknown",
+                    )
                     alert_payload["context"] = build_alert_context(alert_payload)
                     try:
                         await db.security_alerts.update_one(
@@ -895,6 +901,11 @@ async def siem_worker():
                                             c_alert.get("type") or c_alert.get("summary") or event_id,
                                         )
                                         c_alert["alert_uid"] = alert_uid
+                                        attach_detection_provenance(
+                                            c_alert,
+                                            log_data,
+                                            detector_module="siem.correlation",
+                                        )
                                         c_alert["context"] = build_alert_context(c_alert, log_data)
                                         try:
                                             await db.security_alerts.update_one({"tenant_id": tenant_id, "alert_uid": alert_uid}, {"$set": c_alert}, upsert=True)
@@ -971,6 +982,11 @@ async def siem_worker():
                                     "timestamp": log_data["ingested_at"],
                                     "_expire_at": datetime.now(timezone.utc) + timedelta(days=7),
                                 }
+                                attach_detection_provenance(
+                                    alert_payload,
+                                    log_data,
+                                    detector_module="siem.native_event",
+                                )
                                 alert_payload["context"] = build_alert_context(alert_payload, log_data)
                                 _normalize_document_timestamps(alert_payload)
                                 # Save to security_alerts collection
@@ -1032,6 +1048,11 @@ async def siem_worker():
                                         finding.get("event_uid") or log_data.get("event_uid") or message_id,
                                         finding.get("type") or finding.get("summary") or event_id,
                                     )
+                                    attach_detection_provenance(
+                                        finding,
+                                        log_data,
+                                        detector_module="siem.stateless",
+                                    )
                                     finding["context"] = build_alert_context(finding, log_data)
                                     try:
                                         await db.security_alerts.update_one({"tenant_id": tenant_id, "alert_uid": finding["alert_uid"]}, {"$set": finding}, upsert=True)
@@ -1073,6 +1094,11 @@ async def siem_worker():
                                         tenant_id,
                                         corr_alert.get("event_uid") or log_data.get("event_uid") or message_id,
                                         corr_alert.get("type") or corr_alert.get("summary") or event_id,
+                                    )
+                                    attach_detection_provenance(
+                                        corr_alert,
+                                        log_data,
+                                        detector_module="siem.correlation",
                                     )
                                     corr_alert["context"] = build_alert_context(corr_alert, log_data)
                                     try:

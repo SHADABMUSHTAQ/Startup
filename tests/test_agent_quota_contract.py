@@ -231,3 +231,62 @@ async def test_database_count_prevents_redis_restart_from_bypassing_50_agent_cap
     assert "contract limit (50)" in response.json()["detail"]
     assert await redis_client.get(f"tenant:{tenant_id}:active_count") == "50"
     assert await db["agents"].count_documents({"tenant_id": tenant_id}) == 50
+
+
+async def test_platform_cap_blocks_51st_agent_across_different_tenants(
+    async_client,
+    db,
+    redis_client,
+):
+    now = datetime.now(timezone.utc)
+    existing_tenant = "WARSOC_PLATFORM_EXISTING"
+    new_tenant = "WARSOC_PLATFORM_NEW"
+    activation_code = "WARSOC-PLATFORM51"
+    await db["tenants"].insert_many(
+        [
+            {
+                "tenant_id": existing_tenant,
+                "company_name": "Existing Platform Tenant",
+                "plan_type": "Custom",
+                "status": "active",
+                "max_agents": 50,
+                "created_at": now,
+            },
+            {
+                "tenant_id": new_tenant,
+                "company_name": "New Platform Tenant",
+                "plan_type": "Custom",
+                "status": "active",
+                "max_agents": 50,
+                "created_at": now,
+            },
+        ]
+    )
+    await db["agents"].insert_many(
+        [
+            {
+                "tenant_id": existing_tenant,
+                "agent_id": f"WARSOC_PLATFORM_{index}",
+                "status": "active",
+                "public_key": "existing",
+            }
+            for index in range(50)
+        ]
+    )
+    await redis_client.set(
+        f"warsoc:activation:{activation_code}",
+        json.dumps({"tenant_id": new_tenant, "features": "SIEM"}),
+    )
+
+    response = await async_client.post(
+        "/api/v1/agent/register",
+        json={
+            "activation_code": activation_code,
+            "public_key": _ed25519_public_key_pem(),
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "The service is temporarily unavailable."
+    assert await redis_client.get("warsoc:platform:active_agent_count") == "50"
+    assert await db["agents"].count_documents({"tenant_id": new_tenant}) == 0

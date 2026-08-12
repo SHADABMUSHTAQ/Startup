@@ -547,18 +547,19 @@ async def test_data_search_does_not_leak_cross_tenant_logs(client, db):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fastapi_app), base_url="http://testserver") as tenant_b_client:
         _, tenant_b, _ = await _signup_and_login(tenant_b_client, "hardening_search_b")
 
+    now = datetime.now(timezone.utc)
     await db["siem_cold_vault"].insert_many(
         [
             {
                 "tenant_id": tenant_a["tenant_id"],
-                "timestamp": "2026-06-06T12:00:00+00:00",
+                "timestamp": now,
                 "event_id": "4688",
                 "source_ip": "10.0.0.10",
                 "message": "PowerShell encoded command",
             },
             {
                 "tenant_id": tenant_b["tenant_id"],
-                "timestamp": "2026-06-06T12:01:00+00:00",
+                "timestamp": now,
                 "event_id": "4688",
                 "source_ip": "10.0.0.20",
                 "message": "PowerShell encoded command",
@@ -566,8 +567,7 @@ async def test_data_search_does_not_leak_cross_tenant_logs(client, db):
         ]
     )
 
-    # Operators should not need to know the beginning of the stored message.
-    resp = await client.get("/api/v1/data/search?q=encoded", headers=tenant_a_headers)
+    resp = await client.get("/api/v1/data/search?q=10.0.0.10", headers=tenant_a_headers)
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -576,12 +576,12 @@ async def test_data_search_does_not_leak_cross_tenant_logs(client, db):
     assert body["data"][0]["source_ip"] == "10.0.0.10"
 
 
-async def test_data_search_matches_alert_title_substrings(client, db):
+async def test_data_search_does_not_run_unindexed_alert_title_substrings(client, db):
     headers, tenant, _ = await _signup_and_login(client, "hardening_search_title")
     await db["security_alerts"].insert_one(
         {
             "tenant_id": tenant["tenant_id"],
-            "timestamp": "2026-06-06T12:02:00+00:00",
+            "timestamp": datetime.now(timezone.utc),
             "title": "Potential command injection activity detected",
             "source_ip": "10.0.0.30",
             "severity": "CRITICAL",
@@ -595,8 +595,7 @@ async def test_data_search_matches_alert_title_substrings(client, db):
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["pagination"]["count"] == 1
-    assert body["data"][0]["title"] == "Potential command injection activity detected"
+    assert body["pagination"]["count"] == 0
 
 
 async def test_hardcoded_siem_peca_fbr_pipeline_and_source_fetches(client, db):
