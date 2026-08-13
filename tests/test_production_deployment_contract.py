@@ -97,6 +97,18 @@ def test_production_requires_signed_endpoint_events_by_default():
     assert compose.count("AGENT_EVENT_SIGNATURE_MODE: ${AGENT_EVENT_SIGNATURE_MODE:-required}") == 2
 
 
+def test_wazuh_bridge_initializes_spool_for_non_root_runtime():
+    compose = _read("docker-compose.wazuh-bridge.yml")
+    assert "warsoc-wazuh-bridge-init:" in compose
+    assert "install -d -o 1000 -g 1000 -m 0700 /var/lib/warsoc-wazuh" in compose
+    assert 'user: "0:0"' in compose
+    assert "- CHOWN" in compose
+    assert "- DAC_OVERRIDE" in compose
+    assert "- FOWNER" in compose
+    assert "condition: service_completed_successfully" in compose
+    assert "warsoc_wazuh_bridge_spool:/var/lib/warsoc-wazuh" in compose
+
+
 def test_database_backup_is_encrypted_offsite_and_fail_closed():
     backup_script = _read("scripts/backup_mongodb.sh")
     assert "mongodump" in backup_script
@@ -180,6 +192,22 @@ def test_production_acceptance_is_gated_and_verifies_real_artifacts():
     assert "warsoc_email_delivered_total" in validator
     assert "--manifest-path" in validator
     assert "--report-path" in validator
+
+
+def test_legacy_grand_master_harness_is_fail_closed_and_isolated():
+    harness = _read("tests/test_grand_master_e2e.py")
+
+    assert 'E2E_API_BASE_URL", ""' in harness
+    assert "YES_I_CREATED_AN_ISOLATED_STACK" in harness
+    assert 'E2E_DATABASE_NAME.startswith("WarSOC_DB_e2e_")' in harness
+    assert 'redis_db == "0"' in harness
+    assert "E2E_WORKER_CONTAINER" in harness
+    assert "startup-backend-worker-siem-1" not in harness
+    assert 'E2E_ENABLE_SYSLOG", "false"' in harness
+    assert 'event_id = 4688' in harness
+    assert 'event_id = 4672' in harness
+    assert 'event_id = 9' not in harness
+    assert 'event_id = 10' not in harness
 
 
 def test_network_relay_is_separate_bounded_and_not_public_cloud_syslog():

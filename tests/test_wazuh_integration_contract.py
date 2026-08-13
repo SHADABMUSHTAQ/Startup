@@ -16,6 +16,7 @@ from app.wazuh_integration.contracts import (
 from app.wazuh_integration.security import (
     ConnectorBodyTooLarge,
     ConnectorSecurityError,
+    build_mtls_client_context,
     build_signed_headers,
     decrypt_payload,
     encrypt_payload,
@@ -206,6 +207,44 @@ def test_connector_encryption_and_purpose_separated_hmac():
     assert len(tenant) == 64
     assert tenant != actor
     assert tenant != other_tenant
+
+
+def test_mtls_context_loads_ca_and_client_identity(monkeypatch, tmp_path):
+    ca_file = tmp_path / "ca.crt"
+    cert_file = tmp_path / "client.crt"
+    key_file = tmp_path / "client.key"
+    for path in (ca_file, cert_file, key_file):
+        path.write_text("test", encoding="ascii")
+
+    loaded = {}
+
+    class FakeContext:
+        minimum_version = None
+        check_hostname = False
+        verify_mode = None
+
+        def load_cert_chain(self, *, certfile, keyfile):
+            loaded["certfile"] = certfile
+            loaded["keyfile"] = keyfile
+
+    context = FakeContext()
+    monkeypatch.setattr(
+        "app.wazuh_integration.security.ssl.create_default_context",
+        lambda *, purpose, cafile: loaded.update(purpose=purpose, cafile=cafile) or context,
+    )
+
+    result = build_mtls_client_context(
+        ca_file=ca_file,
+        cert_file=cert_file,
+        key_file=key_file,
+    )
+
+    assert result is context
+    assert loaded["cafile"] == str(ca_file)
+    assert loaded["certfile"] == str(cert_file)
+    assert loaded["keyfile"] == str(key_file)
+    assert context.minimum_version.name == "TLSv1_2"
+    assert context.check_hostname is True
 
 
 class _StreamingRequest:

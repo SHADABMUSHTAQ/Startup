@@ -21,6 +21,10 @@ class FakeRedis:
         self.store[key] = value
         return True
 
+    async def set(self, key, value, ex=None):
+        self.store[key] = value
+        return True
+
     async def exists(self, key):
         return 1 if key in self.store else 0
 

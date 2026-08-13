@@ -102,6 +102,16 @@ _RUNTIME_CONFIG = _load_runtime_config()
 _EVENT_ID_MAP = _RUNTIME_CONFIG.get("event_id_map", {})
 _COMPLIANCE_TARGETS = _RUNTIME_CONFIG.get("compliance_targets", {})
 
+_EVIDENCE_LIST_PROJECTION = {
+    "raw_event": 0,
+    "raw_event_data": 0,
+    "raw_data": 0,
+    "processed_data": 0,
+    "signed_payload": 0,
+    "_retention_ts": 0,
+    "_expire_at": 0,
+}
+
 
 def _humanize_event_type(value: str) -> str:
     return str(value or "").replace("_", " ").strip().title()
@@ -204,6 +214,19 @@ def _decrypt_field(value: Any) -> Any:
     except Exception:
         return value
 
+
+def _summarize_evidence_message(value: Any, max_length: int = 500) -> tuple[str, bool]:
+    decrypted = _decrypt_field(value)
+    if decrypted is None:
+        return "", False
+    if isinstance(decrypted, (dict, list)):
+        text = json.dumps(decrypted, default=_json_default, separators=(",", ":"))
+    else:
+        text = str(decrypted)
+    if len(text) <= max_length:
+        return text, False
+    return f"{text[: max_length - 3]}...", True
+
 def _event_sort_key(doc: dict):
     ts = _coerce_dt(doc.get("timestamp") or doc.get("ingested_at"))
     if not ts:
@@ -215,6 +238,7 @@ def _curate_evidence_record(doc: dict, evidence_source: str, data_origin: str) -
     signature = doc.get("digital_signature")
     forensic_hash = doc.get("forensic_seal")
     archived = doc.get("_archived") is True
+    message, message_truncated = _summarize_evidence_message(doc.get("message"))
 
     curated = {
         "id": str(doc.get("_id")) if doc.get("_id") is not None else None,
@@ -226,22 +250,20 @@ def _curate_evidence_record(doc: dict, evidence_source: str, data_origin: str) -
         "event_id": doc.get("event_id"),
         "source_ip": doc.get("source_ip"),
         "user": doc.get("user"),
-        "message": _decrypt_field(doc.get("message")),
+        "message": message,
+        "message_truncated": message_truncated,
         "tags": doc.get("tags"),
         "retention_policy": doc.get("retention_policy"),
-        "raw_event": _decrypt_field(doc.get("raw_event")),
-        "raw_event_data": _decrypt_field(doc.get("raw_event_data")),
-        "raw_data": _decrypt_field(doc.get("raw_data")),
-        "processed_data": _decrypt_field(doc.get("processed_data")),
         "digital_signature": signature,
         "forensic_seal": forensic_hash,
-        "signed_payload": doc.get("signed_payload"),
         "rsa_signature": signature,
         "cryptographic_hash": forensic_hash,
         "evidence_source": evidence_source,
         "data_origin": data_origin,
         "storage_tier": "cold_archive" if archived else "hot",
         "archived": archived,
+        "detail_available": doc.get("_id") is not None,
+        "content_redacted_from_list": True,
     }
     return curated
 
@@ -268,7 +290,7 @@ async def _fetch_docs_page(
 ):
     scoped_query = _compose_query(query, start_dt, end_dt)
     total = await collection.count_documents(scoped_query)
-    cursor = collection.find(scoped_query).sort([
+    cursor = collection.find(scoped_query, _EVIDENCE_LIST_PROJECTION).sort([
         ("timestamp", -1),
         ("ingested_at", -1),
         ("_id", -1),
@@ -719,7 +741,7 @@ async def get_compliance_evidence(
 
     cursors = []
     for coll_name in collections_to_query:
-        cursor = db[coll_name].find(scoped_query).sort([
+        cursor = db[coll_name].find(scoped_query, _EVIDENCE_LIST_PROJECTION).sort([
             ("timestamp", -1),
             ("ingested_at", -1),
             ("_id", -1)

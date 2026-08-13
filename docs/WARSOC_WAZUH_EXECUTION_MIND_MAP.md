@@ -113,9 +113,9 @@ flowchart LR
 |---|---|---|---|
 | 0 | Freeze current WarSOC truth and fallback | Complete | Current WarSOC SIEM/FBR/PECA paths remain independent |
 | 1 | Contracts, threat model, queues and ownership | Code and contract complete | Versioned contracts, encrypted bounded outbox/spools, strict field registry, signed health channel and disabled-by-default settings exist |
-| 2 | Isolated Wazuh lab | Local lab complete; two-host lab pending | Local 4.14.7 stack, loopback ports, private listener and canary rule are prepared; two-host mTLS/Tailscale is not assembled |
-| 3 | Compatibility harness | Local contracts complete; live path pending | 171 focused and cross-system contracts pass; final live decoder/rule/candidate lineage has not run between Compute A and Compute B |
-| 4 | Shadow integration | Code complete, live disabled | Compute A and Compute B optional services exist; real certificates, private addresses and live shadow acceptance remain |
+| 2 | Isolated Wazuh lab | Two-host shadow transport accepted | Local and separate-host 4.14.7 canaries, bidirectional mTLS, signed transport, tenant isolation, negative transport and selected outage recovery pass. |
+| 3 | Compatibility harness | Contracts and two-host live path complete | Maintained Wazuh and adjacent WarSOC regression gates pass; physical saturation and rule-quality corpora remain. |
+| 4 | Shadow integration | Transport accepted; deployment disabled | Signed cross-host dispatch/candidate lineage produced shadow-only observations with zero customer side effects. Production enablement still requires host-firewall, capacity, rollback and rule-quality approval. |
 | 5 | Limited primary promotion | Blocked | Requires accepted Gate 4 metrics and one-family rollback proof |
 | 6 | Firewall projection to Wazuh | Blocked separately | Network relay must pass its own packaged service, real-device and production-pilot gate first |
 | 7 | Security release | Blocked | Requires complete acceptance artifacts, rollback and residual-risk approval |
@@ -220,17 +220,25 @@ shadow activation:
 These closures do not change the gate status to production accepted. The live
 two-machine proof in Gate 2 through Gate 4 is still mandatory.
 
-## 8. Verification Record - 2026-08-12
+## 8. Historical Verification Record - 2026-08-12
 
 The final reviewed files produced these measured results:
 
 | Scope | Result |
 |---|---:|
-| Wazuh bridge, health, projection, candidate and transport contracts | 31 passed |
+| Wazuh bridge, health, projection, candidate and transport contracts | 32 passed |
 | Production deployment, endpoint signing, native detection and relay foundation | 72 passed |
-| Relay runtime and tenant/platform quota contracts | 24 passed |
+| Relay runtime and tenant/platform quota contracts | 36 passed |
 | FBR, PECA, archive, security closure and incident workflow | 44 passed |
-| Total | **171 passed** |
+| Total | **184 passed** |
+
+The newer 2026-08-13 maintained release-gate selection records **432 passed,
+3 skipped**. The skips are one opt-in legacy grand-master harness that is not
+safe as a current release gate and two Git metadata checks that passed directly
+on the host.
+That result and its scope breakdown are authoritative in
+`docs/WARSOC_VERIFICATION_AND_CUSTOMER_ACCEPTANCE_2026-08-12.md`; the table
+above is retained as the earlier dated snapshot rather than silently rewritten.
 
 Additional checks:
 
@@ -242,10 +250,19 @@ Additional checks:
 - `wazuh-analysisd -t`: exit `0`.
 - Repository and manager canary-rule SHA-256: matching.
 - Enabled Wazuh Active Response blocks: `0`.
+- Isolated live canary: one `shadow_observation`; zero customer incidents,
+  security alerts, FBR/PECA records, emails and block actions.
+- Isolated live recovery: accepted dispatch survived manager outage and bridge
+  restart, then completed automatically after manager recovery.
+- Isolated negative transport: replay `409`, tamper/wrong connector `401`,
+  oversized body `413`, and missing client certificate rejected at TLS.
 
-This record proves code contracts and local lab posture. It does not substitute
-for the signed two-host canary, outage, rotation, saturation, tenant-isolation
-and rule-quality evidence required by Gates 2 through 4.
+This record proves code contracts and the isolated two-host shadow transport.
+It does not substitute for physical-host firewall proof, live saturation,
+ruleset rollback or rule-quality evidence required before production promotion.
+
+The current cross-system/customer-flow verification record is
+`docs/WARSOC_VERIFICATION_AND_CUSTOMER_ACCEPTANCE_2026-08-12.md`.
 
 ## 9. Wazuh Capability Boundary
 

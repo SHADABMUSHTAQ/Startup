@@ -179,6 +179,31 @@ spool saturation, receipt loss, health/loss reporting, and recovery.
 **Exit gate:** Two-host canary and all failure cases pass. No customer incident is
 created by Wazuh.
 
+**Execution record - 2026-08-12:** The isolated local equivalent passed from
+canonical evidence through minimized encrypted dispatch, mutual TLS, Wazuh
+4.14.7 rule `100500`, signed candidate return and one shadow observation. A
+forced manager outage plus bridge restart preserved the accepted dispatch and
+recovered automatically. Live transport checks rejected replay, tampering,
+wrong connector identity, oversized bodies and missing client certificates.
+The resulting counts were one shadow observation and zero customer incidents,
+security alerts, FBR records, PECA records, emails or block actions.
+
+This exposed and fixed one real compatibility defect: current HTTPX requires an
+explicit client `SSLContext` for the certificate chain used by this connector;
+the previous certificate tuple did not complete mTLS. The focused Wazuh suite is
+now 32 passing contracts and the selected cross-system compatibility suites are
+152 passing contracts.
+
+The formal exit gate is **not closed**. On 2026-08-13 the separate Compute-B
+host was reached through Tailscale and its manager, indexer and dashboard were
+confirmed at 4.14.7 with loopback-only host bindings. The private listener is
+restricted to bridge IP `172.19.0.50`, rule `100500` is present, and
+`wazuh-analysisd -t` exits zero. Reviewed code-only staging and short-lived
+identity preparation pass, but the encrypted connector-secret transfer and the
+same signed canary/failure matrix still require explicit acceptance and
+execution over the physical two-host path. Local and baseline proof do not
+substitute for that transport/topology proof.
+
 ### Step 7: Implement and Validate Dual-Detector Reconciliation
 
 **Goal:** Allow both engines to contribute without duplicating incidents.
@@ -388,20 +413,25 @@ Passing source tests alone does not satisfy this definition.
 
 ## 6. Current Starting Point
 
-As of approval:
+As of the 2026-08-12 Step 6 local execution:
 
-- the repository is dirty and one commit behind `origin/backend`;
-- focused current-tree contracts pass, including a 147-test core/relay/Wazuh/archive
-  run on 2026-08-12;
+- the reconciled candidate is based on commit `f9d27fa`; only the surgical mTLS
+  compatibility fix and its contract test are uncommitted;
+- 184 selected current-tree contracts pass: 32 focused Wazuh contracts and 152
+  cross-system backend, relay, quota, archive, security, incident, FBR and PECA
+  contracts;
 - production Compose renders with optional profiles;
 - the Wazuh bridge Compose contract renders with example configuration;
 - local Wazuh 4.14.7 is loopback-bound, `wazuh-analysisd -t` passes, and the lab
   canary rule hash matches the repository;
 - Wazuh remains shadow-only with only the canary registry approved;
-- the two-host Wazuh path is unproved;
+- the live isolated local and separate two-host Wazuh paths, outage recovery,
+  tenant isolation and negative transport checks pass;
 - the Relay remains disabled and pfSense is lab-proven, not customer-supported;
 - archive retrieval remains disabled;
-- agent 4.2.8 remains a local candidate.
+- the public 4.2.8 Azure artifact matches the local release manifest; the live
+  authenticated redirect and clean-machine lifecycle remain deployment gates.
 
-The immediate next action is Step 2: reconcile and split Git work without losing
-any current file.
+The remaining Step 6 gates are physical capacity/saturation evidence, ruleset
+rollback and representative rule-family quality. Do not enable primary mode
+until those records are accepted.

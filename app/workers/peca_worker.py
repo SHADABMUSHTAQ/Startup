@@ -618,7 +618,7 @@ async def peca_worker():
                 await asyncio.sleep(1)
     finally:
         try:
-            await redis.close()
+            await redis.aclose()
         except Exception:
             pass
         try:

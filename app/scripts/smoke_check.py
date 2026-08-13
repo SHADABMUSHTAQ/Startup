@@ -11,7 +11,7 @@ async def main():
         print('redis_ping:', ok)
 
         # Blacklist test
-        await r.setex('warsoc:blacklist:test-jti-smoke', 30, 'revoked')
+        await r.set('warsoc:blacklist:test-jti-smoke', 'revoked', ex=30)
         exists = await r.exists('warsoc:blacklist:test-jti-smoke')
         print('blacklist_exists:', exists)
 
@@ -24,7 +24,7 @@ async def main():
 
         await r.delete('warsoc:blacklist:test-jti-smoke')
         await r.srem(f'warsoc:soar_whitelist:{tenant}', ip)
-        await r.close()
+        await r.aclose()
     except Exception as e:
         print('SMOKE ERROR:', e)
 

@@ -19,22 +19,22 @@ from app.wazuh_integration.contracts import (
 from app.wazuh_integration.security import build_signed_headers, encrypt_payload
 
 
-NOW = datetime.now(timezone.utc)
 DISPATCH_UID = "WZD_0123456789ABCDEF0123456789ABCDEF"
 CONNECTOR_ID = "wazuh-shadow-01"
 SIGNING_SECRET = "dispatch-secret-" + "x" * 48
 
 
-def _input() -> DetectionInput:
+def _input(now: datetime | None = None) -> DetectionInput:
+    now = now or datetime.now(timezone.utc)
     return DetectionInput(
         dispatch_uid=DISPATCH_UID,
         event_uid="event-transport-0001",
         tenant_scope="a" * 64,
         source_family="windows_endpoint",
         source_assurance="endpoint_signed",
-        original_event_time=NOW - timedelta(seconds=2),
-        receipt_time=NOW - timedelta(seconds=1),
-        dispatch_time=NOW,
+        original_event_time=now - timedelta(seconds=2),
+        receipt_time=now - timedelta(seconds=1),
+        dispatch_time=now,
         event_age_ms=2000,
         event_id="4688",
         endpoint_id="WARSOC_AGENT_TEST",
@@ -45,11 +45,12 @@ def _input() -> DetectionInput:
 
 
 def _input_batch() -> DetectionInputBatch:
+    now = datetime.now(timezone.utc)
     return DetectionInputBatch(
         batch_id="WZB_0123456789ABCDEF0123456789ABCDEF",
         connector_id=CONNECTOR_ID,
-        created_at=NOW,
-        inputs=[_input()],
+        created_at=now,
+        inputs=[_input(now)],
     )
 
 

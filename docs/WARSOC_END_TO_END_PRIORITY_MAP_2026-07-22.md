@@ -13,7 +13,7 @@ The 2026-07-22 high-priority implementation pass completed the following without
 - The public quote path now records requested scope for a custom contract/manual invoice and does not generate authoritative prices from browser or hardcoded formulas. Mongo lead persistence remains successful when the email queue is unavailable.
 - Team invitations retain hashed, 24-hour, single-use activation tokens and now return a non-cacheable setup URL once to the authenticated admin, removing SMTP as an onboarding dependency.
 - Archive writes support fixed FBR/PECA targets and duration-aware SIEM/general Azure targets; new ledger rows record the physical container and readback follows that ledger. All overrides fall back to the existing locked container until cloud operators explicitly configure separately locked targets.
-- Backend verification closes with 346 passed, 3 skipped and zero application failures. All 11 PECA controls now pass the signed ingestion-to-worker-to-vault integration test. Frontend ESLint and production build remain the previous verified baseline; no frontend source was changed by this backend closure pass.
+- The latest maintained backend verification closes with 432 passed, 3 skipped and zero application failures. All 11 PECA controls pass the signed ingestion-to-worker-to-vault integration test. The skips are one opt-in grand-master harness that now requires a separately orchestrated isolated stack and two Git metadata checks that passed directly on the host. The paired compliance frontend passes ESLint, production build and deterministic browser interaction; remote deployment acceptance remains external.
 
 Still external: verify the live CDN object hash, deploy matching backend/frontend commits, provision and lock FBR/PECA and duration-specific SIEM/general Azure containers before setting routing overrides, and later move backend hosting before the DigitalOcean deadline. Legal content was not modified by this engineering pass.
 
@@ -430,7 +430,7 @@ The frontend legal page currently states that data moves from DigitalOcean to Pa
 | 8. Retention/archive/DR | Partial but operational | Archive/retrieval, ledger-aware multi-container readback, duration-aware routing and a disposable restore drill exist; Azure bucket provisioning and final cutover restore remain. |
 | 9. SIEM detection/enrichment | Partial | Every enabled regex rule has an executable contract and source isolation passes. Complete clean-VM native proof and broader MITRE/CWE enrichment remain. |
 | 10. Exposure monitoring | Not implemented | Deliberately last and isolated. |
-| 11. Integrated acceptance | Partial | Backend closure is 346 passed and 3 explicit skips; exact-machine and prior soak proofs exist. Current paired production browser, final Azure segmentation and cutover restore artifacts remain. |
+| 11. Integrated acceptance | Partial | Backend closure is 432 passed and 3 explicit skips; exact-machine, two-host Wazuh and prior soak proofs exist. The grand-master harness is fail-closed for an isolated stack but has not been executed there. Current paired production browser, final Azure segmentation and cutover restore artifacts remain. |
 
 ## 18. Prioritized Gap Register
 

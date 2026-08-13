@@ -5,6 +5,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 import httpx
 import pytest
@@ -17,9 +18,17 @@ from app.utils.agent_crypto import (
 )
 
 
-API_BASE_URL = os.getenv("E2E_API_BASE_URL", "http://127.0.0.1:8000/api/v1")
+API_BASE_URL = os.getenv("E2E_API_BASE_URL", "").strip()
 SYSLOG_HOST = os.getenv("E2E_SYSLOG_HOST", "127.0.0.1")
 SYSLOG_PORT = int(os.getenv("E2E_SYSLOG_PORT", "5140"))
+E2E_DATABASE_NAME = os.getenv("E2E_DATABASE_NAME", "").strip()
+E2E_WORKER_CONTAINER = os.getenv("E2E_WORKER_CONTAINER", "").strip()
+E2E_SYSLOG_ENABLED = os.getenv("E2E_ENABLE_SYSLOG", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 DEFAULT_TIMEOUT = float(os.getenv("E2E_HTTP_TIMEOUT", "30"))
 RETRYABLE_HTTP_STATUSES = {502, 503}
 RETRYABLE_HTTP_EXCEPTIONS = (
@@ -33,6 +42,42 @@ RETRYABLE_HTTP_EXCEPTIONS = (
 
 def _e2e_enabled() -> bool:
     return os.getenv("E2E", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _validate_isolated_e2e_configuration() -> None:
+    if os.getenv("E2E_CONFIRM_ISOLATED_STACK", "") != "YES_I_CREATED_AN_ISOLATED_STACK":
+        raise RuntimeError(
+            "Refusing destructive E2E run without E2E_CONFIRM_ISOLATED_STACK="
+            "YES_I_CREATED_AN_ISOLATED_STACK"
+        )
+
+    parsed_api = urlparse(API_BASE_URL)
+    if parsed_api.scheme not in {"http", "https"} or parsed_api.hostname not in {
+        "127.0.0.1",
+        "localhost",
+        "::1",
+    }:
+        raise RuntimeError("E2E_API_BASE_URL must target an isolated loopback API")
+    if not parsed_api.path.rstrip("/").endswith("/api/v1"):
+        raise RuntimeError("E2E_API_BASE_URL must include the /api/v1 base path")
+
+    active_test_db = os.getenv("MONGODB_DB_NAME", "").strip()
+    if not E2E_DATABASE_NAME.startswith("WarSOC_DB_e2e_"):
+        raise RuntimeError("E2E_DATABASE_NAME must use the WarSOC_DB_e2e_ prefix")
+    if E2E_DATABASE_NAME != active_test_db:
+        raise RuntimeError(
+            "E2E_DATABASE_NAME must match the isolated TEST_MONGODB_DB_NAME used by pytest"
+        )
+    if not E2E_WORKER_CONTAINER:
+        raise RuntimeError("E2E_WORKER_CONTAINER must name the isolated unified worker")
+
+    redis_url = urlparse(os.getenv("REDIS_URL", ""))
+    redis_db = redis_url.path.strip("/")
+    if not redis_db or redis_db == "0":
+        raise RuntimeError("The E2E stack must use a non-zero isolated Redis database")
+
+    if E2E_SYSLOG_ENABLED and SYSLOG_HOST not in {"127.0.0.1", "localhost", "::1"}:
+        raise RuntimeError("E2E syslog must target a loopback-only isolated receiver")
 
 
 def _now_iso() -> str:
@@ -102,11 +147,11 @@ async def _post_http_batch(
             message = f"ransomware raw access mutation burst {index}"
             event_id = 7045
         elif index % 3 == 0:
-            message = f"sysmon process access {index}"
-            event_id = 9
+            message = f"Windows process creation event {index}"
+            event_id = 4688
         elif index % 3 == 1:
-            message = f"sysmon process creation {index}"
-            event_id = 10
+            message = f"Windows special privileges assigned event {index}"
+            event_id = 4672
         else:
             message = f"file deletion event {index}"
             event_id = 4660
@@ -178,9 +223,9 @@ async def _send_udp_batch(tenant_id: str, agent_id: str, start_index: int, count
         if index % 250 == 0:
             message = _rfc5424_message(source_ip, "warsoc-syslog", str(index), "ransomware", f"ransomware raw access mutation burst {index}")
         elif index % 3 == 0:
-            message = _rfc5424_message(source_ip, "warsoc-syslog", str(index), "sysmon9", f"sysmon raw access {index}")
+            message = _rfc5424_message(source_ip, "warsoc-syslog", str(index), "event4688", f"Windows process creation event {index}")
         elif index % 3 == 1:
-            message = _rfc5424_message(source_ip, "warsoc-syslog", str(index), "sysmon10", f"sysmon process creation {index}")
+            message = _rfc5424_message(source_ip, "warsoc-syslog", str(index), "event4672", f"Windows special privileges assigned event {index}")
         else:
             message = _rfc5424_message(source_ip, "warsoc-syslog", str(index), "del4660", f"file deletion event {index}")
         await _send_udp_message(message)
@@ -208,7 +253,8 @@ class _E2EState:
 @pytest.mark.asyncio
 @pytest.mark.skipif(not _e2e_enabled(), reason="Set E2E=1 to run the full end-to-end validation.")
 async def test_grand_master_e2e(clean_slate, mock_tenant_a, mock_tenant_b, mongo_client, redis_client):
-    settings_db = mongo_client[os.getenv("MONGO_DB_NAME", "WarSOC_DB")]
+    _validate_isolated_e2e_configuration()
+    settings_db = mongo_client[E2E_DATABASE_NAME]
 
     async with httpx.AsyncClient(base_url=API_BASE_URL, follow_redirects=True, timeout=DEFAULT_TIMEOUT, cookies=httpx.Cookies()) as client:
         await _authenticate_agent_client(client, mock_tenant_a["agent_jwt"])
@@ -244,22 +290,23 @@ async def test_grand_master_e2e(clean_slate, mock_tenant_a, mock_tenant_b, mongo
                         )
                     )
                 )
-                udp_tasks.append(
-                    asyncio.create_task(
-                        _send_udp_batch(
-                            mock_tenant_a["tenant_id"],
-                            mock_tenant_a["agent_id"],
-                            event_cursor,
-                            batch_size,
-                            "10.20.30.40",
+                if E2E_SYSLOG_ENABLED:
+                    udp_tasks.append(
+                        asyncio.create_task(
+                            _send_udp_batch(
+                                mock_tenant_a["tenant_id"],
+                                mock_tenant_a["agent_id"],
+                                event_cursor,
+                                batch_size,
+                                "10.20.30.40",
+                            )
                         )
                     )
-                )
                 event_cursor += batch_size
 
             if restart_worker:
                 await asyncio.sleep(5)
-                subprocess.run(["docker", "restart", "startup-backend-worker-siem-1"], check=True)
+                subprocess.run(["docker", "restart", E2E_WORKER_CONTAINER], check=True)
 
             await asyncio.gather(*http_tasks, *udp_tasks)
 

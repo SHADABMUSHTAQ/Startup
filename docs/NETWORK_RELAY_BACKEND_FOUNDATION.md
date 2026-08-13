@@ -424,3 +424,9 @@ Backend `NETWORK_RELAY_ENABLED=true` and frontend
 `VITE_NETWORK_RELAY_ENABLED=true` must only be enabled together after Section 12
 is closed. Until then, the endpoint, SIEM, FBR, and PECA user flows remain
 unchanged.
+
+The 2026-08-12 authenticated customer walkthrough confirmed that the deployed
+frontend does not yet expose an accepted customer relay workspace. This is the
+correct production behavior while both flags remain disabled. The required UI
+components are specified separately in the frontend UI/UX requirements PDF;
+their existence must not be interpreted as permission to enable the relay.

@@ -288,7 +288,7 @@ async def check_ip_reputation(redis_client: Redis, ip_address: str) -> Optional[
 
     # ── STEP 3: Write-Through Cache ──
     try:
-        await redis_client.setex(cache_key, ABUSEIPDB_CACHE_TTL, score)
+        await redis_client.set(cache_key, score, ex=ABUSEIPDB_CACHE_TTL)
     except Exception as e:
         logger.warning(f"[THREAT-INTEL] Redis cache write failed: {e}")
 

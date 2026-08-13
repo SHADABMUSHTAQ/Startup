@@ -194,7 +194,7 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
                 pipe.set(f"tenant_features:{tenant_id}", ",".join(features))
                 pipe.set(f"tenant_agent_limit:{tenant_id}", str(req.max_agents))
                 pipe.set(f"tenant_retention:{tenant_id}", str(req.retention_days))
-                pipe.setex(f"tenant_active:{tenant_id}", 60, "1")
+                pipe.set(f"tenant_active:{tenant_id}", "1", ex=60)
                 if req.daily_ingest_quota_bytes:
                     pipe.set(f"tenant_ingest_quota_bytes:{tenant_id}", str(req.daily_ingest_quota_bytes))
                 await pipe.execute()

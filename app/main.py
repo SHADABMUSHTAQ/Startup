@@ -133,13 +133,13 @@ async def redis_to_websocket_listener(app: FastAPI):
         finally:
             try:
                 if pubsub is not None:
-                    await pubsub.close()
+                    await pubsub.aclose()
             except Exception:
                 pass
             # only close temporary connections
             try:
                 if r is not None and getattr(app.state, "redis", None) is not r:
-                    await r.close()
+                    await r.aclose()
             except Exception:
                 pass
 
@@ -159,7 +159,7 @@ async def bootstrap_threat_intel_to_redis(db, redis_client) -> int:
         async for document in cursor:
             ip = str(document.get("ip") or "").strip()
             if ip:
-                pipe.setex(f"threat_intel:ip:{ip}", ttl, "true")
+                pipe.set(f"threat_intel:ip:{ip}", "true", ex=ttl)
                 count += 1
                 if count % 1000 == 0:
                     await pipe.execute()
@@ -195,7 +195,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"WARN: Redis connection attempt {attempt} failed: {e}")
             if redis_pool is not None:
-                try: await redis_pool.close()
+                try: await redis_pool.aclose()
                 except Exception: pass
             if attempt < max_retries:
                 await asyncio.sleep(backoff)
@@ -229,7 +229,7 @@ async def lifespan(app: FastAPI):
                     except Exception as e:
                         print(f" Redis health monitor: ping failed: {e}")
                         try:
-                            await r.close()
+                            await r.aclose()
                         except Exception:
                             pass
                         app.state.redis = None
@@ -290,7 +290,7 @@ async def lifespan(app: FastAPI):
                 await redis_client.delete(SCHEMA_BOOT_READY_KEY)
                 ok = await _connect_mongo_with_retries(run_schema=True)
                 if ok:
-                    await redis_client.setex(SCHEMA_BOOT_READY_KEY, 3600, "1")
+                    await redis_client.set(SCHEMA_BOOT_READY_KEY, "1", ex=3600)
                 return ok
 
             # Another API worker is doing schema/index work. Wait so this
@@ -360,7 +360,7 @@ async def lifespan(app: FastAPI):
     # Close global Redis connection pool
     try:
         if getattr(app.state, "redis", None) is not None:
-            await app.state.redis.close()
+            await app.state.redis.aclose()
     except Exception:
         pass
 
@@ -656,7 +656,7 @@ async def create_ws_ticket(
 
     ticket = str(uuid.uuid4())
     ticket_payload = json.dumps({"jti": jti, "tenant_id": tenant_id})
-    await redis_client.setex(f"{WS_TICKET_PREFIX}{ticket}", 30, ticket_payload)
+    await redis_client.set(f"{WS_TICKET_PREFIX}{ticket}", ticket_payload, ex=30)
 
     return {"ticket": ticket, "expires_in_seconds": 30}
 

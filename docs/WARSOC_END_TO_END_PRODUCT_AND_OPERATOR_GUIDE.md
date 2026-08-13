@@ -290,15 +290,24 @@ The production Compose service is disabled by default behind the `network-syslog
 
 ## 15. Current verification and remaining obligations
 
-### Verified in production
+### Recorded production and candidate verification
 
-- Backend commit `443939d`, frontend production binding, and agent `4.2.4-Native` are deployed.
+- Historical commit identifiers and agent `4.2.4-Native` results remain audit
+  history, not proof of the latest candidate. Public preflight later verified
+  the versioned `4.2.6` installer and manifest hash.
 - Preflight run `0ab1c87a9f` passed DNS separation, TLS, security headers, CORS, health, private ports, frontend binding, and exact installer hash verification.
 - Platform run `18282be9f1` completed with zero failures across provisioning, authentication, agent enrollment, ingest, SIEM, FBR, PECA, WebSocket, mitigation, RBAC, email, CSV, and PDF.
 - The real Windows endpoint produced all 11 PECA controls and the approved FBR invoice/FIM scenarios. An ordinary database write did not produce a FIM alert.
 - The 50-agent soak registered and ingested 50 agents, rejected seat 51, produced SIEM in 5.18 seconds, and completed in 7.22 seconds without pending Redis work.
 - Azure immutability, archive-before-delete, SHA-256 verification, cold retrieval, and cold-backed FBR/PECA CSV/PDF exports passed.
 - A real browser loaded login, dashboard, compliance, team access, and activation-code flows without console errors.
+
+The 2026-08-12 authenticated browser walkthrough additionally verified incident
+detail, activation-package and invitation dialogs, the PECA 11-control catalog,
+the FBR six-control catalog, and generic error presentation. It also found a
+30-second/1.1 MB PECA evidence-list timeout and raw FBR JSON in the list view.
+The backend candidate now projects metadata-only evidence summaries; deployment
+and paired frontend acceptance remain required.
 
 ### Remaining controlled-pilot obligations
 

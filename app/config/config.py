@@ -7,11 +7,15 @@ from urllib.parse import urlparse
 
 # --- FIX FOR PYDANTIC V2 COMPATIBILITY ---
 try:
-    from pydantic_settings import BaseSettings
+    from pydantic_settings import BaseSettings, SettingsConfigDict
 except ImportError:
     from pydantic import BaseSettings
+    SettingsConfigDict = None
 
 class Settings(BaseSettings):
+    if SettingsConfigDict is not None:
+        model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     # --- INFRASTRUCTURE ---
     jwt_secret_key: str = os.getenv("JWT_SECRET_KEY", "")
     mongodb_uri: str = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
@@ -148,9 +152,10 @@ class Settings(BaseSettings):
         "ENABLE_SECURITY_ALERT_EMAILS", "false"
     ).strip().lower() in {"1", "true", "yes"}
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"  # Extra env vars won't crash the app
+    if SettingsConfigDict is None:
+        class Config:
+            env_file = ".env"
+            extra = "ignore"
 
 
 def _looks_like_placeholder(value: str) -> bool:

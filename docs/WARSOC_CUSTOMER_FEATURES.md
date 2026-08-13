@@ -109,6 +109,14 @@ A separate customer-side network relay is under controlled validation for Fortin
 
 Network packet payload capture is not part of the approved design. Legacy UDP syslog is relay-attested and source-allowlisted; it is not represented as cryptographically authenticated by the originating firewall.
 
+Wazuh is not a separate customer feature or customer-visible engine. It is a
+disabled internal candidate detector that may later contribute validated shadow
+observations behind WarSOC. Current customer detection remains WarSOC-native.
+
+Compliance evidence lists return operational metadata only. Raw evidence is
+available only through a separately authorized record-detail workflow; list
+views must not render complete raw event bodies.
+
 ## 12. Customer Responsibilities and Limitations
 
 - Keep Windows Defender or the organization’s approved endpoint protection enabled.

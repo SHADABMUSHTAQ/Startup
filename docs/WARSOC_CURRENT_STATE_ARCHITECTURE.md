@@ -1,8 +1,8 @@
 # WarSOC Current-State Architecture and Operational Contract
 
 **Document status:** Authoritative as-built map
-**Snapshot date:** 2026-08-10
-**Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, and the disabled network-relay backend/frontend candidate.
+**Snapshot date:** 2026-08-13
+**Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the disabled network-relay candidate, and the disabled Wazuh shadow candidate.
 
 This document describes what the current source code does. It is not a sales claim and it does not treat an implemented path as production-proven unless verification evidence exists.
 
@@ -22,13 +22,13 @@ WarSOC currently has a coherent end-to-end architecture. The application enforce
 10. Normal compliance views, search, CSV exports, and PDF reports read bounded hot Mongo data and archive-ledger availability. Historical bytes require the feature-gated asynchronous retrieval workflow.
 11. The dashboard separates normal endpoint telemetry, immutable detection evidence, and mutable operator incidents.
 
-The approved published release is Windows agent `4.2.6-Native-Signed`. Exact-machine validation on 2026-07-21 proved enrollment, fresh heartbeats, SIEM alerting, PECA Event 4688 evidence, FBR invoice evidence, native FBR database-deletion correlation, 7,191 verified endpoint signatures and zero rejected signatures. The installer is 17,471,600 bytes with SHA-256 `F80C22FCD65FD5755B8483F105FCA4AA3FFFFFBAB4E29B807828D4CC406CDAE0`.
+The current source and public Azure artifact are Windows agent `4.2.8-Native-Signed`. The unsigned installer is 17,797,079 bytes with SHA-256 `04D594A771B0E7F047D4CFDFF5359AC83B8934E5C592D2843ADD59D276E72F67`; production preflight `6efd11cc9e` downloaded the public object and proved that exact match. The live API redirect and deployment-host environment still require release-parity verification after the candidate backend deployment.
 
-The working source is now `4.2.8-Native-Signed`. It contains the bounded, DTD/entity-rejecting native Windows XML parser guard introduced after 4.2.6 plus bounded historical spool replay. A local release candidate was built on 2026-08-10 only after the build was changed to fail when mandatory pywin32 telemetry/DPAPI modules are unavailable. The unsigned installer is 17,797,778 bytes with SHA-256 `781CEFB43ECE08155FDF5EDC734FADBB1D6BDA3AD4A9B9B6898799176F9BC142`. It has a matching local manifest, but it is not a published production release until exact-binary Defender/hash review, Azure upload, clean-machine installation, and production preflight pass. Existing 4.2.6 agents remain supported.
+The last complete exact-machine native workflow remains the 2026-07-21 `4.2.6-Native-Signed` run: enrollment, fresh heartbeats, SIEM alerting, PECA Event 4688 evidence, FBR invoice evidence, native FBR database-deletion correlation, 7,191 verified endpoint signatures and zero rejected signatures. Agent 4.2.8 preserves that architecture and adds the bounded DTD/entity-rejecting Windows XML parser guard plus bounded historical spool replay. Existing 4.2.6 agents remain compatible only while the backend permits their signed event format; new installations use 4.2.8.
 
 The disabled network-relay candidate has also passed 36 focused parser, schema, signing, encrypted-spool, outbox, Redis-admission, lifecycle, source-isolation and hybrid-correlation tests. A locally built 29,263,064-byte Windows relay candidate had SHA-256 `04602CBBCEEA8EF2BE18D5FD1C9DC2F89DADD0B9B8BA140C9B4444264BE055E3` and produced no detection in an enabled Microsoft Defender custom scan. It is unsigned and was not installed as a Windows service. A pfSense CE 2.8.1 Hyper-V appliance supplied native pass/block syslog proof, but this is not exact customer-hardware acceptance; these facts keep the production gate closed.
 
-The complete current backend suite closes with 397 passed, 1 explicitly skipped and zero application failures on 2026-08-10. The current frontend candidate passes targeted ESLint and the production Vite build. These local facts do not by themselves prove that a remote backend, Vercel deployment or CDN object runs the same commit/artifact; production acceptance must compare the deployed commit, API behavior and downloaded artifact hash.
+The maintained backend release-gate selection closed with 432 passed, 3 explicitly skipped and zero application failures on 2026-08-13. The skips are one opt-in isolated-stack E2E harness and two container-local Git metadata checks that passed directly on the host. The current frontend candidate passes ESLint, the production Vite build and a deterministic browser flow for summary-only compliance evidence plus explicit authorized detail. These local facts do not by themselves prove that a remote backend or Vercel deployment runs the same commit; production acceptance must compare deployed revisions and API behavior.
 
 ### 1.1 SIEM architecture and scope decision (2026-08-02)
 
@@ -135,10 +135,13 @@ Parser unit tests and simulated correlations do not equal real-device proof.
 `WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md` defines the reviewed target for
 using the Wazuh manager as a replaceable generic detection subsystem. The
 disabled backend and Compute-B bridge foundation is implemented and its focused
-contract suite passes, but it is not deployed, two-host live-tested, promoted,
-or customer-visible. A local isolated Wazuh 4.14.7 stack and the colleague's
-separate Wazuh laptop are lab candidates; neither is an approved production
-Compute B. The current WarSOC SIEM remains authoritative. Wazuh must not own
+contract suite passes. The isolated one-host live harness proves bidirectional
+mTLS, canary rule 100500, signed candidate return, shadow-only persistence,
+selected failure recovery and negative transport checks. The separate two-host
+lab additionally proves private Tailscale binding, bidirectional mTLS, signed
+dispatch/candidate lineage, tenant isolation and manager/bridge/candidate-API
+recovery. The subsystem is not deployed, promoted, or customer-visible; neither lab host is an approved
+production Compute B. The current WarSOC SIEM remains authoritative. Wazuh must not own
 endpoint enrollment, tenant identity,
 canonical evidence, FBR, PECA, incidents, storage, retrieval, customer access,
 or response. No production feature or claim changes until the recorded shadow
@@ -451,15 +454,14 @@ Agent `4.2.6-Native-Signed` is a compatibility and key-protection release over `
 
 The release does **not** add Sysmon, packet capture, firewall-device collection, proprietary POS database parsing or new customer-facing SIEM rules. Detection behavior is controlled by the backend catalogs and worker logic, not by the installer version alone.
 
-### 8.3 Agent 4.2.8 candidate state
+### 8.3 Agent 4.2.8 artifact state
 
-The repository source is labelled `4.2.8-Native-Signed` so an installer rebuilt
-from the post-4.2.6 XML-guard and replay-bounded source cannot be confused with the
-already published 4.2.6 bytes. A local unsigned installer and manifest were built
-on 2026-08-10 after enforcing mandatory pywin32 build dependencies. Nothing in
-this local build uploaded the artifact or declared it production. The approved
-public artifact remains 4.2.6 until the Defender/hash, Azure-upload, clean-machine
-installation, and production-preflight gates pass.
+The repository source is labelled `4.2.8-Native-Signed` so the XML-guard and
+replay-bounded build cannot be confused with historical 4.2.6 bytes. The
+versioned installer and manifest were built after enforcing mandatory pywin32
+dependencies. The public Azure object now matches the local 17,797,079-byte
+installer SHA-256 `04D594A7...76E72F67`. This proves artifact identity, not the
+live backend redirect, clean-machine lifecycle or deployed backend revision.
 
 ## 9. API Ingestion Contract
 
@@ -1095,20 +1097,21 @@ The API creates the incident collections and indexes and performs the bounded ho
 
 - DigitalOcean commit `526c55b` and Vercel commit `952e96b` are retained only as historical verified baselines. They are not evidence of the currently deployed commit after later pushes.
 - The 2026-07-22 working release contains agent `4.2.6-Native-Signed`, the custom-contract quote correction, non-cacheable invitation handoff, production-disabled manual injection and optional duration-aware archive-container routing.
-- The complete maintained backend regression closed on 2026-08-10 with `397 passed`, `1 skipped`, and zero application failures. The skip is explicitly environment-dependent; no failed test was reclassified as skipped. The focused security closure covers public auth response fields, signed POS replay protection, heartbeat freshness, 2FA throttling, evidence RBAC, CSV formula safety, upload cleanup, purge path containment, tenant/deployment quotas, endpoint-signing readiness, bounded indexed search, asynchronous archive-retrieval controls, and the shared endpoint/relay ingest ceiling.
+- The complete maintained backend regression closed on 2026-08-13 with `432 passed`, `3 skipped`, and zero application failures. The skips are one explicitly gated isolated-stack E2E harness and two Git metadata checks unavailable inside the test image but passed on the host. The focused security closure covers public auth response fields, signed POS replay protection, heartbeat freshness, 2FA throttling, evidence RBAC, CSV formula safety, upload cleanup, purge path containment, tenant/deployment quotas, endpoint-signing readiness, bounded indexed search, asynchronous archive-retrieval controls, and the shared endpoint/relay ingest ceiling.
 - Pytest discovery is now bounded to the maintained `tests/` tree. Root-level live-fire, scratch, browser and binary-output files remain outside the default regression run instead of causing unrelated collection failures. This changes test discovery hygiene, not application behavior.
 - The PECA worker integration test now submits and verifies all 11 catalog controls through authenticated signed ingestion, Redis, the PECA consumer and `peca_forensic_logs`; an FBR control event remains excluded from the PECA vault.
 - On 2026-07-29, a fresh candidate image built from the current Dockerfile contained `cryptography 49.0.0`, `setuptools 83.0.0`, `wheel 0.46.2`, and no `ecdsa`; its installed-environment `pip-audit` emitted `No known vulnerabilities found`. A direct pinned-requirements audit also reported no known vulnerability. The older cached development image is not release evidence and must not be promoted. Bandit reported no high-severity/high-confidence issue across `app`, `agent`, and `scripts`. Windows Event XML is obtained from the native Windows Event Log API and the current bounded parser rejects DTD/entity declarations before parsing.
 - SIEM source routing now requires trusted web-log provenance for web and phishing signatures while preserving native Event `4688` command-line detection. This prevents Windows events from being mislabeled as Web-WAF or phishing detections.
 - The `security_alerts` unique index now applies only to documents with a string `alert_uid`; the startup migration handles both Mongo index options and key-spec conflicts, while legacy rows without `alert_uid` remain readable.
 - Compliance evidence responses distinguish a valid empty hot vault from API failure and expose archive availability metadata without downloading historical blobs.
+- The 2026-08-12 authenticated walkthrough proved dashboard search/live-mode switching but found exact duplicate endpoint and incident rows in the rendered lists. The deployed compliance list also returned an approximately 1.1 MB PECA response in about 30 seconds and rendered raw FBR JSON. The paired candidate now projects bounded metadata summaries, renders readable evidence cards and calls the authorized lazy evidence-detail route only after explicit selection. Backend contracts, frontend lint and the production build pass; paired deployment plus authenticated payload/latency/browser proof remain required.
 - Frontend lint and the production Vite build pass. Vercel declares HSTS, CSP, clickjacking, MIME-sniffing, referrer, and browser-permission headers. The PDF sanitizer is pinned to DOMPurify 3.4.12 and React Router is pinned to 7.18.2. The registry still reports the React Router RSC server-action CSRF advisory; that code path is not reachable in this Vite client-only SPA, which defines no React Server Components or Router actions. The frontend uses `/incidents`, `/incidents/summary`, `/logs/live?source=siem&aggregate=true`, `/data/status`, the custom-contract quote payload and the one-time invitation-link response. Its new Endpoint Fleet was exercised against an isolated authenticated required-signing tenant. The main JavaScript chunk remains a performance warning at approximately 1.73 MB minified / 544 KB gzip.
 - `/auth/me` uses an explicit public-field allowlist, so encrypted 2FA material and future internal database fields cannot be returned accidentally.
 - Raw evidence detail is collection-scoped by role and entitlement: admin receives SIEM plus entitled compliance evidence, auditor receives entitled compliance evidence, and manager/analyst receive SIEM evidence only. Management-audit reads are admin-only.
 - Uploaded CSV source files are temporary parsing artifacts. Successful and failed uploads remove the physical source; failed partial imports are rolled back. `scripts/purge_legacy_upload_sources.py` provides a dry-run-first cleanup for files retained by older releases.
 - Python compilation passed for the changed API, database, worker, launch-validator, and measurement modules. Both repositories pass `git diff --check`.
-- Current installer: `warsoc_installer-4.2.6.exe`, 17,471,600 bytes, SHA-256 `F80C22FCD65FD5755B8483F105FCA4AA3FFFFFBAB4E29B807828D4CC406CDAE0`.
-- The versioned manifest is `pilot_hash_manifest-4.2.6.json` and also covers the packaged agent, NSSM, native telemetry script, and tenant policy.
+- Current installer: `warsoc_installer-4.2.8.exe`, 17,797,079 bytes, SHA-256 `04D594A771B0E7F047D4CFDFF5359AC83B8934E5C592D2843ADD59D276E72F67`.
+- The versioned manifest is `pilot_hash_manifest-4.2.8.json` and also covers the packaged agent, NSSM, native telemetry script, and tenant policy.
 
 ### 22.2 Production preflight
 
@@ -1118,7 +1121,8 @@ Historical production preflight run `15545d8ce7` passed on 2026-07-16:
 - Frontend/API TLS, HTTPS, HSTS, clickjacking protection, MIME protection, CORS with credentials, backend dependency health, and blocked public API docs passed.
 - MongoDB `27017`, Redis `6379`, and API `8000` are closed externally.
 - The deployed frontend is bound to `https://api.warsoc.tech/api/v1`, its same-origin API proxy returns the expected unauthenticated 401, and its contact form uses the WarSOC backend.
-- At that time, the authenticated agent download returned HTTP 307 to the then-current Azure `4.2.4` artifact. This is not current 4.2.6 CDN proof.
+- Production preflight `6efd11cc9e` on 2026-08-13 reconfirmed DNS/TLS separation, frontend assets, API binding and health, CORS, security headers, blocked public docs and private data ports, plus an exact SHA-256 match between local installer 4.2.8 and the public Azure artifact. This proves the deployed baseline and artifact, not the uncommitted candidate changes.
+- The older authenticated redirect observation targeted 4.2.4. Preflight `6efd11cc9e` proves the direct 4.2.8 Azure object; repeat the authenticated 307 assertion after deploying the matching backend environment.
 
 ### 22.3 Production platform pipeline
 
@@ -1196,13 +1200,13 @@ Status meanings:
 | DNS and TLS | `warsoc.tech` to Vercel; `api.warsoc.tech` to DigitalOcean/Nginx | PROVEN | DNS separation, HTTPS certificates, HSTS and certificate validity passed preflight `15545d8ce7`. |
 | Vercel frontend | Browser UI, auth hydration, dashboard, endpoint fleet, compliance and team workflows | CANDIDATE-PROVEN | The previous production baseline passed login and bounded reads. The local candidate consumes `/incidents`, `/incidents/summary`, aggregated SIEM evidence and backend-owned endpoint/signing health; authenticated local browser smoke plus lint/build pass, but the paired production deployment and network-path smoke are still required. |
 | Nginx gateway | TLS termination, security headers and reverse proxy | PROVEN with observation | Public headers/CORS/private-port checks pass. Real ingest returns 200. Some request bodies are buffered to temporary files; disk impact needs pilot measurement. |
-| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | CANDIDATE-PROVEN | The production baseline is healthy. The candidate adds tenant-scoped incident APIs, startup projection/indexing, shared endpoint-signing health, bounded exact search, and a feature-gated retrieval ledger; all 380 executable backend tests pass with three explicit skips, but the new routes still require production smoke after deployment. |
+| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | CANDIDATE-PROVEN | The production baseline is healthy. The candidate adds tenant-scoped incident APIs, startup projection/indexing, shared endpoint-signing health, bounded exact search, bounded compliance summaries, and a feature-gated retrieval ledger; all 432 maintained backend tests pass with three explicit skips, but the new routes still require production smoke after deployment. |
 | Authentication/session | Login, HttpOnly access cookie, CSRF double-submit and `/auth/me` | PROVEN | Existing tenant login, auth context and profile returned 200. Public signup returned 403. |
 | Manual sales flow | Quote/contact to operator follow-up; no automatic payment | PROVEN | Quote and contact requests returned 200; legacy payment webhook returned 404. No Safepay dependency is required. |
 | Tenant provisioning | Super-admin creates tenant, admin, packs and seat limit | PROVEN | Disposable production tenant provisioning and login passed in run `b87116c8af`. |
 | Team invitation | Admin creates role-specific one-time activation link; SMTP delivery is optional | CANDIDATE-PROVEN | The response is non-cacheable and returns the 24-hour single-use link once to the authenticated admin. Pending login denial, atomic activation, replay rejection and login with the chosen password pass. Remote browser copy/share activation remains an acceptance step. |
 | RBAC | Admin/manager/analyst/auditor route restrictions | PARTIAL | Regression and earlier production-assisted checks cover route denial/allow rules. A current invited auditor click-through remains required. |
-| Azure agent artifact | Public versioned installer delivery outside the backend host | CANDIDATE-PROVEN | Local `warsoc_installer-4.2.6.exe` is 17,471,600 bytes and matches SHA-256 `F80C22FC...06CDAE0`; production must verify that the 307 target downloads the same bytes. |
+| Azure agent artifact | Public versioned installer delivery outside the backend host | CANDIDATE-PROVEN | Public and local `warsoc_installer-4.2.8.exe` are 17,797,079 bytes and match SHA-256 `04D594A7...76E72F67`; the authenticated API 307 must be repeated after deployment-host environment synchronization. |
 | Installer and Windows service | Validate activation, configure telemetry and run agent under NSSM | PROVEN on exact machine | Agent `4.2.6-Native-Signed` enrolled and produced fresh heartbeats plus SIEM/PECA/FBR evidence on the test machine. |
 | Native Windows telemetry | Security/System XML collection without Sysmon | PROVEN | Audit policy is configured; Security and System channels report `ok`; current native Event 4688 evidence continues to arrive. |
 | Agent durability boundary | Local spool, retry, disk reserve and 500 MiB cap | PROVEN for current agent state | Metrics report zero spool bytes, zero blocked agents and zero spool-limit hits. Failure/recovery behavior remains covered by regression and prior native tests. |
@@ -1234,6 +1238,7 @@ Status meanings:
 | Capacity ceiling | Maximum 50 active agents per tenant and 50 aggregate active agents on the shared host | PROVEN by contract tests; prior synthetic soak | Mongo-backed floors prevent Redis restarts from bypassing either boundary. Real customer mix must still be monitored because event volume per endpoint varies. |
 | Linux/syslog | Linux endpoint telemetry | OUT OF SCOPE | Linux remains outside the Windows SMB pilot and no Linux agent/intake is claimed. |
 | Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | PFSENSE LAB-PROVEN CANDIDATE / DISABLED | Cloud API, strict metadata-only Fortinet/Cisco ASA/MikroTik/pfSense parsers, bounded encrypted spools, Fernet-protected raw cloud evidence, exact retry, DPAPI identity, separate Windows service/installer, lifecycle recovery, atomic Redis admission, per-device coverage state, source isolation, and backlog-safe limited hybrid correlations are implemented. A pfSense CE 2.8.1 Hyper-V lab proved native BSD syslog parsing, logged pass/block evidence, Ed25519 relay attestation, encrypted outage retention, unclean restart recovery, zero duplicate event UIDs, and continuous batch hashes. `NETWORK_RELAY_ENABLED=false`; packaged Windows-service acceptance, exact customer hardware, Fortinet/Cisco ASA/MikroTik appliance proof, retention, capacity, proactive external notification, and pilot proof remain open. |
+| Internal Wazuh detector | Receive minimized WarSOC projections and return validated candidate observations | TWO-HOST SHADOW TRANSPORT PROVEN / PRODUCTION DISABLED | Maintained Wazuh contracts and both local and separate-host live mTLS canaries pass with zero customer side effects. The two-host run proves signed transport, tenant isolation, bounded expiry, alert-file identity-change recovery and manager/bridge/candidate-API recovery. Explicit host-firewall rules, physical saturation, ruleset rollback and rule-family quality remain open. `WAZUH_DETECTION_MODE=disabled` and `WAZUH_PRIMARY_APPROVED=false` remain mandatory. |
 | External threat-intelligence enrichment | Third-party reputation/provider lookups | OUT OF SCOPE | No live provider integration is claimed for the current pilot. Native SIEM/FBR/PECA operation does not depend on it. |
 
 ## 23. Failure Map
@@ -1345,6 +1350,7 @@ Do not declare the current release fully accepted until all of the following are
 | Wazuh execution mind map and gate status | `docs/WARSOC_WAZUH_EXECUTION_MIND_MAP.md` |
 | Disabled Wazuh contracts, projector, outbox, bridge and candidate validator | `app/wazuh_integration/`, `app/workers/wazuh_dispatch_worker.py`, and `docker-compose.wazuh-bridge.yml` |
 | Wazuh lab implementation and acceptance procedure | `docs/WARSOC_WAZUH_IMPLEMENTATION_AND_LAB_RUNBOOK.md` |
+| Cross-system verification and customer-flow acceptance | `docs/WARSOC_VERIFICATION_AND_CUSTOMER_ACCEPTANCE_2026-08-12.md` |
 | Sanitized customer capability statement | `docs/WARSOC_CUSTOMER_FEATURES.md` |
 | Azure backend migration | `docs/AZURE_BACKEND_MIGRATION_RUNBOOK.md` and `deploy/azure/` |
 | Azure account, storage, immutability, and expiry controls | `docs/AZURE_ACCOUNT_AND_STORAGE_CREATION_RUNBOOK.md` |

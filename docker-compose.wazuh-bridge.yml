@@ -5,9 +5,32 @@ x-warsoc-bridge-security: &warsoc-bridge-security
     - ALL
 
 services:
+  warsoc-wazuh-bridge-init:
+    build: .
+    image: warsoc-wazuh-bridge:${WAZUH_BRIDGE_IMAGE_TAG:-local}
+    entrypoint: []
+    command:
+      - /bin/sh
+      - -c
+      - install -d -o 1000 -g 1000 -m 0700 /var/lib/warsoc-wazuh
+    user: "0:0"
+    restart: "no"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    volumes:
+      - warsoc_wazuh_bridge_spool:/var/lib/warsoc-wazuh
+
   warsoc-wazuh-bridge:
     <<: *warsoc-bridge-security
     build: .
+    image: warsoc-wazuh-bridge:${WAZUH_BRIDGE_IMAGE_TAG:-local}
     container_name: warsoc-wazuh-bridge
     entrypoint: []
     command:
@@ -45,6 +68,9 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+    depends_on:
+      warsoc-wazuh-bridge-init:
+        condition: service_completed_successfully
     networks:
       wazuh_private:
         ipv4_address: ${WAZUH_BRIDGE_CONTAINER_IP:?WAZUH_BRIDGE_CONTAINER_IP is required}

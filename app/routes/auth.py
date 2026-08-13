@@ -433,7 +433,7 @@ async def verify_agent_token(request: Request, token: str = Depends(oauth2_schem
                 {"active": 1, "status": 1, "has_active_plan": 1},
             )
             if not tenant_doc:
-                await redis.setex(tenant_active_key, 60, "0")
+                await redis.set(tenant_active_key, "0", ex=60)
                 raise HTTPException(status_code=403, detail="Tenant is inactive")
 
             tenant_status = str(tenant_doc.get("status") or "active").strip().lower()
@@ -448,7 +448,7 @@ async def verify_agent_token(request: Request, token: str = Depends(oauth2_schem
             )
             plan_enabled = bool(active_user or tenant_doc.get("has_active_plan") is True)
             tenant_allowed = tenant_enabled and plan_enabled
-            await redis.setex(tenant_active_key, 60, "1" if tenant_allowed else "0")
+            await redis.set(tenant_active_key, "1" if tenant_allowed else "0", ex=60)
             if not tenant_allowed:
                 raise HTTPException(status_code=403, detail="Tenant subscription is inactive")
 
@@ -654,7 +654,7 @@ async def logout(request: Request, current_user=Depends(get_current_user)):
                 if redis:
                     # Store the token in the blacklist until its natural expiration time
                     try:
-                        await redis.setex(f"warsoc:blacklist:{jti}", ttl, "revoked")
+                        await redis.set(f"warsoc:blacklist:{jti}", "revoked", ex=ttl)
                     except Exception as e:
                         print(f"âš ï¸ Failed to write logout blacklist to Redis: {e}")
 

@@ -237,7 +237,7 @@ class SIEMEngine:
                 # Set Redis cooldown key with expiration
                 if self.redis:
                     try:
-                        await self.redis.setex(cooldown_key, cooldown_seconds, "1")
+                        await self.redis.set(cooldown_key, "1", ex=cooldown_seconds)
                     except Exception:
                         # Silently fail if Redis is down, alert still fires
                         pass
@@ -1241,7 +1241,7 @@ class CorrelationEngine:
 
             # Store current login (overwrite after comparison)
             current_data = json.dumps({"lat": lat, "lon": lon, "ip": source_ip, "ts": timestamp_iso})
-            await self.redis.setex(travel_key, travel_window, current_data)
+            await self.redis.set(travel_key, current_data, ex=travel_window)
 
             if not prev_raw:
                 corr_logger.info(f"[CORR][TRAVEL] First login for {user} recorded baseline.")
@@ -1334,7 +1334,7 @@ class CorrelationEngine:
         try:
             if event_id == "4732":
                 # Stage 1: Admin grant detected — arm the trigger
-                await self.redis.setex(ghost_key, ghost_window, "armed")
+                await self.redis.set(ghost_key, "armed", ex=ghost_window)
                 corr_logger.info(
                     f"[CORR][GHOST] Stage-1 armed: 4732 by {user} for {tenant_id}. "
                     f"Watching for 1102 within {ghost_window}s..."

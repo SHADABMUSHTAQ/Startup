@@ -33,6 +33,7 @@ from app.wazuh_integration.contracts import (
 from app.wazuh_integration.security import (
     ConnectorBodyTooLarge,
     ConnectorSecurityError,
+    build_mtls_client_context,
     build_signed_headers,
     read_bounded_request_body,
     verify_signed_request,
@@ -390,10 +391,15 @@ async def export_candidates(spool: BridgeSpool, settings: BridgeSettings) -> int
         body=body,
     )
     try:
+        tls_context = build_mtls_client_context(
+            ca_file=settings.candidate_ca_file,
+            cert_file=settings.candidate_cert_file,
+            key_file=settings.candidate_key_file,
+        )
         async with httpx.AsyncClient(
-            verify=str(settings.candidate_ca_file),
-            cert=(str(settings.candidate_cert_file), str(settings.candidate_key_file)),
+            verify=tls_context,
             timeout=10,
+            trust_env=False,
         ) as client:
             response = await client.post(
                 settings.candidate_url,
@@ -519,10 +525,15 @@ async def export_health_events(
         connector_id=settings.connector_id,
         body=body,
     )
+    tls_context = build_mtls_client_context(
+        ca_file=settings.candidate_ca_file,
+        cert_file=settings.candidate_cert_file,
+        key_file=settings.candidate_key_file,
+    )
     async with httpx.AsyncClient(
-        verify=str(settings.candidate_ca_file),
-        cert=(str(settings.candidate_cert_file), str(settings.candidate_key_file)),
+        verify=tls_context,
         timeout=10,
+        trust_env=False,
     ) as client:
         response = await client.post(
             settings.health_url,

@@ -6,7 +6,6 @@ import hashlib
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -19,6 +18,7 @@ from app.wazuh_integration.contracts import (
     DetectionInputReceipt,
 )
 from app.wazuh_integration.security import (
+    build_mtls_client_context,
     build_signed_headers,
     decrypt_payload,
     verify_signed_request,
@@ -196,18 +196,12 @@ async def _release_for_retry(db, document: dict[str, Any], settings, detail: str
     )
 
 
-def _tls_options(settings) -> tuple[str, tuple[str, str]]:
-    required = (
-        settings.wazuh_dispatch_ca_file,
-        settings.wazuh_dispatch_cert_file,
-        settings.wazuh_dispatch_key_file,
+def _tls_options(settings):
+    return build_mtls_client_context(
+        ca_file=settings.wazuh_dispatch_ca_file,
+        cert_file=settings.wazuh_dispatch_cert_file,
+        key_file=settings.wazuh_dispatch_key_file,
     )
-    if any(not value for value in required):
-        raise RuntimeError("Wazuh dispatch mTLS files are not configured")
-    for value in required:
-        if not Path(value).is_file():
-            raise RuntimeError("Wazuh dispatch mTLS file is unavailable")
-    return required[0], (required[1], required[2])
 
 
 async def dispatch_claimed(db, documents: list[dict[str, Any]], settings) -> dict[str, int]:
@@ -252,16 +246,16 @@ async def dispatch_claimed(db, documents: list[dict[str, Any]], settings) -> dic
         return {"retry": len(valid), "batch_too_large": 1}
 
     try:
-        verify, cert = _tls_options(settings)
+        tls_context = _tls_options(settings)
         headers = build_signed_headers(
             secret=settings.wazuh_dispatch_signing_secret,
             connector_id=settings.wazuh_connector_id,
             body=body,
         )
         async with httpx.AsyncClient(
-            verify=verify,
-            cert=cert,
+            verify=tls_context,
             timeout=settings.wazuh_dispatch_timeout_seconds,
+            trust_env=False,
         ) as client:
             response = await client.post(
                 settings.wazuh_dispatch_url,

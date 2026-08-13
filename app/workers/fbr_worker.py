@@ -176,7 +176,7 @@ async def _normalize_native_fim_event(redis: Redis, log_data: dict, event_id: st
             return "ignore", None, None
         key = _fim_correlation_key(log_data, handle_id)
         try:
-            await redis.setex(key, FIM_CORRELATION_TTL_SECONDS, object_path)
+            await redis.set(key, object_path, ex=FIM_CORRELATION_TTL_SECONDS)
             await increment_redis_counter(redis, "warsoc_fim_delete_intents_total")
         except Exception as exc:
             raise FIMCorrelationUnavailable(f"Unable to persist FIM delete intent: {exc}") from exc

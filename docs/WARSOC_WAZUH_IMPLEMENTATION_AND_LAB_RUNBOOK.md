@@ -1,8 +1,8 @@
 # WarSOC Wazuh Implementation and Two-Laptop Lab Runbook
 
-**Status:** Hardened shadow foundation complete; disabled; live two-host acceptance pending
+**Status:** Two-host shadow transport accepted; production disabled; rule-quality and release gates pending
 
-**Last updated:** 2026-08-12
+**Last updated:** 2026-08-13
 
 ## 1. Non-Negotiable Boundary
 
@@ -152,7 +152,8 @@ docker compose -f docker-compose.yml run --rm --no-deps `
   tests/test_wazuh_transport_state_machine.py
 ```
 
-Result recorded on 2026-08-12 after the bridge hardening review: **31 passed**.
+Result recorded on 2026-08-12 after the bridge hardening review and mTLS client
+compatibility fix: **32 passed**.
 
 The focused tests prove durable-before-ack bridge admission, request tamper and
 replay rejection, idempotent receipts, signed dispatcher responses, bounded
@@ -163,12 +164,24 @@ Compatibility checks also passed for endpoint event signing, the existing
 network relay, production Compose contracts, native detection, tenant/platform
 quotas, seven-day SIEM hot retention, immutable archive deletion safeguards,
 evidence access scope, incident workflow, the FBR deep dive, and the PECA
-11-event deep dive. The complete review record is **171 passed**: 31 Wazuh
-contracts and 140 cross-system compatibility contracts.
+11-event deep dive. The 2026-08-13 maintained candidate selection records **346
+passed** across Wazuh, relay, native SIEM/FBR/PECA, incidents, signing, storage,
+retrieval, quotas, security, user journeys and backend hardening. This is a
+selected release-gate suite, not a claim that every historical test file is
+current or that Wazuh is approved as a production-primary detector.
 
-This proves contracts and local state logic. It does not prove two-host mTLS,
-Wazuh manager receipt, real `alerts.json` rotation, outage survival, or detection
-quality.
+The isolated local live harness additionally proved mutual TLS in both
+directions, Wazuh manager receipt, canary rule `100500`, signed candidate return,
+manager-outage recovery, bridge-restart recovery, durable retry state and
+shadow-only side effects. It rejected replay, tampering, wrong connector
+identity, oversized bodies and missing client certificates.
+
+The 2026-08-13 separate two-host run then proved private Tailscale binding,
+bidirectional mTLS, durable receipt, rule 100500, signed candidate return,
+two-tenant lineage isolation, manager/bridge/candidate-API outage recovery and
+fail-closed live-window expiry. The adjacent maintained Docker regression gate
+recorded **233 passed**. Real spool saturation under load, explicit host-firewall
+rules, ruleset upgrade/rollback and production detection quality remain open.
 
 ## 8. Compute-B Preparation
 
@@ -188,9 +201,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\prepare_wazuh_lab_integration
   -Apply
 ```
 
-The script backs up `ossec.conf` and local rules, adds TCP 15140 with an exact
-bridge-IP allowlist, installs rule 100500, runs `wazuh-analysisd -t`, requires a
-successful `wazuh-logtest`, restarts only the manager, and prints hashes.
+The script backs up the host-mounted manager configuration and local rules, adds
+TCP 15140 with an exact bridge-IP allowlist, installs rule 100500, runs
+`wazuh-analysisd -t`, requires a successful `wazuh-logtest`, recreates only the
+manager, and prints hashes. Updating the host-mounted configuration is required;
+editing only `/var/ossec/etc/ossec.conf` inside the running container is not
+persistent across recreation.
 
 Do not continue if configuration validation or logtest fails.
 
@@ -211,6 +227,11 @@ Copy `.env.wazuh-bridge.example` to an ignored `.env.wazuh-bridge` on Compute B.
 Set the actual Wazuh log volume, Docker network, reserved bridge IP, registry
 SHA-256, private Compute-A candidate URL, and certificate paths. Validate the
 Compose rendering before starting it:
+
+The bridge Compose includes a one-shot root init service which creates the named
+spool directory as UID/GID 1000 with mode `0700`. Do not remove it: without this
+step a fresh named volume is root-owned and the non-root bridge cannot open its
+SQLite spool.
 
 The Compute-B environment also sets a private Compute-A health URL. It uses the
 same B-to-A mTLS identity and candidate-signing secret, but a separate route and
@@ -275,15 +296,19 @@ outbox retries within its cap.
 
 ## 12. Remaining Acceptance Work
 
-The integration is not complete until these artifacts pass:
+Compute-B baseline and private two-host shadow transport are accepted. Wazuh
+4.14.7, loopback-only host bindings, the exact bridge-IP listener allowlist,
+rule `100500`, configuration validation, Tailscale-only service binding,
+bidirectional mTLS, signed requests and responses, cross-tenant lineage, and
+manager/bridge/candidate-API recovery passed. Alert-file identity change was
+reported and processing resumed. A dispatch older than its bounded live window
+expired with signed critical health instead of producing a late detection.
 
-- real two-host mTLS in both directions;
-- invalid certificate, signature, stale timestamp, and replay rejection;
-- bridge and candidate API firewall proof;
-- process restart, manager restart, and network outage recovery;
-- real `alerts.json` truncation and rotation without silent loss;
-- outbox and both bridge-spool saturation behavior;
-- cross-tenant canary rejection;
+The integration is not production-complete until these artifacts pass:
+
+- explicit bridge and candidate API Windows firewall proof on both hosts;
+- physical outbox and both bridge-spool saturation/load behavior (bounded
+  refusal and retry behavior currently pass by contract only);
 - ruleset upgrade and rollback;
 - FBR/PECA/current-SIEM independence during forced Wazuh failure;
 - positive, negative, noise, malformed, and boundary corpora for each proposed

@@ -7,7 +7,7 @@ services:
     container_name: warsoc-mongodb
     restart: unless-stopped
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     command: ["--wiredTigerCacheSizeGB", "0.5"]
     environment:
       - MONGO_INITDB_ROOT_USERNAME=${MONGO_USER}
@@ -47,7 +47,7 @@ services:
     container_name: warsoc-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     command:
       - redis-server
       - --requirepass
@@ -95,7 +95,7 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*", "--workers", "1"]
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
       - ${WARSOC_ENV_FILE:-.env}
     environment:

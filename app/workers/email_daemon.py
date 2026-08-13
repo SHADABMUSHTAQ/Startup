@@ -467,7 +467,7 @@ async def run_email_daemon() -> None:
                 task.cancel()
             await asyncio.gather(*active_tasks, return_exceptions=True)
         try:
-            await redis_client.close()
+            await redis_client.aclose()
         except Exception:
             pass
 

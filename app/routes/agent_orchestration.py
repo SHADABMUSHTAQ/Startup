@@ -260,7 +260,7 @@ async def generate_activation(
     }
     
     ttl = 86400
-    await redis_client.setex(f"warsoc:activation:{code}", ttl, json.dumps(payload))
+    await redis_client.set(f"warsoc:activation:{code}", json.dumps(payload), ex=ttl)
     
     return ActivationResponse(activation_code=code, expires_in_seconds=ttl)
 
@@ -594,7 +594,7 @@ async def agent_heartbeat(
                 }
             },
         )
-        await redis_client.setex(f"warsoc:agent_cache:db_update:{body.agent_id}", 60, "1")
+        await redis_client.set(f"warsoc:agent_cache:db_update:{body.agent_id}", "1", ex=60)
     
     # Check OTA Updates
     auto_update_enabled = str(getattr(settings, "auto_update_enabled", "false")).lower() == "true"

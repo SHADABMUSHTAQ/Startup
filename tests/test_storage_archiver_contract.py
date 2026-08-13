@@ -9,7 +9,24 @@ import pytest
 from app.workers import storage_archiver
 from app.utils import archive_reader
 from app.routes import compliance
-from app.routes.compliance import _curate_evidence_record
+from app.routes.compliance import (
+    _EVIDENCE_LIST_PROJECTION,
+    _curate_evidence_record,
+    _summarize_evidence_message,
+    _fetch_docs_page,
+)
+
+
+def test_compliance_evidence_summary_bounds_large_messages():
+    summary, truncated = _summarize_evidence_message("x" * 750)
+
+    assert len(summary) == 500
+    assert summary.endswith("...")
+    assert truncated is True
+
+    short_summary, short_truncated = _summarize_evidence_message({"event": "4688"})
+    assert short_summary == '{"event":"4688"}'
+    assert short_truncated is False
 
 
 def test_compliance_evidence_exposes_safe_storage_tier_provenance():
@@ -29,6 +46,73 @@ def test_compliance_evidence_exposes_safe_storage_tier_provenance():
     assert archived["storage_tier"] == "cold_archive"
     assert archived["archived"] is True
     assert "_archive_blob_name" not in archived
+
+
+def test_compliance_evidence_list_never_exposes_raw_or_signed_payloads():
+    curated = _curate_evidence_record(
+        {
+            "_id": "record-1",
+            "raw_event": "raw",
+            "raw_event_data": {"secret": True},
+            "raw_data": {"secret": True},
+            "processed_data": {"secret": True},
+            "signed_payload": "large-payload",
+        },
+        "peca_forensic",
+        "peca_forensic_logs",
+    )
+
+    for field in (
+        "raw_event",
+        "raw_event_data",
+        "raw_data",
+        "processed_data",
+        "signed_payload",
+    ):
+        assert field not in curated
+    assert curated["detail_available"] is True
+    assert curated["content_redacted_from_list"] is True
+
+
+@pytest.mark.asyncio
+async def test_compliance_hot_list_applies_metadata_only_projection():
+    class FakeCursor:
+        def sort(self, *_args, **_kwargs):
+            return self
+
+        def skip(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        async def to_list(self, length):
+            return [{"event_uid": "event-1"}][:length]
+
+    class FakeCollection:
+        def __init__(self):
+            self.find_args = None
+
+        async def count_documents(self, _query):
+            return 1
+
+        def find(self, query, projection):
+            self.find_args = (query, projection)
+            return FakeCursor()
+
+    collection = FakeCollection()
+    docs, total = await _fetch_docs_page(
+        collection,
+        {"tenant_id": "TENANT-A"},
+        None,
+        None,
+        skip=0,
+        limit=50,
+    )
+
+    assert total == 1
+    assert docs == [{"event_uid": "event-1"}]
+    assert collection.find_args[1] == _EVIDENCE_LIST_PROJECTION
 
 
 @pytest.mark.asyncio

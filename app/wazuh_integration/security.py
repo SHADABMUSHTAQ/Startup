@@ -6,7 +6,9 @@ import hashlib
 import hmac
 import re
 import secrets
+import ssl
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Mapping
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -22,6 +24,30 @@ class ConnectorSecurityError(ValueError):
 
 class ConnectorBodyTooLarge(ConnectorSecurityError):
     pass
+
+
+def build_mtls_client_context(
+    *,
+    ca_file: str | Path,
+    cert_file: str | Path,
+    key_file: str | Path,
+) -> ssl.SSLContext:
+    """Build a CA-verifying client context with an explicit mTLS identity."""
+    paths = tuple(Path(value) for value in (ca_file, cert_file, key_file))
+    if any(not path.is_file() for path in paths):
+        raise ConnectorSecurityError("connector mTLS file is unavailable")
+    context = ssl.create_default_context(
+        purpose=ssl.Purpose.SERVER_AUTH,
+        cafile=str(paths[0]),
+    )
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
+    try:
+        context.load_cert_chain(certfile=str(paths[1]), keyfile=str(paths[2]))
+    except (OSError, ssl.SSLError) as exc:
+        raise ConnectorSecurityError("connector mTLS identity is invalid") from exc
+    return context
 
 
 async def read_bounded_request_body(request, *, max_bytes: int) -> bytes:

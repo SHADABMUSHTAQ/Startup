@@ -341,7 +341,7 @@ async def _mark_siem_hot_done(redis_client: Redis, tenant_id: str, event_uid: st
     if not tenant_id or not event_uid:
         return
     try:
-        await redis_client.setex(_siem_hot_done_key(tenant_id, event_uid), 7 * 24 * 60 * 60, "1")
+        await redis_client.set(_siem_hot_done_key(tenant_id, event_uid), "1", ex=7 * 24 * 60 * 60)
     except Exception as exc:
         logger.warning(f"[SIEM-HOT] Failed to set idempotency marker: {exc}")
 
@@ -1186,7 +1186,7 @@ async def siem_worker():
                 await asyncio.sleep(1)
     finally:
         try:
-            await redis.close()
+            await redis.aclose()
         except Exception:
             pass
         try:

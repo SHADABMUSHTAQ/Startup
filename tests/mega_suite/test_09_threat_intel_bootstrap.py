@@ -86,8 +86,15 @@ class _FakeMongoDB:
 class _FakeRedisPipeline:
     def __init__(self):
         self.commands = []
+
+    def set(self, key, value, ex=None):
+        self.commands.append((key, ex, value))
+        return self
+
     def setex(self, key, ttl, value):
         self.commands.append((key, ttl, value))
+        return self
+
     async def execute(self):
         pass
 

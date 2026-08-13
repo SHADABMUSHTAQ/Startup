@@ -59,6 +59,8 @@ class FakeRedis:
         if nx and key in self.data:
             return False
         self.data[key] = value
+        if ex is not None:
+            self.ttls[key] = int(ex)
         return True
 
     async def eval(self, script, numkeys, correlation_key, claim_key, claim_ttl):
