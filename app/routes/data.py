@@ -90,6 +90,11 @@ def _time_filter(days: str | int | None, collection_name: str) -> dict:
     return {time_field: {"$gte": cutoff}}
 
 
+def _indexed_time_sort(time_field: str) -> list[tuple[str, int]]:
+    """Return the newest-first sort covered by each tenant/time index."""
+    return [(time_field, -1)]
+
+
 def _exact_search_query(tenant_id: str, term: str) -> dict:
     event_id_terms = [term]
     if term.isdigit():
@@ -128,14 +133,17 @@ async def _run_safe_global_search(db, tenant_id: str, q: str, days: str, skip: i
         if search_term:
             exact_query = _exact_search_query(tenant_id, search_term)
             exact_query = {"$and": [exact_query, time_clause]}
-            cursor = db[coll_name].find(exact_query).sort([(sort_field, -1), ("_id", -1)]).limit(limit)
+            # Keep this sort aligned with the tenant/time compound indexes.
+            # Adding _id here forces MongoDB to fetch and sort every matching
+            # hot record before applying the limit.
+            cursor = db[coll_name].find(exact_query).sort(_indexed_time_sort(sort_field)).limit(limit)
             rows = await cursor.to_list(length=limit)
             for row in rows:
                 row["_hot_source_collection"] = coll_name
             docs.extend(rows)
         else:
             latest_query = {"$and": [{"tenant_id": tenant_id}, time_clause]}
-            cursor = db[coll_name].find(latest_query).sort([(sort_field, -1), ("_id", -1)]).limit(limit)
+            cursor = db[coll_name].find(latest_query).sort(_indexed_time_sort(sort_field)).limit(limit)
             rows = await cursor.to_list(length=limit)
             for row in rows:
                 row["_hot_source_collection"] = coll_name

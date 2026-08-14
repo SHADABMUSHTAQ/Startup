@@ -164,9 +164,10 @@ Compatibility checks also passed for endpoint event signing, the existing
 network relay, production Compose contracts, native detection, tenant/platform
 quotas, seven-day SIEM hot retention, immutable archive deletion safeguards,
 evidence access scope, incident workflow, the FBR deep dive, and the PECA
-11-event deep dive. The 2026-08-13 maintained candidate selection records **346
-passed** across Wazuh, relay, native SIEM/FBR/PECA, incidents, signing, storage,
-retrieval, quotas, security, user journeys and backend hardening. This is a
+11-event deep dive. The final 2026-08-13 maintained release gate records **432
+passed, 3 explicitly skipped, and 0 failed** across Wazuh, relay, native
+SIEM/FBR/PECA, incidents, signing, storage, retrieval, quotas, security, user
+journeys, and backend hardening. This is a
 selected release-gate suite, not a claim that every historical test file is
 current or that Wazuh is approved as a production-primary detector.
 
@@ -325,3 +326,6 @@ Set `WAZUH_DETECTION_MODE=disabled` and stop the two optional Compute-A services
 Stop the Compute-B bridge. Do not delete canonical SIEM, FBR, PECA, incident, or
 archive data. Preserve outbox, DLQ, quarantine, shadow observations, bridge
 health events, configuration hashes, and acceptance artifacts for review.
+
+The phase-by-phase implementation and remaining-gate ledger is
+`docs/WARSOC_WAZUH_FIREWALL_IMPLEMENTATION_LEDGER_2026-08-13.md`.

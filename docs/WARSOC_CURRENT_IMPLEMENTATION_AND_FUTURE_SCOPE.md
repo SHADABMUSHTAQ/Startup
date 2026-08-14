@@ -1,7 +1,7 @@
 # WarSOC Current Implementation and Future Scope Register
 
 **Document role:** Consolidated source-of-truth index
-**Snapshot date:** 2026-08-12
+**Snapshot date:** 2026-08-13
 **Audience:** WarSOC engineering, operations, security review, and product leadership
 **Applies to:** The backend working tree, the published Windows agent boundary, the disabled network-relay candidate, and the disabled Wazuh detection candidate
 
@@ -30,29 +30,32 @@ implementation contracts remain in the documents listed in Section 16.
 
 At this snapshot:
 
-- The backend worktree is on branch `backend` at local commit `6b0e102`.
-- The branch is one commit behind `origin/backend`.
-- The worktree contains a large mixed set of modified and untracked files.
-- The Wazuh integration, archive retrieval, and several architecture documents are
-  present in the worktree but are not all committed.
-- This state is not a frozen release and must not be pushed or deployed as one
-  undifferentiated batch.
-- The exact currently deployed backend and frontend commits were not re-verified
-  while producing this register.
+- The authoritative backend branch is `backend` at pushed commit `7e81a9d`.
+- The authoritative frontend branch is `main` at pushed commit `6f0cc5a`.
+- The deployment operator pulled the backend commit, synchronized the required
+  non-secret production flags, rebuilt the API/worker/cron/archiver services,
+  and reported healthy containers with no matching error logs.
+- The deployed frontend bundle contains the bounded compliance summary and
+  explicit evidence-detail workflow from `6f0cc5a`.
+- Production preflight `83aa506f9e` passed DNS, TLS, frontend assets and API
+  binding, backend dependency health, CORS, security headers, blocked public
+  docs/private ports, and the exact public Azure installer hash.
+- Wazuh and firewall-relay production profiles remain deliberately disabled.
 
-Release identity therefore remains an `OPEN-GATE`. Before the next deployment,
-WarSOC must record the reviewed backend commit, frontend commit, Docker image
-digests, sanitized configuration fingerprint, database/index migration state,
-installer version, installer SHA-256, Azure object SHA-256, and acceptance run ID.
+Release identity is recorded for this deployment. Docker image digests,
+sanitized configuration fingerprint, database/index migration state, and
+authenticated post-deploy customer-flow evidence remain release artifacts to
+capture for a formal paid-customer freeze.
 
 ### 2.1 Windows agent release state
 
 | Item | State |
 |---|---|
-| Published/accepted agent | `4.2.6-Native-Signed`; historically validated on a real Windows endpoint. |
+| Published/accepted agent | `4.2.8-Native-Signed`; public Azure artifact and local manifest match exactly. |
+| Historical exact-machine proof | `4.2.6-Native-Signed` completed enrollment, signed ingestion, SIEM, PECA, and FBR validation on the test endpoint. |
 | Working source agent | `4.2.8-Native-Signed`. |
 | 4.2.8 additions | Bounded XML parsing with DTD/entity rejection, bounded historical replay, and a build gate for required Windows/DPAPI dependencies. |
-| 4.2.8 release state | Local candidate only; Azure hash identity, Defender review, clean-machine install, and production preflight remain open. |
+| 4.2.8 release state | Published and preflight-proven: 17,797,079 bytes, SHA-256 `04D594A771B0E7F047D4CFDFF5359AC83B8934E5C592D2843ADD59D276E72F67`. Exact clean-machine workflow acceptance remains inherited from 4.2.6 until repeated on 4.2.8. |
 | Installer trust | Hash allowlisting supports controlled pilots while Defender remains enabled. The installer is not publisher code-signed. |
 
 ## 3. Current Product Boundary
@@ -191,7 +194,7 @@ POS schemas or safely read arbitrary production databases.
 |---|---|---|---|
 | Incident workflow | `ACTIVE` | Assignment, acknowledgement, notes, closure, occurrence grouping, and evidence references. | Final role/concurrency/browser acceptance. |
 | IP/CIDR mitigation | `ACTIVE` with guards | Uses active agents and self-lockout protections. It is not a general EDR response system. | Controlled production rollback proof. |
-| Dashboard | `HISTORICALLY-PROVEN` | Separates telemetry, detection evidence, and incidents. Current frontend commit parity was not checked for this register. | Verify current Vercel commit, API binding, WebSocket/HTTP reconciliation, and role views. |
+| Dashboard | `ACTIVE`; current bundle verified | Separates telemetry, detection evidence, and incidents. Frontend `6f0cc5a` is present in the deployed Vercel bundle and uses the production API binding. | Complete current authenticated WebSocket/HTTP reconciliation and role-view acceptance. |
 | CSV/PDF | `ACTIVE` for bounded hot data | PDF is a human-readable report, not the cryptographic evidence object. Historical bytes use retrieval. | Final layout/data completeness and role acceptance. |
 | Email | `OPTIONAL` | Security-alert email is intentionally disabled. Sales/contact/invitation email may use SMTP, with manual invitation-link fallback. | Monitor SMTP quota only for retained email uses. |
 
@@ -407,6 +410,8 @@ when the customer POS explicitly supplies it under the agreed contract.
 
 **Priority:** P0
 **Outcome:** One reviewed release candidate.
+**Current status:** Complete for backend `7e81a9d`, frontend `6f0cc5a`, and
+agent 4.2.8; production preflight `83aa506f9e` passed.
 
 - Reconcile the local branch with `origin/backend` without losing dirty work.
 - Split current work into reviewable commits by component.
@@ -418,6 +423,9 @@ when the customer POS explicitly supplies it under the agreed contract.
 
 **Priority:** P0
 **Outcome:** Current SIEM/FBR/PECA product is deployable without relying on future modules.
+**Current status:** Core release deployed and healthy. Exact 4.2.8 clean-machine
+workflow repetition, SIEM raw-evidence privacy design, and final paid-customer
+backup/retention acceptance remain separate controlled gates.
 
 - Align required audit categories and SACL profiles with enabled rules.
 - Approve the SIEM raw-evidence privacy boundary.
@@ -429,6 +437,8 @@ when the customer POS explicitly supplies it under the agreed contract.
 
 **Priority:** P1 after Phase 1
 **Outcome:** One approved canary traverses WarSOC to Wazuh and back without changing customer incidents.
+**Current status:** Complete as a controlled two-host shadow-transport lab.
+Production remains disabled.
 
 - Connect Compute A and the separate Wazuh lab through an approved private link.
 - Install mTLS identities and pin registry/config hashes.
@@ -441,6 +451,9 @@ when the customer POS explicitly supplies it under the agreed contract.
 
 **Priority:** P1 after shadow proof
 **Outcome:** Both detectors can contribute to one WarSOC incident.
+**Current status:** Contracts, provenance, candidate validation, and shadow
+ledger are implemented. Rule-family quality measurement and any incident
+promotion remain open.
 
 - Implement the normalized candidate and reconciliation contract.
 - Preserve multi-engine observations as internal provenance.
@@ -451,6 +464,9 @@ when the customer POS explicitly supplies it under the agreed contract.
 
 **Priority:** P1/P2
 **Outcome:** One explicitly supported firewall model has evidence-backed onboarding.
+**Current status:** pfSense CE 2.8.1 is virtual-lab-validated. Packaged Windows
+service acceptance, exact customer hardware, measured load, 24-hour non-POS
+pilot, and customer UI remain open; production stays disabled.
 
 - Complete exact Windows Relay service/ACL/DPAPI/spool/upgrade tests.
 - Validate pfSense end to end first, then each separately offered vendor.
@@ -464,6 +480,8 @@ when the customer POS explicitly supplies it under the agreed contract.
 
 **Priority:** P2
 **Outcome:** Stronger endpoint posture without turning WarSOC into an uncontrolled EDR.
+**Current status:** Future scope. It is not part of the current Wazuh or relay
+production claim.
 
 - Expand only approved path baselines and security posture checks.
 - Measure event volume and false positives before enabling each policy.
@@ -474,6 +492,9 @@ when the customer POS explicitly supplies it under the agreed contract.
 
 **Priority:** P0 before paid retention promises; otherwise P2
 **Outcome:** Retention contracts and capacity are physically enforceable.
+**Current status:** Archive-before-delete and immutable fallback are active;
+duration-specific containers, retrieval staging/UI, and replacement-host scale
+proof remain open.
 
 - Finish Azure retention class containers and retrieval staging.
 - Complete asynchronous retrieval and monthly allowance enforcement.
@@ -542,6 +563,7 @@ A capability is not `ACTIVE` merely because code exists. It is done only when:
 | Current operator/customer flow | `docs/WARSOC_END_TO_END_PRODUCT_AND_OPERATOR_GUIDE.md` |
 | Current architecture questions and proof gaps | `docs/WARSOC_COMPLETE_ARCHITECTURE_QUESTION_REGISTER.md` |
 | Current-scope 15-question closure register | `docs/WARSOC_CURRENT_SCOPE_15_ARCHITECTURE_QUESTIONS.md` |
+| Wazuh/firewall completed-phase and remaining-gate ledger | `docs/WARSOC_WAZUH_FIREWALL_IMPLEMENTATION_LEDGER_2026-08-13.md` |
 | Network relay implementation boundary | `docs/NETWORK_RELAY_BACKEND_FOUNDATION.md` |
 | Firewall research and validation | `docs/NETWORK_FIREWALL_VALIDATION_RESEARCH.md` |
 | pfSense lab | `docs/PFSENSE_NETWORK_RELAY_LAB_RUNBOOK.md` |

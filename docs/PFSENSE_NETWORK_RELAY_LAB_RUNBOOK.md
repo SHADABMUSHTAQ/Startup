@@ -1,6 +1,7 @@
 # WarSOC pfSense Network Relay Lab Runbook
 
-**Status:** Isolated host network created; VM and firewall execution in progress
+**Status:** `VIRTUAL_LAB_VALIDATED` for pfSense CE 2.8.1; production disabled
+**Last verified:** 2026-08-02
 **Production impact:** None
 **Required production state:** `NETWORK_RELAY_ENABLED=false`
 **Purpose:** Obtain the first real-firewall-OS proof for the disabled network relay

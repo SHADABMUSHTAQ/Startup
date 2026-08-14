@@ -85,6 +85,11 @@ def test_csv_hot_search_uses_normalized_date_anchor():
     assert isinstance(time_filter["_retention_ts"]["$gte"], datetime)
 
 
+def test_hot_search_never_adds_an_unindexed_id_tiebreaker():
+    assert data_routes._indexed_time_sort("timestamp") == [("timestamp", -1)]
+    assert data_routes._indexed_time_sort("_retention_ts") == [("_retention_ts", -1)]
+
+
 @pytest.mark.asyncio
 async def test_monthly_included_allowance_reservation_is_atomic():
     collection = SimpleNamespace(

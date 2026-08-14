@@ -8,6 +8,9 @@
 **Implementation authority:**
 `docs/WARSOC_WAZUH_IMPLEMENTATION_AND_LAB_RUNBOOK.md`
 
+**Combined Wazuh/firewall implementation ledger:**
+`docs/WARSOC_WAZUH_FIREWALL_IMPLEMENTATION_LEDGER_2026-08-13.md`
+
 ## 1. Non-Negotiable Decision
 
 WarSOC remains the security product and system of record. Wazuh is a pinned,

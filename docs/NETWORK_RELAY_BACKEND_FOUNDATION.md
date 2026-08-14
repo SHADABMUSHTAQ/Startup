@@ -333,7 +333,11 @@ Selected backend validation through 2026-08-10:
   registration, status, revocation, recovery, source-isolation, feature-gate,
   and hybrid-correlation tests passed.
 - 122 selected security, ingestion, worker, SIEM, FBR, PECA, stream-retention, archive, and relay tests passed together in the writable Docker test harness.
-- The complete maintained backend suite passed with 397 passed, 1 skipped, and 0 failed on 2026-08-10. Default discovery is intentionally limited to `tests/`; live-fire and scratch scripts are not part of this regression claim.
+- The complete maintained release gate passed with 432 passed, 3 explicitly
+  skipped, and 0 failed on 2026-08-13. The skips are one isolated-stack-only
+  destructive harness and two container-local Git metadata checks that passed
+  directly on the host. Default discovery remains limited to maintained tests;
+  live-fire and scratch scripts are not part of this regression claim.
 - `git diff --check` is clean except informational Windows line-ending warnings.
 
 Physical pfSense lab validation on 2026-08-02 added the following evidence:
@@ -389,44 +393,23 @@ The gate remains closed until all of these pass:
 
 Current Windows endpoint, SIEM, FBR, and PECA production paths do not depend on this feature and remain unchanged while it is disabled.
 
-## 13. Feature-Gated Frontend Candidate
+## 13. Customer UI Boundary
 
-The current frontend candidate contains a `Network Relays` workspace guarded by
-`VITE_NETWORK_RELAY_ENABLED`. The production default remains `false`, so the
-navigation and relay API calls are absent from the active customer interface
-until the backend production gate is deliberately opened.
+The authoritative frontend `main` branch does not currently contain a Network
+Relays workspace or `VITE_NETWORK_RELAY_ENABLED` integration. This is the
+correct production state while the backend gate remains closed; it must not be
+described as a hidden or completed customer feature.
 
-Implemented behavior:
+A future separately reviewed UI must provide only WarSOC concepts:
 
-1. Admins can generate a one-time relay activation for explicitly registered
-   pfSense, Fortinet, Cisco ASA, or MikroTik device contracts.
-2. Admins can revoke a relay with a required reason. Managers, analysts, and
-   auditors have read-only relay-health access. Backend tenant isolation and
-   mutation RBAC remain authoritative.
-3. The page shows relay state, last cloud receipt, version, device count,
-   accepted sequence, per-device state, last event time, and reported drops.
-4. Empty, loading, unavailable, active, degraded, silent, offline, not-seen,
-   and revoked states are represented without exposing backend exceptions.
-5. The UI displays firewall metadata and health only. It does not display packet
-   payloads or claim that UDP sources are device-authenticated.
-6. Activation and revocation dialogs provide close controls and Escape-key
-   dismissal, and the layout is constrained for desktop and mobile widths.
+1. one-time relay activation for explicitly registered device contracts;
+2. role-scoped relay/device health and required-reason revocation;
+3. last cloud receipt, version, accepted sequence, drops, spool pressure, clock
+   confidence, and active/degraded/silent/offline/revoked states;
+4. customer-safe setup guidance and error references; and
+5. no packet payloads, raw vendor-message browsing, Wazuh identity, internal
+   ports, Azure secrets, or device-authentication claims for legacy UDP.
 
-Still intentionally absent:
-
-- raw vendor-message browsing;
-- archive retrieval controls inside the relay workspace;
-- automatic firewall configuration;
-- production enablement; and
-- a claim that every supported parser has passed physical-device acceptance.
-
-Backend `NETWORK_RELAY_ENABLED=true` and frontend
-`VITE_NETWORK_RELAY_ENABLED=true` must only be enabled together after Section 12
-is closed. Until then, the endpoint, SIEM, FBR, and PECA user flows remain
-unchanged.
-
-The 2026-08-12 authenticated customer walkthrough confirmed that the deployed
-frontend does not yet expose an accepted customer relay workspace. This is the
-correct production behavior while both flags remain disabled. The required UI
-components are specified separately in the frontend UI/UX requirements PDF;
-their existence must not be interpreted as permission to enable the relay.
+Backend `NETWORK_RELAY_ENABLED=true` and the future frontend implementation must
+only be enabled together after Section 12 closes. Until then, endpoint, SIEM,
+FBR, and PECA customer flows remain unchanged.

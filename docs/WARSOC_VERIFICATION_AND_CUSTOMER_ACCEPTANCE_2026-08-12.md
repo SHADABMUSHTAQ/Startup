@@ -35,7 +35,7 @@ incident, or report path.
 | User/security/pricing/runtime contracts | 49 passed | User journeys, sanitized failures, upload deletion, security controls and commercial request behavior pass. |
 | Deep SIEM/FBR/PECA and rule-catalog contracts | 18 passed | Maintained deep engine suites pass. |
 | Backend hardening contracts | 37 passed | Tenant isolation, lazy raw-evidence detail and upload hardening pass. |
-| Deployed production preflight `6efd11cc9e` | Passed | DNS/TLS, frontend assets, API binding/health, CORS, security headers, blocked docs/private ports and Azure installer 4.2.8 SHA-256 pass on 2026-08-13. |
+| Deployed production preflight `83aa506f9e` | Passed | DNS/TLS, frontend assets, API binding/health, CORS, security headers, blocked docs/private ports and Azure installer 4.2.8 SHA-256 pass on 2026-08-13. |
 | Isolated local Wazuh live harness | Passed | Bidirectional mTLS, canary rule 100500, signed return, shadow-only persistence and selected failure recovery pass on one host. |
 | Separate Compute-A/Compute-B Wazuh path | Shadow transport accepted; production disabled | A private Tailscale path, bidirectional mTLS, separate HMAC identities, durable dispatch/receipt, rule 100500, signed candidate return, tenant isolation and manager/bridge/candidate-API recovery passed against the remote 4.14.7 host. Production enablement and rule-quality promotion remain blocked. |
 | pfSense relay lab | Passed as a lab candidate | Native pass/block syslog, parsing, relay signing, encrypted outage spool and recovery passed in the controlled Hyper-V lab. |
@@ -52,18 +52,18 @@ runtime-database and retired-container hazards, but the destructive harness has
 not been executed against a freshly orchestrated isolated stack. That does not
 invalidate the maintained suite or separate two-host Wazuh proof.
 
-The production preflight applies to the currently deployed release. It does not
-prove or deploy the uncommitted backend candidate described in this record.
+Backend commit `7e81a9d` was pulled and rebuilt by the deployment operator, and
+frontend commit `6f0cc5a` is present in the deployed Vercel bundle. Production
+preflight proves their public availability and network/security baseline; it
+does not replace an authenticated user-flow or exact Docker-image digest record.
 
-Static security validation scanned 33,274 lines in `app/` and non-legacy
-`scripts/` with Bandit 1.9.4. It reported zero high-severity findings. The 28
-medium scanner candidates were reviewed: missing-IP sentinel values are not
-network binds; bridge SQLite identifiers are restricted by a fixed internal
-allowlist while record values remain parameterized; the syslog listener binds
-inside its container and the production host publishes UDP only on loopback;
-the acceptance downloader first requires an HTTPS installer redirect; and the
-two `/tmp` findings are offline PDF-text helper scripts. No exploitable
-medium/high defect was established by this scan.
+Final static security validation scanned 27,948 application lines with Bandit
+1.9.4. It reported zero high-severity findings and 25 medium scanner candidates.
+The medium results were reviewed: missing-IP values are telemetry sentinels,
+container-internal wildcard listeners are host-loopback/profile-gated, and
+bridge SQLite table/identity names are selected from a fixed internal allowlist
+while record values remain parameterized. No exploitable medium/high defect was
+established by this scan.
 
 The development Compose file previously published API, MongoDB and Redis on
 all host interfaces. Those three development-only mappings now bind to
@@ -101,13 +101,13 @@ The walkthrough also found two concrete compliance-view defects:
    event material. A customer list should show evidence summaries and load raw
    detail only after an authorized explicit action.
 
-The paired candidate now applies a metadata-only Mongo projection, bounds the
+The deployed pair now applies a metadata-only Mongo projection, bounds the
 summary message, and removes raw, processed and signed payload bodies from list
 responses. The frontend renders compact evidence cards and requests
 `/logs/{id}/evidence` only after an explicit authorized action. Backend
-contracts, frontend ESLint and the production build pass. Backend and frontend
-must still deploy together and pass the authenticated browser payload/latency
-flow before this defect is closed in production.
+contracts, frontend ESLint, the production build, deployment preflight, and
+deployed-bundle inspection pass. An authenticated browser payload/latency flow
+remains the final customer-level closure artifact.
 
 The dashboard search correctly switched from live mode to a bounded historical
 result and returned to live mode through the explicit control. However, exact
@@ -226,3 +226,6 @@ release and require the authenticated browser flow before acceptance. Do not ena
 Wazuh until the remaining capacity, rule-quality, host-firewall and rollback
 gates produce approved artifacts. The two-host shadow transport gate is closed;
 production defaults remain disabled/shadow-safe.
+
+The detailed Wazuh and firewall phase ledger is
+`docs/WARSOC_WAZUH_FIREWALL_IMPLEMENTATION_LEDGER_2026-08-13.md`.
