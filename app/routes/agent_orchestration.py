@@ -616,11 +616,19 @@ async def download_agent(
 ):
     cdn_url = (settings.agent_cdn_url or "").strip()
     if not cdn_url:
-        raise HTTPException(status_code=503, detail="Agent installer URL is not configured.")
+        logger.error("Agent download unavailable: AGENT_CDN_URL is empty")
+        raise HTTPException(status_code=503, detail="Agent download is temporarily unavailable.")
     if not _is_valid_agent_cdn_url(cdn_url):
-        raise HTTPException(status_code=503, detail="Agent installer URL is misconfigured.")
+        logger.error("Agent download unavailable: AGENT_CDN_URL failed validation")
+        raise HTTPException(status_code=503, detail="Agent download is temporarily unavailable.")
 
-    return RedirectResponse(url=cdn_url)
+    return RedirectResponse(
+        url=cdn_url,
+        headers={
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
 
 @router.post("/deregister")
 async def deregister_agent(

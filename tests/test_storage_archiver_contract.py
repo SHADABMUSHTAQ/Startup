@@ -145,9 +145,7 @@ async def test_archive_ledger_count_does_not_download_blobs():
 @pytest.mark.asyncio
 async def test_compliance_full_hot_page_skips_azure_blob_reads(monkeypatch):
     count_mock = AsyncMock(return_value=(900, True))
-    fetch_mock = AsyncMock()
     monkeypatch.setattr(compliance, "count_archived_documents", count_mock)
-    monkeypatch.setattr(compliance, "_fetch_archived_page", fetch_mock)
 
     archived, total, meta = await compliance._resolve_archive_page(
         object(),
@@ -166,24 +164,19 @@ async def test_compliance_full_hot_page_skips_azure_blob_reads(monkeypatch):
     assert total == 1000
     assert meta == {
         "archive_read_performed": False,
+        "archive_metadata_checked": True,
+        "archive_available": True,
+        "archive_retrieval_required": False,
         "archive_rows": 900,
         "total_is_exact": True,
     }
-    fetch_mock.assert_not_awaited()
-
-
 @pytest.mark.asyncio
-async def test_compliance_boundary_page_reads_only_missing_cold_rows(monkeypatch):
+async def test_compliance_boundary_page_requires_isolated_cold_retrieval(monkeypatch):
     monkeypatch.setattr(
         compliance,
         "count_archived_documents",
         AsyncMock(return_value=(4, True)),
     )
-    fetch_mock = AsyncMock(
-        return_value=([{"event_uid": "cold-1"}, {"event_uid": "cold-2"}], 4)
-    )
-    monkeypatch.setattr(compliance, "_fetch_archived_page", fetch_mock)
-
     archived, total, meta = await compliance._resolve_archive_page(
         object(),
         tenant_id="TENANT-A",
@@ -197,24 +190,21 @@ async def test_compliance_boundary_page_reads_only_missing_cold_rows(monkeypatch
         event_id=None,
     )
 
-    assert [doc["event_uid"] for doc in archived] == ["cold-1", "cold-2"]
+    assert archived == []
     assert total == 6
-    assert meta["archive_read_performed"] is True
-    assert fetch_mock.await_args.kwargs["skip"] == 0
-    assert fetch_mock.await_args.kwargs["limit"] == 2
+    assert meta["archive_read_performed"] is False
+    assert meta["archive_available"] is True
+    assert meta["archive_retrieval_required"] is True
 
 
 @pytest.mark.asyncio
-async def test_compliance_cold_page_applies_archive_offset(monkeypatch):
+async def test_compliance_cold_page_requires_isolated_retrieval(monkeypatch):
     monkeypatch.setattr(
         compliance,
         "count_archived_documents",
         AsyncMock(return_value=(10, True)),
     )
-    fetch_mock = AsyncMock(return_value=([{"event_uid": "cold-4"}], 10))
-    monkeypatch.setattr(compliance, "_fetch_archived_page", fetch_mock)
-
-    archived, total, _ = await compliance._resolve_archive_page(
+    archived, total, meta = await compliance._resolve_archive_page(
         object(),
         tenant_id="TENANT-A",
         collection_names=["fbr_pos_logs"],
@@ -227,17 +217,13 @@ async def test_compliance_cold_page_applies_archive_offset(monkeypatch):
         event_id=None,
     )
 
-    assert archived[0]["event_uid"] == "cold-4"
+    assert archived == []
     assert total == 13
-    assert fetch_mock.await_args.kwargs["skip"] == 4
-
-
+    assert meta["archive_retrieval_required"] is True
 @pytest.mark.asyncio
 async def test_filtered_full_hot_page_is_fast_and_marks_total_inexact(monkeypatch):
     count_mock = AsyncMock()
-    fetch_mock = AsyncMock()
     monkeypatch.setattr(compliance, "count_archived_documents", count_mock)
-    monkeypatch.setattr(compliance, "_fetch_archived_page", fetch_mock)
 
     archived, total, meta = await compliance._resolve_archive_page(
         object(),
@@ -256,7 +242,6 @@ async def test_filtered_full_hot_page_is_fast_and_marks_total_inexact(monkeypatc
     assert total == 50
     assert meta["total_is_exact"] is False
     count_mock.assert_not_awaited()
-    fetch_mock.assert_not_awaited()
 
 
 def test_compliance_hot_retention_is_separate_from_vault_retention():

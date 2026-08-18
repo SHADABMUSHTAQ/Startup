@@ -1086,6 +1086,8 @@ async def test_agent_download_redirects_to_cdn(client, monkeypatch):
 
     assert resp.status_code == 307, resp.text
     assert resp.headers["location"] == "https://cdn.example.com/agent.exe"
+    assert resp.headers["cache-control"] == "no-store"
+    assert resp.headers["referrer-policy"] == "no-referrer"
 
 
 

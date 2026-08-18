@@ -68,6 +68,9 @@ def test_backend_contains_only_the_cdn_agent_download_route():
     assert 'parsed.path.lower().endswith(".exe")' in orchestration
     assert '"AGENT_CDN_URL": s.agent_cdn_url' in config
     assert "must be an HTTPS URL that points directly" in config
+    assert 'detail="Agent download is temporarily unavailable."' in orchestration
+    assert '"Cache-Control": "no-store"' in orchestration
+    assert '"Referrer-Policy": "no-referrer"' in orchestration
     assert '"/agent/download"' not in threat_intel
     assert "StreamingResponse" not in threat_intel
     assert "COPY ./agent ./agent" not in dockerfile
@@ -76,6 +79,19 @@ def test_backend_contains_only_the_cdn_agent_download_route():
     assert "COPY ./deploy/wazuh/registry /app/deploy/wazuh/registry" in dockerfile
     assert "!scripts/launch_readiness_validator.py" in dockerignore
     assert "agent/" in dockerignore
+
+
+def test_normal_exports_are_explicitly_hot_tier_only():
+    export = _read("app/routes/export.py")
+    compliance = _read("app/routes/compliance.py")
+
+    assert '"X-WarSOC-Data-Scope": "hot-tier"' in export
+    assert '"X-WarSOC-Data-Scope": "hot-tier"' in compliance
+    assert '"X-WarSOC-Archive-Retrieval-Required"' in export
+    assert '"X-WarSOC-Archive-Retrieval-Required"' in compliance
+    assert "[*hot_docs, *archived_docs]" not in export
+    assert "[*hot_docs, *archived_docs]" not in compliance
+    assert "This PDF does not read those cold records" in export
 
 
 def test_pilot_manifest_covers_complete_executable_installation_chain():

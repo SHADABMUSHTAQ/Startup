@@ -259,9 +259,9 @@ async def export_csv(
     sort_field = "last_seen" if data_type == "incidents" else "timestamp"
     cursor = collection.find(query).sort(sort_field, -1).limit(limit)
     hot_docs = await cursor.to_list(length=limit)
-    archived_docs = []
+    archived_total = 0
     if data_type != "incidents":
-        archived_docs, _ = await fetch_archived_documents(
+        _, archived_total = await fetch_archived_documents(
             db,
             tenant_id=tenant_id,
             collections=[collection_name],
@@ -271,7 +271,7 @@ async def export_csv(
             limit=limit,
         )
     export_docs = sorted(
-        [*hot_docs, *archived_docs],
+        hot_docs,
         key=lambda doc: _parse_time(
             str(doc.get("last_seen") or doc.get("timestamp") or doc.get("ingested_at") or "")
         ) or datetime.min.replace(tzinfo=timezone.utc),
@@ -310,7 +310,12 @@ async def export_csv(
     return StreamingResponse(
         csv_list_generator(export_docs, fieldnames),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Cache-Control": "no-store",
+            "X-WarSOC-Data-Scope": "hot-tier",
+            "X-WarSOC-Archive-Retrieval-Required": str(archived_total > 0).lower(),
+        },
     )
 
 @router.get("/audit-report")
@@ -371,7 +376,7 @@ async def export_audit_report(
     hot_total = await collection.count_documents(query)
     logs_cursor = collection.find(query).sort("timestamp", -1).limit(500)
     forensic_logs = await logs_cursor.to_list(length=500)
-    archived_forensic_logs, archived_total = await fetch_archived_documents(
+    _, archived_total = await fetch_archived_documents(
         db,
         tenant_id=tenant_id,
         collections=[collection_name],
@@ -381,7 +386,7 @@ async def export_audit_report(
         limit=500,
     )
     evidence_by_identity = {}
-    for evidence in [*forensic_logs, *archived_forensic_logs]:
+    for evidence in forensic_logs:
         identity = str(evidence.get("event_uid") or evidence.get("_id") or "")
         if identity:
             evidence_by_identity[identity] = evidence
@@ -390,7 +395,7 @@ async def export_audit_report(
         key=lambda doc: _parse_time(str(doc.get("timestamp") or doc.get("ingested_at") or "")) or datetime.min.replace(tzinfo=timezone.utc),
         reverse=True,
     )[:500]
-    total_matching_records = hot_total + archived_total
+    total_matching_records = hot_total
     
     # Compliance coverage is based on immutable evidence, not operational alert
     # fan-out. One Windows event may legitimately produce more than one SIEM
@@ -448,11 +453,18 @@ async def export_audit_report(
     elements.append(Paragraph("SECTION 2: FORENSIC EVIDENCE LEDGER", header_style))
     preview_count = min(50, len(forensic_logs))
     elements.append(Paragraph(
-        "The ledger below is a summary preview of the newest "
-        f"{preview_count} of {total_matching_records} matching evidence records. "
-        "Use the Auditor CSV export when record-level detail is required.",
+        "The ledger below is a hot-tier summary preview of the newest "
+        f"{preview_count} of {total_matching_records} matching hot records. "
+        "Historical evidence is obtained through the isolated archive-retrieval workflow.",
         body_style,
     ))
+    if archived_total > 0:
+        elements.append(Paragraph(
+            "Archive metadata indicates historical rows in one or more overlapping archive batches. "
+            "This PDF does not read those cold records, and the metadata count is not an exact filtered-result count. "
+            "Submit a historical retrieval request for the archive contents.",
+            body_style,
+        ))
     elements.append(Spacer(1, 0.1 * inch))
 
     ledger_data = [["Timestamp", "Event", "Source IP", "Forensic Seal (Partial)"]]
@@ -483,7 +495,7 @@ async def export_audit_report(
     
     if total_matching_records > 50:
         elements.append(Paragraph(
-            f"<i>{total_matching_records - 50} additional matching records are omitted from this PDF summary; use the Auditor CSV export for detail.</i>",
+            f"<i>{total_matching_records - 50} additional hot-tier matching records are omitted from this PDF summary; use the bounded Auditor CSV export for hot-tier detail.</i>",
             body_style,
         ))
 
@@ -508,7 +520,12 @@ async def export_audit_report(
     return StreamingResponse(
         buffer,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Cache-Control": "no-store",
+            "X-WarSOC-Data-Scope": "hot-tier",
+            "X-WarSOC-Archive-Retrieval-Required": str(archived_total > 0).lower(),
+        },
     )
 
 class ReportItem(BaseModel):

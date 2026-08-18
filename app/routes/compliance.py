@@ -299,28 +299,6 @@ async def _fetch_docs_page(
     return docs, total
 
 
-async def _fetch_archived_page(
-    db,
-    tenant_id: str,
-    collection_names: list[str],
-    start_dt: Optional[datetime],
-    end_dt: Optional[datetime],
-    event_id: Optional[str],
-    skip: int,
-    limit: int,
-):
-    archived_docs, archived_total = await fetch_archived_documents(
-        db,
-        tenant_id=tenant_id,
-        collections=collection_names,
-        start_dt=start_dt,
-        end_dt=end_dt,
-        event_id=event_id,
-        limit=skip + limit,
-    )
-    return archived_docs[skip: skip + limit], archived_total
-
-
 async def _resolve_archive_page(
     db,
     *,
@@ -334,47 +312,39 @@ async def _resolve_archive_page(
     end_dt: Optional[datetime],
     event_id: Optional[str],
 ) -> tuple[list[dict], int, dict]:
-    """Fill a page from cold storage only after the hot tier is exhausted."""
+    """Describe cold evidence without loading archive bytes in the API process."""
     unfiltered = event_id is None and start_dt is None and end_dt is None
     archived_total = 0
     total_is_exact = False
+    archive_metadata_checked = False
 
-    if unfiltered:
+    remaining = max(0, limit - len(hot_docs))
+    if unfiltered or (remaining > 0 and collection_names):
         archived_total, total_is_exact = await count_archived_documents(
             db,
             tenant_id=tenant_id,
             collections=collection_names,
         )
+        archive_metadata_checked = True
 
-    remaining = max(0, limit - len(hot_docs))
     archive_skip = max(0, skip - hot_total)
-    archive_read_performed = False
-    archived_docs: list[dict] = []
-    should_read_archive = remaining > 0
-    if unfiltered and total_is_exact:
-        should_read_archive = should_read_archive and archive_skip < archived_total
+    archive_available = archived_total > 0 or (archive_metadata_checked and not total_is_exact)
+    archive_retrieval_required = (
+        remaining > 0
+        and archive_available
+        and (not unfiltered or not total_is_exact or archive_skip < archived_total)
+    )
 
-    if should_read_archive:
-        archived_docs, scanned_total = await _fetch_archived_page(
-            db,
-            tenant_id,
-            collection_names,
-            start_dt,
-            end_dt,
-            event_id,
-            skip=archive_skip,
-            limit=remaining,
-        )
-        archive_read_performed = True
-        if not total_is_exact:
-            archived_total = scanned_total
-            # A bounded blob scan cannot prove a global filtered total.
-            total_is_exact = False
-
-    return archived_docs, hot_total + archived_total, {
-        "archive_read_performed": archive_read_performed,
+    # Filtered archive totals cannot be derived from batch metadata without
+    # reading cold evidence, so keep their pagination total hot-tier only.
+    combined_total = hot_total + archived_total if unfiltered else hot_total
+    return [], combined_total, {
+        "archive_read_performed": False,
+        "archive_metadata_checked": archive_metadata_checked,
+        "archive_available": archive_available,
+        "archive_retrieval_required": archive_retrieval_required,
         "archive_rows": archived_total,
-        "total_is_exact": total_is_exact,
+        "total_is_exact": total_is_exact if unfiltered else False,
     }
 
 
@@ -945,8 +915,9 @@ async def export_compliance_evidence(
     _: str = Depends(RoleChecker(["admin", "auditor"])),
 ):
     """
-    Dedicated Compliance Export Engine (Uncapped).
-    Mandatory for FBR and PECA auditing.
+    Bounded hot-tier compliance CSV export.
+
+    Historical evidence requires the isolated archive-retrieval workflow.
     """
     tenant_id = _safe_path_segment(current_user.get("tenant_id"))
     if not tenant_id:
@@ -969,7 +940,7 @@ async def export_compliance_evidence(
 
     cursor = collection.find(query).sort("timestamp", -1).limit(limit)
     hot_docs = await cursor.to_list(length=limit)
-    archived_docs, _ = await fetch_archived_documents(
+    _, archived_total = await fetch_archived_documents(
         db,
         tenant_id=tenant_id,
         collections=[collection_name],
@@ -978,7 +949,7 @@ async def export_compliance_evidence(
         event_id=None,
         limit=limit,
     )
-    export_docs = sorted([*hot_docs, *archived_docs], key=_event_sort_key, reverse=True)[:limit]
+    export_docs = sorted(hot_docs, key=_event_sort_key, reverse=True)[:limit]
 
     if export_docs:
         fieldnames = set()
@@ -995,5 +966,10 @@ async def export_compliance_evidence(
     return StreamingResponse(
         csv_list_generator(export_docs, fieldnames),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Cache-Control": "no-store",
+            "X-WarSOC-Data-Scope": "hot-tier",
+            "X-WarSOC-Archive-Retrieval-Required": str(archived_total > 0).lower(),
+        },
     )

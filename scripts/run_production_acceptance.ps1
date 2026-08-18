@@ -79,13 +79,20 @@ function Get-HttpStatus {
     }
     catch {
         $status = 0
+        $response = $null
         try {
-            $status = [int]$_.Exception.Response.StatusCode
+            $responseProperty = $_.Exception.PSObject.Properties["Response"]
+            if ($responseProperty) {
+                $response = $responseProperty.Value
+            }
+            if ($response) {
+                $status = [int]$response.StatusCode
+            }
         }
         catch {}
         return [ordered]@{
             status = $status
-            headers = if ($_.Exception.Response) { $_.Exception.Response.Headers } else { @{} }
+            headers = if ($response) { $response.Headers } else { @{} }
             content = $_.Exception.Message
         }
     }
