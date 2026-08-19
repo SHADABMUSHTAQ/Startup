@@ -1,0 +1,43 @@
+{
+  "schema": "warsoc.runtime-config-manifest/v1",
+  "release_id": "warsoc-v1.0.0-rc2",
+  "app_version": "1.0.0",
+  "environment": "production-candidate",
+  "feature_flags": {
+    "network_relay_enabled": true,
+    "wazuh_detection_mode": "primary",
+    "wazuh_primary_approved": true,
+    "enable_security_alert_emails": false
+  },
+  "quotas_and_limits": {
+    "network_relay_max_per_tenant": 2,
+    "default_unentitled_tenant_relay_limit": 0,
+    "rate_limit_per_minute": 120,
+    "wazuh_shadow_retention_days": 90,
+    "fbr_retention_years": 7
+  },
+  "wazuh_integration": {
+    "engine": "wazuh",
+    "engine_version": "4.14.7",
+    "engine_instance_id": "wazuh-manager-lab-01",
+    "connector_id": "warsoc-wazuh-bridge-lab",
+    "ruleset_version": "warsoc-v1-production-registry",
+    "rule_registry_sha256": "2a8d26f14bfe759e9837b1000d3dda1b4e320cb0dd399f3bc3c50dbe1fd69794",
+    "manager_image_digest": "wazuh/wazuh-manager@sha256:c364ef100ba40d501537b1668a5a72bba4c4fbcf39bbef6a02123ff221fc40d0",
+    "agent_msi_sha256": "E967F36B75589D6210244FD58239C7021FA53A77C38D92315C3B3BD115002EDE",
+    "ossec_conf_sha256": "f99027ed1bf26bae56fe873e68264f12c90fc242344ca486a4587e5f69f44f9e",
+    "ruleset_combined_sha256": "8318de06caccd1fea7c5970845aec80e7f56d7f69639e2f7200950946b6ef9bf"
+  },
+  "detection_authority_policy": {
+    "approved_primary_families": ["audit_log_cleared"],
+    "shadow_families": ["authentication_failure", "service_installation", "process_creation"],
+    "evidence_authority": "warsoc_canonical_signed"
+  },
+  "topology": {
+    "backend_runtime": "uvicorn fastapi python 3.13",
+    "database": "mongodb 7.x multi-tenant",
+    "cache_queue": "redis 7.x resp2",
+    "network_relay": "warsoc_relay.exe 1.0.0 (sha256: 04602CBBCEEA8EF2BE18D5FD1C9DC2F89DADD0B9B8BA140C9B4444264BE055E3)",
+    "endpoint_agent": "warsoc_agent.exe 4.2.8 (sha256: BD7E8A1FE57C44FEA3D24D2ECE68E251450A27FB5F059DC4E79A7D5F8EF6AE19)"
+  }
+}

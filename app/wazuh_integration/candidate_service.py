@@ -432,17 +432,20 @@ async def admit_candidate(
                 }
             )
             if existing_incident:
+                is_duplicate_event = bool(event_uid and event_uid in existing_incident.get("related_events", []))
+                update_op: dict[str, Any] = {
+                    "$addToSet": {
+                        "detection_sources": "wazuh",
+                        "related_events": event_uid,
+                        "mitre_ids": {"$each": mitre_ids},
+                    },
+                    "$set": {"updated_at": received_at},
+                }
+                if not is_duplicate_event:
+                    update_op["$inc"] = {"occurrence_count": 1}
                 await incidents_col.update_one(
                     {"_id": existing_incident["_id"]},
-                    {
-                        "$addToSet": {
-                            "detection_sources": "wazuh",
-                            "related_events": event_uid,
-                            "mitre_ids": {"$each": mitre_ids},
-                        },
-                        "$inc": {"occurrence_count": 1},
-                        "$set": {"updated_at": received_at},
-                    },
+                    update_op,
                 )
             else:
                 new_incident = {

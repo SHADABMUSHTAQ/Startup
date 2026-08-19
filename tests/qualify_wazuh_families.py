@@ -162,7 +162,7 @@ async def run_qualification():
             "severity": "HIGH",
             "attack_level": True,
             "family_status": "shadow",  # Starts in shadow, then promoted to primary
-            "warsoc_mitre_ids": ["T1070.004"],
+            "warsoc_mitre_ids": ["T1070.001"],
             "deserves_incident_alone": True,
             "fp_risk_meaning": "High-confidence anti-forensics action; highly suspicious and rare in normal operation",
         },
@@ -354,7 +354,7 @@ async def run_qualification():
         windows_channel="Security",
         selected_security_fields={"channel": "Security", "event_id": "1102"},
         engine_reported_category="audit_log_cleared",
-        engine_reported_mitre_ids=["T1070.004"],
+        engine_reported_mitre_ids=["T1070.001"],
         engine_context={
             "wazuh_timestamp": str(datetime.now(timezone.utc))[:128],
             "wazuh_manager": "wazuh.manager",
@@ -376,12 +376,12 @@ async def run_qualification():
     print(f"    - Severity: {inc.get('severity')}")
     print(f"    - Authority: {inc.get('evidence_authority')} (Must be warsoc_canonical_signed)")
     print(f"    - Related Events: {inc.get('related_events')} (Must contain {promo_event_uid})")
-    print(f"    - MITRE IDs: {inc.get('mitre_ids')} (Must be ['T1070.004'])")
+    print(f"    - MITRE IDs: {inc.get('mitre_ids')} (Must be ['T1070.001'])")
     print(f"    - Occurrence Count: {inc.get('occurrence_count')}")
 
     assert inc.get("evidence_authority") == "warsoc_canonical_signed"
     assert promo_event_uid in inc.get("related_events", [])
-    assert inc.get("mitre_ids") == ["T1070.004"]
+    assert inc.get("mitre_ids") == ["T1070.001"]
 
     # Test Replay Idempotency in Primary Mode
     print("\n--- Testing Replay Idempotency for Promoted Rule ---")

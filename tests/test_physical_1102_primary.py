@@ -90,7 +90,7 @@ async def run_physical_1102():
     rule_id = str(rule.get("id") or "60117")
     rule_level = int(rule.get("level") or 9)
     rule_desc = str(rule.get("description") or "Windows audit log was cleared")
-    engine_mitre = rule.get("mitre", {}).get("id", ["T1070.004"])
+    engine_mitre = rule.get("mitre", {}).get("id", ["T1070.001"])
     if not isinstance(engine_mitre, list):
         engine_mitre = [str(engine_mitre)]
     alert_id = str(alert.get("id") or f"alert-1102-{record_id}")
@@ -137,7 +137,7 @@ async def run_physical_1102():
         "severity": "HIGH",
         "attack_level": True,
         "family_status": "approved",
-        "mitre_ids": ["T1070.004"],
+        "mitre_ids": ["T1070.001"],
         "allowed_engine_levels": [rule_level],
         "event_ids": ["1102"],
         "candidate_enabled": True,
@@ -217,7 +217,7 @@ async def run_physical_1102():
 
     assert inc.get("evidence_authority") == "warsoc_canonical_signed"
     assert canonical_event_uid in inc.get("related_events", [])
-    assert inc.get("mitre_ids") == ["T1070.004"]
+    assert inc.get("mitre_ids") == ["T1070.001"]
 
     # Replay test
     replay = await admit_candidate(db, candidate, settings, received_at=datetime.now(timezone.utc))

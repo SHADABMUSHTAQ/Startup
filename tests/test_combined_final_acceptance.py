@@ -97,7 +97,7 @@ async def run_combined_acceptance():
 
     # Registry: 60117 Approved (Primary), 60122 Shadow, 61138 Shadow
     rules = [
-        {"rule_id": "60117", "category": "audit_log_cleared", "family": "audit_log_cleared", "severity": "HIGH", "attack_level": True, "family_status": "approved", "mitre_ids": ["T1070.004"], "levels": [9], "events": ["1102"]},
+        {"rule_id": "60117", "category": "audit_log_cleared", "family": "audit_log_cleared", "severity": "HIGH", "attack_level": True, "family_status": "approved", "mitre_ids": ["T1070.001"], "levels": [9], "events": ["1102"]},
         {"rule_id": "60122", "category": "authentication_failure", "family": "authentication_failure", "severity": "LOW", "attack_level": False, "family_status": "shadow", "mitre_ids": [], "levels": [5], "events": ["4625"]},
         {"rule_id": "61138", "category": "service_installation", "family": "service_installation", "severity": "MEDIUM", "attack_level": False, "family_status": "shadow", "mitre_ids": ["T1543.003"], "levels": [5], "events": ["7045"]},
     ]
@@ -227,7 +227,7 @@ async def run_combined_acceptance():
         windows_channel="Security",
         selected_security_fields={"channel": "Security", "event_id": "1102"},
         engine_reported_category="audit_log_cleared",
-        engine_reported_mitre_ids=["T1070.004"],
+        engine_reported_mitre_ids=["T1070.001"],
         engine_context={"wazuh_timestamp": str(datetime.now(timezone.utc))[:128], "wazuh_manager": "wazuh.manager"},
     )
     outcome_1102 = await admit_candidate(db, cand_1102, settings, received_at=datetime.now(timezone.utc))
