@@ -109,6 +109,8 @@ scratch_*.py
 Output/
 relay/build/
 relay/dist/
+relay/config/
+relay/
 
 # Cryptographic Keys
 keys/

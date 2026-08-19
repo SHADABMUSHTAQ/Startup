@@ -239,7 +239,13 @@ class DetectionCandidate(BaseModel):
     engine_rule_id: str
     engine_rule_level: int = Field(ge=0, le=16)
     engine_detected_at: datetime
-    trigger_dispatch_uid: str
+    trigger_dispatch_uid: str | None = None
+    wazuh_agent_id: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
+    wazuh_agent_name: str | None = Field(default=None, max_length=128)
+    windows_event_id: str | None = Field(default=None, max_length=64)
+    windows_event_record_id: str | None = Field(default=None, max_length=64)
+    windows_channel: str | None = Field(default=None, max_length=128)
+    selected_security_fields: dict[str, Any] = Field(default_factory=dict)
     engine_reported_category: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
     engine_reported_mitre_ids: list[str] = Field(default_factory=list, max_length=32)
     engine_context: dict[str, Any] = Field(default_factory=dict)
@@ -253,8 +259,8 @@ class DetectionCandidate(BaseModel):
 
     @field_validator("trigger_dispatch_uid")
     @classmethod
-    def validate_trigger_dispatch_uid(cls, value: str) -> str:
-        if not DISPATCH_UID_PATTERN.fullmatch(value):
+    def validate_trigger_dispatch_uid(cls, value: str | None) -> str | None:
+        if value is not None and not DISPATCH_UID_PATTERN.fullmatch(value):
             raise ValueError("invalid trigger dispatch UID")
         return value
 
@@ -262,6 +268,18 @@ class DetectionCandidate(BaseModel):
     @classmethod
     def validate_detected_at(cls, value: datetime) -> datetime:
         return _utc(value, "engine_detected_at")
+
+    @field_validator("selected_security_fields", "engine_context")
+    @classmethod
+    def validate_maps(cls, value: dict[str, Any], info) -> dict[str, Any]:
+        return _validate_scalar_map(value, max_fields=64)
+
+    @model_validator(mode="after")
+    def validate_candidate_lineage(self):
+        if not self.trigger_dispatch_uid and not self.wazuh_agent_id:
+            raise ValueError("candidate must include either trigger_dispatch_uid or wazuh_agent_id")
+        return self
+
 
     @field_validator("engine_reported_mitre_ids")
     @classmethod

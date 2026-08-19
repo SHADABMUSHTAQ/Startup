@@ -79,10 +79,16 @@ def _dispatch_uid(tenant_id: str, event_uid: str, ruleset_version: str) -> str:
     return f"WZD_{hashlib.sha256(material).hexdigest()[:32].upper()}"
 
 
-def _source_identity(document: dict[str, Any], *, network_enabled: bool) -> tuple[str, str, str] | None:
+def _source_identity(
+    document: dict[str, Any],
+    *,
+    network_enabled: bool,
+    native_endpoint_enabled: bool = False,
+) -> tuple[str, str, str] | None:
     family = str(document.get("telemetry_family") or "").strip().lower()
     if (
-        family == "windows"
+        not native_endpoint_enabled
+        and family == "windows"
         and document.get("signature_verified") is True
         and document.get("source_assurance") == "agent_signed"
     ):
@@ -278,7 +284,32 @@ async def project_canonical_event(
         return ProjectionResult(status="disabled")
 
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    identity = _source_identity(document, network_enabled=bool(settings.network_relay_enabled))
+
+    # Point 4: Per-endpoint native Wazuh binding check.
+    # Only skip Windows custom-JSON projection for endpoints that have
+    # an active native Wazuh agent binding. Endpoints without a binding
+    # continue to be projected normally.
+    endpoint_has_native_wazuh = False
+    doc_family = str(document.get("telemetry_family") or "").strip().lower()
+    if doc_family == "windows":
+        endpoint_id = str(document.get("agent_id") or "").strip()
+        if endpoint_id:
+            bindings_col = getattr(db, "detection_engine_agent_bindings", None)
+            if bindings_col is not None:
+                native_binding = await bindings_col.find_one(
+                    {
+                        "engine": "wazuh",
+                        "warsoc_agent_id": endpoint_id,
+                        "status": "active",
+                    }
+                )
+                endpoint_has_native_wazuh = native_binding is not None
+
+    identity = _source_identity(
+        document,
+        network_enabled=bool(settings.network_relay_enabled),
+        native_endpoint_enabled=endpoint_has_native_wazuh,
+    )
     if identity is None:
         return ProjectionResult(status="ineligible", reason="source_assurance")
     source_family = identity[0]

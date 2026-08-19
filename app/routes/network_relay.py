@@ -541,8 +541,9 @@ async def generate_relay_activation(
     active_count = await db["network_relays"].count_documents(
         {"tenant_id": tenant_id, "status": {"$nin": list(INACTIVE_RELAY_STATUSES)}}
     )
+    raw_limit = tenant.get("max_network_relays")
     tenant_limit = min(
-        int(tenant.get("max_network_relays") or settings.network_relay_max_per_tenant),
+        int(raw_limit if raw_limit is not None else 0),
         settings.network_relay_max_per_tenant,
     )
     if active_count >= tenant_limit:
@@ -645,8 +646,9 @@ async def register_relay(request: Request, body: RelayRegisterRequest, db=Depend
         active_count = await db["network_relays"].count_documents(
             {"tenant_id": tenant_id, "status": {"$nin": list(INACTIVE_RELAY_STATUSES)}}
         )
+        raw_limit = tenant.get("max_network_relays")
         tenant_limit = min(
-            int(tenant.get("max_network_relays") or settings.network_relay_max_per_tenant),
+            int(raw_limit if raw_limit is not None else 0),
             settings.network_relay_max_per_tenant,
         )
         if active_count >= tenant_limit:

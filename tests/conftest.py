@@ -8,6 +8,9 @@ import sys
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit, urlunsplit
 
+from dotenv import load_dotenv
+load_dotenv()
+
 # Establish isolated service targets before importing any application module.
 _runtime_db_name = os.getenv("MONGODB_DB_NAME", "WarSOC_DB")
 _test_db_name = os.getenv("TEST_MONGODB_DB_NAME", f"{_runtime_db_name}_pytest")
@@ -139,6 +142,16 @@ async def db(mongo_client, settings):
         "siem_cold_vault",
         "storage_archives",
         "system_audit",
+        "detection_engine_connectors",
+        "detection_rule_registry",
+        "detection_engine_agent_bindings",
+        "detection_shadow_observations",
+        "detection_engine_observations",
+        "detection_candidates_quarantine",
+        "detection_dispatch_outbox",
+        "detection_dispatch_dlq",
+        "detection_coverage_gaps",
+        "detection_projector_state",
         "tenants",
         "used_provisioning_tokens",
         "users",

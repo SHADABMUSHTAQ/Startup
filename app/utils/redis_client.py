@@ -20,6 +20,7 @@ def create_redis_client(url: str, *, decode_responses: bool = True) -> Redis:
         decode_responses=decode_responses,
         max_connections=max_connections,
         timeout=pool_timeout,
+        protocol=2,
     )
     return Redis(connection_pool=pool)
 

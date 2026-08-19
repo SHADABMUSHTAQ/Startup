@@ -162,13 +162,38 @@ def _candidate_from_alert(
     if rule is None:
         return None
     dispatch_uid = _extract_dispatch_uid(alert)
-    if not dispatch_uid:
-        raise ValueError("approved Wazuh alert is missing WarSOC dispatch lineage")
+    agent_info = alert.get("agent") if isinstance(alert.get("agent"), dict) else {}
+    wazuh_agent_id = str(agent_info.get("id") or "").strip() or None
+    wazuh_agent_name = str(agent_info.get("name") or "").strip() or None
+
+    if not dispatch_uid and not wazuh_agent_id:
+        raise ValueError("approved Wazuh alert is missing both WarSOC dispatch lineage and Wazuh agent identity")
+
     alert_id = str(alert.get("id") or "").strip()
     if not alert_id:
         alert_id = hashlib.sha256(
             orjson.dumps(alert, option=orjson.OPT_SORT_KEYS)
         ).hexdigest()
+
+    win_data = (alert.get("data") or {}).get("win") if isinstance(alert.get("data"), dict) else {}
+    win_system = win_data.get("system", {}) if isinstance(win_data, dict) else {}
+    windows_event_id = str(win_system.get("eventID") or "").strip() or None
+    windows_event_record_id = str(win_system.get("eventRecordID") or "").strip() or None
+    windows_channel = str(win_system.get("channel") or win_system.get("Channel") or "").strip() or None
+
+    win_eventdata = win_data.get("eventdata", {}) if isinstance(win_data, dict) else {}
+    selected_fields: dict[str, Any] = {}
+    if isinstance(win_eventdata, dict):
+        for k, v in win_eventdata.items():
+            if isinstance(v, (str, int, float, bool)) and len(selected_fields) < 32:
+                selected_fields[str(k)[:64]] = v
+
+    mitre_list = rule.get("mitre_ids") or []
+    if not mitre_list:
+        rule_mitre = wazuh_rule.get("mitre", {}).get("id") if isinstance(wazuh_rule.get("mitre"), dict) else []
+        if isinstance(rule_mitre, list):
+            mitre_list = [str(m).strip().upper() for m in rule_mitre if str(m).strip()]
+
     return DetectionCandidate(
         connector_id=settings.connector_id,
         engine_instance_id=settings.engine_instance_id,
@@ -179,8 +204,14 @@ def _candidate_from_alert(
         engine_rule_level=int(wazuh_rule.get("level") or 0),
         engine_detected_at=alert.get("timestamp"),
         trigger_dispatch_uid=dispatch_uid,
+        wazuh_agent_id=wazuh_agent_id,
+        wazuh_agent_name=wazuh_agent_name,
+        windows_event_id=windows_event_id,
+        windows_event_record_id=windows_event_record_id,
+        windows_channel=windows_channel,
+        selected_security_fields=selected_fields,
         engine_reported_category=str(rule["category"]),
-        engine_reported_mitre_ids=list(rule.get("mitre_ids", [])),
+        engine_reported_mitre_ids=list(mitre_list),
         engine_context={
             "wazuh_timestamp": str(alert.get("timestamp") or "")[:128],
             "wazuh_manager": str((alert.get("manager") or {}).get("name") or "")[:128],
