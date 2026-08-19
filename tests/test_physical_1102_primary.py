@@ -105,8 +105,7 @@ async def run_physical_1102():
     print(f"    - Engine MITRE: {engine_mitre}")
 
     print("\n[2/4] Setting up Authoritative MongoDB State for Primary 60117...")
-    # Clean previous tenant records
-    await db.detection_rule_registry.delete_many({"rule_id": "60117", "registry_sha256": settings.wazuh_rule_registry_sha256})
+    await db.detection_rule_registry.delete_many({"ruleset_version": settings.ruleset_version})
     await db.detection_engine_agent_bindings.delete_many({"engine": "wazuh", "wazuh_agent_id": wazuh_agent_id})
     await db.detection_engine_connectors.delete_many({"connector_id": settings.connector_id})
     await db.detection_engine_observations.delete_many({"tenant_id": tenant_id})
