@@ -1,0 +1,135 @@
+{
+  "schema": "warsoc.wazuh-rule-registry/v1",
+  "ruleset_version": "warsoc-v1-production-registry",
+  "rules": [
+    {
+      "rule_id": "63103",
+      "parent_rule_id": "63108",
+      "family": "audit_log_cleared",
+      "category": "audit_log_cleared",
+      "severity": "HIGH",
+      "attack_level": true,
+      "family_status": "approved",
+      "mitre_ids": ["T1070.004"],
+      "allowed_engine_levels": [5],
+      "source_family": "windows_endpoint",
+      "event_ids": ["1102"],
+      "input_field_map": {
+        "channel": "processed_data.channel"
+      },
+      "candidate_context_fields": [
+        "wazuh_timestamp",
+        "wazuh_manager"
+      ]
+    },
+    {
+      "rule_id": "60117",
+      "parent_rule_id": "60100",
+      "family": "audit_log_cleared",
+      "category": "audit_log_cleared",
+      "severity": "HIGH",
+      "attack_level": true,
+      "family_status": "approved",
+      "mitre_ids": ["T1070.004"],
+      "allowed_engine_levels": [9],
+      "source_family": "windows_endpoint",
+      "event_ids": ["1102"],
+      "input_field_map": {
+        "channel": "processed_data.channel"
+      },
+      "candidate_context_fields": [
+        "wazuh_timestamp",
+        "wazuh_manager"
+      ]
+    },
+    {
+      "rule_id": "60122",
+      "parent_rule_id": "60105",
+      "family": "authentication_failure",
+      "category": "authentication_failure",
+      "severity": "LOW",
+      "attack_level": false,
+      "family_status": "shadow",
+      "mitre_ids": [],
+      "allowed_engine_levels": [5],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4625"],
+      "input_field_map": {
+        "status": "processed_data.status",
+        "sub_status": "processed_data.sub_status",
+        "logon_type": "processed_data.logon_type"
+      },
+      "candidate_context_fields": [
+        "wazuh_timestamp",
+        "wazuh_manager"
+      ]
+    },
+    {
+      "rule_id": "60105",
+      "parent_rule_id": "60104",
+      "family": "authentication_failure",
+      "category": "authentication_failure",
+      "severity": "LOW",
+      "attack_level": false,
+      "family_status": "shadow",
+      "mitre_ids": [],
+      "allowed_engine_levels": [5],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4625"],
+      "input_field_map": {
+        "status": "processed_data.status",
+        "sub_status": "processed_data.sub_status",
+        "logon_type": "processed_data.logon_type"
+      },
+      "candidate_context_fields": [
+        "wazuh_timestamp",
+        "wazuh_manager"
+      ]
+    },
+    {
+      "rule_id": "61138",
+      "parent_rule_id": "61100",
+      "family": "service_installation",
+      "category": "service_installation",
+      "severity": "MEDIUM",
+      "attack_level": false,
+      "family_status": "shadow",
+      "mitre_ids": ["T1543.003"],
+      "allowed_engine_levels": [5],
+      "source_family": "windows_endpoint",
+      "event_ids": ["7045"],
+      "input_field_map": {
+        "service_name": "processed_data.service_name",
+        "image_path": "processed_data.image_path",
+        "service_type": "processed_data.service_type",
+        "start_type": "processed_data.start_type"
+      },
+      "candidate_context_fields": [
+        "wazuh_timestamp",
+        "wazuh_manager"
+      ]
+    },
+    {
+      "rule_id": "67027",
+      "parent_rule_id": null,
+      "family": "process_creation",
+      "category": "process_creation",
+      "severity": "INFO",
+      "attack_level": false,
+      "family_status": "shadow",
+      "mitre_ids": [],
+      "allowed_engine_levels": [3],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4688"],
+      "input_field_map": {
+        "new_process_name": "processed_data.new_process_name",
+        "command_line": "processed_data.command_line",
+        "parent_process_name": "processed_data.parent_process_name"
+      },
+      "candidate_context_fields": [
+        "wazuh_timestamp",
+        "wazuh_manager"
+      ]
+    }
+  ]
+}
