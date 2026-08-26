@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from app.routes.ingest_pulse import (
     _build_event_signature_status,
     _extract_endpoint_name,
+    _normalize_stream_payloads,
     _verify_endpoint_event,
 )
 from app.utils.agent_crypto import (
@@ -69,6 +70,115 @@ def test_ed25519_event_signature_verifies_and_returns_provenance():
     assert result["source_assurance"] == "agent_signed"
     assert result["signature_algorithm"] == "Ed25519"
     assert len(result["signing_key_id"]) == 64
+
+
+def test_ed25519_v2_authenticates_collection_coverage_metadata():
+    private_key, public_pem = _keypair()
+    event = _signed_event(private_key)
+    event.update(
+        {
+            "signature_version": "ed25519-v2",
+            "agent_collection_time": datetime.now(timezone.utc).isoformat(),
+            "collection_protocol_version": "warsoc-agent-collection-v2",
+            "source_channel": "Security",
+            "source_channel_epoch": "epoch-9d4a69b6",
+            "source_sequence": 9021,
+        }
+    )
+    payload_hash = build_payload_hash(build_signable_event_payload(event))
+    event["payload_hash"] = payload_hash
+    event["agent_signature"] = private_key.sign(
+        build_event_signature_string(
+            event["agent_id"],
+            event["timestamp"],
+            event["event_uid"],
+            payload_hash,
+        ).encode("utf-8")
+    ).hex()
+
+    result = verify_event_signature(
+        event,
+        agent_id=event["agent_id"],
+        public_key_pem=public_pem,
+    )
+    assert result["signature_version"] == "ed25519-v2"
+    assert result["signature_verified"] is True
+
+    event["source_sequence"] = 9022
+    with pytest.raises(AgentEventSignatureError, match="hash mismatch"):
+        verify_event_signature(
+            event,
+            agent_id=event["agent_id"],
+            public_key_pem=public_pem,
+        )
+
+
+def test_ed25519_v2_rejects_missing_collection_metadata():
+    private_key, public_pem = _keypair()
+    event = _signed_event(private_key)
+    event["signature_version"] = "ed25519-v2"
+    payload_hash = build_payload_hash(build_signable_event_payload(event))
+    event["payload_hash"] = payload_hash
+    event["agent_signature"] = private_key.sign(
+        build_event_signature_string(
+            event["agent_id"],
+            event["timestamp"],
+            event["event_uid"],
+            payload_hash,
+        ).encode("utf-8")
+    ).hex()
+
+    with pytest.raises(AgentEventSignatureError, match="metadata is incomplete"):
+        verify_event_signature(
+            event,
+            agent_id=event["agent_id"],
+            public_key_pem=public_pem,
+        )
+
+
+def test_ed25519_v2_metadata_survives_ingest_normalization():
+    private_key, public_pem = _keypair()
+    event = _signed_event(private_key)
+    event.update(
+        {
+            "signature_version": "ed25519-v2",
+            "agent_collection_time": datetime.now(timezone.utc).isoformat(),
+            "collection_protocol_version": "warsoc-agent-collection-v2",
+            "source_channel": "Security",
+            "source_channel_epoch": "epoch-normalization",
+            "source_sequence": 4625,
+        }
+    )
+    payload_hash = build_payload_hash(build_signable_event_payload(event))
+    event["payload_hash"] = payload_hash
+    event["agent_signature"] = private_key.sign(
+        build_event_signature_string(
+            event["agent_id"],
+            event["timestamp"],
+            event["event_uid"],
+            payload_hash,
+        ).encode("utf-8")
+    ).hex()
+
+    normalized = _normalize_stream_payloads(
+        [event],
+        {
+            "agent_id": event["agent_id"],
+            "tenant_id": "WARSOC_TEST_TENANT",
+            "public_key": public_pem,
+        },
+    )
+
+    assert len(normalized) == 1
+    assert normalized[0]["agent_collection_time"] == event["agent_collection_time"]
+    assert normalized[0]["collection_protocol_version"] == "warsoc-agent-collection-v2"
+    assert normalized[0]["source_channel"] == "Security"
+    assert normalized[0]["source_channel_epoch"] == "epoch-normalization"
+    assert normalized[0]["source_sequence"] == 4625
+    assert _verify_endpoint_event(
+        normalized[0],
+        {"agent_id": event["agent_id"], "public_key": public_pem},
+    )["signature_verified"] is True
 
 
 def test_mutated_signed_event_is_rejected():

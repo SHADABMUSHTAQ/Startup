@@ -9,7 +9,13 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 
-EVENT_SIGNATURE_VERSION = "ed25519-v1"
+EVENT_SIGNATURE_VERSION_V1 = "ed25519-v1"
+EVENT_SIGNATURE_VERSION_V2 = "ed25519-v2"
+EVENT_SIGNATURE_VERSION = EVENT_SIGNATURE_VERSION_V1
+SUPPORTED_EVENT_SIGNATURE_VERSIONS = {
+    EVENT_SIGNATURE_VERSION_V1,
+    EVENT_SIGNATURE_VERSION_V2,
+}
 
 
 class AgentEventSignatureError(ValueError):
@@ -42,7 +48,7 @@ def build_signable_event_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if raw_event_data is None:
         raw_event_data = payload.get("raw_data", {})
 
-    return {
+    signable = {
         "source_ip": payload.get("source_ip", ""),
         "user": payload.get("user", ""),
         "event_id": "" if payload.get("event_id") is None else str(payload.get("event_id")).strip(),
@@ -52,6 +58,40 @@ def build_signable_event_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "raw_event_data": raw_event_data or {},
         "agent_version": payload.get("agent_version", ""),
     }
+    signature_version = str(
+        payload.get("signature_version") or EVENT_SIGNATURE_VERSION_V1
+    ).strip().lower()
+    if signature_version == EVENT_SIGNATURE_VERSION_V2:
+        signable.update(
+            {
+                "agent_collection_time": payload.get("agent_collection_time", ""),
+                "collection_protocol_version": payload.get("collection_protocol_version", ""),
+                "source_channel": payload.get("source_channel", ""),
+                "source_channel_epoch": payload.get("source_channel_epoch", ""),
+                "source_sequence": payload.get("source_sequence", ""),
+            }
+        )
+    return signable
+
+
+def _validate_v2_collection_metadata(payload: dict[str, Any]) -> None:
+    collection_time = str(payload.get("agent_collection_time") or "").strip()
+    protocol_version = str(payload.get("collection_protocol_version") or "").strip()
+    source_channel = str(payload.get("source_channel") or "").strip()
+    source_epoch = str(payload.get("source_channel_epoch") or "").strip()
+    source_sequence = payload.get("source_sequence")
+    if (
+        parse_utc_timestamp(collection_time) is None
+        or not protocol_version
+        or not source_channel
+        or not source_epoch
+        or source_sequence in (None, "")
+    ):
+        raise AgentEventSignatureError("endpoint v2 collection metadata is incomplete")
+    if any(len(value) > 128 for value in (protocol_version, source_channel, source_epoch)):
+        raise AgentEventSignatureError("endpoint v2 collection metadata is malformed")
+    if len(str(source_sequence)) > 128:
+        raise AgentEventSignatureError("endpoint v2 source sequence is malformed")
 
 
 def build_event_signature_string(
@@ -86,8 +126,10 @@ def verify_event_signature(
 ) -> dict[str, Any]:
     """Verify one canonical endpoint event and return durable provenance metadata."""
     signature_version = str(payload.get("signature_version") or "").strip().lower()
-    if signature_version != EVENT_SIGNATURE_VERSION:
+    if signature_version not in SUPPORTED_EVENT_SIGNATURE_VERSIONS:
         raise AgentEventSignatureError("unsupported endpoint signature version")
+    if signature_version == EVENT_SIGNATURE_VERSION_V2:
+        _validate_v2_collection_metadata(payload)
 
     event_uid = str(payload.get("event_uid") or "").strip()
     timestamp = str(payload.get("timestamp") or "").strip()
@@ -123,7 +165,7 @@ def verify_event_signature(
         raise AgentEventSignatureError("agent public key is unreadable") from exc
 
     return {
-        "signature_version": EVENT_SIGNATURE_VERSION,
+        "signature_version": signature_version,
         "signature_algorithm": "Ed25519",
         "payload_hash": computed_hash,
         "signing_key_id": public_key_id(public_key_pem),

@@ -462,6 +462,11 @@ def _normalize_stream_payloads(raw_payload, agent_context: dict) -> list[dict]:
                 "payload_hash": fields.get("payload_hash") or payload.get("payload_hash"),
                 "signature_version": fields.get("signature_version") or payload.get("signature_version"),
                 "signature_algorithm": fields.get("signature_algorithm") or payload.get("signature_algorithm"),
+                "agent_collection_time": fields.get("agent_collection_time") or payload.get("agent_collection_time"),
+                "collection_protocol_version": fields.get("collection_protocol_version") or payload.get("collection_protocol_version"),
+                "source_channel": fields.get("source_channel") or payload.get("source_channel"),
+                "source_channel_epoch": fields.get("source_channel_epoch") or payload.get("source_channel_epoch"),
+                "source_sequence": fields.get("source_sequence") if fields.get("source_sequence") is not None else payload.get("source_sequence"),
                 # Do not invent a value before signature verification. Signed
                 # agents authenticate the exact version they supplied; an
                 # omitted version remains explicitly unknown.
