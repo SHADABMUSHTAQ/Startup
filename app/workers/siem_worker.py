@@ -25,6 +25,7 @@ from app.utils.alert_incidents import operator_message
 from app.utils.alert_context import build_alert_context
 from app.utils.detection_provenance import attach_detection_provenance
 from app.utils.security_incidents import project_and_publish_incident
+from app.utils.siem_privacy import protect_siem_document
 from app.actions.alerting import dispatch_alert_if_entitled, is_email_trigger_severity
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [SIEM-Worker] %(message)s")
@@ -357,11 +358,12 @@ async def _flush_siem_cold_vault(db, cold_docs: list[dict]) -> int:
         event_uid = item.get("event_uid") or str(uuid.uuid4())
         item["event_uid"] = event_uid
         item["context"] = build_alert_context(item)
+        persistence_item = protect_siem_document(item, settings.encryption_key)
         ops.append(
             UpdateOne(
                 {"tenant_id": item.get("tenant_id"), "event_uid": event_uid},
                 {
-                    "$set": _upsert_body(item),
+                    "$set": _upsert_body(persistence_item),
                     "$setOnInsert": {"created_at": now},
                 },
                 upsert=True,

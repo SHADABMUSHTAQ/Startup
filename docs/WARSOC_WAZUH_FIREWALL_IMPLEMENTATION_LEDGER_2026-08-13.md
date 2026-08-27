@@ -1,8 +1,8 @@
 # WarSOC Wazuh and Firewall Integration Implementation Ledger
 
-**Snapshot date:** 2026-08-13  
-**Document role:** Detailed implementation, verification, and remaining-gate record  
-**Audience:** WarSOC engineering, operations, security review, and product leadership  
+**Snapshot date:** 2026-08-20
+**Document role:** Detailed implementation, verification, and remaining-gate record
+**Audience:** WarSOC engineering, operations, security review, and product leadership
 **Data classification:** Internal architecture metadata only; no customer data, credentials, activation codes, private addresses, or raw evidence
 
 ## 1. Executive Verdict
@@ -17,14 +17,14 @@ The exact current state is:
 | Capability | Current status | Meaning |
 |---|---|---|
 | WarSOC native Windows SIEM/FBR/PECA | Active production path | Continues independently of Wazuh and the firewall relay. |
-| Wazuh contracts and bridge implementation | Implemented and regression-proven | Versioned projection, durable transport, candidate validation, and failure controls exist. |
+| Wazuh contracts and bridge implementation | RC2 implemented and regression-proven | Versioned projection, durable transport, exact signed-evidence validation, standard WarSOC incident projection, and failure controls exist. |
 | Wazuh separate-host shadow transport | Two-host lab-proven | A signed canary completed the private mTLS path and produced a WarSOC shadow observation with no customer side effects. |
-| Wazuh production detection | Disabled | `WAZUH_DETECTION_MODE=disabled` and `WAZUH_PRIMARY_APPROVED=false` remain required. |
+| Wazuh primary candidate family | RC2 code/lab-proven; production disabled | `audit_log_cleared` is the only approved primary family. Production flags remain disabled until exact deployment acceptance. |
 | Firewall relay backend | Implemented and regression-proven | Relay enrollment, strict parsers, bounded spools, signed batches, admission, health, and correlation contracts exist. |
 | pfSense integration | Virtual-lab-proven | pfSense CE 2.8.1 pass/block records completed the controlled Hyper-V relay path. |
 | Other firewall vendors | Parser/fixture candidate only | Fortinet, Cisco ASA, and MikroTik parser contracts exist but do not have accepted physical-device evidence. |
 | Customer firewall production integration | Disabled | `NETWORK_RELAY_ENABLED=false` remains required. |
-| Customer firewall UI | Not present in authoritative frontend `main` | Current production UI has no relay workspace. A future UI requires a separate reviewed implementation. |
+| Customer firewall UI | Local correction source-complete; deployment acceptance open | A local frontend candidate based on `6ffc9e0` uses backend capability/entitlement gating, nested relay/device status, complete activation, revoke and MFA key-recovery contracts, read-only non-admin roles and memory-only one-time codes. Lint/build pass; it is not pushed, deployed or paired-tested. |
 | Firewall metadata through Wazuh | Designed but blocked | It requires both relay production acceptance and a separately approved Wazuh network rule family. |
 
 Therefore, it is accurate to say that the integration foundations and controlled
@@ -180,7 +180,7 @@ the host-mounted source of truth rather than only the running container.
 
 ### Phase W5: Rule-Family Quality and Promotion
 
-**Status:** Open; production blocker.
+**Status:** One RC2 family approved in code/lab; production acceptance remains open.
 
 Required evidence for every proposed rule family:
 
@@ -194,8 +194,13 @@ Required evidence for every proposed rule family:
 - physical outbox/input/candidate spool saturation; and
 - forced-Wazuh-failure proof that native SIEM/FBR/PECA remain healthy.
 
-Only one reviewed generic family may be promoted at a time. Until this closes,
-Wazuh remains disabled in production.
+RC2 approves only the `audit_log_cleared` family (Windows Event 1102; accepted
+Wazuh rule identities 63103 and 60117) for primary candidacy. The candidate is
+still untrusted until WarSOC binds it to the exact tenant and endpoint and finds
+recent canonical signed evidence with matching event, record, and channel.
+Authentication failure, service installation, and process creation remain
+shadow-only. Wazuh remains disabled in production until the exact deployed
+registry, bridge, manager, and WarSOC backend pass acceptance.
 
 ## 5. Firewall and Relay Phase Ledger
 
@@ -305,12 +310,17 @@ Still required:
 
 ### Phase F6: Customer UI and Production Enablement
 
-**Status:** Not implemented in authoritative frontend; production-disabled.
+**Status:** Local correction source-complete; production-disabled and paired
+acceptance open.
 
-The customer UI eventually needs WarSOC-only controls for relay activation,
-registered devices, health, last receipt, drops, spool pressure, revocation,
-and customer-safe setup guidance. It must not expose Wazuh, raw vendor messages,
-Azure credentials, internal APIs, or unsupported compliance claims.
+The correction candidate follows
+`WARSOC_FIREWALL_WAZUH_FRONTEND_BUILD_GUIDE.md`: backend capability controls
+visibility, Admin alone can generate/revoke/recover, other authorized roles are
+read-only, nested device state is rendered without invented fields, and every
+customer label remains WarSOC-only. One-time activation and recovery codes stay
+in component memory. It does not expose Wazuh, raw vendor messages, Azure
+credentials, internal APIs or unsupported compliance claims. It must be applied
+to the authoritative frontend, deployed and paired-tested before enablement.
 
 Backend `NETWORK_RELAY_ENABLED=true` and any future frontend flag must be
 enabled together only after Phase F5 closes. No current production customer
@@ -320,18 +330,16 @@ depends on this capability.
 
 | Verification | Result | Scope |
 |---|---:|---|
-| Full maintained backend release gate | 432 passed, 3 explicitly skipped | Native SIEM, FBR, PECA, incidents, signing, archive/retrieval, quotas, relay, Wazuh, security, and user contracts. |
-| Focused Wazuh contracts | 32 passed | Projection, transport trust, replay, durability, health, candidate validation, and state machine. |
-| Focused network relay contracts | 36 passed | Parser, collector, spools, signing, admission, lifecycle, source isolation, and correlations. |
+| Full maintained backend release gate | 446 passed, 1 explicitly skipped | Native SIEM, FBR, PECA, incidents, signing, archive/retrieval, quotas, relay, Wazuh, security, and user contracts. The skip is the opt-in isolated destructive harness. |
+| Focused RC2 closure contracts | 55 passed | Exact signed lineage, cross-endpoint rejection, cross-rule deduplication, standard incidents, relay entitlement, startup fail-closed behavior, and physical primary path. |
 | Wazuh local live canary | Passed | Private listener, rule 100500, signed return, shadow-only side effects, and selected outage recovery. |
 | Wazuh separate-host canary | Passed | Private overlay, bidirectional mTLS/HMAC, tenant isolation, recovery, and expiry. |
 | pfSense virtual appliance | Passed | Native pass/block syslog, signing, encrypted outage retention, restart recovery, and batch continuity. |
 | Current production preflight | Passed, run `83aa506f9e` | DNS, TLS, frontend assets/API binding, health, CORS, security headers, blocked docs/private ports, and exact Azure agent 4.2.8 hash. |
-| Static application security scan | 0 high-severity findings | Current application paths; reviewed medium findings are controlled sentinels/listeners or fixed-allowlist SQLite identifiers. |
+| Static checks on closure patch | Passed | Python compilation, whitespace validation, zero Bandit findings in changed backend files, and local Redis/Mongo/API/Git validator. |
 
-Three maintained-suite skips do not conceal a product failure: one destructive
-grand-master harness is explicitly isolated-stack-only, and two container-local
-Git metadata checks passed on the host.
+The maintained-suite skip does not conceal a product failure: the destructive
+grand-master harness is explicitly isolated-stack-only.
 
 ## 7. Production Configuration State
 
@@ -392,5 +400,5 @@ WarSOC must not yet claim:
 | Relay backend contract | `docs/NETWORK_RELAY_BACKEND_FOUNDATION.md` |
 | Firewall validation model | `docs/NETWORK_FIREWALL_VALIDATION_RESEARCH.md` |
 | pfSense controlled lab | `docs/PFSENSE_NETWORK_RELAY_LAB_RUNBOOK.md` |
+| Firewall/detection frontend contract | `docs/WARSOC_FIREWALL_WAZUH_FRONTEND_BUILD_GUIDE.md` |
 | Cross-system verification | `docs/WARSOC_VERIFICATION_AND_CUSTOMER_ACCEPTANCE_2026-08-12.md` |
-

@@ -1,0 +1,2792 @@
+{
+  "inventory_version": "2026-08-20.phase0",
+  "source": "Static AST analysis of app/main.py and included app/routes modules",
+  "limitations": [
+    "This inventory does not replace negative authorization tests.",
+    "MANUAL_REVIEW_REQUIRED is fail-closed and must not be interpreted as public access.",
+    "Runtime middleware and nested dependency behavior require test evidence in addition to this artifact."
+  ],
+  "summary": {
+    "route_count": 122,
+    "manual_review_required": 0,
+    "feature_gated_routes": 30
+  },
+  "routes": [
+    {
+      "method": "POST",
+      "route": "/api/v1/admin/provision",
+      "source_file": "app/routes/admin.py",
+      "source_line": 83,
+      "handler": "provision_tenant",
+      "router_module": "admin",
+      "feature_condition": null,
+      "auth_type": "PLATFORM_ADMIN_KEY",
+      "auth_evidence": [
+        "get_db",
+        "verify_admin"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "PLATFORM_ADMIN_OPERATION",
+      "request_schemas": [
+        "ProvisionRequest"
+      ],
+      "response_schema": "ProvisionResponse",
+      "rate_size_boundary_evidence": [
+        "source_marker:quota"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/admin/rotate-key/{tenant_id}",
+      "source_file": "app/routes/admin.py",
+      "source_line": 248,
+      "handler": "rotate_tenant_key",
+      "router_module": "admin",
+      "feature_condition": null,
+      "auth_type": "PLATFORM_ADMIN_KEY",
+      "auth_evidence": [
+        "get_db",
+        "verify_admin"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "PLATFORM_ADMIN_OPERATION",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/admin/tenants",
+      "source_file": "app/routes/admin.py",
+      "source_line": 237,
+      "handler": "list_tenants",
+      "router_module": "admin",
+      "feature_condition": null,
+      "auth_type": "PLATFORM_ADMIN_KEY",
+      "auth_evidence": [
+        "get_db",
+        "verify_admin"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "PLATFORM_ADMIN_OPERATION",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/agent/deregister",
+      "source_file": "app/routes/agent_orchestration.py",
+      "source_line": 713,
+      "handler": "deregister_agent",
+      "router_module": "agent_orchestration",
+      "feature_condition": null,
+      "auth_type": "AGENT_IDENTITY",
+      "auth_evidence": [
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "SERVICE_IDENTITY_TENANT",
+      "request_schemas": [
+        "HeartbeatRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "source_marker:quota"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/agent/download",
+      "source_file": "app/routes/agent_orchestration.py",
+      "source_line": 692,
+      "handler": "download_agent",
+      "router_module": "agent_orchestration",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/agent/generate-activation",
+      "source_file": "app/routes/agent_orchestration.py",
+      "source_line": 235,
+      "handler": "generate_activation",
+      "router_module": "agent_orchestration",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": "ActivationResponse",
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/agent/heartbeat",
+      "source_file": "app/routes/agent_orchestration.py",
+      "source_line": 501,
+      "handler": "agent_heartbeat",
+      "router_module": "agent_orchestration",
+      "feature_condition": null,
+      "auth_type": "AGENT_IDENTITY",
+      "auth_evidence": [
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "SERVICE_IDENTITY_TENANT",
+      "request_schemas": [
+        "HeartbeatRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/agent/heartbeat/{tenant_id}",
+      "source_file": "app/routes/threat_intel.py",
+      "source_line": 310,
+      "handler": "agent_heartbeat",
+      "router_module": "threat_intel",
+      "feature_condition": null,
+      "auth_type": "AGENT_IDENTITY",
+      "auth_evidence": [
+        "verify_agent_token"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "SERVICE_IDENTITY_TENANT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/agent/register",
+      "source_file": "app/routes/agent_orchestration.py",
+      "source_line": 330,
+      "handler": "register_agent",
+      "router_module": "agent_orchestration",
+      "feature_condition": null,
+      "auth_type": "AGENT_ONE_TIME_ACTIVATION",
+      "auth_evidence": [
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "SERVICE_IDENTITY_TENANT",
+      "request_schemas": [
+        "AgentRegisterRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/agent/validate-activation",
+      "source_file": "app/routes/agent_orchestration.py",
+      "source_line": 295,
+      "handler": "validate_activation",
+      "router_module": "agent_orchestration",
+      "feature_condition": null,
+      "auth_type": "AGENT_ONE_TIME_ACTIVATION",
+      "auth_evidence": [
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "SERVICE_IDENTITY_TENANT",
+      "request_schemas": [
+        "ActivationValidateRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/alerts/",
+      "source_file": "app/routes/alerts.py",
+      "source_line": 94,
+      "handler": "get_alerts",
+      "router_module": "alerts",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(ge=1, le=365)",
+        "Query(ge=1, le=500)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "PATCH",
+      "route": "/api/v1/alerts/{alert_id}/status",
+      "source_file": "app/routes/alerts.py",
+      "source_line": 227,
+      "handler": "update_alert_status",
+      "router_module": "alerts",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "AlertUpdate"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/archive-retrievals/",
+      "source_file": "app/routes/archive_retrieval.py",
+      "source_line": 258,
+      "handler": "list_archive_retrievals",
+      "router_module": "archive_retrieval",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(ge=1, le=100)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/archive-retrievals/",
+      "source_file": "app/routes/archive_retrieval.py",
+      "source_line": 168,
+      "handler": "create_archive_retrieval",
+      "router_module": "archive_retrieval",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "ArchiveRetrievalRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/archive-retrievals/{request_id}",
+      "source_file": "app/routes/archive_retrieval.py",
+      "source_line": 283,
+      "handler": "get_archive_retrieval",
+      "router_module": "archive_retrieval",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/archive-retrievals/{request_id}/approve",
+      "source_file": "app/routes/archive_retrieval.py",
+      "source_line": 300,
+      "handler": "approve_archive_retrieval",
+      "router_module": "archive_retrieval",
+      "feature_condition": null,
+      "auth_type": "PLATFORM_ADMIN_KEY",
+      "auth_evidence": [
+        "get_db",
+        "verify_admin"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "PLATFORM_ADMIN_OPERATION",
+      "request_schemas": [
+        "ArchiveApprovalRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/archive-retrievals/{request_id}/download-links",
+      "source_file": "app/routes/archive_retrieval.py",
+      "source_line": 388,
+      "handler": "issue_archive_download_links",
+      "router_module": "archive_retrieval",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/auth/2fa/disable",
+      "source_file": "app/routes/account.py",
+      "source_line": 231,
+      "handler": "disable_two_factor",
+      "router_module": "account",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "TwoFactorCode"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/auth/2fa/setup",
+      "source_file": "app/routes/account.py",
+      "source_line": 149,
+      "handler": "setup_two_factor",
+      "router_module": "account",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/auth/2fa/status",
+      "source_file": "app/routes/account.py",
+      "source_line": 140,
+      "handler": "two_factor_status",
+      "router_module": "account",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/auth/2fa/verify",
+      "source_file": "app/routes/account.py",
+      "source_line": 187,
+      "handler": "verify_two_factor",
+      "router_module": "account",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "TwoFactorCode"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/auth/activate-invite",
+      "source_file": "app/routes/auth.py",
+      "source_line": 934,
+      "handler": "activate_invite",
+      "router_module": "auth",
+      "feature_condition": null,
+      "auth_type": "PUBLIC_BOUNDED",
+      "auth_evidence": [
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "NOT_APPLICABLE",
+      "request_schemas": [
+        "ActivateInviteRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/auth/invite",
+      "source_file": "app/routes/auth.py",
+      "source_line": 810,
+      "handler": "invite_user",
+      "router_module": "auth",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "InviteUserRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/auth/login",
+      "source_file": "app/routes/auth.py",
+      "source_line": 584,
+      "handler": "login",
+      "router_module": "auth",
+      "feature_condition": null,
+      "auth_type": "PUBLIC_BOUNDED",
+      "auth_evidence": [
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "NOT_APPLICABLE",
+      "request_schemas": [
+        "LoginSchema"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/auth/logout",
+      "source_file": "app/routes/auth.py",
+      "source_line": 659,
+      "handler": "logout",
+      "router_module": "auth",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/auth/me",
+      "source_file": "app/routes/auth.py",
+      "source_line": 694,
+      "handler": "get_me",
+      "router_module": "auth",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "source_marker:quota"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/auth/my-packs",
+      "source_file": "app/routes/auth.py",
+      "source_line": 726,
+      "handler": "get_my_packs",
+      "router_module": "auth",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/auth/profile",
+      "source_file": "app/routes/account.py",
+      "source_line": 69,
+      "handler": "get_profile",
+      "router_module": "account",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "PUT",
+      "route": "/api/v1/auth/profile",
+      "source_file": "app/routes/account.py",
+      "source_line": 84,
+      "handler": "update_profile",
+      "router_module": "account",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "ProfileUpdate"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/auth/signup",
+      "source_file": "app/routes/auth.py",
+      "source_line": 478,
+      "handler": "signup",
+      "router_module": "auth",
+      "feature_condition": null,
+      "auth_type": "PUBLIC_BOUNDED",
+      "auth_evidence": [
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "NOT_APPLICABLE",
+      "request_schemas": [
+        "UserCreate"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/auth/team",
+      "source_file": "app/routes/auth.py",
+      "source_line": 996,
+      "handler": "list_team_members",
+      "router_module": "auth",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/v1/auth/team/{user_id}",
+      "source_file": "app/routes/auth.py",
+      "source_line": 1028,
+      "handler": "remove_team_member",
+      "router_module": "auth",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/auth/update-plan",
+      "source_file": "app/routes/auth.py",
+      "source_line": 737,
+      "handler": "update_plan",
+      "router_module": "auth",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "PlanUpdate"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/auth/upgrade",
+      "source_file": "app/routes/auth.py",
+      "source_line": 795,
+      "handler": "upgrade_plan",
+      "router_module": "auth",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC_AND_PLATFORM_ADMIN_KEY",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db",
+        "verify_admin"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "UpgradePlan"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/cases",
+      "source_file": "app/routes/evidence_cases.py",
+      "source_line": 298,
+      "handler": "list_evidence_cases",
+      "router_module": "evidence_cases",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "Literal['OPEN', 'CLOSED'] | None"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(ge=1, le=500)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/compliance/cases",
+      "source_file": "app/routes/evidence_cases.py",
+      "source_line": 238,
+      "handler": "create_evidence_case",
+      "router_module": "evidence_cases",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "CreateEvidenceCaseRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/cases/{case_id}",
+      "source_file": "app/routes/evidence_cases.py",
+      "source_line": 315,
+      "handler": "get_evidence_case",
+      "router_module": "evidence_cases",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/compliance/cases/{case_id}/close",
+      "source_file": "app/routes/evidence_cases.py",
+      "source_line": 462,
+      "handler": "close_evidence_case",
+      "router_module": "evidence_cases",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "CustodyActionRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/compliance/cases/{case_id}/custody",
+      "source_file": "app/routes/evidence_cases.py",
+      "source_line": 429,
+      "handler": "record_custody_action",
+      "router_module": "evidence_cases",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "CustodyActionRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/cases/{case_id}/exports",
+      "source_file": "app/routes/evidence_cases.py",
+      "source_line": 576,
+      "handler": "list_evidence_exports",
+      "router_module": "evidence_cases",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(ge=1, le=100)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/compliance/cases/{case_id}/exports",
+      "source_file": "app/routes/evidence_cases.py",
+      "source_line": 536,
+      "handler": "request_evidence_export",
+      "router_module": "evidence_cases",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "EvidenceExportRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/cases/{case_id}/exports/{export_id}",
+      "source_file": "app/routes/evidence_cases.py",
+      "source_line": 592,
+      "handler": "get_evidence_export",
+      "router_module": "evidence_cases",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/compliance/cases/{case_id}/exports/{export_id}/download-link",
+      "source_file": "app/routes/evidence_cases.py",
+      "source_line": 649,
+      "handler": "issue_evidence_export_download_link",
+      "router_module": "evidence_cases",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/compliance/cases/{case_id}/items",
+      "source_file": "app/routes/evidence_cases.py",
+      "source_line": 345,
+      "handler": "add_evidence_case_item",
+      "router_module": "evidence_cases",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "AddEvidenceCaseItemRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/coverage",
+      "source_file": "app/routes/compliance.py",
+      "source_line": 802,
+      "handler": "get_compliance_coverage",
+      "router_module": "compliance",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/evidence",
+      "source_file": "app/routes/compliance.py",
+      "source_line": 1005,
+      "handler": "get_compliance_evidence",
+      "router_module": "compliance",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_db",
+        "require_premium_plan"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(ge=0)",
+        "Query(ge=1, le=500)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/evidence/{pack_id}",
+      "source_file": "app/routes/compliance.py",
+      "source_line": 1198,
+      "handler": "get_compliance_evidence_by_pack",
+      "router_module": "compliance",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(ge=0)",
+        "Query(ge=1, le=500)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/export",
+      "source_file": "app/routes/compliance.py",
+      "source_line": 1297,
+      "handler": "export_compliance_evidence",
+      "router_module": "compliance",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_db",
+        "require_premium_plan"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(ge=1, le=50000)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/holds",
+      "source_file": "app/routes/compliance.py",
+      "source_line": 248,
+      "handler": "list_evidence_holds",
+      "router_module": "compliance",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "Literal['ACTIVE', 'PENDING_RELEASE', 'RELEASED'] | None"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(ge=1, le=500)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/compliance/holds",
+      "source_file": "app/routes/compliance.py",
+      "source_line": 187,
+      "handler": "apply_evidence_hold",
+      "router_module": "compliance",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "EvidenceHoldRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/compliance/holds/{hold_id}/release",
+      "source_file": "app/routes/compliance.py",
+      "source_line": 264,
+      "handler": "release_evidence_hold",
+      "router_module": "compliance",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "EvidenceHoldReleaseRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/packs",
+      "source_file": "app/routes/compliance.py",
+      "source_line": 720,
+      "handler": "list_compliance_packs",
+      "router_module": "compliance",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/packs/{pack_id}",
+      "source_file": "app/routes/compliance.py",
+      "source_line": 981,
+      "handler": "get_pack_details",
+      "router_module": "compliance",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/retention/status",
+      "source_file": "app/routes/compliance.py",
+      "source_line": 738,
+      "handler": "get_retention_status",
+      "router_module": "compliance",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/data/search",
+      "source_file": "app/routes/data.py",
+      "source_line": 343,
+      "handler": "global_search",
+      "router_module": "data",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(ge=0)",
+        "Query(ge=1, le=200)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/data/status",
+      "source_file": "app/routes/data.py",
+      "source_line": 170,
+      "handler": "agent_status",
+      "router_module": "data",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/export/audit-report",
+      "source_file": "app/routes/export.py",
+      "source_line": 321,
+      "handler": "export_audit_report",
+      "router_module": "export",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_ENTITLEMENT",
+      "auth_evidence": [
+        "get_db",
+        "require_premium_plan"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/export/csv",
+      "source_file": "app/routes/export.py",
+      "source_line": 185,
+      "handler": "export_csv",
+      "router_module": "export",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_ENTITLEMENT",
+      "auth_evidence": [
+        "get_db",
+        "require_premium_plan"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(le=50000)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/export/download/{report_id}",
+      "source_file": "app/routes/export.py",
+      "source_line": 570,
+      "handler": "download_report",
+      "router_module": "export",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_ENTITLEMENT",
+      "auth_evidence": [
+        "require_premium_plan"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/export/list",
+      "source_file": "app/routes/export.py",
+      "source_line": 539,
+      "handler": "list_reports",
+      "router_module": "export",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_ENTITLEMENT",
+      "auth_evidence": [
+        "require_premium_plan"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": "List[ReportItem]",
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/fbr/pos/ingest",
+      "source_file": "app/routes/pos.py",
+      "source_line": 72,
+      "handler": "ingest_pos_logs",
+      "router_module": "pos",
+      "feature_condition": null,
+      "auth_type": "AGENT_IDENTITY",
+      "auth_evidence": [
+        "get_db",
+        "redis_ingest_rate_limit",
+        "verify_agent_token"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "SERVICE_IDENTITY_TENANT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "source_marker:quota",
+        "source_marker:rate_limit",
+        "source_marker:replay"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/incidents/",
+      "source_file": "app/routes/incidents.py",
+      "source_line": 185,
+      "handler": "list_incidents",
+      "router_module": "incidents",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(ge=1, le=500)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/incidents/assignees",
+      "source_file": "app/routes/incidents.py",
+      "source_line": 242,
+      "handler": "list_incident_assignees",
+      "router_module": "incidents",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/incidents/summary",
+      "source_file": "app/routes/incidents.py",
+      "source_line": 132,
+      "handler": "get_incident_summary",
+      "router_module": "incidents",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/incidents/{incident_id}",
+      "source_file": "app/routes/incidents.py",
+      "source_line": 276,
+      "handler": "get_incident_detail",
+      "router_module": "incidents",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(ge=1, le=100)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "PATCH",
+      "route": "/api/v1/incidents/{incident_id}/status",
+      "source_file": "app/routes/incidents.py",
+      "source_line": 414,
+      "handler": "update_incident_status",
+      "router_module": "incidents",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "IncidentUpdate"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/ingest/alerts/history",
+      "source_file": "app/routes/ingest_pulse.py",
+      "source_line": 1071,
+      "handler": "get_alert_history",
+      "router_module": "ingest_pulse",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/ingest/logs",
+      "source_file": "app/routes/ingest_pulse.py",
+      "source_line": 1096,
+      "handler": "fetch_agent_logs",
+      "router_module": "ingest_pulse",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(le=100)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/ingest/pulse",
+      "source_file": "app/routes/ingest_pulse.py",
+      "source_line": 722,
+      "handler": "ingest_pulse_logs",
+      "router_module": "ingest_pulse",
+      "feature_condition": null,
+      "auth_type": "AGENT_IDENTITY",
+      "auth_evidence": [
+        "get_db",
+        "redis_ingest_rate_limit",
+        "verify_agent_token"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "SERVICE_IDENTITY_TENANT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "source_marker:quota",
+        "source_marker:rate_limit"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/list",
+      "source_file": "app/routes/threat_intel.py",
+      "source_line": 349,
+      "handler": "get_blocked_list",
+      "router_module": "threat_intel",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/logs/",
+      "source_file": "app/routes/logs.py",
+      "source_line": 98,
+      "handler": "get_logs_master",
+      "router_module": "logs",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RequireRole",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "auditor",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(ge=1, le=365)",
+        "Query(ge=1, le=500)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/logs/inject",
+      "source_file": "app/routes/logs.py",
+      "source_line": 411,
+      "handler": "inject_manual_log",
+      "router_module": "logs",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RequireRole",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/logs/live",
+      "source_file": "app/routes/logs.py",
+      "source_line": 281,
+      "handler": "get_live_logs",
+      "router_module": "logs",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RequireRole",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(ge=1, le=500)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/logs/management-audit",
+      "source_file": "app/routes/logs.py",
+      "source_line": 445,
+      "handler": "get_management_audit",
+      "router_module": "logs",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RequireRole",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(ge=0)",
+        "Query(ge=1, le=500)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/logs/{log_id}/evidence",
+      "source_file": "app/routes/logs.py",
+      "source_line": 352,
+      "handler": "get_forensic_evidence",
+      "router_module": "logs",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RequireRole",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "auditor",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/mitigate",
+      "source_file": "app/routes/threat_intel.py",
+      "source_line": 140,
+      "handler": "execute_mitigation",
+      "router_module": "threat_intel",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RequireRole",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "BanRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/network-relay/generate-activation",
+      "source_file": "app/routes/network_relay.py",
+      "source_line": 545,
+      "handler": "generate_relay_activation",
+      "router_module": "network_relay",
+      "feature_condition": "settings.network_relay_enabled",
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "RelayActivationRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/network-relay/ingest",
+      "source_file": "app/routes/network_relay.py",
+      "source_line": 1486,
+      "handler": "ingest_relay_batch",
+      "router_module": "network_relay",
+      "feature_condition": "settings.network_relay_enabled",
+      "auth_type": "RELAY_IDENTITY",
+      "auth_evidence": [
+        "_relay_context",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "SERVICE_IDENTITY_TENANT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "source_marker:content-length",
+        "source_marker:max_batch",
+        "source_marker:max_body",
+        "source_marker:quota"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/network-relay/recover-key",
+      "source_file": "app/routes/network_relay.py",
+      "source_line": 1008,
+      "handler": "recover_relay_key",
+      "router_module": "network_relay",
+      "feature_condition": "settings.network_relay_enabled",
+      "auth_type": "RELAY_KEY_RECOVERY_AUTHORIZATION",
+      "auth_evidence": [
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "SERVICE_IDENTITY_TENANT",
+      "request_schemas": [
+        "RelayRecoverRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "source_marker:replay"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/network-relay/register",
+      "source_file": "app/routes/network_relay.py",
+      "source_line": 595,
+      "handler": "register_relay",
+      "router_module": "network_relay",
+      "feature_condition": "settings.network_relay_enabled",
+      "auth_type": "RELAY_ONE_TIME_ACTIVATION",
+      "auth_evidence": [
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "SERVICE_IDENTITY_TENANT",
+      "request_schemas": [
+        "RelayRegisterRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/network-relay/status",
+      "source_file": "app/routes/network_relay.py",
+      "source_line": 843,
+      "handler": "list_relay_status",
+      "router_module": "network_relay",
+      "feature_condition": "settings.network_relay_enabled",
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "auditor",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/network-relay/{relay_id}/authorize-key-recovery",
+      "source_file": "app/routes/network_relay.py",
+      "source_line": 942,
+      "handler": "authorize_relay_key_recovery",
+      "router_module": "network_relay",
+      "feature_condition": "settings.network_relay_enabled",
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "RelayRecoveryAuthorizationRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/network-relay/{relay_id}/revoke",
+      "source_file": "app/routes/network_relay.py",
+      "source_line": 898,
+      "handler": "revoke_relay",
+      "router_module": "network_relay",
+      "feature_condition": "settings.network_relay_enabled",
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "RelayRevokeRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/revoke",
+      "source_file": "app/routes/threat_intel.py",
+      "source_line": 250,
+      "handler": "revoke_mitigation",
+      "router_module": "threat_intel",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RequireRole",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "BanRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/sales/contact",
+      "source_file": "app/routes/sales.py",
+      "source_line": 182,
+      "handler": "contact_sales",
+      "router_module": "sales",
+      "feature_condition": null,
+      "auth_type": "PUBLIC_BOUNDED",
+      "auth_evidence": [
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "NOT_APPLICABLE",
+      "request_schemas": [
+        "ContactRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/sales/pricing",
+      "source_file": "app/routes/sales.py",
+      "source_line": 70,
+      "handler": "get_pricing",
+      "router_module": "sales",
+      "feature_condition": null,
+      "auth_type": "PUBLIC_BOUNDED",
+      "auth_evidence": [],
+      "allowed_roles": [],
+      "tenant_scope": "NOT_APPLICABLE",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/sales/request-quote",
+      "source_file": "app/routes/sales.py",
+      "source_line": 77,
+      "handler": "request_quote",
+      "router_module": "sales",
+      "feature_condition": null,
+      "auth_type": "PUBLIC_BOUNDED",
+      "auth_evidence": [
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "NOT_APPLICABLE",
+      "request_schemas": [
+        "QuoteRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/session/fresh-start",
+      "source_file": "app/routes/threat_intel.py",
+      "source_line": 364,
+      "handler": "tenant_fresh_start",
+      "router_module": "threat_intel",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/upload/analyze",
+      "source_file": "app/routes/upload.py",
+      "source_line": 270,
+      "handler": "analyze_log_file",
+      "router_module": "upload",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/v1/upload/delete/{analysis_id}",
+      "source_file": "app/routes/upload.py",
+      "source_line": 564,
+      "handler": "delete_log_alias",
+      "router_module": "upload",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/upload/report/{analysis_id}",
+      "source_file": "app/routes/upload.py",
+      "source_line": 569,
+      "handler": "download_report",
+      "router_module": "upload",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/upload/results",
+      "source_file": "app/routes/upload.py",
+      "source_line": 455,
+      "handler": "get_upload_history",
+      "router_module": "upload",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/v1/upload/results/{analysis_id}",
+      "source_file": "app/routes/upload.py",
+      "source_line": 529,
+      "handler": "delete_log",
+      "router_module": "upload",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/upload/results/{analysis_id}",
+      "source_file": "app/routes/upload.py",
+      "source_line": 480,
+      "handler": "get_analysis_result",
+      "router_module": "upload",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/virustotal/ip/{ip}",
+      "source_file": "app/routes/threat_intel.py",
+      "source_line": 385,
+      "handler": "check_virustotal_ip",
+      "router_module": "threat_intel",
+      "feature_condition": null,
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/ws/ticket",
+      "source_file": "app/main.py",
+      "source_line": 644,
+      "handler": "create_ws_ticket",
+      "router_module": "main",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/activate-invite",
+      "source_file": "app/routes/auth.py",
+      "source_line": 934,
+      "handler": "activate_invite",
+      "router_module": "auth",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "PUBLIC_BOUNDED",
+      "auth_evidence": [
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "NOT_APPLICABLE",
+      "request_schemas": [
+        "ActivateInviteRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/invite",
+      "source_file": "app/routes/auth.py",
+      "source_line": 810,
+      "handler": "invite_user",
+      "router_module": "auth",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "InviteUserRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/login",
+      "source_file": "app/routes/auth.py",
+      "source_line": 584,
+      "handler": "login",
+      "router_module": "auth",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "PUBLIC_BOUNDED",
+      "auth_evidence": [
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "NOT_APPLICABLE",
+      "request_schemas": [
+        "LoginSchema"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/logout",
+      "source_file": "app/routes/auth.py",
+      "source_line": 659,
+      "handler": "logout",
+      "router_module": "auth",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/auth/me",
+      "source_file": "app/routes/auth.py",
+      "source_line": 694,
+      "handler": "get_me",
+      "router_module": "auth",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "source_marker:quota"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/auth/my-packs",
+      "source_file": "app/routes/auth.py",
+      "source_line": 726,
+      "handler": "get_my_packs",
+      "router_module": "auth",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/signup",
+      "source_file": "app/routes/auth.py",
+      "source_line": 478,
+      "handler": "signup",
+      "router_module": "auth",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "PUBLIC_BOUNDED",
+      "auth_evidence": [
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "NOT_APPLICABLE",
+      "request_schemas": [
+        "UserCreate"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/auth/team",
+      "source_file": "app/routes/auth.py",
+      "source_line": 996,
+      "handler": "list_team_members",
+      "router_module": "auth",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "DELETE",
+      "route": "/auth/team/{user_id}",
+      "source_file": "app/routes/auth.py",
+      "source_line": 1028,
+      "handler": "remove_team_member",
+      "router_module": "auth",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/update-plan",
+      "source_file": "app/routes/auth.py",
+      "source_line": 737,
+      "handler": "update_plan",
+      "router_module": "auth",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "PlanUpdate"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/upgrade",
+      "source_file": "app/routes/auth.py",
+      "source_line": 795,
+      "handler": "upgrade_plan",
+      "router_module": "auth",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT_RBAC_AND_PLATFORM_ADMIN_KEY",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db",
+        "verify_admin"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "UpgradePlan"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/firewall/agent/heartbeat/{tenant_id}",
+      "source_file": "app/routes/threat_intel.py",
+      "source_line": 310,
+      "handler": "agent_heartbeat",
+      "router_module": "threat_intel",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "AGENT_IDENTITY",
+      "auth_evidence": [
+        "verify_agent_token"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "SERVICE_IDENTITY_TENANT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/firewall/list",
+      "source_file": "app/routes/threat_intel.py",
+      "source_line": 349,
+      "handler": "get_blocked_list",
+      "router_module": "threat_intel",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/firewall/mitigate",
+      "source_file": "app/routes/threat_intel.py",
+      "source_line": 140,
+      "handler": "execute_mitigation",
+      "router_module": "threat_intel",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RequireRole",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "BanRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/firewall/revoke",
+      "source_file": "app/routes/threat_intel.py",
+      "source_line": 250,
+      "handler": "revoke_mitigation",
+      "router_module": "threat_intel",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RequireRole",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "BanRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/firewall/session/fresh-start",
+      "source_file": "app/routes/threat_intel.py",
+      "source_line": 364,
+      "handler": "tenant_fresh_start",
+      "router_module": "threat_intel",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/firewall/virustotal/ip/{ip}",
+      "source_file": "app/routes/threat_intel.py",
+      "source_line": 385,
+      "handler": "check_virustotal_ip",
+      "router_module": "threat_intel",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/health",
+      "source_file": "app/main.py",
+      "source_line": 618,
+      "handler": "health_check",
+      "router_module": "main",
+      "feature_condition": null,
+      "auth_type": "PUBLIC_BOUNDED",
+      "auth_evidence": [],
+      "allowed_roles": [],
+      "tenant_scope": "NOT_APPLICABLE",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/metrics",
+      "source_file": "app/routes/metrics.py",
+      "source_line": 39,
+      "handler": "metrics",
+      "router_module": "metrics",
+      "feature_condition": null,
+      "auth_type": "METRICS_BEARER_OR_IP_ALLOWLIST",
+      "auth_evidence": [],
+      "allowed_roles": [],
+      "tenant_scope": "NOT_APPLICABLE",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/upload/analyze",
+      "source_file": "app/routes/upload.py",
+      "source_line": 270,
+      "handler": "analyze_log_file",
+      "router_module": "upload",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "DELETE",
+      "route": "/upload/delete/{analysis_id}",
+      "source_file": "app/routes/upload.py",
+      "source_line": 564,
+      "handler": "delete_log_alias",
+      "router_module": "upload",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/upload/report/{analysis_id}",
+      "source_file": "app/routes/upload.py",
+      "source_line": 569,
+      "handler": "download_report",
+      "router_module": "upload",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/upload/results",
+      "source_file": "app/routes/upload.py",
+      "source_line": 455,
+      "handler": "get_upload_history",
+      "router_module": "upload",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "DELETE",
+      "route": "/upload/results/{analysis_id}",
+      "source_file": "app/routes/upload.py",
+      "source_line": 529,
+      "handler": "delete_log",
+      "router_module": "upload",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/upload/results/{analysis_id}",
+      "source_file": "app/routes/upload.py",
+      "source_line": 480,
+      "handler": "get_analysis_result",
+      "router_module": "upload",
+      "feature_condition": "settings.enable_legacy_routes",
+      "auth_type": "USER_JWT",
+      "auth_evidence": [
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "WEBSOCKET",
+      "route": "/ws/alerts",
+      "source_file": "app/main.py",
+      "source_line": 671,
+      "handler": "websocket_endpoint",
+      "router_module": "main",
+      "feature_condition": null,
+      "auth_type": "WEBSOCKET_ONE_TIME_TICKET",
+      "auth_evidence": [],
+      "allowed_roles": [],
+      "tenant_scope": "TICKET_BOUND_TENANT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    }
+  ]
+}

@@ -10,11 +10,16 @@ from datetime import datetime, timezone
 import hashlib
 import os
 from passlib.context import CryptContext
+from pymongo.errors import DuplicateKeyError
 
 from app.database import get_db
 from app.utils.limiter import limiter
 from app.utils.tenant_cache import normalize_pack_id
-from app.utils.security_policy import PLATFORM_MAX_AGENTS, StrongPassword
+from app.utils.security_policy import (
+    PLATFORM_MAX_AGENTS,
+    StrongPassword,
+    USER_IDENTITY_COLLATION,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -84,7 +89,10 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
 
     # 0. Prevent duplicate provisioning
     try:
-        existing_user = await db["users"].find_one({"email": admin_email})
+        existing_user = await db["users"].find_one(
+            {"email": admin_email},
+            collation=USER_IDENTITY_COLLATION,
+        )
     except Exception as exc:
         logger.exception("Tenant provisioning preflight failed for %s", admin_email)
         raise HTTPException(
@@ -131,7 +139,16 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
     }
     # 3. Create the Admin User Account
     hashed_password = pwd_context.hash(req.admin_password)
-    admin_username = admin_email.split("@")[0]
+    username_base = admin_email.split("@")[0]
+    existing_username = await db["users"].find_one(
+        {"username": username_base},
+        collation=USER_IDENTITY_COLLATION,
+    )
+    admin_username = (
+        f"{username_base}-{tenant_id[-8:].lower()}"
+        if existing_username
+        else username_base
+    )
 
     admin_user = {
         "_id": ObjectId(),
@@ -179,6 +196,11 @@ async def provision_tenant(request: Request, req: ProvisionRequest, db=Depends(g
                 tenant_id,
                 "; ".join(rollback_failures),
             )
+        if isinstance(exc, DuplicateKeyError):
+            raise HTTPException(
+                status_code=400,
+                detail="User with this email already exists.",
+            ) from exc
         raise HTTPException(
             status_code=500,
             detail="Tenant provisioning failed; no account was created.",

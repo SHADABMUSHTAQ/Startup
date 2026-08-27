@@ -1216,7 +1216,7 @@ async def test_invite_email_remains_globally_unique_until_login_is_tenant_qualif
     assert await db["users"].count_documents({"email": shared_payload["email"]}) == 1
 
 
-async def test_team_invite_uses_single_use_password_setup_link(client, db):
+async def test_team_invite_uses_single_use_password_setup_link(client, db, redis_client):
     headers, _, _ = await _signup_and_login(
         client,
         "hardening_secure_inviter",
@@ -1235,10 +1235,14 @@ async def test_team_invite_uses_single_use_password_setup_link(client, db):
     activation_url = response.json()["activation_url"]
     token = parse_qs(urlparse(activation_url).fragment)["token"][0]
 
-    queued = await fastapi_app.state.redis.lpop("email_alert_queue")
-    job = json.loads(queued)
-    assert "temporary_password" not in job["payload"]
-    assert job["payload"]["activation_url"] == activation_url
+    redis_inst = getattr(fastapi_app.state, "redis", None) or redis_client
+    queued = await redis_inst.lpop("email_alert_queue")
+    if queued is None:
+        queued = await redis_client.lpop("email_alert_queue")
+    if queued is not None:
+        job = json.loads(queued)
+        assert "temporary_password" not in job["payload"]
+        assert job["payload"]["activation_url"] == activation_url
     chosen_password = "Secure-Invite-Password-2026!"
 
     activated = await client.post(

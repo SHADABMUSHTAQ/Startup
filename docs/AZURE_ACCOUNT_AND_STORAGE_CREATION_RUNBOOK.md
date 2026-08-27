@@ -186,8 +186,6 @@ for container in \
   warsoc-retention-180 \
   warsoc-retention-270 \
   warsoc-retention-360 \
-  warsoc-peca-365 \
-  warsoc-fbr-2190 \
   warsoc-retrieval-staging \
   warsoc-db-backups
 do
@@ -214,8 +212,6 @@ declare -A RETENTION_DAYS=(
   [warsoc-retention-180]=180
   [warsoc-retention-270]=270
   [warsoc-retention-360]=360
-  [warsoc-peca-365]=365
-  [warsoc-fbr-2190]=2190
 )
 
 for container in "${!RETENTION_DAYS[@]}"; do
@@ -229,7 +225,7 @@ for container in "${!RETENTION_DAYS[@]}"; do
 done
 ```
 
-Do not apply an immutability policy to `warsoc-retrieval-staging`; temporary copies must expire. The database-backup container follows the approved recovery-retention policy, not the FBR evidence lock.
+Do not apply an immutability policy to `warsoc-retrieval-staging`; temporary copies must expire. The database-backup container follows the approved recovery-retention policy, not an evidence retention lock.
 
 ### 8.1 Test each unlocked policy
 
@@ -401,6 +397,9 @@ Prove archive upload and backup upload from the Azure VM immediately after this 
 ## 12. Environment Mapping
 
 Do not add duration-specific variables until every referenced policy is locked and verified. Keep the existing six-year fallback unchanged during the compute migration.
+New FBR and PECA evidence use the matching
+`AZURE_STORAGE_CONTAINER_GENERAL_<days>` route; there are no active
+class-specific container variables for those evidence packs.
 
 ```dotenv
 AZURE_STORAGE_CONTAINER=warsoc-cold-storage
@@ -408,14 +407,6 @@ AZURE_IMMUTABILITY_REQUIRED=true
 AZURE_IMMUTABILITY_SCOPE=container
 AZURE_CONTAINER_IMMUTABILITY_LOCKED=true
 AZURE_CONTAINER_IMMUTABILITY_DAYS=2190
-
-AZURE_STORAGE_CONTAINER_FBR=warsoc-fbr-2190
-AZURE_CONTAINER_IMMUTABILITY_LOCKED_FBR=true
-AZURE_CONTAINER_IMMUTABILITY_DAYS_FBR=2190
-
-AZURE_STORAGE_CONTAINER_PECA=warsoc-peca-365
-AZURE_CONTAINER_IMMUTABILITY_LOCKED_PECA=true
-AZURE_CONTAINER_IMMUTABILITY_DAYS_PECA=365
 
 AZURE_STORAGE_CONTAINER_SIEM_90=warsoc-retention-90
 AZURE_STORAGE_CONTAINER_GENERAL_90=warsoc-retention-90
@@ -475,9 +466,9 @@ Serial creation of promotional accounts is not a production architecture and may
 - Correct subscription and region recorded.
 - Artifact account contains only approved versioned public artifacts.
 - Evidence account rejects anonymous access.
-- Six immutable containers have the exact locked durations.
+- Five new immutable containers have the exact locked durations.
 - Existing six-year fallback remains intact.
-- Staging and backup containers are private and not governed by the FBR lock.
+- Staging and backup containers are private and not governed by evidence locks.
 - Staging lifecycle cleanup is installed without deleting unrelated lifecycle rules.
 - Storage firewall/private endpoint path is proven from the backend.
 - Connection string and keys are stored outside Git with mode `600` on the host.

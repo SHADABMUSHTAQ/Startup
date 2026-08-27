@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, Request, HTTPException, Header
 from pydantic import BaseModel, Field
+import base64
+import hashlib
 import json
 import logging
 import os
@@ -25,6 +27,7 @@ from app.utils.agent_lifecycle import (
     agent_status_needs_lifecycle_migration,
     normalize_agent_lifecycle_status,
 )
+from app.utils.agent_crypto import parse_utc_timestamp, public_key_id
 
 
 router = APIRouter()
@@ -86,7 +89,19 @@ class HeartbeatRequest(BaseModel):
     agent_id: str
     current_version: str
     timestamp: float = Field(..., allow_inf_nan=False)
+    protocol_version: str = "heartbeat-v1"
+    nonce: str | None = Field(default=None, min_length=16, max_length=128)
+    agent_collection_time: str | None = Field(default=None, max_length=64)
     sensor_status: dict[str, Any] | None = None
+
+
+def _heartbeat_clock_state(offset_seconds: float) -> str:
+    absolute_offset = abs(float(offset_seconds))
+    if absolute_offset <= 5:
+        return "TRUSTED"
+    if absolute_offset <= 60:
+        return "DEGRADED"
+    return "UNTRUSTED"
 
 
 def _sanitize_sensor_status(raw_status: dict[str, Any] | None) -> dict[str, Any]:
@@ -103,15 +118,26 @@ def _sanitize_sensor_status(raw_status: dict[str, Any] | None) -> dict[str, Any]
             status = str(raw_channel.get("status") or "unknown").strip().lower()
             if status not in {"ok", "degraded", "error", "unknown"}:
                 status = "unknown"
+
+            def _channel_cursor(name: str) -> int:
+                try:
+                    return max(0, int(raw_channel.get(name) or 0))
+                except (TypeError, ValueError):
+                    return 0
+
             channels[channel_name] = {
                 "status": status,
                 "last_checked_at": str(raw_channel.get("last_checked_at") or "")[:64],
                 "last_event_at": str(raw_channel.get("last_event_at") or "")[:64],
                 "last_error": str(raw_channel.get("last_error") or "")[:500] or None,
+                "channel_epoch": str(raw_channel.get("channel_epoch") or "")[:128] or None,
+                "watermark": _channel_cursor("watermark"),
+                "latest_record_id": _channel_cursor("latest_record_id"),
             }
 
     pos_audit = raw_status.get("pos_audit_log")
     pos_audit = pos_audit if isinstance(pos_audit, dict) else {}
+    nonce_key = None
     try:
         pos_sacl_path_count = int(raw_status.get("pos_sacl_path_count") or 0)
     except (TypeError, ValueError):
@@ -548,10 +574,28 @@ async def agent_heartbeat(
             
         public_key.verify(signature_bytes, raw_body)
         
-        # 0-Mercy Nonce/Timestamp validation
+        protocol_version = str(body.protocol_version or "heartbeat-v1").strip().lower()
+        if protocol_version not in {"heartbeat-v1", "heartbeat-v2"}:
+            raise HTTPException(status_code=400, detail="Unsupported heartbeat protocol")
+
         now_ts = datetime.now(timezone.utc).timestamp()
-        if abs(now_ts - body.timestamp) > 30:
-            raise HTTPException(status_code=401, detail="Expired Signature: Timestamp is older than 30 seconds. Replay Attack Prevented.")
+        clock_offset_seconds = now_ts - body.timestamp
+        accepted_skew = 30 if protocol_version == "heartbeat-v1" else 900
+        if abs(clock_offset_seconds) > accepted_skew:
+            raise HTTPException(status_code=401, detail="Heartbeat is outside the accepted time window")
+
+        if protocol_version == "heartbeat-v2":
+            if not body.nonce or not body.agent_collection_time:
+                raise HTTPException(status_code=400, detail="Heartbeat v2 metadata is incomplete")
+            collection_time = parse_utc_timestamp(body.agent_collection_time)
+            if collection_time is None:
+                raise HTTPException(status_code=400, detail="Heartbeat collection time is invalid")
+            if abs(collection_time.timestamp() - body.timestamp) > 5:
+                raise HTTPException(status_code=400, detail="Heartbeat time fields are inconsistent")
+
+            nonce_key = f"warsoc:heartbeat_nonce:{body.agent_id}:{body.nonce}"
+            if not await redis_client.set(nonce_key, "1", nx=True, ex=1800):
+                raise HTTPException(status_code=409, detail="Heartbeat was already accepted")
                 
     except HTTPException:
         raise
@@ -565,9 +609,44 @@ async def agent_heartbeat(
         
     if tenant_id:
         sensor_status = _sanitize_sensor_status(body.sensor_status)
+        received_at = datetime.now(timezone.utc)
+        protocol_version = str(body.protocol_version or "heartbeat-v1").strip().lower()
+        clock_offset_seconds = received_at.timestamp() - body.timestamp
+        signed_body_hash = hashlib.sha256(raw_body).hexdigest()
+        try:
+            await db["agent_coverage_observations"].insert_one(
+                {
+                "tenant_id": tenant_id,
+                "agent_id": body.agent_id,
+                "agent_version": body.current_version,
+                "protocol_version": protocol_version,
+                "nonce": body.nonce,
+                "agent_timestamp": datetime.fromtimestamp(body.timestamp, timezone.utc),
+                "agent_collection_time": parse_utc_timestamp(body.agent_collection_time)
+                if body.agent_collection_time
+                else None,
+                "server_received_time": received_at,
+                "clock_offset_ms": int(clock_offset_seconds * 1000),
+                "clock_state": _heartbeat_clock_state(clock_offset_seconds)
+                if protocol_version == "heartbeat-v2"
+                else "LEGACY",
+                "sensor_status": sensor_status,
+                "signed_body_sha256": signed_body_hash,
+                "signed_body_b64": base64.b64encode(raw_body).decode("ascii"),
+                "signature_algorithm": "Ed25519",
+                "signature": x_warsoc_signature.lower(),
+                "signing_key_id": public_key_id(public_key_pem),
+                "source_ip": request.client.host if request.client else None,
+                "created_at": received_at,
+                }
+            )
+        except Exception:
+            if nonce_key:
+                await redis_client.delete(nonce_key)
+            raise
         await redis_client.set(
             f"status:{tenant_id}:{body.agent_id}",
-            datetime.now(timezone.utc).isoformat(),
+            received_at.isoformat(),
             ex=600,
         )
         await redis_client.set(

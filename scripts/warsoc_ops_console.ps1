@@ -168,7 +168,7 @@ $retentionBox.Maximum = 2190
 $retentionBox.Value = 90
 $form.Controls.Add($retentionBox)
 $retentionHint = New-Object System.Windows.Forms.Label
-$retentionHint.Text = "Tenant default. Policy vault: FBR 2190 days, PECA 365 days."
+$retentionHint.Text = "Tenant retention applies to SIEM, FBR, and PECA evidence."
 $retentionHint.Location = New-Point 310 ($y + 2)
 $retentionHint.Size = New-Size 420 24
 $form.Controls.Add($retentionHint)

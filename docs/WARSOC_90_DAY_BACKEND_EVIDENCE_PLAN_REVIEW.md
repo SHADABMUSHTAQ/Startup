@@ -4,6 +4,10 @@
 **Date:** 2026-08-15  
 **Applies to:** the current Windows-only WarSOC backend, agent, SIEM, FBR, PECA, Azure archive, disabled network relay, and disabled Wazuh candidate boundary
 
+> **Retention supersession (2026-08-24):** Tax-period and six-year FBR
+> retention sections in this reviewed plan are no longer active product
+> requirements. Use `WARSOC_FBR_RETENTION_PRODUCT_DECISION_2026-08-24.md`.
+
 ## 1. Decision
 
 The proposed direction is valid, but it is not safe to execute as one large change.

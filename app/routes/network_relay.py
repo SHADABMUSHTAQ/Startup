@@ -39,6 +39,12 @@ from app.utils.agent_crypto import public_key_id
 from app.utils.limiter import limiter
 from app.utils.rbac import RoleChecker
 from app.utils.totp import reveal_totp_secret, verify_totp
+from app.utils.source_provenance import apply_source_provenance
+from app.utils.source_evidence import (
+    SourceEvidenceConflict,
+    persist_source_envelope,
+    publish_source_outbox,
+)
 
 
 router = APIRouter()
@@ -187,6 +193,16 @@ def _tenant_is_active(tenant: dict | None) -> bool:
         and tenant.get("has_active_plan", True) is not False
         and status not in INACTIVE_TENANT_STATUSES
     )
+
+
+def _tenant_relay_limit(tenant: dict | None) -> int:
+    if not _tenant_is_active(tenant):
+        return 0
+    try:
+        configured = int((tenant or {}).get("max_network_relays") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(configured, settings.network_relay_max_per_tenant))
 
 
 def _canonical_public_key(value: str) -> str:
@@ -541,11 +557,7 @@ async def generate_relay_activation(
     active_count = await db["network_relays"].count_documents(
         {"tenant_id": tenant_id, "status": {"$nin": list(INACTIVE_RELAY_STATUSES)}}
     )
-    raw_limit = tenant.get("max_network_relays")
-    tenant_limit = min(
-        int(raw_limit if raw_limit is not None else 0),
-        settings.network_relay_max_per_tenant,
-    )
+    tenant_limit = _tenant_relay_limit(tenant)
     if active_count >= tenant_limit:
         raise HTTPException(status_code=403, detail="Network relay contract limit reached")
 
@@ -646,11 +658,7 @@ async def register_relay(request: Request, body: RelayRegisterRequest, db=Depend
         active_count = await db["network_relays"].count_documents(
             {"tenant_id": tenant_id, "status": {"$nin": list(INACTIVE_RELAY_STATUSES)}}
         )
-        raw_limit = tenant.get("max_network_relays")
-        tenant_limit = min(
-            int(raw_limit if raw_limit is not None else 0),
-            settings.network_relay_max_per_tenant,
-        )
+        tenant_limit = _tenant_relay_limit(tenant)
         if active_count >= tenant_limit:
             raise HTTPException(status_code=403, detail="Network relay contract limit reached")
 
@@ -839,9 +847,17 @@ async def list_relay_status(
 ):
     _feature_guard()
     tenant_id = str(current_user.get("tenant_id") or "")
+    tenant = await db["tenants"].find_one({"tenant_id": tenant_id})
+    tenant_limit = _tenant_relay_limit(tenant)
     rows = await db["network_relays"].find({"tenant_id": tenant_id}).sort(
         "created_at", -1
     ).to_list(length=100)
+    active_count = sum(
+        1
+        for row in rows
+        if str(row.get("status") or "active").lower()
+        not in INACTIVE_RELAY_STATUSES
+    )
     relay_ids = [str(row.get("relay_id") or "") for row in rows if row.get("relay_id")]
     observations_by_relay: dict[str, dict[str, dict[str, Any]]] = {}
     if relay_ids:
@@ -855,6 +871,17 @@ async def list_relay_status(
                 observations_by_relay.setdefault(relay_id, {})[device_id] = observation
     now = datetime.now(timezone.utc)
     return {
+        "capability": {
+            "enabled": True,
+            "entitled": tenant_limit > 0,
+            "max_relays": tenant_limit,
+            "active_relays": active_count,
+            "remaining_relays": max(0, tenant_limit - active_count),
+            "can_manage": str(current_user.get("role") or "").strip().lower()
+            == "admin",
+            "metadata_only": True,
+            "validated_firewall_vendors": ["pfsense"],
+        },
         "relays": [
             _relay_public_status(
                 row,
@@ -1160,7 +1187,7 @@ def _queue_event(
             "observed_source_address": event.source_address,
         }
     )
-    return {
+    queued_event = {
         "tenant_id": relay_context["tenant_id"],
         "agent_id": relay_context["relay_id"],
         "source_id": event.device_id,
@@ -1207,6 +1234,7 @@ def _queue_event(
         "signature_verified_at": cloud_receipt_time.isoformat(),
         "agent_version": relay_context["relay"].get("version") or "unknown",
     }
+    return apply_source_provenance(queued_event)
 
 
 async def _admit_batch(
@@ -1261,9 +1289,6 @@ local platform_quota_used = tonumber(redis.call('GET', KEYS[4]) or '0')
 if incoming_bytes > 0 and quota_used + incoming_bytes > quota_limit then return -4 end
 if incoming_bytes > 0 and platform_quota_limit > 0 and platform_quota_used + incoming_bytes > platform_quota_limit then return -5 end
 if redis.call('XLEN', KEYS[2]) + payload_count > stream_limit then return -3 end
-for i = 17, 16 + payload_count do
-  redis.call('XADD', KEYS[2], '*', 'payload', ARGV[i])
-end
 if incoming_bytes > 0 then
   redis.call('INCRBY', KEYS[3], incoming_bytes)
   redis.call('INCRBY', KEYS[4], incoming_bytes)
@@ -1301,7 +1326,6 @@ return 1
             max(1, int(quota_bytes)),
             INGEST_DAILY_QUOTA_TTL_SECONDS,
             max(0, int(platform_quota_bytes)),
-            *payloads,
         )
     )
 
@@ -1586,33 +1610,79 @@ async def ingest_relay_batch(
     if admission == -1:
         await redis.incr("warsoc_network_relay_batches_rejected_total")
         raise HTTPException(status_code=409, detail="Relay batch sequence mismatch")
-    if admission == 2:
-        try:
-            await _persist_batch_receipt(db, relay_context, batch, batch_hash, now)
-        except Exception as exc:
-            logger.exception("Relay receipt recovery failed for duplicate batch")
-            raise HTTPException(
-                status_code=503,
-                detail="Relay receipt persistence unavailable; retain and retry",
-            ) from exc
-        await redis.incr("warsoc_network_relay_batches_duplicate_total")
-        return ORJSONResponse(
-            status_code=202,
-            content={"status": "duplicate_acknowledged", "queued": 0, "sequence": batch.sequence},
-        )
-
     try:
+        outbox_uids = await persist_source_envelope(
+            db,
+            tenant_id=relay_context["tenant_id"],
+            source_principal_type="network_relay",
+            source_principal_id=relay_context["relay_id"],
+            source_channel="network_relay",
+            source_envelope_uid=f"{batch.chain_id}:{batch.key_epoch}:{batch.sequence}",
+            source_payload=raw_body,
+            dispatch_events=[
+                {
+                    "event_uid": event.event_uid,
+                    "serialized_payload": payload,
+                    "target_streams": [RAW_LOGS_QUEUE],
+                }
+                for event, payload in zip(batch.events, payloads)
+            ],
+            retention_class="SIEM",
+            auth_metadata={
+                "scheme": RELAY_SIGNATURE_VERSION,
+                "signature_algorithm": "Ed25519",
+                "signature": signature,
+                "payload_hash": batch_hash,
+                "signing_key_id": relay_context["relay"].get("signing_key_id"),
+                "key_epoch": batch.key_epoch,
+                "chain_id": batch.chain_id,
+                "sequence": batch.sequence,
+                "previous_batch_hash": batch.previous_batch_hash,
+                "verification_version": "relay-batch-v1",
+            },
+            source_timestamp=batch.created_at,
+        )
         await _persist_batch_receipt(db, relay_context, batch, batch_hash, now)
         await db["network_relays"].update_one(
             {"relay_id": relay_context["relay_id"]},
             {"$set": {"last_ip": request.client.host if request.client else None}},
         )
+    except SourceEvidenceConflict as exc:
+        logger.warning(
+            "[SECURITY] Relay source evidence identity conflict: relay=%s sequence=%s",
+            relay_context["relay_id"],
+            batch.sequence,
+        )
+        raise HTTPException(status_code=409, detail="Source evidence identity conflict") from exc
     except Exception as exc:
-        logger.exception("Relay receipt persistence failed after durable Redis admission")
+        logger.exception("Relay source persistence failed before stream dispatch")
         raise HTTPException(
             status_code=503,
-            detail="Relay receipt persistence unavailable; retain and retry",
+            detail="Relay evidence persistence unavailable; retain and retry",
         ) from exc
+
+    try:
+        published_count = await publish_source_outbox(
+            db,
+            redis,
+            outbox_uids=outbox_uids,
+            limit=len(outbox_uids),
+        )
+    except Exception:
+        logger.exception("Relay source outbox inline dispatch failed; background retry retained")
+        published_count = 0
+
+    if admission == 2:
+        await redis.incr("warsoc_network_relay_batches_duplicate_total")
+        return ORJSONResponse(
+            status_code=202,
+            content={
+                "status": "duplicate_acknowledged",
+                "queued": 0,
+                "dispatch_published": published_count,
+                "sequence": batch.sequence,
+            },
+        )
     control_events = [event for event in batch.events if event.record_class == "control"]
     reported_drops = sum(
         int(event.normalized.get("dropped_events") or 0) for event in control_events
@@ -1634,5 +1704,11 @@ async def ingest_relay_batch(
     ).execute()
     return ORJSONResponse(
         status_code=202,
-        content={"status": "accepted", "queued": len(batch.events), "sequence": batch.sequence},
+        content={
+            "status": "accepted",
+            "queued": len(batch.events),
+            "dispatch_published": published_count,
+            "dispatch_pending": len(outbox_uids) - published_count,
+            "sequence": batch.sequence,
+        },
     )

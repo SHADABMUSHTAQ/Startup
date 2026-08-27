@@ -8,7 +8,7 @@ import sys
 import copy
 import traceback
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorClient
 from redis import exceptions as redis_exceptions
 from redis.asyncio import Redis
@@ -23,6 +23,11 @@ from app.actions.alerting import dispatch_alert_if_entitled, is_email_trigger_se
 from app.utils.agent_crypto import timestamp_age_seconds
 from app.utils.security_incidents import project_and_publish_incident, project_security_incident
 from app.utils.detection_provenance import attach_detection_provenance
+from app.utils.source_provenance import apply_source_provenance, compliance_source_allowed
+from app.utils.fbr_retention import (
+    apply_fbr_tenant_retention,
+    normalize_tenant_retention_days,
+)
 
 
 from cryptography.fernet import Fernet
@@ -41,6 +46,22 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [FBR] %(message)s")
 logger = logging.getLogger("FBR-Worker")
+
+
+async def _tenant_retention_days(db, tenant_id: str, cache: dict) -> int:
+    now = time.monotonic()
+    cached = cache.get(tenant_id)
+    if cached and cached[0] > now:
+        return cached[1]
+    tenant = await db.tenants.find_one(
+        {"tenant_id": tenant_id},
+        {"_id": 0, "retention_days": 1},
+    )
+    retention_days = normalize_tenant_retention_days(
+        (tenant or {}).get("retention_days")
+    )
+    cache[tenant_id] = (now + 60, retention_days)
+    return retention_days
 
 settings = get_settings()
 FBR_ROLLUP_EVENT_IDS = {"FIM-DB-MOD"}
@@ -691,6 +712,7 @@ async def fbr_worker():
     buffer_payload_by_mid = {}
     last_flush_time = time.time()
     last_heartbeat = 0.0
+    retention_days_cache = {}
 
     logger.info("WarSOC FBR Worker: POS compliance active")
     
@@ -811,6 +833,15 @@ async def fbr_worker():
                         
                         tenant_id = log_data.get("tenant_id")
 
+                        apply_source_provenance(log_data)
+                        if not compliance_source_allowed(log_data, "fbr"):
+                            await increment_redis_counter(
+                                redis,
+                                "warsoc_fbr_ineligible_source_total",
+                            )
+                            immediate_ack_ids.append(message_id)
+                            continue
+
                         # 1. Fetch live features
                         features = await get_tenant_features(redis, tenant_id)
                         
@@ -823,7 +854,6 @@ async def fbr_worker():
                         # Dynamic target enforcement.
                         # Normalize incoming event_id to string for SSOT lookup
                         raw_eid = log_data.get("event_id")
-                        is_syslog = log_data.get("type") == "network_log"
                         event_id = str(raw_eid).strip() if raw_eid is not None else ""
                         native_fim_generated = False
                         message_claim_key = None
@@ -863,14 +893,19 @@ async def fbr_worker():
                             if rule_pack == "fbr_pos":
                                 matched_pack = rule_pack
                                 matched_rule = rule
-                        if not is_syslog:
-                            if not event_id or event_id not in fbr_targets:
-                                logger.debug(
-                                    "Ignoring non-FBR event_id=%s",
-                                    event_id,
-                                )
-                                immediate_ack_ids.append(message_id)
-                                continue
+                        if not event_id or event_id not in fbr_targets:
+                            logger.debug(
+                                "Ignoring non-FBR event_id=%s",
+                                event_id,
+                            )
+                            immediate_ack_ids.append(message_id)
+                            continue
+
+                        tenant_retention_days = await _tenant_retention_days(
+                            db,
+                            tenant_id,
+                            retention_days_cache,
+                        )
 
                         # --- FBR DYNAMIC THROTTLE & ROLL-UP ---
                         # Create a summary alert during a FIM storm, but never suppress
@@ -909,9 +944,13 @@ async def fbr_worker():
                                         "event_uid": str(uuid.uuid4()),
                                         "timestamp": datetime.now(timezone.utc).isoformat(),
                                         "tags": "FBR_ROLLUP",
-                                        "retention_policy": "6_YEARS",
+                                        "retention_policy": "TENANT_ENTITLEMENT",
                                         "source_ip_confidence": "remote_or_payload_source" if src_ip != "unknown" else "unknown",
                                     }
+                                    apply_fbr_tenant_retention(
+                                        summary,
+                                        tenant_retention_days,
+                                    )
                                     summary = _seal_fbr_rollup_summary(summary)
                                     try:
                                         await db.fbr_pos_summaries.insert_one(summary)
@@ -944,10 +983,10 @@ async def fbr_worker():
 
                         # Apply retention and compliance metadata.
                         log_data["tags"] = "FBR_POS"
-                        log_data["retention_policy"] = "6_YEARS"
+                        log_data["retention_policy"] = "TENANT_ENTITLEMENT"
                         _apply_rule_metadata(log_data, matched_pack or "fbr_pos", matched_rule)
                         log_data["ingested_at"] = datetime.now(timezone.utc).isoformat()
-                        log_data["_expire_at"] = datetime.now(timezone.utc) + timedelta(days=365 * 6)
+                        apply_fbr_tenant_retention(log_data, tenant_retention_days)
                         _normalize_document_timestamps(log_data)
                         
                         # Signing removed: append the processed log to the buffer for dual-write.

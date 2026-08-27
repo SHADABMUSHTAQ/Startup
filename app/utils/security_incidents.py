@@ -517,6 +517,11 @@ async def project_and_publish_incident(
 
 def serialize_incident(document: Mapping[str, Any]) -> dict[str, Any]:
     result = dict(document)
+    internal_detection_sources = result.pop("detection_sources", None)
+    if internal_detection_sources:
+        # Detector/vendor provenance is retained in Mongo for engineering and
+        # audit use. Customer APIs expose WarSOC as the incident authority.
+        result["detection_source"] = "WarSOC"
     evidence_refs = result.get("evidence_refs") or []
     event_uids = result.get("event_uids") or []
     alert_uids = result.get("alert_uids") or []

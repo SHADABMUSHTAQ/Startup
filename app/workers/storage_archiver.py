@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from azure.core.exceptions import ResourceExistsError
+from azure.storage.blob import BlobImmutabilityPolicyMode, ImmutabilityPolicy
 from azure.storage.blob.aio import BlobServiceClient
 from app.utils.security_incidents import project_security_incident
 from bson import ObjectId
@@ -14,6 +15,9 @@ from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.utils.compliance_catalog import COMPLIANCE_CATALOG
+from app.utils.fbr_retention import FBR_ACTIVE_RETENTION_MODEL
+from app.utils.peca_retention import PECA_ACTIVE_RETENTION_MODEL
+from app.utils.evidence_locks import acquire_retention_fence, release_retention_fence
 
 load_dotenv()
 
@@ -26,6 +30,9 @@ DEFAULT_ARCHIVE_COLLECTIONS = (
     "security_alerts",
     "fbr_pos_logs",
     "peca_forensic_logs",
+    "source_envelopes_siem",
+    "source_envelopes_peca",
+    "source_envelopes_fbr",
     "csv_uploads",
     "analysis_results",
 )
@@ -36,14 +43,17 @@ COLLECTION_DATE_FIELDS = {
     "security_alerts": ("_expire_at", "timestamp", "ingested_at", "_retention_ts"),
     "fbr_pos_logs": ("_expire_at", "timestamp", "ingested_at", "_retention_ts"),
     "peca_forensic_logs": ("_expire_at", "timestamp", "ingested_at", "_retention_ts"),
+    "source_envelopes_siem": ("timestamp", "received_at"),
+    "source_envelopes_peca": ("timestamp", "received_at"),
+    "source_envelopes_fbr": ("timestamp", "received_at"),
     "csv_uploads": ("_retention_ts", "timestamp", "uploaded_at"),
     "analysis_results": ("uploaded_at", "created_at", "timestamp"),
 }
 
 EXPLICIT_EXPIRY_FIELDS = {"_expire_at"}
 COMPLIANCE_PACK_BY_COLLECTION = {
-    "fbr_pos_logs": "fbr_pos",
     "peca_forensic_logs": "peca_forensic",
+    "source_envelopes_peca": "peca_forensic",
 }
 COMPLIANCE_HOT_RETENTION_DAYS = {
     collection_name: int(COMPLIANCE_CATALOG[pack_name]["retention"]["local_hot_days"])
@@ -52,22 +62,31 @@ COMPLIANCE_HOT_RETENTION_DAYS = {
 COMPLIANCE_VAULT_RETENTION_DAYS = {
     collection_name: int(COMPLIANCE_CATALOG[pack_name]["retention"]["vault_days"])
     for collection_name, pack_name in COMPLIANCE_PACK_BY_COLLECTION.items()
+    if COMPLIANCE_CATALOG[pack_name]["retention"]["vault_days"] is not None
 }
 DEFAULT_SIEM_HOT_RETENTION_DAYS = max(1, min(7, int(os.getenv("SIEM_HOT_RETENTION_DAYS", "7"))))
 DEFAULT_RAW_LOG_HOT_RETENTION_DAYS = max(1, min(7, int(os.getenv("RAW_LOG_HOT_RETENTION_DAYS", "7"))))
 HOT_RETENTION_DAYS_BY_COLLECTION = {
     **COMPLIANCE_HOT_RETENTION_DAYS,
+    "fbr_pos_logs": int(COMPLIANCE_CATALOG["fbr_pos"]["retention"]["local_hot_days"]),
+    "source_envelopes_fbr": int(
+        COMPLIANCE_CATALOG["fbr_pos"]["retention"]["local_hot_days"]
+    ),
     "siem_cold_vault": DEFAULT_SIEM_HOT_RETENTION_DAYS,
     "security_alerts": DEFAULT_SIEM_HOT_RETENTION_DAYS,
     "logs": DEFAULT_RAW_LOG_HOT_RETENTION_DAYS,
+    "source_envelopes_siem": DEFAULT_SIEM_HOT_RETENTION_DAYS,
 }
 
 ARCHIVE_RETENTION_CLASS_BY_COLLECTION = {
-    "fbr_pos_logs": "FBR",
-    "peca_forensic_logs": "PECA",
+    "fbr_pos_logs": "GENERAL",
+    "peca_forensic_logs": "GENERAL",
     "siem_cold_vault": "SIEM",
     "security_alerts": "SIEM",
     "logs": "SIEM",
+    "source_envelopes_siem": "SIEM",
+    "source_envelopes_peca": "GENERAL",
+    "source_envelopes_fbr": "GENERAL",
 }
 
 
@@ -151,6 +170,25 @@ async def _verify_blob_immutability(blob_client, required_until: datetime) -> di
             f"policy through {required_until.isoformat()}"
         )
     return status
+
+
+async def _ensure_blob_immutability(blob_client, required_until: datetime) -> dict:
+    properties = await blob_client.get_blob_properties()
+    status = _blob_immutability_status(properties, required_until)
+    if status["verified"]:
+        return status
+    if not _environment_flag("AZURE_BLOB_IMMUTABILITY_AUTO_LOCK", default=False):
+        raise RuntimeError(
+            "Azure blob is not protected by a legal hold or a locked immutability "
+            f"policy through {required_until.isoformat()}"
+        )
+    await blob_client.set_immutability_policy(
+        ImmutabilityPolicy(
+            expiry_time=required_until,
+            policy_mode=BlobImmutabilityPolicyMode.LOCKED,
+        )
+    )
+    return await _verify_blob_immutability(blob_client, required_until)
 
 
 async def _verify_container_immutability_capability(
@@ -285,7 +323,20 @@ def _archive_query(tenant_id: str, collection_name: str, retention_cutoff: datet
     clauses: list[dict] = []
     for field_name in fields:
         clauses.extend(_date_clauses(field_name, retention_cutoff, expiry_cutoff))
-    return {"tenant_id": tenant_id, "$or": clauses}
+    query = {"tenant_id": tenant_id, "$or": clauses}
+    if collection_name in {"fbr_pos_logs", "source_envelopes_fbr"}:
+        # Existing records from the retired tax-period model are deliberately
+        # left untouched. Only evidence created under the active tenant model
+        # can be moved and deleted by this archiver.
+        query["retention_model"] = FBR_ACTIVE_RETENTION_MODEL
+    if collection_name in {"peca_forensic_logs", "source_envelopes_peca"}:
+        # Unmarked PECA evidence predates the tenant-entitlement model. It may
+        # already carry a longer retention obligation or reference a locked
+        # Azure object, so only explicitly versioned new evidence is eligible.
+        query["retention_model"] = PECA_ACTIVE_RETENTION_MODEL
+    if collection_name.startswith("source_envelopes_"):
+        query["dispatch_complete"] = True
+    return query
 
 
 def _archive_partition_time(docs: list[dict]) -> datetime:
@@ -317,6 +368,61 @@ def _effective_vault_retention_days(collection_name: str, tenant_retention_days:
     return max(1, tenant_retention_days)
 
 
+def _batch_vault_retention(
+    collection_name: str,
+    documents: list[dict],
+    tenant_retention_days: int,
+) -> tuple[int, str | None]:
+    return _effective_vault_retention_days(collection_name, tenant_retention_days), None
+
+
+def _archive_cohorts(collection_name: str, documents: list[dict]) -> list[list[dict]]:
+    return [documents] if documents else []
+
+
+def _bounded_archive_documents(documents: list[dict], max_encoded_bytes: int) -> list[dict]:
+    selected = []
+    encoded_bytes = 2
+    for document in documents:
+        document_bytes = len(
+            json.dumps(document, default=_json_default, separators=(",", ":")).encode("utf-8")
+        )
+        if selected and encoded_bytes + document_bytes + 1 > max_encoded_bytes:
+            break
+        if document_bytes + 2 > max_encoded_bytes:
+            raise RuntimeError("A single archive document exceeds ARCHIVE_BATCH_MAX_BYTES")
+        selected.append(document)
+        encoded_bytes += document_bytes + 1
+    return selected
+
+
+async def _active_hold_ids_for_batch(db, tenant_id: str, collection_name: str, docs: list[dict]) -> list[str]:
+    event_uids = [str(doc.get("event_uid")) for doc in docs if doc.get("event_uid")]
+    scope_queries: list[dict] = [
+        {"scope_type": "TENANT"},
+        {"scope_type": "COLLECTION", "collection": collection_name},
+    ]
+    if event_uids:
+        scope_queries.append(
+            {
+                "scope_type": "EVENT",
+                "collection": collection_name,
+                "event_uid": {"$in": event_uids},
+            }
+        )
+    hold = await db["legal_holds"].find_one(
+        {
+            "tenant_id": tenant_id,
+            "status": {"$in": ["ACTIVE", "PENDING_RELEASE"]},
+            "$or": scope_queries,
+        },
+        {"_id": 1, "hold_id": 1},
+    )
+    if not hold:
+        return []
+    return [str(hold.get("hold_id") or hold.get("_id"))]
+
+
 async def _archive_batch(
     container_client,
     db,
@@ -333,7 +439,7 @@ async def _archive_batch(
     if not document_ids:
         return 0
 
-    json_dump = json.dumps(docs, indent=2, default=_json_default).encode("utf-8")
+    json_dump = json.dumps(docs, default=_json_default, separators=(",", ":")).encode("utf-8")
     sha256_hash = hashlib.sha256(json_dump).hexdigest()
     identity = "|".join(
         (
@@ -353,7 +459,11 @@ async def _archive_batch(
     )
     json_blob_name = f"{base_name}.json"
     hash_blob_name = f"{base_name}.sha256"
-    vault_retention_days = _effective_vault_retention_days(collection_name, tenant_retention_days)
+    vault_retention_days, retention_state = _batch_vault_retention(
+        collection_name,
+        docs,
+        tenant_retention_days,
+    )
     retain_until = (
         datetime.now(timezone.utc) + timedelta(days=vault_retention_days)
         if vault_retention_days
@@ -369,6 +479,7 @@ async def _archive_batch(
                 "sha256": sha256_hash,
                 "collection": collection_name,
                 "retention_days": str(vault_retention_days or 0),
+                "retention_state": str(retention_state or "configured"),
             },
         )
     except ResourceExistsError:
@@ -395,8 +506,8 @@ async def _archive_batch(
                 vault_retention_days,
             )
         elif scope == "blob":
-            json_status = await _verify_blob_immutability(json_blob, retain_until)
-            hash_status = await _verify_blob_immutability(hash_blob, retain_until)
+            json_status = await _ensure_blob_immutability(json_blob, retain_until)
+            hash_status = await _ensure_blob_immutability(hash_blob, retain_until)
             immutability_status = {
                 "verified": True,
                 "scope": "blob",
@@ -440,6 +551,8 @@ async def _archive_batch(
         "alert_uids": alert_uids,
         "vault_retention_days": vault_retention_days,
         "retain_until": retain_until,
+        "retention_state": retention_state,
+        "automatic_final_expiry_allowed": retention_state != "UNRESOLVED",
         "immutability": immutability_status,
         "created_at": archived_at,
         "status": "archived",
@@ -490,10 +603,65 @@ async def _archive_batch(
                 archive_key,
             )
 
-    delete_result = await db[collection_name].delete_many({
-        "tenant_id": tenant_id,
-        "_id": {"$in": document_ids},
-    })
+    fence_owner = f"archive-delete:{run_id}:{collection_name}:{archive_key}"
+    if not await acquire_retention_fence(db, tenant_id, fence_owner):
+        logger.warning("Archive delete fence is busy for tenant %s; preserving hot records.", tenant_id)
+        return 0
+    try:
+        active_hold_ids = await _active_hold_ids_for_batch(
+            db,
+            tenant_id,
+            collection_name,
+            docs,
+        )
+        if active_hold_ids:
+            await db["storage_archives"].update_one(
+                {
+                    "tenant_id": tenant_id,
+                    "collection": collection_name,
+                    "archive_key": archive_key,
+                },
+                {
+                    "$set": {
+                        "status": "archived_hot_preserved_hold",
+                        "active_hold_ids": active_hold_ids,
+                        "hot_delete_blocked_at": datetime.now(timezone.utc),
+                    }
+                },
+            )
+            logger.warning(
+                "Archived %s.%s batch %s but preserved hot records due to active hold %s.",
+                tenant_id,
+                collection_name,
+                batch_number,
+                active_hold_ids,
+            )
+            return 0
+
+        delete_result = await db[collection_name].delete_many({
+            "tenant_id": tenant_id,
+            "_id": {"$in": document_ids},
+        })
+    finally:
+        await release_retention_fence(db, tenant_id, fence_owner)
+    await db["storage_archives"].update_one(
+        {
+            "tenant_id": tenant_id,
+            "collection": collection_name,
+            "archive_key": archive_key,
+        },
+        {
+            "$set": {
+                "status": "archived_hot_deleted",
+                "hot_deleted_at": datetime.now(timezone.utc),
+                "hot_deleted_count": delete_result.deleted_count,
+            },
+            "$unset": {
+                "active_hold_ids": "",
+                "hot_delete_blocked_at": "",
+            },
+        },
+    )
     logger.info(
         "Archived %s.%s batch %s to %s/%s and deleted %s hot records.",
         tenant_id,
@@ -517,7 +685,12 @@ async def run_archiver():
 
     mongo_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
     db_name = os.getenv("MONGODB_DB_NAME", "warsoc_db")
-    archive_batch_size = int(os.getenv("ARCHIVE_BATCH_SIZE", "5000"))
+    archive_batch_size = max(1, min(int(os.getenv("ARCHIVE_BATCH_SIZE", "100")), 500))
+    archive_fetch_size = min(archive_batch_size, 25)
+    archive_batch_max_bytes = max(
+        1024 * 1024,
+        min(int(os.getenv("ARCHIVE_BATCH_MAX_BYTES", str(32 * 1024 * 1024))), 64 * 1024 * 1024),
+    )
     archive_lead_days = int(os.getenv("ARCHIVE_LEAD_DAYS", "1"))
     collections_to_archive = _parse_archive_collections()
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "_" + uuid.uuid4().hex[:8]
@@ -530,11 +703,14 @@ async def run_archiver():
         blob_service_client = BlobServiceClient.from_connection_string(azure_conn_str)
         container_contexts = {}
 
-        async def get_container_context(collection_name: str, tenant_retention_days: int):
+        async def get_container_context(
+            collection_name: str,
+            tenant_retention_days: int,
+            required_vault_days: int | None = None,
+        ):
             retention_class = _archive_retention_class(collection_name)
-            vault_retention_days = _effective_vault_retention_days(
-                collection_name,
-                tenant_retention_days,
+            vault_retention_days = required_vault_days or _effective_vault_retention_days(
+                collection_name, tenant_retention_days
             )
             routing_key = _archive_routing_key(collection_name, vault_retention_days)
             container_name = _archive_container_name(collection_name, vault_retention_days)
@@ -581,15 +757,13 @@ async def run_archiver():
                 batch_number = 1
 
                 while True:
-                    docs = await db[collection_name].find(query).sort("_id", 1).limit(archive_batch_size).to_list(length=archive_batch_size)
+                    candidates = await db[collection_name].find(query).sort("_id", 1).limit(archive_fetch_size).to_list(length=archive_fetch_size)
+                    docs = _bounded_archive_documents(candidates, archive_batch_max_bytes)
                     if not docs:
                         break
 
+                    deleted_in_iteration = 0
                     try:
-                        container_name, container_client, container_immutability = await get_container_context(
-                            collection_name,
-                            retention_days,
-                        )
                         if collection_name == "security_alerts":
                             # Archive is allowed to remove alert evidence only
                             # after its mutable workflow state has been projected.
@@ -597,18 +771,30 @@ async def run_archiver():
                             # the original MongoDB documents for a later retry.
                             for alert in docs:
                                 await project_security_incident(db, alert)
-                        await _archive_batch(
-                            container_client,
-                            db,
-                            tenant_id,
-                            collection_name,
-                            docs,
-                            run_id,
-                            batch_number,
-                            retention_days,
-                            container_immutability,
-                            container_name,
-                        )
+                        for cohort_docs in _archive_cohorts(collection_name, docs):
+                            required_vault_days, _ = _batch_vault_retention(
+                                collection_name,
+                                cohort_docs,
+                                retention_days,
+                            )
+                            container_name, container_client, container_immutability = await get_container_context(
+                                collection_name,
+                                retention_days,
+                                required_vault_days,
+                            )
+                            deleted_in_iteration += await _archive_batch(
+                                container_client,
+                                db,
+                                tenant_id,
+                                collection_name,
+                                cohort_docs,
+                                run_id,
+                                batch_number,
+                                retention_days,
+                                container_immutability,
+                                container_name,
+                            )
+                            batch_number += 1
                     except Exception as exc:
                         logger.error(
                             "Failed to archive %s for tenant %s. Records were not deleted. Error: %s",
@@ -618,7 +804,8 @@ async def run_archiver():
                         )
                         break
 
-                    batch_number += 1
+                    if deleted_in_iteration == 0:
+                        break
 
     finally:
         if blob_service_client is not None:

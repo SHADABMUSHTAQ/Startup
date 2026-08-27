@@ -42,7 +42,12 @@ def _http_event(event_id, event_uid, tenant_id, agent_id, message, source_ip, pr
 async def test_peca_deep_dive():
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fastapi_app), base_url="http://testserver/api/v1", timeout=30.0) as client:
         # 1. Setup Tenant and Agent
-        session = await provision_and_login_admin(client, "peca_tester", api_prefix="")
+        session = await provision_and_login_admin(
+            client,
+            "peca_tester",
+            api_prefix="",
+            retention_days=270,
+        )
         user_token = session["token"]
         csrf_token = session["csrf_token"]
         tenant_id = session["tenant_id"]
@@ -177,5 +182,9 @@ async def test_peca_deep_dive():
         for log in peca_logs:
             assert log.get("compliance_pack") == "peca_forensic", f"Missing compliance_pack tag on {log.get('event_id')}"
             assert "matched_rule_id" in log, f"Missing matched_rule_id on {log.get('event_id')}"
+            assert log.get("retention_model") == "TENANT_ENTITLEMENT_V1"
+            assert log.get("retention_policy") == "TENANT_ENTITLEMENT"
+            assert log.get("tenant_retention_days_at_ingest") == 270
+            assert "_expire_at" not in log
 
         print("[*] PECA Deep Dive: SUCCESS!")

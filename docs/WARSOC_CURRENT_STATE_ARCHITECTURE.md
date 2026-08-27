@@ -1,11 +1,12 @@
 # WarSOC Current-State Architecture and Operational Contract
 
 **Document status:** Authoritative as-built map
-**Snapshot date:** 2026-08-15
-**Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the disabled network-relay candidate, and the disabled Wazuh shadow candidate.
+**Snapshot date:** 2026-08-24
+**Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the production-disabled network-relay candidate, and the production-disabled Wazuh candidate-detector path.
 
-**Current pushed repository pair:** backend `d92fb65`, frontend `6ffc9e0`
-**Last production-accepted application pair recorded by this document:** backend `7e81a9d`, frontend `6f0cc5a`
+**Current pushed repository pair:** backend `467e4f6`, frontend `6ffc9e0`
+**Current reviewed backend workspace:** base `6c3900f` plus the uncommitted 2026-08-24 release candidate described in sections 1.9 through 1.11
+**Current production identity observed before candidate deployment:** backend `d92fb65`, frontend `6ffc9e0`
 
 This document describes what the current source code does. It is not a sales claim and it does not treat an implemented path as production-proven unless verification evidence exists.
 
@@ -25,13 +26,27 @@ WarSOC currently has a coherent end-to-end architecture. The application enforce
 10. Normal compliance views, search, CSV exports, and PDF reports read bounded hot Mongo data and archive-ledger availability. Historical bytes require the feature-gated asynchronous retrieval workflow.
 11. The dashboard separates normal endpoint telemetry, immutable detection evidence, and mutable operator incidents.
 
-The current source and public Azure artifact are Windows agent `4.2.8-Native-Signed`. The unsigned installer is 17,797,079 bytes with SHA-256 `04D594A771B0E7F047D4CFDFF5359AC83B8934E5C592D2843ADD59D276E72F67`; production preflight `83aa506f9e` downloaded the public object and proved that exact match. The deployment operator synchronized the 4.2.8 CDN URL and required-signing mode; an authenticated API 307 remains the final redirect-path acceptance step.
+The public Azure artifact remains Windows agent `4.2.8-Native-Signed`. The
+reviewed source candidate is `4.2.9-Native-Signed-Coverage`. Its local installer
+SHA-256 is `960BF349C023A1FB79065F7ACC692A089ADEF583585DEB2BDFFCC3DC60003670`
+and packaged agent SHA-256 is
+`B9B2F9B7E308395861CC6887DD020FE0A0BFD85EA2257DB240B2FFC0FA6C75EE`.
+The 4.2.9 installer is not Authenticode-signed, uploaded, installed or
+production-accepted. The accepted 4.2.8 object must remain available until all
+four steps pass.
 
 The last complete exact-machine native workflow remains the 2026-07-21 `4.2.6-Native-Signed` run: enrollment, fresh heartbeats, SIEM alerting, PECA Event 4688 evidence, FBR invoice evidence, native FBR database-deletion correlation, 7,191 verified endpoint signatures and zero rejected signatures. Agent 4.2.8 preserves that architecture and adds the bounded DTD/entity-rejecting Windows XML parser guard plus bounded historical spool replay. Existing 4.2.6 agents remain compatible only while the backend permits their signed event format; new installations use 4.2.8.
 
 The disabled network-relay candidate has also passed 36 focused parser, schema, signing, encrypted-spool, outbox, Redis-admission, lifecycle, source-isolation and hybrid-correlation tests. A locally built 29,263,064-byte Windows relay candidate had SHA-256 `04602CBBCEEA8EF2BE18D5FD1C9DC2F89DADD0B9B8BA140C9B4444264BE055E3` and produced no detection in an enabled Microsoft Defender custom scan. It is unsigned and was not installed as a Windows service. A pfSense CE 2.8.1 Hyper-V appliance supplied native pass/block syslog proof, but this is not exact customer-hardware acceptance; these facts keep the production gate closed.
 
-The maintained backend release-gate selection closed with 432 passed, 3 explicitly skipped and zero application failures on 2026-08-13. The skips are one opt-in isolated-stack E2E harness and two container-local Git metadata checks that passed directly on the host. Backend `7e81a9d` and frontend `6f0cc5a` remain the last production-accepted application pair recorded here. The current pushed repository pair is backend `d92fb65` and frontend `6ffc9e0`; its focused August 14 validation is recorded below, but it must not be called production-proven until the backend is recreated from that commit, the Vercel deployment identity is confirmed, and the named authenticated acceptance checks pass.
+The complete clean backend campaign closed with 523 passed, one explicitly
+skipped and zero assertion failures on 2026-08-24. The skip is the opt-in
+isolated-stack destructive E2E harness. `pip check`, `pip-audit`, Python
+compilation, production Compose parsing, generated API inventory, high-severity
+Bandit and diff hygiene also passed. Frontend lint, production build and
+high-severity dependency audit passed. Production backend `d92fb65` remained
+healthy before candidate deployment. These results accept the local release
+candidate; they do not prove that the candidate is pushed, deployed or live.
 
 ### 1.1 SIEM architecture and scope decision (2026-08-02)
 
@@ -137,14 +152,16 @@ Parser unit tests and simulated correlations do not equal real-device proof.
 
 `WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md` defines the reviewed target for
 using the Wazuh manager as a replaceable generic detection subsystem. The
-disabled backend and Compute-B bridge foundation is implemented and its focused
+production-disabled backend and Compute-B bridge foundation is implemented and its focused
 contract suite passes. The isolated one-host live harness proves bidirectional
 mTLS, canary rule 100500, signed candidate return, shadow-only persistence,
 selected failure recovery and negative transport checks. The separate two-host
 lab additionally proves private Tailscale binding, bidirectional mTLS, signed
 dispatch/candidate lineage, tenant isolation and manager/bridge/candidate-API
 recovery. The subsystem is not deployed, promoted, or customer-visible; neither lab host is an approved
-production Compute B. The current WarSOC SIEM remains authoritative. Wazuh must not own
+production Compute B. RC2 permits only the `audit_log_cleared` family to become
+a primary candidate after all global, registry, and exact signed-lineage gates
+pass; other curated families remain shadow-only. The current WarSOC SIEM remains authoritative. Wazuh must not own
 endpoint enrollment, tenant identity,
 canonical evidence, FBR, PECA, incidents, storage, retrieval, customer access,
 or response. No production feature or claim changes until the recorded shadow
@@ -171,6 +188,236 @@ The August 14 work changed bounded query behavior and frontend failure handling;
 8. **Azure read proof:** the running storage archiver reported no archive/immutability/critical error in the observed 24-hour window. A read-only retrieval of the latest PECA archive downloaded 31,205,879 bytes for 1,039 records, matched the ledger payload SHA-256 and companion hash blob, and confirmed container-scoped immutability. No archive byte was proxied through the API or written to the application host.
 
 The unresolved release boundaries remain explicit: the 4.2.8 installer has a verified manifest but no Authenticode publisher signature; no fresh destructive FBR test was generated against the current protected POS path; the dashboard route is still a large lazy chunk; `NETWORK_RELAY_ENABLED=false`; Wazuh shadow integration is disabled; and `ARCHIVE_RETRIEVAL_ENABLED=false`.
+
+### 1.7 August 20 FBR/PECA Phase 0 truth hardening
+
+Phase 0 corrected compliance terminology and governance without changing event
+routing, workers, retention numbers, storage, or historical evidence. Its
+retention snapshot is superseded for new evidence by the August 24 PECA
+retention decision. The PECA pack is now named `WarSOC PECA Evidence Pack`; it no longer claims a mapping
+to PECA Section 46. The FBR pack is now `WarSOC FBR POS Evidence Readiness` and
+states that WarSOC is an independent evidence platform, not an FBR-licensed
+integrator or invoice-submission system.
+
+`app/utils/compliance_legal_registry.py` records legal instrument status,
+regime, official source, source version, verification date, and claim scope.
+S.R.O. 288(I)/2026 remains recorded as a draft Income Tax instrument, not a
+final Sales Tax POS authority. The eleven PECA and six FBR controls now publish
+required telemetry, evidence purpose, source class, legal references,
+applicability, claim state, and explicit proof limitations. Evidence API rows
+separate `evidence_state` from `claim_state`.
+
+`scripts/generate_api_security_inventory.py` produces the internal route/RBAC/
+tenant artifact at `docs/generated/WARSOC_API_SECURITY_INVENTORY.json` without
+enabling public API documentation. The detailed Phase 0 contract and explicit
+non-goals are in `WARSOC_FBR_PECA_PHASE_0_TRUTH_MAP.md`.
+
+### 1.8 August 20 Wazuh/firewall RC2 backend closure
+
+The RC2 backend foundation is code-complete and locally regression-proven, but
+it remains production-disabled and is not equivalent to customer acceptance.
+The closure patch enforces these boundaries:
+
+1. A native Wazuh candidate can link only to the same tenant and bound WarSOC
+   endpoint, with an exact Windows record/event/channel match, recent canonical
+   evidence, `signature_verified=true`, and `source_assurance=agent_signed`.
+2. Missing or ambiguous canonical evidence cannot create an incident. Primary
+   promotion requires `WAZUH_DETECTION_MODE=primary`, global
+   `WAZUH_PRIMARY_APPROVED=true`, an approved registry family, and complete
+   lineage. The only approved RC2 family is `audit_log_cleared`; authentication
+   failure, service installation, and process creation remain shadow families.
+3. An approved candidate enters the normal WarSOC incident projector rather
+   than creating a second Wazuh-shaped incident schema. Internal detector
+   provenance is retained for audit, while customer APIs identify the incident
+   authority as WarSOC and do not disclose the detector vendor or raw rule ID.
+4. Native-alert deduplication uses the exact canonical event UID. Same-tenant,
+   different-endpoint records cannot satisfy candidate lineage or merge merely
+   because they share a category or source address.
+5. Relay entitlement defaults to zero per tenant and is capped by the platform
+   setting. `GET /api/v1/network-relay/status` now returns the authoritative
+   capability object plus nested relay/device state for frontend gating.
+6. Compliance database/index initialization fails startup visibly when a
+   critical schema operation fails. Conflicting-index cleanup ignores only
+   MongoDB's explicit `IndexNotFound` race; other failures are not swallowed.
+7. The maintained suite passed 446 tests with one isolated destructive test
+   skipped. Focused post-patch checks passed, Python compilation and
+   `git diff --check` passed, Bandit reported no finding in the changed backend
+   files, and the local Redis/Mongo/API/Git validation script passed.
+
+A local frontend correction candidate based exactly on authoritative frontend
+`6ffc9e0` now follows the relay contract: it reads `capability` and
+`relays[].devices[]`, sends the complete relay/device activation request,
+derives allowed vendors and management visibility from the backend, and keeps
+the workspace behind both the deployment kill switch and successful tenant
+entitlement. It also reads tenant retention from
+`/compliance/retention/status` and removes fixed FBR/PECA vault claims. ESLint,
+the production Vite build and focused source assertions pass. This candidate is
+not pushed or deployed; the backend must remain disabled until paired runtime
+acceptance passes.
+
+### 1.9 August 20 P0 evidence-integrity closure
+
+This source candidate closes the current evidence-admission gap without enabling
+the relay, Wazuh, archive retrieval, or any new customer feature. Its deployment
+state is **SOURCE-ACCEPTED / NOT PRODUCTION-DEPLOYED**.
+
+1. Legacy UDP syslog is classified as `legacy_syslog` and remains SIEM-only. It
+   cannot create PECA or FBR evidence, even if a sender supplies forged source or
+   signature labels.
+2. Signed Windows endpoint events are `signed_windows_agent`; signed POS HTTP
+   bodies are `authenticated_pos`; relay batches are `relay_attested_network`.
+   Only the first two classes are eligible for the applicable current compliance
+   evidence paths.
+3. Endpoint, POS, and disabled-relay admission persists an encrypted canonical
+   source envelope in MongoDB before Redis dispatch becomes ready. The durable
+   outbox references the encrypted envelope instead of storing a second plaintext
+   payload.
+4. Redis publication is leased, retryable, idempotent by source/event identity,
+   and bounded by the raw-stream entry ceiling. Canonical source envelopes are
+   archive-before-delete evidence; only published transport-ledger rows receive a
+   post-publication TTL.
+5. This historical checkpoint introduced fail-closed FBR tax-period metadata.
+   Section 1.11 supersedes that product decision: new FBR evidence now uses the
+   tenant's normal retention entitlement and legacy records are not rewritten.
+
+The maintained backend suite passed 462 tests with one expected skip. Focused
+failure, replay, source-isolation, retention, archive, and Redis-retry tests are
+recorded in `WARSOC_P0_EVIDENCE_INTEGRITY_CLOSURE_2026-08-20.md`.
+
+### 1.10 August 20 backend evidence-program implementation
+
+The P0 closure has since been extended in source without enabling a new customer
+feature. Legacy period-aware FBR utilities, explicit legal/proceeding holds, bounded
+archive cohorts and pre-delete hold fences, SIEM sensitive-field encryption,
+evidence claim evaluation, case/custody state machines, deterministic signed
+evidence packages, an isolated package-export worker, an optional daily Azure
+root commitment, a disabled synthetic FBR reconciliation contract, and an
+independent authorization-policy manifest now exist.
+
+All operationally sensitive additions remain disabled or require explicit
+infrastructure configuration. They are **not production-deployed** and do not
+prove live Azure behavior, a real POS database/integrator connection, Wazuh or
+relay promotion, or frontend completion. The exact implementation and remaining
+gates are recorded in
+`WARSOC_BACKEND_EVIDENCE_PROGRAM_IMPLEMENTATION_2026-08-20.md`.
+
+The initial August 20 local checkpoint passed 520 maintained tests with one explicitly opt-in
+destructive E2E test skipped. Python compilation, production Compose parsing,
+route-inventory generation, diff hygiene, high-severity Bandit scanning, and
+local Redis/Mongo/API connectivity also passed. This is source regression proof,
+not production or live-Azure acceptance.
+
+### 1.11 August 24 release-candidate condition
+
+This section supersedes earlier current-state numbers without deleting their
+historical evidence.
+
+1. **Backend source:** the complete evidence-program, source-envelope,
+   tenant-entitlement FBR retention, custody, privacy and disabled Wazuh/relay changes exist
+   in the local release candidate based on `6c3900f`. They are not yet one
+   pushed release commit.
+2. **Regression:** one uncontaminated full run passed 523 tests with one
+   explicitly skipped destructive isolated-stack test and 44 deprecation
+   warnings. Dependency consistency/audit, compile, Compose, Bandit,
+   authorization inventory and diff checks pass.
+3. **Identity and secrets:** normalized case-insensitive uniqueness is enforced
+   in application and Mongo index contracts after a live duplicate audit found
+   no conflicts. Candidate production startup rejects short JWT and platform
+   administrator secrets without printing them.
+4. **Agent:** 4.2.9 extends the signed endpoint envelope with collection time,
+   channel, epoch and sequence continuity and reports signed coverage in the
+   heartbeat. It preserves the bounded spool, XML parser guard and POS source
+   contract. The local installer and manifest are built, but the installer is
+   unsigned and not yet on the public Azure artifact path.
+5. **Production:** the pre-candidate backend `d92fb65` reports healthy Mongo and
+   Redis dependencies and the expected containers. Optional network relay,
+   Wazuh, evidence export, daily anchor and FBR reconciliation remain disabled.
+6. **Azure:** the deployed private evidence account uses a historical fallback
+   container declared at 2,190 immutable days. Candidate code selects the
+   duration-aware general-retention route for new FBR and PECA evidence from
+   `tenants.retention_days`, but the duration-specific production environment
+   routes remain unconfigured. Until those routes are created, locked and
+   enabled, the fallback over-retains rather than deleting early. Existing
+   blobs and legacy Mongo rows remain untouched.
+7. **Compliance catalog:** PECA remains 11 endpoint evidence controls and FBR
+   remains six POS-semantic/FIM controls. Catalog version
+   `2026-08-24.tenant-retention-v4` exposes tenant-entitlement FBR and PECA retention.
+8. **Claim boundary:** WarSOC provides technical evidence support. It does not
+   prove blanket PECA/FBR compliance, submit invoices to FBR, act as a licensed
+   integrator, infer invoice rows from file changes, or treat normal Windows
+   administrative activity as an attack without rule context.
+
+The current release condition is therefore:
+
+```text
+local backend candidate       ACCEPTED
+local frontend build/security ACCEPTED
+agent 4.2.9 build/manifest    ACCEPTED
+publisher signature/CDN       OPEN
+candidate production deploy   OPEN
+live role and pipeline proof  OPEN
+FBR/PECA duration routing     CODE COMPLETE / CLOUD ROUTES PENDING
+Wazuh and network relay       DISABLED CANDIDATES
+```
+
+### 1.12 August 24 PECA retention product decision
+
+New records in the `WarSOC PECA Evidence Pack` inherit the tenant's existing
+`retention_days` entitlement. They remain operationally hot in Mongo for seven
+days and then use the matching `GENERAL_<days>` Azure route. The ingestion
+boundary stamps `retention_model=TENANT_ENTITLEMENT_V1` on both the canonical
+source envelope and derived PECA evidence. The archiver selects only records
+with that marker, verifies Azure integrity and immutability, writes the archive
+ledger, rechecks holds, and only then deletes exact hot-copy IDs.
+
+Unmarked historical PECA rows and existing locked Azure blobs are not rewritten,
+rerouted, shortened, or deleted by this release. Pending pre-release queue
+entries without a trusted tenant-retention snapshot are preserved with manual
+review state and excluded from automatic archival. This product decision does
+not change the 11 controls and does not claim that endpoint forensic evidence is
+PECA section 32 service-provider traffic data.
+
+### 1.13 August 26 release-validation delta
+
+The PECA retention correction has source-level release evidence, but it is not
+yet runtime-accepted on a real isolated Redis/Azure stack:
+
+1. The exact candidate collects 533 maintained tests. The previous 523-test
+   clean campaign remains historical evidence for the earlier candidate.
+2. A structurally selected service-independent campaign passed 323 tests with
+   zero assertion failures. A focused retention/evidence plus relay/Wazuh
+   campaign passed 175 tests. The archive tests include upload/immutability
+   failure preserving Mongo and an active-hold recheck preserving both PECA and
+   FBR hot copies.
+3. Python compilation, production Compose rendering, diff hygiene, forbidden
+   tracked-file checks, the 122-route authorization inventory and high-severity
+   Bandit scanning passed. The inventory has zero manual-review routes.
+4. The current frontend at `origin/main` passes ESLint and a production Vite
+   build. Its dashboard chunk remains 1,377.61 kB minified / 428.65 kB gzip.
+5. The local frontend correction candidate now matches the relay capability,
+   nested status and complete activation contracts. Its source/build gates pass;
+   authenticated activation, registration, status, revocation/recovery and
+   role-negative checks remain paired runtime acceptance work.
+6. The local frontend correction candidate now uses the tenant entitlement
+   returned by `/compliance/retention/status` in compliance, pricing, quote and
+   legal views. It displays unavailable when the authority endpoint fails and
+   no longer invents a PECA/FBR duration. Deployment proof remains open.
+7. The local pfSense lab address answers ICMP, but HTTPS was not reachable and
+   the earlier synthetic route was absent during this run. The Wazuh host is a
+   separate colleague machine and was not reachable from this validation
+   session. Source/lab evidence remains valid; neither physical path received a
+   fresh all-to-all acceptance.
+8. Docker/Redis access was denied to the validation sandbox. Local MongoDB 8.2
+   was started on an isolated workspace path, but a real Redis service could
+   not be substituted honestly. The complete 533-test Mongo/Redis run and one
+   controlled PECA archive success/failure/hold exercise therefore remain open.
+9. Local production-shaped Azure configuration exposes only the existing
+   fallback route. No `GENERAL_90/180/270/360` route is available for a safe
+   isolated success test. Existing production/locked evidence was not touched.
+
+This delta does not enable network relay, Wazuh or archive retrieval and does
+not approve production deployment. The exact closure commands and evidence
+requirements are recorded in `WARSOC_RELEASE_VALIDATION_2026-08-26.md`.
 
 ## 2. Product Boundary
 
@@ -210,7 +457,7 @@ The unresolved release boundaries remain explicit: the 4.2.8 installer has a ver
 
 ### 2.3 Disabled network-relay candidate
 
-The candidate is documented in `NETWORK_RELAY_BACKEND_FOUNDATION.md`. It does not change the current Windows pilot path, public ports, FBR truth sources, PECA 11-control catalog, or hot/cold retention. The authoritative frontend `main` branch does not contain a relay workspace, so there are no customer relay API calls or hidden relay claims in the active UI. Every relay backend source file, parser, worker, installer, test and configuration migrates with the backend; `NETWORK_RELAY_ENABLED=false` keeps the capability inactive until deliberate acceptance and a separately reviewed frontend implementation.
+The candidate is documented in `NETWORK_RELAY_BACKEND_FOUNDATION.md`. It does not change the current Windows pilot path, public ports, FBR truth sources, PECA 11-control catalog, or hot/cold retention. A local frontend correction based on `6ffc9e0` now matches the request, nested response, entitlement and role contracts in `WARSOC_FIREWALL_WAZUH_FRONTEND_BUILD_GUIDE.md`; it passes source/build gates but is not pushed, deployed or paired-tested. Every relay backend source file, parser, worker, installer, test and configuration migrates with the backend; `NETWORK_RELAY_ENABLED=false` keeps the capability inactive until deliberate paired acceptance.
 
 Candidate capabilities include separate relay identities, retry-safe one-time activation, Ed25519-signed HTTPS batches, atomic Redis admission, strict Fortinet/Cisco ASA/MikroTik/pfSense metadata parsing, encrypted bounded evidence/control spools, encrypted raw cloud evidence, exact retry bodies, Windows DPAPI protection, NSSM lifecycle, revocation and dead-key recovery, per-device active/degraded/silent state, network-source isolation, receipt-time VPN spray detection, non-alert VPN-to-Windows context, and chronology-checked same-host high-risk-to-public-network correlation.
 
@@ -496,7 +743,12 @@ live backend redirect, clean-machine lifecycle or deployed backend revision.
 - Rejects new batches with retryable HTTP 503 before those boundaries are crossed; the agent retains and retries them.
 - Agent 4.2.8 distinguishes current telemetry from events at least five minutes old. Acknowledged historical backlog replays at no more than ten events/second by default, while current telemetry retains the normal low-latency sender cadence.
 - Rejects banned sources according to the active mitigation state.
-- Accepted events enter Redis Streams.
+- Accepted source material and exact dispatch payloads are first compressed,
+  encrypted, and committed to the retention-class Mongo source-envelope
+  collection. A durable outbox is then made ready and publishes to Redis.
+- A source-envelope UID replay with identical authenticated content heals an
+  interrupted dispatch. Reuse with different source bytes or dispatch content
+  returns a conflict and cannot overwrite the original evidence.
 
 ### 9.2 Authenticated POS evidence
 
@@ -504,7 +756,9 @@ live backend redirect, clean-machine lifecycle or deployed backend revision.
 - Requires agent authentication and the enrolled Ed25519 key.
 - The exact JSON request body is signed in `X-WarSOC-Signature`.
 - The strict envelope contains only `nonce`, `timestamp`, and `payload`.
-- Redis atomically consumes each agent-scoped nonce for five minutes; replays return HTTP 409.
+- Redis records each agent-scoped nonce as processing and then completed for five
+  minutes. A completed replay returns HTTP 409; an exact retry after an
+  interrupted server-side dispatch can heal the committed source envelope.
 - Requests older or newer than the five-minute acceptance window are rejected.
 - Maximum request body: 5 MB.
 - Maximum event count: 500.
@@ -512,6 +766,8 @@ live backend redirect, clean-machine lifecycle or deployed backend revision.
 - Accepted IDs: `FBR-INV-DEL` and `FBR-INV-MOD` only.
 - Required contract fields include event ID, event UID, invoice ID, timezone-aware timestamp, actor, and source system.
 - API clients cannot submit `FIM-DB-MOD`; only validated native Windows telemetry can generate it.
+- The exact signed HTTP request body is encrypted in the FBR source-envelope
+  collection before its event payloads are eligible for Redis dispatch.
 
 ## 10. Redis Transport and Failure Semantics
 
@@ -535,6 +791,25 @@ live backend redirect, clean-machine lifecycle or deployed backend revision.
 
 ### 10.3 Acknowledgement rules
 
+Before a consumer group can receive an accepted endpoint/POS/relay event, the
+source-evidence outbox follows this order:
+
+```text
+authenticated source bytes
+        -> encrypted Mongo source envelope PREPARING
+        -> outbox rows created not-ready
+        -> source envelope COMMITTED
+        -> outbox ready
+        -> Redis transaction publish
+        -> outbox published
+        -> source envelope dispatch_complete
+```
+
+An API-process or Redis failure after Mongo commit leaves the outbox retryable.
+The unified worker publishes it later. A crash after Redis accepts a transaction
+but before Mongo records `published` can cause at-least-once redispatch; stable
+event UIDs and downstream unique indexes are the duplicate-suppression boundary.
+
 - Each consumer group receives its own copy of a stream entry.
 - A worker acknowledges only after its required persistence/action succeeds.
 - Transient Mongo or Redis failures leave messages pending for reclaim/retry.
@@ -550,7 +825,9 @@ live backend redirect, clean-machine lifecycle or deployed backend revision.
 
 ### 10.4 Unified worker
 
-The production unified worker supervises SIEM, FBR, PECA, email, and stream-retention loops concurrently. A crashed loop is restarted after a delay without terminating the other loops.
+The production unified worker supervises the source-evidence outbox, SIEM, FBR,
+PECA, email, and stream-retention loops concurrently. A crashed loop is restarted
+after a delay without terminating the other loops.
 
 ## 11. SIEM Detection Architecture
 
@@ -676,10 +953,11 @@ Explicitly disabled or unavailable categories include trusted-location analytics
 - Pack ID: `peca_forensic`.
 - Collection: `peca_forensic_logs`.
 - Hot Mongo window: 7 days.
-- Azure vault period: 365 days.
+- New-evidence Azure period: tenant retention entitlement through the matching `GENERAL_<days>` route.
+- Historical unmarked records and locked blobs remain under their recorded historical obligations.
 - Only entitled tenants receive PECA forensic records.
 
-### 12.2 Current 11-control catalog
+### 12.2 Current 11-control WarSOC evidence catalog
 
 | Control | Event | Purpose |
 |---|---:|---|
@@ -707,6 +985,12 @@ Explicitly disabled or unavailable categories include trusted-location analytics
 
 PECA evidence can exist without a corresponding actionable SIEM alert. For example, a normal 4624 login is useful forensic evidence but is not automatically a threat.
 
+These controls are investigation-supporting endpoint observations, not
+statutory PECA rules. They do not establish blanket PECA compliance or PECA
+Section 32 traffic-data retention. The evidence API publishes observation and
+claim state separately so an observed event cannot silently become a legal
+conclusion.
+
 ## 13. FBR Pipeline
 
 ### 13.1 Entitlement and storage
@@ -714,7 +998,10 @@ PECA evidence can exist without a corresponding actionable SIEM alert. For examp
 - Pack ID: `fbr_pos`.
 - Collection: `fbr_pos_logs`.
 - Hot Mongo window: 7 days.
-- Current Azure fallback: 2,190 days (six years), measured from the archived record's current retention anchor. This is a conservative operational fallback, not the final tax-period-aware FBR retention calculation.
+- Active retention model: `TENANT_ENTITLEMENT_V1`.
+- Vault retention inherits `tenants.retention_days`, the same commercial
+  retention architecture used for general security evidence.
+- WarSOC FBR monitoring is not the customer's statutory tax-record repository.
 - Only entitled tenants receive FBR evidence.
 
 ### 13.2 Current six-control catalog
@@ -727,6 +1014,13 @@ PECA evidence can exist without a corresponding actionable SIEM alert. For examp
 | FBR-104 | `4663` | Delete-intent context containing path and handle. |
 | FBR-105 | `4670` | Native permission-change evidence. |
 | FBR-106 | `FIM-DB-MOD` | Correlated database-file tamper evidence. |
+
+The catalog separates `POS_SEMANTIC` from `WINDOWS_FIM` evidence and states what
+each source can and cannot establish. WarSOC does not submit invoices, issue FBR
+invoice numbers, or act as a licensed integrator. The older fixed 2,190-day
+fallback and tax-period model are retired from the active product. New FBR
+evidence uses the tenant's normal retention entitlement. Historical records
+and locked Azure evidence are not rewritten or shortened.
 
 ### 13.3 Two independent FBR truth sources
 
@@ -766,6 +1060,10 @@ Sensitive FBR fields, including message, raw event, raw data, raw event data, an
 | `incident_audit_log` | Incident workflow API | Tenant-scoped acknowledgement, assignment and closure audit history. |
 | `fbr_pos_logs` | FBR worker | Encrypted FBR evidence. |
 | `peca_forensic_logs` | PECA worker | Signed/encrypted PECA evidence. |
+| `source_envelopes_siem` | Ingestion/outbox | Encrypted canonical endpoint or relay source material retained with SIEM evidence. |
+| `source_envelopes_peca` | Ingestion/outbox | Encrypted canonical signed-endpoint source material retained with PECA evidence. |
+| `source_envelopes_fbr` | Ingestion/outbox | Encrypted canonical signed-endpoint/POS source material with tenant-entitlement retention metadata. |
+| `source_evidence_outbox` | Ingestion/outbox | Retryable transport ledger referencing encrypted source envelopes; not canonical evidence. |
 | `storage_archives` | Storage archiver | Azure archive ledger and retrieval index. |
 | `csv_uploads` | Upload workflow | Uploaded source metadata. |
 | `analysis_results` | Analysis workflow | Derived analysis results. |
@@ -780,13 +1078,20 @@ Sensitive FBR fields, including message, raw event, raw data, raw event data, an
 | SIEM evidence (`siem_cold_vault`) | 7 days | Tenant contract, normally 90 days. |
 | SIEM alerts (`security_alerts`) | 7 days | Tenant contract, normally 90 days. |
 | Incident workflow (`security_incidents`) | Lightweight operational record; not part of the evidence archiver | Retained while the tenant is active under the current pilot contract. |
-| FBR evidence | 7 days | Current fallback: 2,190 days. Target: six calendar years from the applicable tax-period boundary, extended by any hold. |
-| PECA evidence | 7 days | 365 days. |
+| FBR evidence | 7 days | Tenant retention entitlement, matching general commercial security evidence. |
+| PECA evidence | 7 days | Tenant retention entitlement for new evidence. |
 | Uploads/results | Tenant retention | Tenant retention. |
 
-There is no end-user retention button for PECA or FBR because these values are compliance policy, not an arbitrary UI preference. SIEM archive retention follows the tenant contract. All three core live data classes use a seven-day Mongo archival threshold.
+SIEM, general security evidence, FBR evidence and new PECA evidence follow the
+tenant retention entitlement. All three core live evidence classes use a
+seven-day Mongo archival threshold.
 
-The deployed Azure evidence account has used one locked 2,190-day container-scoped immutability policy. This is stronger than the logical SIEM and PECA minimums, but it physically over-retains those classes. The archiver now supports optional fixed `PECA`/`FBR` containers and duration-aware `SIEM_<days>`/`GENERAL_<days>` containers, records the selected container in every new ledger row, and makes archive readback use that recorded container. Class-level and global fallbacks remain available, so no routing change occurs until separately locked containers are explicitly configured. A locked Azure policy cannot be shortened for blobs already governed by it. The optional fixed FBR route is compatibility support only; it must not be treated as the final tax-period-aware retention model.
+The deployed Azure evidence account has used one locked 2,190-day
+container-scoped immutability policy. This over-retains shorter classes but
+remains an immutable historical fact. New FBR and PECA evidence route through
+duration-aware `GENERAL_<days>` containers; SIEM uses `SIEM_<days>`. Every
+ledger row records its physical container. Existing
+blobs and locks remain untouched and cannot be shortened.
 
 The threshold and the physical move time are not identical:
 
@@ -797,15 +1102,27 @@ The threshold and the physical move time are not identical:
 
 ### 14.3 Retention markers
 
-- `_expire_at` is the SIEM hot-expiry marker. On FBR/PECA records it also carries the long compliance-expiry metadata, while the fixed collection timestamp policy controls the seven-day move to Azure.
+- `_expire_at` remains a SIEM hot or legacy explicit-expiry marker. Active FBR
+  and PECA evidence use the collection's seven-day archive threshold instead
+  of an independent document expiry.
+- New FBR and PECA records use `retention_model=TENANT_ENTITLEMENT_V1`,
+  `retention_state=TENANT_POLICY`, `retention_basis`, and an ingest-time tenant
+  retention snapshot. Archive selection uses the tenant's active entitlement.
 - `_retention_ts` is used as a stable date anchor for raw/upload collections.
 - The archiver knows the valid fields for each collection and also applies the fixed seven-day collection threshold.
-- Legacy records are backfilled so they remain discoverable by the archiver.
+- Legacy FBR records are not backfilled or automatically selected by the new
+  archive path. A separately approved migration is required for them.
 - Mongo TTL indexes are removed from archive-managed collections.
 
 MongoDB itself is therefore not allowed to delete evidence on a timer. Only the verified archive transaction may remove hot copies.
 
-The exception is `security_incident_occurrences`, whose TTL removes only the retry/idempotency ledger after its duplicate-suppression window. It contains references and hashes, not raw SIEM/FBR/PECA evidence. `security_incidents` is deliberately not copied into immutable Azure while it remains mutable; its linked evidence is archived independently and remains retrievable by event UID.
+The exceptions are short-lived workflow/transport ledgers. For example,
+`security_incident_occurrences` expires retry/idempotency references and
+`source_evidence_outbox` expires only rows already marked published. Neither TTL
+is attached to canonical SIEM/FBR/PECA/source-envelope evidence.
+`security_incidents` is deliberately not copied into immutable Azure while it
+remains mutable; its linked evidence is archived independently and remains
+retrievable by event UID.
 
 ### 14.4 Dashboard read indexes and startup guarantee
 
@@ -836,7 +1153,7 @@ Current application-level protection is not uniform across every collection:
 
 - FBR and PECA encrypt their sensitive payload fields, including `message`, raw-event variants and `processed_data`, with the configured Fernet key before Mongo and Azure storage.
 - Their routing metadata and selected identifiers can remain readable so records can be located, attributed and verified.
-- General SIEM evidence and alerts are not uniformly field-encrypted before archival. They rely on Azure server-side encryption at rest, TLS in transit, private-container authorization and WarSOC tenant/RBAC controls.
+- New SIEM evidence encrypts raw message/data/XML and sensitive command context before Mongo persistence and Azure archival. Searchable routing and summary fields remain bounded and readable; authorized detail/export paths decrypt protected values. Historical plaintext evidence is not silently rewritten and requires a separately approved migration decision.
 - The archive SHA-256 companion and immutable policy prove integrity and prevent premature modification/deletion; they do not anonymize data or prevent an authorized reader from seeing readable fields.
 
 The operating rule is data minimization: collect only telemetry needed for a documented SIEM, PECA or FBR purpose; do not collect general packet payloads, document contents, credentials, email bodies or unrelated application data. POS invoice evidence must contain the defined audit fields rather than complete proprietary databases or customer transaction payloads.
@@ -848,8 +1165,8 @@ Before onboarding a tenant, the contract/onboarding record must identify the evi
 Retention segmentation remains a pre-commercial onboarding gate. The existing locked `warsoc-cold-storage` fallback is safe against early deletion but physically over-retains SIEM and PECA evidence for 2,190 days. Before any new commercial retention promise is activated:
 
 1. Inventory existing containers, policies, ledger rows, tenant retention values and current archive backlog.
-2. Create private `warsoc-retention-90`, `warsoc-retention-180`, `warsoc-retention-270`, `warsoc-retention-360` and `warsoc-peca-365` containers only after their product/legal terms are approved. Do not create or lock a new `warsoc-fbr-2190` container as the final FBR design.
-3. Decide and test the FBR tax-period resolver, unresolved-state fail-closed behavior, hold extension, Azure account capability, immutability scope and cost model. Keep the existing locked fallback until that design is legally and technically accepted.
+2. Create private `warsoc-retention-90`, `warsoc-retention-180`, `warsoc-retention-270` and `warsoc-retention-360` containers only after their product terms are approved. New FBR and PECA evidence use the matching general-retention container; do not create new class-specific statutory-retention containers.
+3. Validate tenant-retention routing, explicit legal holds, Azure account capability, immutability scope and cost. Keep the existing locked fallback until each duration route is technically accepted.
 4. Validate every approved policy while unlocked with harmless data, then lock the exact approved duration.
 5. Add the duration-specific environment variables only after all referenced containers exist and are locked.
 6. Recreate only `storage-archiver`, archive controlled samples for every class, and verify the recorded container/hash/immutability.
@@ -873,6 +1190,8 @@ Storage separation and compute migration are separate changes. Do not alter arch
 For each tenant, collection, and batch:
 
 1. Select eligible Mongo records using the collection's hot-retention rules.
+   Source envelopes are eligible only after every referenced outbox event is
+   published and `dispatch_complete=true`.
 2. Serialize the batch as JSON.
 3. Calculate SHA-256 over the exact JSON bytes.
 4. Upload the JSON blob with collection, hash, and vault-retention metadata.
@@ -901,8 +1220,13 @@ The public agent-artifact account/container must remain separate from the privat
 - Verification mode: `AZURE_IMMUTABILITY_SCOPE=container`.
 - Operator declaration: locked for 2,190 days.
 - The archiver verifies Azure container immutability capability and the declared locked period before deleting hot Mongo records.
-- The current deployed single-container policy satisfies the six-year FBR floor but physically over-retains PECA and shorter general/SIEM contracts.
-- Code/config routing supports fixed FBR and PECA containers plus exact-duration SIEM/general buckets such as `SIEM_90` and `GENERAL_180`. It is intentionally inactive until each target container exists, has a locked policy covering that duration, and its environment override is set. Existing blobs remain in the original locked container.
+- The current deployed single-container policy remains valid for historical
+  blobs but over-retains evidence whose commercial entitlement is shorter.
+- Code/config routing supports exact-duration SIEM/general buckets such as
+  `SIEM_90` and `GENERAL_180`. New FBR and PECA evidence use the general
+  duration route. Routing remains inactive until each target container exists,
+  has a locked policy covering that duration, and its environment override is
+  set. Existing blobs remain in the original locked container.
 
 ## 16. Cold Archive Retrieval
 
@@ -956,6 +1280,7 @@ For the selected clean production launch, legacy pilot archives are not attached
 | Compliance catalog | `GET /api/v1/compliance/packs` and `GET /api/v1/auth/my-packs` | Available and entitled packs. |
 | Compliance coverage | `GET /api/v1/compliance/coverage` | Sensor/control coverage status. |
 | PECA/FBR evidence | `GET /api/v1/compliance/evidence/{pack_id}` | Authorized hot evidence plus archive-ledger availability metadata. Historical bytes require an archive retrieval request. |
+| Retention status | `GET /api/v1/compliance/retention/status` | Admin/auditor tenant entitlement, hot window, FBR/PECA tenant-retention model, active-hold count, and observed archive-ledger availability. It exposes no Azure object paths or credentials. |
 
 The Agent Feed and Live Inspection must not use the same dataset. Normal endpoint evidence belongs in the feed; actionable detections belong in incidents. Historical search rows are explicitly typed and cannot expose acknowledgement, closure, or block actions.
 
@@ -1136,7 +1461,7 @@ The API creates the incident collections and indexes and performs the bounded ho
 - Compliance evidence responses distinguish a valid empty hot vault from API failure and expose archive availability metadata without downloading historical blobs.
 - Normal compliance/general CSV and audit PDF responses now declare `X-WarSOC-Data-Scope: hot-tier`, suppress caching, and indicate when isolated archive retrieval is required. Audit PDFs no longer count archive-batch metadata as exact filtered evidence or direct users to CSV for cold history.
 - The 2026-08-12 authenticated walkthrough proved dashboard search/live-mode switching but found exact duplicate endpoint and incident rows in the rendered lists. The previous compliance list also returned an approximately 1.1 MB PECA response in about 30 seconds and rendered raw FBR JSON. Backend `7e81a9d` now projects bounded metadata summaries, and frontend `6f0cc5a` renders readable evidence cards and calls the authorized lazy evidence-detail route only after explicit selection. Contracts, lint, build, deployment, and bundle inspection pass; authenticated payload/latency/browser proof remains required.
-- Frontend lint and the production Vite build pass. Vercel declares HSTS, CSP, clickjacking, MIME-sniffing, referrer, and browser-permission headers. The PDF sanitizer is pinned to DOMPurify 3.4.12 and React Router is pinned to 7.18.2. The registry still reports the React Router RSC server-action CSRF advisory; that code path is not reachable in this Vite client-only SPA, which defines no React Server Components or Router actions. The frontend uses `/incidents`, `/incidents/summary`, `/logs/live?source=siem&aggregate=true`, `/data/status`, the custom-contract quote payload and the one-time invitation-link response. Its Endpoint Fleet was exercised against an isolated authenticated required-signing tenant. Route splitting reduces the initial shell to approximately 291.20 kB minified / 96.90 kB gzip; the dashboard remains a separate approximately 1,456.16 kB / 447.05 kB chunk and therefore remains a performance target.
+- Frontend lint and the production Vite build pass. Vercel declares HSTS, CSP, clickjacking, MIME-sniffing, referrer, and browser-permission headers. The authoritative frontend lockfile still resolves DOMPurify 3.4.12 and React Router/React Router DOM 7.18.1; the dependency audit therefore remains open until patched versions are adopted and regression-tested. The reported React Router issue is in the RSC server-action path, which is not reachable in this Vite client-only SPA, but that reduced reachability is not a dependency-closure claim. The frontend uses `/incidents`, `/incidents/summary`, `/logs/live?source=siem&aggregate=true`, `/data/status`, the custom-contract quote payload and the one-time invitation-link response. Its Endpoint Fleet was exercised against an isolated authenticated required-signing tenant. Route splitting reduces the initial shell to approximately 291.20 kB minified / 96.90 kB gzip; the dashboard remains a separate approximately 1,456.16 kB / 447.05 kB chunk and therefore remains a performance target.
 - `/auth/me` uses an explicit public-field allowlist, so encrypted 2FA material and future internal database fields cannot be returned accidentally.
 - Raw evidence detail is collection-scoped by role and entitlement: admin receives SIEM plus entitled compliance evidence, auditor receives entitled compliance evidence, and manager/analyst receive SIEM evidence only. Management-audit reads are admin-only.
 - Uploaded CSV source files are temporary parsing artifacts. Successful and failed uploads remove the physical source; failed partial imports are rolled back. `scripts/purge_legacy_upload_sources.py` provides a dry-run-first cleanup for files retained by older releases.
@@ -1211,7 +1536,7 @@ Additional production-assisted lifecycle proof remains recorded:
 |---|---|---|
 | Customer-style invitation activation | Pending-login denial, token activation, replay rejection and active login are covered. SMTP is no longer required because the authenticated admin receives the link once. | Copy one link in the deployed browser, activate it as the invited role and confirm the intended role view. |
 | Independent backup recovery | The production-format encrypted Mongo drill now verifies SHA-256 and restores into a network-disabled disposable MongoDB container. | Repository proof `20260721T200605Z-7541a279` restored 156,671 documents with zero failures and recorded collection/index counts. Repeat against the final production backup during the Azure cutover. |
-| Physical retention segmentation | One locked 2,190-day container currently governs all evidence blobs. | Route future FBR, PECA, and general/SIEM archives to containers whose locked policy matches the promised retention class. |
+| Physical retention segmentation | One locked 2,190-day container currently governs historical evidence blobs. New FBR evidence now shares the general tenant-duration model. | Route PECA and duration-aware general/SIEM archives to containers whose lock covers the promised class; leave existing locked evidence untouched. |
 | Archive retrieval rollout | A prior synchronous reader proved that existing blobs and hashes were readable, but normal API hot/cold merging has been removed to protect API memory. | Configure private staging/lifecycle/RBAC, enable the isolated worker in a non-production acceptance environment, prove rehydration/SAS/hash/expiry, then build the frontend request/status UI. |
 | Dashboard post-deploy resources | The deployed frontend uses the intended 30-second alert and 10-second evidence schedule. Before deployment, Mongo used approximately 55.91% CPU and 1.639 GiB of its 2 GiB container limit. In the first post-deploy snapshot it used 1.55% CPU and 939.6 MiB; API, Redis and the unified worker were also low-use and healthy. A brief 502 and two legacy 499 cancellations occurred while the API container restarted at 21:30; no `/logs/live` 499 or 5xx appeared after deployment. | Measure Mongo CPU/memory and Nginx status codes for at least 15 continuous minutes after deployment; require no live-read 499s and p95 below two seconds. |
 | Ingest request buffering | Real agent ingestion is returning HTTP 200, but Nginx reports that some request bodies spill to its temporary request-body files. This is bounded buffering, not evidence loss, but it creates disk I/O. | Record agent batch sizes and temporary-file/disk growth during the 50-agent pilot; tune `client_body_buffer_size` or request batching only from measured data. |
@@ -1275,12 +1600,16 @@ Status meanings:
 | Metrics and health | Worker, queue, agent, DLQ, detection and dashboard telemetry | PROVEN | Protected production metrics were read successfully. Dashboard live-read histograms are deployed on the backend. |
 | Independent Mongo backup | Operational disaster recovery separate from evidence archive | CANDIDATE-PROVEN | Drill `20260721T200605Z-7541a279` verified SHA-256, decrypted a production-format archive, and restored 156,671 documents across 18 collections with zero failures into a network-disabled disposable MongoDB. The restore drill is now tracked and uses a temporary disk-backed Docker volume instead of a 2 GiB RAM-backed filesystem; the volume is deleted after the drill. Repeat with the final Azure-hosted production backup during cutover. |
 | Endpoint event authenticity | Per-event Ed25519 signature tied to the enrolled agent key before Redis admission | REQUIRED / DEPLOYED | Agent/API tests and exact-machine flow pass with 7,191 verified and zero rejected signatures. Accepted-event signature readiness is exposed per endpoint and gates health/coverage. The deployment operator set `AGENT_EVENT_SIGNATURE_MODE=required`; fresh signed-agent metrics remain the runtime watch. |
-| Physical retention classes | Match actual Azure lock duration to compliance and general retention terms | CODE COMPLETE / CLOUD PENDING | Routing and readback support separate SIEM, PECA, FBR and general containers with safe legacy fallback. Existing blobs remain in the locked 2,190-day container; new routing must not be enabled until target containers and locked policies exist. |
+| Physical retention classes | Match actual Azure lock duration to tenant and general retention terms | CODE COMPLETE / CLOUD PENDING | Routing and readback support duration-aware SIEM/general containers. New FBR and PECA evidence use the general tenant-duration route. Existing blobs and legacy FBR/PECA records remain under their original model. |
+| Evidence cases and custody | Reference original evidence and record hash-linked custody transitions | CODE COMPLETE / DEPLOYMENT PENDING | Tenant-scoped case references, recovery-safe custody events, explicit holds, closure and offline-verifiable packages are implemented. Cold evidence requires the isolated retrieval flow first. |
+| Evidence package export | Build signed packages outside the API and deliver directly from Azure | CODE COMPLETE / DISABLED | Isolated bounded worker, RSA-PSS package signature, short-lived user-delegation SAS and expiry are implemented. Azure container/RBAC and live browser proof remain open. |
+| Daily external evidence root | Anchor daily evidence-chain commitments outside Mongo | CODE COMPLETE / DISABLED | Deterministic hash-only Azure anchor and WORM verification are implemented. Private locked container and live outage/retry proof remain open. |
+| FBR multi-source reconciliation | Compare POS, DB and external observations without inventing success | CONTRACT/LAB ONLY / DISABLED | Deterministic raw hashes, semantic fingerprints and non-green missing/replay outcomes are implemented. Real DB and licensed-integrator connectors remain unbuilt. |
 | Installer code signing | Publisher reputation and Defender trust | PARTIAL | Exact hash allowlisting supports the pilot while Defender stays enabled; the binary remains unsigned. |
 | Capacity ceiling | Maximum 50 active agents per tenant and 50 aggregate active agents on the shared host | PROVEN by contract tests; prior synthetic soak | Mongo-backed floors prevent Redis restarts from bypassing either boundary. Real customer mix must still be monitored because event volume per endpoint varies. |
 | Linux/syslog | Linux endpoint telemetry | OUT OF SCOPE | Linux remains outside the Windows SMB pilot and no Linux agent/intake is claimed. |
-| Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | PFSENSE LAB-PROVEN CANDIDATE / DISABLED | Cloud API, strict metadata-only Fortinet/Cisco ASA/MikroTik/pfSense parsers, bounded encrypted spools, Fernet-protected raw cloud evidence, exact retry, DPAPI identity, separate Windows service/installer, lifecycle recovery, atomic Redis admission, per-device coverage state, source isolation, and backlog-safe limited hybrid correlations are implemented. A pfSense CE 2.8.1 Hyper-V lab proved native BSD syslog parsing, logged pass/block evidence, Ed25519 relay attestation, encrypted outage retention, unclean restart recovery, zero duplicate event UIDs, and continuous batch hashes. `NETWORK_RELAY_ENABLED=false`; packaged Windows-service acceptance, exact customer hardware, Fortinet/Cisco ASA/MikroTik appliance proof, retention, capacity, proactive external notification, and pilot proof remain open. |
-| Internal Wazuh detector | Receive minimized WarSOC projections and return validated candidate observations | TWO-HOST SHADOW TRANSPORT PROVEN / PRODUCTION DISABLED | Maintained Wazuh contracts and both local and separate-host live mTLS canaries pass with zero customer side effects. The two-host run proves signed transport, tenant isolation, bounded expiry, alert-file identity-change recovery and manager/bridge/candidate-API recovery. Explicit host-firewall rules, physical saturation, ruleset rollback and rule-family quality remain open. `WAZUH_DETECTION_MODE=disabled` and `WAZUH_PRIMARY_APPROVED=false` remain mandatory. |
+| Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | PFSENSE LAB-PROVEN CANDIDATE / DISABLED | Cloud API, strict metadata-only Fortinet/Cisco ASA/MikroTik/pfSense parsers, bounded encrypted spools, Fernet-protected raw cloud evidence, exact retry, DPAPI identity, separate Windows service/installer, lifecycle recovery, atomic Redis admission, per-device coverage state, source isolation, and backlog-safe limited hybrid correlations are implemented. A pfSense CE 2.8.1 Hyper-V lab proved native BSD syslog parsing, logged pass/block evidence, Ed25519 relay attestation, encrypted outage retention, unclean restart recovery, zero duplicate event UIDs, and continuous batch hashes. Tenant entitlement now defaults to zero and the status API publishes the exact capability plus nested device state. A local frontend correction matches this contract and passes lint/build, but is not pushed or paired-tested. `NETWORK_RELAY_ENABLED=false`; packaged Windows-service acceptance, exact customer hardware, other appliance proof, retention, capacity, external notification and pilot proof remain open. |
+| Internal Wazuh detector | Receive minimized WarSOC projections and return validated candidate observations | RC2 CODE/LAB-PROVEN / PRODUCTION DISABLED | Maintained Wazuh contracts and both local and separate-host live mTLS canaries pass with zero customer side effects. RC2 approves only `audit_log_cleared` as a primary candidate family; promotion additionally requires the global flag and exact recent signed WarSOC evidence for the bound endpoint. Approved candidates use the standard WarSOC incident schema and customer APIs hide detector-vendor provenance. Authentication failure, service installation, and process creation remain shadow-only. Exact deployment identity, physical saturation, rollback, and post-deploy acceptance remain open. |
 | External threat-intelligence enrichment | Third-party reputation/provider lookups | OUT OF SCOPE | No live provider integration is claimed for the current pilot. Native SIEM/FBR/PECA operation does not depend on it. |
 
 ## 23. Failure Map
@@ -1291,7 +1620,7 @@ Status meanings:
 | Spool reaches 500 MiB or disk reserve | Pause new durable collection; retain existing evidence; report Degraded. | `/data/status`, spool metrics, agent log. |
 | Security/System channel fails | Continue reporting heartbeat as degraded. | `/data/status` and dashboard Degraded. |
 | Malformed POS JSONL | Quarantine locally; do not invent evidence. | Agent quarantine/parse metric. |
-| Redis unavailable at ingest | Reject/fail request; agent retries from spool. | API error, Redis health, ingest metrics. |
+| Redis unavailable after source admission | Preserve the committed encrypted source envelope and ready/retry outbox row; API retry and the unified outbox worker heal dispatch. | API error, outbox status/attempts, Redis health, endpoint spool growth. |
 | Raw stream reaches admission limit | Return HTTP 503; never trim unacknowledged events; agent retries. | `warsoc_raw_stream_depth`, API log, endpoint spool growth. |
 | Worker cannot write Mongo | Leave stream message pending for reclaim. | Worker error/pending count. |
 | Detection persists but incident projection fails | Leave the stream event retryable; the archiver must retain the hot alert until projection succeeds. | Worker/archiver error, pending count, incident projection gap. |
@@ -1299,6 +1628,7 @@ Status meanings:
 | FIM Redis correlation misses | No false FIM alert; keep unmatched event as SIEM evidence. | Correlation-miss metric. |
 | Azure upload fails | Do not delete hot Mongo records. | Archiver error and hot-storage growth. |
 | Azure immutability insufficient | Do not delete hot Mongo records. | Archiver hard failure. |
+| FBR general-retention Azure policy is absent or too short | Fail archive verification and do not delete the Mongo hot copy. | Archive ledger/error and Mongo growth. |
 | Archive hash mismatch on read | Reject that blob's records. | Archive-reader integrity error. |
 | WebSocket disconnects | HTTP refresh reconciles; reconnect with a fresh ticket. | UI reconnect state and API polling. |
 | Live dashboard read becomes slow | Preserve the previous feed; reject overlapping browser requests and emit a slow-read warning/metric. | `warsoc_dashboard_live_read_seconds`, Nginx 499 count, Mongo execution-plan proof. |
@@ -1350,25 +1680,33 @@ Do not declare the current release fully accepted until all of the following are
 2. Tenant provisioning and browser login proof.
 3. Valid activation generation and successful real Windows agent enrollment.
 4. Signed heartbeat showing Security and System channels healthy.
-5. SIEM alert generated from a known native test event within the target latency.
-6. PECA evidence for the required native controls, including System Event 7045.
-7. FBR invoice evidence from strict JSONL or authenticated API.
-8. FBR file delete/permission scenario producing exactly one encrypted FIM event and no alert for ordinary writes.
-9. Dashboard Agent Feed showing grouped normal evidence and Live Inspection showing only actionable incidents.
-10. `/api/v1/logs/live?source=siem&aggregate=true`, `/api/v1/incidents`, and `/api/v1/incidents/summary` return within ten seconds and produce no fresh Nginx HTTP 499 or 5xx responses.
-11. Two compatible detections grouping into one incident with count two; a materially different context remaining separate; evidence coverage and detected timeline present; tenant-safe assignment; acknowledgement, closure with notes, workflow audit persistence, and safe IP mitigation.
-12. Auditor access allowed for entitled evidence and denied for operations/team/agent/live-feed controls.
-13. Email delivery proof.
-14. PDF and CSV proof.
-15. Azure blob upload, immutability, SHA verification and archive-ledger proof. If archive retrieval is enabled for the release, require a separate asynchronous rehydration and short-lived SAS download proof.
-16. Backup restore proof distinct from the compliance archive.
-17. Endpoint-signature metrics proving zero invalid signatures and, before enabling required mode, zero unsigned active agents for the agreed observation window.
+5. Encrypted source-envelope and outbox proof showing Mongo commit before Redis,
+   retry after a forced Redis failure, and no plaintext source body in the outbox.
+6. SIEM alert generated from a known native test event within the target latency.
+7. PECA evidence for the required native controls, including System Event 7045,
+   and proof that legacy syslog cannot enter the PECA collection.
+8. FBR invoice evidence from strict JSONL or authenticated API, with
+   `TENANT_ENTITLEMENT_V1` retention metadata and no tax-period expiry.
+9. FBR file delete/permission scenario producing exactly one encrypted FIM event and no alert for ordinary writes.
+10. Dashboard Agent Feed showing grouped normal evidence and Live Inspection showing only actionable incidents.
+11. `/api/v1/logs/live?source=siem&aggregate=true`, `/api/v1/incidents`, and `/api/v1/incidents/summary` return within ten seconds and produce no fresh Nginx HTTP 499 or 5xx responses.
+12. Two compatible detections grouping into one incident with count two; a materially different context remaining separate; evidence coverage and detected timeline present; tenant-safe assignment; acknowledgement, closure with notes, workflow audit persistence, and safe IP mitigation.
+13. Auditor access allowed for entitled evidence and denied for operations/team/agent/live-feed controls.
+14. Email delivery proof.
+15. PDF and CSV proof.
+16. Azure blob upload, immutability, SHA verification and archive-ledger proof.
+    For FBR, prove the selected general-duration policy covers the tenant
+    entitlement and that an inadequate policy leaves Mongo untouched. If archive retrieval
+    is enabled for the release, require a separate asynchronous rehydration and
+    short-lived SAS download proof.
+17. Backup restore proof distinct from the compliance archive.
+18. Endpoint-signature metrics proving zero invalid signatures and, before enabling required mode, zero unsigned active agents for the agreed observation window.
 
 ## 26. Source-of-Truth Files
 
 | Concern | Source |
 |---|---|
-| Compliance controls and fixed retention | `app/utils/compliance_catalog.py` |
+| Compliance controls and policy metadata | `app/utils/compliance_catalog.py` |
 | SIEM event/rule catalog | `app/utils/siem_catalog.py` |
 | SIEM processing | `app/workers/siem_worker.py` |
 | Incident projection and idempotency | `app/utils/security_incidents.py` |
@@ -1383,6 +1721,18 @@ Do not declare the current release fully accepted until all of the following are
 | Azure archive availability | `app/utils/archive_reader.py` |
 | Asynchronous archive retrieval | `app/routes/archive_retrieval.py`, `app/utils/archive_retrieval.py`, and `app/workers/archive_retrieval_worker.py` |
 | Endpoint event signature verification | `app/utils/agent_crypto.py` and `app/routes/ingest_pulse.py` |
+| Source classification and compliance eligibility | `app/utils/source_provenance.py` |
+| Encrypted canonical source envelopes and durable Redis outbox | `app/utils/source_evidence.py` |
+| Active tenant-entitlement FBR retention and isolated legacy interpreters | `app/utils/fbr_retention.py` |
+| FBR retention product decision and historical compatibility boundary | `docs/WARSOC_FBR_RETENTION_PRODUCT_DECISION_2026-08-24.md` |
+| Explicit legal/proceeding holds and archive fences | `app/utils/evidence_holds.py` and `app/utils/evidence_locks.py` |
+| Evidence-state and claim-state evaluation | `app/utils/evidence_claims.py` |
+| SIEM sensitive-field privacy | `app/utils/siem_privacy.py` |
+| Evidence cases and hash-linked custody | `app/utils/evidence_custody.py` and `app/routes/evidence_cases.py` |
+| Signed evidence packages and offline verifier | `app/utils/evidence_package.py` and `scripts/verify_evidence_package.py` |
+| Isolated evidence-package export | `app/workers/evidence_export_worker.py` |
+| External daily evidence commitment | `app/utils/evidence_anchor.py` and `app/workers/compliance_cron.py` |
+| FBR reconciliation contract/lab engine | `app/utils/fbr_reconciliation.py` |
 | Redis ingest memory admission | `app/utils/ingest_capacity.py` |
 | Windows event signing and protected key storage | `agent/windows_agent.py` |
 | Network-relay API and admission | `app/routes/network_relay.py` |
@@ -1390,8 +1740,19 @@ Do not declare the current release fully accepted until all of the following are
 | Network-relay as-built candidate contract | `docs/NETWORK_RELAY_BACKEND_FOUNDATION.md` |
 | Future generic detection engine and Wazuh integration | `docs/WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md` |
 | Reviewed 90-day backend evidence plan, phase gates, Azure decision points and contradictions | `docs/WARSOC_90_DAY_BACKEND_EVIDENCE_PLAN_REVIEW.md` |
+| FBR/PECA Phase 0 legal, evidence, claim and API truth map | `docs/WARSOC_FBR_PECA_PHASE_0_TRUTH_MAP.md` |
+| P0 source isolation, canonical evidence, outbox and FBR-retention closure | `docs/WARSOC_P0_EVIDENCE_INTEGRITY_CLOSURE_2026-08-20.md` |
+| Current backend evidence-program implementation and open gates | `docs/WARSOC_BACKEND_EVIDENCE_PROGRAM_IMPLEMENTATION_2026-08-20.md` |
+| Current release audit, production-proof boundary and closure order | `docs/WARSOC_RELEASE_AUDIT_2026-08-21.md` |
+| Current release condition, completed verification and promotion blockers | `docs/WARSOC_RELEASE_CONDITION_REPORT_2026-08-24.md` |
+| FBR and PECA current detection, evidence, retention and acceptance guide | `docs/WARSOC_FBR_PECA_END_TO_END_OPERATING_GUIDE_2026-08-24.md` |
+| Upgraded frontend functional delta and API/role contract | `docs/WARSOC_UPGRADED_FRONTEND_DELTA_2026-08-21.md` |
+| Generated API authentication, RBAC and tenant-scope inventory | `docs/generated/WARSOC_API_SECURITY_INVENTORY.json` |
+| Human-reviewed authorization intent | `docs/WARSOC_AUTHORIZATION_POLICY.json` |
+| Versioned compliance legal-reference registry | `app/utils/compliance_legal_registry.py` |
 | Wazuh execution mind map and gate status | `docs/WARSOC_WAZUH_EXECUTION_MIND_MAP.md` |
 | Detailed Wazuh and firewall phase implementation ledger | `docs/WARSOC_WAZUH_FIREWALL_IMPLEMENTATION_LEDGER_2026-08-13.md` |
+| Firewall relay and customer-safe detection frontend contract | `docs/WARSOC_FIREWALL_WAZUH_FRONTEND_BUILD_GUIDE.md` |
 | Disabled Wazuh contracts, projector, outbox, bridge and candidate validator | `app/wazuh_integration/`, `app/workers/wazuh_dispatch_worker.py`, and `docker-compose.wazuh-bridge.yml` |
 | Wazuh lab implementation and acceptance procedure | `docs/WARSOC_WAZUH_IMPLEMENTATION_AND_LAB_RUNBOOK.md` |
 | Cross-system verification and customer-flow acceptance | `docs/WARSOC_VERIFICATION_AND_CUSTOMER_ACCEPTANCE_2026-08-12.md` |

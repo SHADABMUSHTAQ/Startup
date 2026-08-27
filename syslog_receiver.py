@@ -7,8 +7,8 @@
 
 Integration Point:
     UDP:5140 → asyncio.Queue(50000) → raw_logs_queue (Redis Stream)
-    All four existing workers (SIEM, PECA, FBR, Detection) will
-    automatically consume these logs with zero code changes.
+    SIEM consumes these legacy network logs. Compliance workers reject
+    them because source-IP allowlisting is not cryptographic provenance.
 
 Environment Variables:
     REDIS_HOST          (default: redis)
@@ -22,6 +22,7 @@ Environment Variables:
 """
 
 import asyncio
+import hashlib
 import ipaddress
 import json
 import logging
@@ -50,6 +51,11 @@ DRAIN_INTERVAL   = int(os.getenv("DRAIN_INTERVAL_MS", "100")) / 1000.0
 RAW_LOGS_QUEUE       = "raw_logs_queue"
 BUFFER_MAX           = 50_000
 AGENT_ID             = "syslog_receiver"
+
+
+def _stable_legacy_event_id(value: str) -> int:
+    digest = hashlib.sha256(str(value).encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big") % 100_000
 
 
 def parse_allowed_source_networks(raw_value: str) -> tuple:
@@ -169,6 +175,11 @@ def parse_syslog(raw: str) -> dict:
         "message": "",
         "raw_data": {"raw": raw},
         "type": "network_log",
+        "source_class": "legacy_syslog",
+        "evidence_profile": "network_telemetry",
+        "source_assurance": "legacy_ip_allowlist_only",
+        "signature_verified": False,
+        "compliance_source_eligible": False,
     }
 
     stripped = raw.strip()
@@ -183,7 +194,7 @@ def parse_syslog(raw: str) -> dict:
             try:
                 base["event_id"] = int(sig_id)
             except ValueError:
-                base["event_id"] = hash(sig_id) % 100000
+                base["event_id"] = _stable_legacy_event_id(sig_id)
             base["message"] = m.group(6).strip() or "CEF Event"
             base["raw_data"] = {
                 "format": "CEF",
@@ -226,7 +237,7 @@ def parse_syslog(raw: str) -> dict:
 
         base["source_ip"] = hostname if hostname != "-" else "0.0.0.0"
         base["message"] = msg_body or f"{app_name}: {msg_id}"
-        base["event_id"] = hash(f"{facility}:{app_name}:{msg_id}") % 100000
+        base["event_id"] = _stable_legacy_event_id(f"{facility}:{app_name}:{msg_id}")
         base["raw_data"] = {
             "format": "RFC5424",
             "facility": facility,
@@ -249,7 +260,7 @@ def parse_syslog(raw: str) -> dict:
 
         base["source_ip"] = hostname
         base["message"] = msg_body
-        base["event_id"] = hash(f"{facility}:{hostname}") % 100000
+        base["event_id"] = _stable_legacy_event_id(f"{facility}:{hostname}")
         base["raw_data"] = {
             "format": "RFC3164",
             "facility": facility,

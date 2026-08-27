@@ -17,6 +17,7 @@ from app.utils.compliance_chain import (
     genesis_root,
     verify_ledger_entry,
 )
+from app.utils.evidence_anchor import anchor_daily_ledger
 
 # 🏗 COMPLIANCE CRON: Daily compliance maintenance worker
 # Architecture: Standalone asyncio worker.  Does NOT share the FastAPI event loop.
@@ -60,12 +61,32 @@ SOURCE_COLLECTIONS = ["peca_forensic_logs", "fbr_pos_logs"]
 DEAD_AIR_THRESHOLD = load_dead_air_threshold()
 
 
+def _environment_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _as_utc(value):
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
 async def _compute_daily_root(db, tenant_id: str, date_str: str, start_dt: datetime, end_dt: datetime, previous_root: str) -> dict:
     """Build a deterministic hash commitment over the day's evidence."""
     log_count = 0
     seen_event_ids = []
     source_counts = {}
     evidence_hasher = hashlib.sha256()
+    evidence_retention_until = None
 
     for collection_name in SOURCE_COLLECTIONS:
         collection = db[collection_name]
@@ -90,6 +111,15 @@ async def _compute_daily_root(db, tenant_id: str, date_str: str, start_dt: datet
             event_id = doc.get("event_id")
             if event_id is not None:
                 seen_event_ids.append(str(event_id))
+            candidate_retention = _as_utc(
+                doc.get("effective_retention_until")
+                or doc.get("base_retention_until")
+                or doc.get("_expire_at")
+            )
+            if candidate_retention and (
+                evidence_retention_until is None or candidate_retention > evidence_retention_until
+            ):
+                evidence_retention_until = candidate_retention
 
     evidence_digest = evidence_hasher.hexdigest()
     daily_root = compute_daily_root(
@@ -115,6 +145,9 @@ async def _compute_daily_root(db, tenant_id: str, date_str: str, start_dt: datet
         "source_collections": SOURCE_COLLECTIONS,
         "computed_at": datetime.now(timezone.utc).isoformat(),
         "worker_id": f"cron_{socket.gethostname()}",
+        "evidence_retention_until": (
+            evidence_retention_until.isoformat() if evidence_retention_until else None
+        ),
     }
 
     return ledger_entry
@@ -179,6 +212,61 @@ async def run_daily_chain(db):
         logger.info(f"[{tenant_id}]  Recorded {date_str}: {ledger_entry['log_count']} logs.")
 
     logger.info(f"=== Daily Maintenance Complete for {date_str} ===")
+
+
+async def anchor_pending_ledgers(db, blob_service_client, *, limit: int = 100) -> dict:
+    """Retry verified daily roots until Azure readback and WORM checks succeed."""
+
+    container_name = os.getenv("EVIDENCE_DAILY_ANCHOR_CONTAINER", "").strip()
+    fallback_days = int(os.getenv("EVIDENCE_DAILY_ANCHOR_FALLBACK_DAYS", "2555"))
+    ledgers = await db[LEDGER_COLLECTION].find(
+        {"anchor_status": {"$ne": "VERIFIED"}}
+    ).sort([("date", 1), ("tenant_id", 1)]).limit(max(1, min(limit, 500))).to_list(length=limit)
+    result = {"verified": 0, "failed": 0, "unverified": 0}
+    for ledger in ledgers:
+        identity = {"_id": ledger["_id"], "daily_root_hash": ledger.get("daily_root_hash")}
+        if not verify_ledger_entry(ledger):
+            result["unverified"] += 1
+            await db[LEDGER_COLLECTION].update_one(
+                identity,
+                {"$set": {"anchor_status": "LEDGER_UNVERIFIED", "anchor_checked_at": datetime.now(timezone.utc)}},
+            )
+            continue
+        try:
+            anchor = await anchor_daily_ledger(
+                blob_service_client,
+                container_name=container_name,
+                ledger=ledger,
+                fallback_days=fallback_days,
+            )
+        except Exception as exc:
+            result["failed"] += 1
+            await db[LEDGER_COLLECTION].update_one(
+                identity,
+                {
+                    "$set": {
+                        "anchor_status": "FAILED",
+                        "anchor_checked_at": datetime.now(timezone.utc),
+                        "anchor_last_error": str(exc)[:500],
+                    },
+                    "$inc": {"anchor_attempts": 1},
+                },
+            )
+            continue
+        result["verified"] += 1
+        await db[LEDGER_COLLECTION].update_one(
+            identity,
+            {
+                "$set": {
+                    "anchor_status": "VERIFIED",
+                    "anchor": anchor,
+                    "anchor_checked_at": datetime.now(timezone.utc),
+                },
+                "$unset": {"anchor_last_error": ""},
+                "$inc": {"anchor_attempts": 1},
+            },
+        )
+    return result
 
 async def run_monthly_reports(db):
     """
@@ -275,11 +363,22 @@ async def compliance_cron():
     import redis.asyncio as aioredis
     app_redis = await aioredis.from_url(settings.redis_url, decode_responses=True)
 
+    anchor_client = None
+    anchor_enabled = _environment_flag("EVIDENCE_DAILY_ANCHOR_ENABLED", default=False)
+    if anchor_enabled:
+        connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").strip()
+        if not connection_string:
+            raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING is required when daily anchors are enabled")
+        from azure.storage.blob.aio import BlobServiceClient
+
+        anchor_client = BlobServiceClient.from_connection_string(connection_string)
+
     logger.info("⚡ WarSOC Compliance Cron: Multi-Schedule Engine Active.")
 
     last_daily_run = None
     last_monthly_run = None
     last_heartbeat_run = None
+    last_anchor_run = None
 
     while True:
         now = datetime.now(timezone.utc)
@@ -299,7 +398,24 @@ async def compliance_cron():
             except Exception as e:
                 logger.error(f"[!] Daily chain computation failed: {e}")
 
-        # 3. Monthly Rollup (On the 1st of the month at 01:00 UTC)
+        # 3. External daily-root anchoring. This is independently retryable and
+        # remains disabled until the private WORM container is provisioned.
+        anchor_retry_seconds = max(
+            300,
+            int(os.getenv("EVIDENCE_DAILY_ANCHOR_RETRY_SECONDS", "900")),
+        )
+        if anchor_client and (
+            last_anchor_run is None
+            or (now - last_anchor_run).total_seconds() >= anchor_retry_seconds
+        ):
+            try:
+                anchor_result = await anchor_pending_ledgers(db, anchor_client)
+                logger.info("Daily anchor result: %s", anchor_result)
+            except Exception as e:
+                logger.error("[!] Daily anchor run failed: %s", e)
+            last_anchor_run = now
+
+        # 4. Monthly Rollup (On the 1st of the month at 01:00 UTC)
         if now.day == 1 and now.hour >= 1 and (last_monthly_run is None or last_monthly_run.month != now.month):
             logger.info("Running monthly compliance PDF rollup...")
             try:

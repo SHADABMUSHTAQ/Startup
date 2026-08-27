@@ -2,11 +2,13 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 from typing import Any, Literal, Optional
+import uuid
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from cryptography.fernet import Fernet
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.utils.limiter import limiter
 from app.config.config import get_settings
 from app.database import get_db
@@ -19,6 +21,12 @@ from app.utils.endpoint_health import (
     decode_event_signature_status,
     event_signature_mode,
 )
+from app.utils.evidence_locks import acquire_retention_fence, release_retention_fence
+from app.utils.fbr_retention import (
+    FBR_ACTIVE_RETENTION_MODEL,
+    normalize_tenant_retention_days,
+)
+from app.utils.peca_retention import PECA_ACTIVE_RETENTION_MODEL
 
 settings = get_settings()
 try:
@@ -27,6 +35,48 @@ except Exception:
     fernet = None
 
 router = APIRouter()
+
+HOLDABLE_EVIDENCE_COLLECTIONS = {
+    "fbr_pos_logs",
+    "source_envelopes_fbr",
+    "peca_forensic_logs",
+    "source_envelopes_peca",
+    "siem_cold_vault",
+    "source_envelopes_siem",
+    "security_alerts",
+    "agent_coverage_observations",
+}
+
+
+class EvidenceHoldRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    scope_type: Literal["TENANT", "COLLECTION", "EVENT"]
+    collection: str | None = Field(default=None, max_length=100)
+    event_uid: str | None = Field(default=None, max_length=200)
+    reason: str = Field(min_length=10, max_length=2000)
+    authority: str = Field(min_length=2, max_length=300)
+    proceeding_reference: str | None = Field(default=None, max_length=300)
+
+    @model_validator(mode="after")
+    def validate_scope(self):
+        if self.scope_type in {"COLLECTION", "EVENT"}:
+            if self.collection not in HOLDABLE_EVIDENCE_COLLECTIONS:
+                raise ValueError("collection is not holdable evidence")
+        elif self.collection is not None:
+            raise ValueError("tenant holds must not specify a collection")
+        if self.scope_type == "EVENT" and not self.event_uid:
+            raise ValueError("event holds require event_uid")
+        if self.scope_type != "EVENT" and self.event_uid is not None:
+            raise ValueError("event_uid is only valid for event holds")
+        return self
+
+
+class EvidenceHoldReleaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    reason: str = Field(min_length=10, max_length=2000)
+    authority: str = Field(min_length=2, max_length=300)
 
 import csv
 import io
@@ -88,6 +138,191 @@ async def csv_list_generator(docs: list[dict], fieldnames):
         yield buffer.getvalue()
         buffer.seek(0)
         buffer.truncate(0)
+
+
+def _public_hold(document: dict) -> dict:
+    return {
+        key: value
+        for key, value in document.items()
+        if key not in {"_id", "created_by_user_id", "released_by_user_id"}
+    }
+
+
+async def _record_hold_operation(
+    db,
+    *,
+    operation_id: str,
+    hold_id: str,
+    tenant_id: str,
+    action: str,
+    actor: dict,
+    reason: str,
+    authority: str,
+    status: str,
+):
+    now = datetime.now(timezone.utc)
+    await db.evidence_hold_audit.update_one(
+        {"operation_id": operation_id},
+        {
+            "$setOnInsert": {
+                "operation_id": operation_id,
+                "hold_id": hold_id,
+                "tenant_id": tenant_id,
+                "action": action,
+                "actor_user_id": str(actor.get("_id") or ""),
+                "actor_email": str(actor.get("email") or actor.get("username") or ""),
+                "actor_role": str(actor.get("role") or ""),
+                "reason": reason,
+                "authority": authority,
+                "created_at": now,
+            },
+            "$set": {"status": status, "updated_at": now},
+        },
+        upsert=True,
+    )
+
+
+@router.post("/holds", status_code=201)
+@limiter.limit("10/minute")
+async def apply_evidence_hold(
+    request: Request,
+    body: EvidenceHoldRequest,
+    current_user: dict = Depends(get_current_user),
+    _: str = Depends(RoleChecker(["admin"])),
+    db=Depends(get_db),
+):
+    tenant_id = str(current_user.get("tenant_id") or "").strip()
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant context is required")
+    now = datetime.now(timezone.utc)
+    hold_id = f"HOLD-{uuid.uuid4().hex.upper()}"
+    operation_id = uuid.uuid4().hex
+    fence_owner = f"hold-apply:{operation_id}"
+    if not await acquire_retention_fence(db, tenant_id, fence_owner):
+        raise HTTPException(status_code=409, detail="Evidence retention state is changing; retry the request")
+    document = {
+        "hold_id": hold_id,
+        "tenant_id": tenant_id,
+        "status": "ACTIVE",
+        "scope_type": body.scope_type,
+        "collection": body.collection,
+        "event_uid": body.event_uid,
+        "reason": body.reason,
+        "authority": body.authority,
+        "proceeding_reference": body.proceeding_reference,
+        "created_by_user_id": str(current_user.get("_id") or ""),
+        "created_by": str(current_user.get("email") or current_user.get("username") or ""),
+        "created_at": now,
+        "updated_at": now,
+    }
+    try:
+        await _record_hold_operation(
+            db,
+            operation_id=operation_id,
+            hold_id=hold_id,
+            tenant_id=tenant_id,
+            action="APPLY",
+            actor=current_user,
+            reason=body.reason,
+            authority=body.authority,
+            status="PENDING",
+        )
+        await db.legal_holds.insert_one(document)
+        await _record_hold_operation(
+            db,
+            operation_id=operation_id,
+            hold_id=hold_id,
+            tenant_id=tenant_id,
+            action="APPLY",
+            actor=current_user,
+            reason=body.reason,
+            authority=body.authority,
+            status="COMMITTED",
+        )
+    finally:
+        await release_retention_fence(db, tenant_id, fence_owner)
+    return {"hold": _public_hold(document)}
+
+
+@router.get("/holds")
+async def list_evidence_holds(
+    status: Literal["ACTIVE", "PENDING_RELEASE", "RELEASED"] | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    current_user: dict = Depends(get_current_user),
+    _: str = Depends(RoleChecker(["admin", "auditor"])),
+    db=Depends(get_db),
+):
+    query: dict[str, Any] = {"tenant_id": current_user["tenant_id"]}
+    if status:
+        query["status"] = status
+    documents = await db.legal_holds.find(query).sort("created_at", -1).limit(limit).to_list(limit)
+    return {"holds": [_public_hold(document) for document in documents]}
+
+
+@router.post("/holds/{hold_id}/release")
+@limiter.limit("10/minute")
+async def release_evidence_hold(
+    request: Request,
+    hold_id: str,
+    body: EvidenceHoldReleaseRequest,
+    current_user: dict = Depends(get_current_user),
+    _: str = Depends(RoleChecker(["admin"])),
+    db=Depends(get_db),
+):
+    tenant_id = str(current_user.get("tenant_id") or "")
+    hold = await db.legal_holds.find_one(
+        {"tenant_id": tenant_id, "hold_id": hold_id, "status": "ACTIVE"}
+    )
+    if not hold:
+        raise HTTPException(status_code=404, detail="Active evidence hold was not found")
+    operation_id = uuid.uuid4().hex
+    fence_owner = f"hold-release:{operation_id}"
+    if not await acquire_retention_fence(db, tenant_id, fence_owner):
+        raise HTTPException(status_code=409, detail="Evidence retention state is changing; retry the request")
+    try:
+        await _record_hold_operation(
+            db,
+            operation_id=operation_id,
+            hold_id=hold_id,
+            tenant_id=tenant_id,
+            action="RELEASE",
+            actor=current_user,
+            reason=body.reason,
+            authority=body.authority,
+            status="PENDING",
+        )
+        released_at = datetime.now(timezone.utc)
+        result = await db.legal_holds.update_one(
+            {"_id": hold["_id"], "status": "ACTIVE"},
+            {
+                "$set": {
+                    "status": "RELEASED",
+                    "release_reason": body.reason,
+                    "release_authority": body.authority,
+                    "released_by_user_id": str(current_user.get("_id") or ""),
+                    "released_by": str(current_user.get("email") or current_user.get("username") or ""),
+                    "released_at": released_at,
+                    "updated_at": released_at,
+                }
+            },
+        )
+        if result.modified_count != 1:
+            raise HTTPException(status_code=409, detail="Evidence hold state changed; retry the request")
+        await _record_hold_operation(
+            db,
+            operation_id=operation_id,
+            hold_id=hold_id,
+            tenant_id=tenant_id,
+            action="RELEASE",
+            actor=current_user,
+            reason=body.reason,
+            authority=body.authority,
+            status="COMMITTED",
+        )
+    finally:
+        await release_retention_fence(db, tenant_id, fence_owner)
+    updated = await db.legal_holds.find_one({"_id": hold["_id"]})
+    return {"hold": _public_hold(updated)}
 
 def _load_runtime_config() -> dict:
     config_path = Path(__file__).resolve().parent.parent / "config" / "config.json"
@@ -239,6 +474,8 @@ def _curate_evidence_record(doc: dict, evidence_source: str, data_origin: str) -
     forensic_hash = doc.get("forensic_seal")
     archived = doc.get("_archived") is True
     message, message_truncated = _summarize_evidence_message(doc.get("message"))
+    rule = get_rule_for_pack(evidence_source, str(doc.get("event_id") or ""))
+    evaluation = evaluate_evidence_claim(doc, evidence_source, rule)
 
     curated = {
         "id": str(doc.get("_id")) if doc.get("_id") is not None else None,
@@ -264,6 +501,16 @@ def _curate_evidence_record(doc: dict, evidence_source: str, data_origin: str) -
         "archived": archived,
         "detail_available": doc.get("_id") is not None,
         "content_redacted_from_list": True,
+        "control_id": rule.get("control_id") if rule else None,
+        "evidence_state": evaluation["evidence_state"],
+        "claim_state": evaluation["claim_state"],
+        "time_trust_state": evaluation["time_trust_state"],
+        "retention_ready": evaluation["retention_ready"],
+        "evidence_checks": evaluation["evidence_checks"],
+        "evidence_gaps": evaluation["evidence_gaps"],
+        "claim_boundary": rule.get("claim_boundary") if rule else None,
+        "evidence_source_class": rule.get("evidence_source_class") if rule else None,
+        "legal_reference_ids": rule.get("legal_reference_ids", []) if rule else [],
     }
     return curated
 
@@ -457,7 +704,12 @@ async def _get_fbr_page_with_fallback(
     return docs, total, "fbr_vault_legacy", True
 
 
-from app.utils.compliance_catalog import COMPLIANCE_CATALOG
+from app.utils.compliance_catalog import (
+    COMPLIANCE_CATALOG,
+    COMPLIANCE_CATALOG_VERSION,
+    get_rule_for_pack,
+)
+from app.utils.evidence_claims import evaluate_evidence_claim
 
 def _apply_pack_curation(docs: list, pack_id: str, origin: str):
     source = "peca_forensic" if pack_id == "peca_forensic" else "fbr_pos"
@@ -472,10 +724,78 @@ async def list_compliance_packs():
             "pack_id": fid,
             "name": f["name"],
             "description": f["description"],
-            "retention": f["retention"]
+            "retention": f["retention"],
+            "catalog_version": COMPLIANCE_CATALOG_VERSION,
+            "evidence_domain": f["evidence_domain"],
+            "legal_reference_ids": f["legal_reference_ids"],
+            "claim_boundary": f["claim_boundary"],
         }
         for fid, f in COMPLIANCE_CATALOG.items()
     ]
+
+
+@router.get("/retention/status")
+async def get_retention_status(
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    _: str = Depends(RoleChecker(["admin", "auditor"])),
+):
+    """Return a tenant-scoped summary of active retention and observed archives."""
+
+    tenant_id = str(current_user.get("tenant_id") or "").strip()
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant context is required")
+
+    tenant = await db["tenants"].find_one(
+        {"tenant_id": tenant_id},
+        {"_id": 0, "retention_days": 1},
+    )
+    tenant_retention_days = normalize_tenant_retention_days(
+        (tenant or {}).get("retention_days")
+    )
+    active_hold_count = await db["legal_holds"].count_documents(
+        {"tenant_id": tenant_id, "status": {"$in": ["ACTIVE", "PENDING_RELEASE"]}}
+    )
+    archived_statuses = [
+        "archived",
+        "archived_hot_preserved_hold",
+        "archived_hot_deleted",
+    ]
+    archive_query = {
+        "tenant_id": tenant_id,
+        "status": {"$in": archived_statuses},
+    }
+    archived_batch_count = await db["storage_archives"].count_documents(archive_query)
+    latest_archives = await db["storage_archives"].find(
+        archive_query,
+        {"_id": 0, "created_at": 1},
+    ).sort("created_at", -1).limit(1).to_list(length=1)
+    latest_archive_at = latest_archives[0].get("created_at") if latest_archives else None
+
+    fbr_retention = COMPLIANCE_CATALOG["fbr_pos"]["retention"]
+    return {
+        "retention": {
+            "model": FBR_ACTIVE_RETENTION_MODEL,
+            "tenant_retention_days": tenant_retention_days,
+            "hot_storage_days": int(fbr_retention["local_hot_days"]),
+            "fbr_archive_retention_days": tenant_retention_days,
+            "peca_archive_retention_days": tenant_retention_days,
+            "peca_retention_model": PECA_ACTIVE_RETENTION_MODEL,
+            "legal_hold_state": "ACTIVE" if active_hold_count else "NONE",
+            "active_hold_count": active_hold_count,
+            "archive_availability": (
+                "ARCHIVED_EVIDENCE_AVAILABLE"
+                if archived_batch_count
+                else "NO_ARCHIVED_EVIDENCE_OBSERVED"
+            ),
+            "archived_batch_count": archived_batch_count,
+            "latest_archive_at": latest_archive_at,
+            "fbr_scope": (
+                "FBR POS and invoice-integrity monitoring evidence; WarSOC is not "
+                "the customer's statutory tax-record repository."
+            ),
+        }
+    }
 
 
 @router.get("/coverage")
@@ -505,6 +825,23 @@ async def get_compliance_coverage(
     signature_status_by_agent = {}
     agent_ids = [str(agent.get("agent_id") or "") for agent in agents]
     agent_ids = [agent_id for agent_id in agent_ids if agent_id]
+    latest_coverage_by_agent = {}
+    if agent_ids:
+        coverage_cursor = db["agent_coverage_observations"].find(
+            {"tenant_id": tenant_id, "agent_id": {"$in": agent_ids}},
+            {
+                "_id": 0,
+                "agent_id": 1,
+                "protocol_version": 1,
+                "server_received_time": 1,
+                "clock_state": 1,
+                "sensor_status": 1,
+            },
+        ).sort("server_received_time", -1)
+        async for observation in coverage_cursor:
+            observed_agent_id = str(observation.get("agent_id") or "")
+            if observed_agent_id and observed_agent_id not in latest_coverage_by_agent:
+                latest_coverage_by_agent[observed_agent_id] = observation
     if redis_client is not None and agent_ids:
         signature_values = await redis_client.mget(
             [
@@ -520,14 +857,43 @@ async def get_compliance_coverage(
     now = datetime.now(timezone.utc)
     agent_states = []
     for agent in agents:
-        sensor = agent.get("sensor_status") if isinstance(agent.get("sensor_status"), dict) else {}
+        agent_id = str(agent.get("agent_id") or "")
+        observation = latest_coverage_by_agent.get(agent_id)
+        observation_time = _coerce_dt(
+            (observation or {}).get("server_received_time")
+        )
+        observation_is_current = bool(
+            observation_time and (now - observation_time).total_seconds() <= 600
+        )
+        observed_sensor = (observation or {}).get("sensor_status")
+        if observation_is_current and isinstance(observed_sensor, dict):
+            sensor = observed_sensor
+            last_seen = observation_time
+        else:
+            sensor = (
+                agent.get("sensor_status")
+                if isinstance(agent.get("sensor_status"), dict)
+                else {}
+            )
+            last_seen = _coerce_dt(agent.get("last_seen"))
         channels = sensor.get("channels") if isinstance(sensor.get("channels"), dict) else {}
-        last_seen = _coerce_dt(agent.get("last_seen"))
         online = bool(last_seen and (now - last_seen).total_seconds() <= 600)
         signature_status = signature_status_by_agent.get(
-            str(agent.get("agent_id") or ""),
+            agent_id,
             decode_event_signature_status(None),
         )
+        protocol_version = str(
+            (observation or {}).get("protocol_version") or ""
+        ).lower()
+        clock_state = str((observation or {}).get("clock_state") or "UNKNOWN").upper()
+        if observation_is_current and protocol_version == "heartbeat-v2":
+            coverage_proof_state = (
+                "trusted" if clock_state == "TRUSTED" else "degraded"
+            )
+        elif observation_is_current:
+            coverage_proof_state = "legacy_signed"
+        else:
+            coverage_proof_state = "legacy_snapshot"
         native_ready = (
             online
             and str(sensor.get("audit_policy_status") or "").lower() == "configured"
@@ -550,11 +916,12 @@ async def get_compliance_coverage(
         )
         agent_states.append(
             {
-                "agent_id": agent.get("agent_id"),
+                "agent_id": agent_id,
                 "online": online,
                 "native_ready": native_ready,
                 "fbr_ready": fbr_ready,
                 "signing_ready": bool(signature_status["ready"]),
+                "coverage_proof_state": coverage_proof_state,
             }
         )
 
@@ -563,6 +930,20 @@ async def get_compliance_coverage(
         required_key = "fbr_ready" if pack_id == "fbr_pos" else "native_ready"
         ready_count = sum(1 for state in agent_states if state[required_key])
         signing_ready_count = sum(1 for state in agent_states if state["signing_ready"])
+        signed_coverage_count = sum(
+            1
+            for state in agent_states
+            if state["coverage_proof_state"] in {"trusted", "degraded", "legacy_signed"}
+        )
+        trusted_coverage_count = sum(
+            1 for state in agent_states if state["coverage_proof_state"] == "trusted"
+        )
+        if agent_states and trusted_coverage_count == len(agent_states):
+            coverage_proof_state = "trusted"
+        elif signed_coverage_count:
+            coverage_proof_state = "degraded"
+        else:
+            coverage_proof_state = "legacy_snapshot"
         if not agent_states or ready_count == 0:
             status = "not_configured"
         elif ready_count == len(agent_states):
@@ -583,6 +964,9 @@ async def get_compliance_coverage(
                 "registered_agents": len(agent_states),
                 "ready_agents": ready_count,
                 "signing_ready_agents": signing_ready_count,
+                "signed_coverage_agents": signed_coverage_count,
+                "trusted_coverage_agents": trusted_coverage_count,
+                "coverage_proof_state": coverage_proof_state,
                 "event_signature_mode": signature_mode,
                 "last_evidence_at": _to_jsonable(
                     (latest or {}).get("timestamp") or (latest or {}).get("ingested_at")
@@ -607,7 +991,12 @@ async def get_pack_details(pack_id: str):
     return {
         "pack_id": normalized_id,
         "name": pack["name"],
+        "description": pack["description"],
         "retention": pack["retention"],
+        "catalog_version": COMPLIANCE_CATALOG_VERSION,
+        "evidence_domain": pack["evidence_domain"],
+        "legal_reference_ids": pack["legal_reference_ids"],
+        "claim_boundary": pack["claim_boundary"],
         "monitored_events": rules
     }
 

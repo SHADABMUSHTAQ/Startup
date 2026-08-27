@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr, Field
+from pymongo.errors import DuplicateKeyError
 
 from app.database import get_db
 from passlib.context import CryptContext
@@ -21,7 +22,12 @@ from app.utils.limiter import limiter
 from app.utils.observability import record_auth_fail_closed
 from app.utils.rbac import RoleChecker
 from app.routes.admin import verify_admin
-from app.utils.security_policy import PLATFORM_MAX_AGENTS, StrongPassword
+from app.utils.security_policy import (
+    PLATFORM_MAX_AGENTS,
+    StrongPassword,
+    USER_IDENTITY_COLLATION,
+    normalize_user_identity,
+)
 from app.utils.totp import reveal_totp_secret, verify_totp
 from app.utils.agent_lifecycle import (
     agent_lifecycle_is_active,
@@ -476,7 +482,12 @@ async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
             detail="Self-service signup is disabled. Contact WarSOC sales for onboarding.",
         )
 
-    existing_user = await db["users"].find_one({"$or": [{"email": user.email}, {"username": user.username}]})
+    normalized_email = normalize_user_identity(user.email)
+    normalized_username = normalize_user_identity(user.username)
+    existing_user = await db["users"].find_one(
+        {"$or": [{"email": normalized_email}, {"username": normalized_username}]},
+        collation=USER_IDENTITY_COLLATION,
+    )
     if existing_user:
         raise HTTPException(status_code=400, detail="Username or Email already registered")
 
@@ -490,8 +501,8 @@ async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
     packs = []
 
     new_user = {
-        "username": user.username,
-        "email": user.email,
+        "username": normalized_username,
+        "email": normalized_email,
         "full_name": user.full_name,
         "hashed_password": hashed_password,
         "tenant_id": new_tenant_id,
@@ -501,7 +512,10 @@ async def signup(request: Request, user: UserCreate, db=Depends(get_db)):
         "has_active_plan": False,
         "created_at": datetime.now(timezone.utc)
     }
-    await db["users"].insert_one(new_user)
+    try:
+        await db["users"].insert_one(new_user)
+    except DuplicateKeyError as exc:
+        raise HTTPException(status_code=400, detail="Username or Email already registered") from exc
 
     new_tenant = {
         "tenant_id": new_tenant_id,
@@ -568,7 +582,11 @@ class LoginSchema(BaseModel):
 @router.post("/login")
 @limiter.limit("5/minute")
 async def login(request: Request, user_data: LoginSchema, db=Depends(get_db)):
-    db_user = await db["users"].find_one({"$or": [{"username": user_data.username}, {"email": user_data.username}]})
+    login_identifier = normalize_user_identity(user_data.username)
+    db_user = await db["users"].find_one(
+        {"$or": [{"username": login_identifier}, {"email": login_identifier}]},
+        collation=USER_IDENTITY_COLLATION,
+    )
     if not db_user or not verify_password(user_data.password, db_user.get("hashed_password")):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if str(db_user.get("status") or "active").strip().lower() != "active":
@@ -811,7 +829,11 @@ async def invite_user(
     packs = payload.allowed_packs if role == "auditor" else ["internal_full"]
     packs = resolve_compliance_packs(current_user.get("plan_type", "Customized"), packs)
     now = datetime.now(timezone.utc)
-    existing_user = await db["users"].find_one({"email": payload.email})
+    invite_email = normalize_user_identity(payload.email)
+    existing_user = await db["users"].find_one(
+        {"email": invite_email},
+        collation=USER_IDENTITY_COLLATION,
+    )
     if existing_user:
         existing_status = str(existing_user.get("status") or "active").strip().lower()
         if existing_status != "pending" or existing_user.get("tenant_id") != tenant_id:
@@ -823,9 +845,9 @@ async def invite_user(
         )
     else:
         new_user = {
-            "username": f'{payload.email.split("@")[0]}-{str(uuid.uuid4())[:8]}',
-            "email": payload.email,
-            "full_name": payload.email.split("@")[0],
+            "username": f'{invite_email.split("@")[0]}-{str(uuid.uuid4())[:8]}',
+            "email": invite_email,
+            "full_name": invite_email.split("@")[0],
             "hashed_password": get_password_hash(secrets.token_urlsafe(48)),
             "tenant_id": tenant_id,
             "plan_type": current_user.get("plan_type", "Customized"),
@@ -837,7 +859,10 @@ async def invite_user(
             "created_at": now,
             "invited_at": now,
         }
-        insert_result = await db["users"].insert_one(new_user)
+        try:
+            insert_result = await db["users"].insert_one(new_user)
+        except DuplicateKeyError as exc:
+            raise HTTPException(status_code=400, detail="User with this email already exists") from exc
         user_id = insert_result.inserted_id
 
     raw_token = secrets.token_urlsafe(48)
@@ -873,9 +898,9 @@ async def invite_user(
         try:
             invite_job = {
                 "type": "team_invite",
-                "recipient": str(payload.email),
+                "recipient": invite_email,
                 "payload": {
-                    "email": str(payload.email),
+                    "email": invite_email,
                     "role": role,
                     "tenant_id": tenant_id,
                     "activation_url": activation_url,

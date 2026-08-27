@@ -305,15 +305,18 @@ Create only approved private evidence containers:
 180-day SIEM/general
 270-day SIEM/general
 360-day SIEM/general
-365-day PECA
-2190-day FBR
+PECA through the matching tenant-duration general route
 ```
+
+New FBR evidence uses the matching general tenant-retention class. No active
+FBR-specific six-year container is required. Historical locked evidence remains
+under its original Azure policy.
 
 Test each policy unlocked, then lock it. Configure environment routing only after
 every referenced container exists and has the required locked duration.
 
-For each class prove event -> Mongo -> blob -> SHA-256 -> immutability -> ledger ->
-exact Mongo-ID deletion -> authorized readback. An unlocked/short container must
+For each configured class prove event -> Mongo -> blob -> SHA-256 -> immutability
+-> ledger -> exact Mongo-ID deletion -> authorized readback. An unlocked/short container must
 fail closed and preserve Mongo.
 
 **Exit gate:** Physical container behavior matches every sold retention promise.

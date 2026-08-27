@@ -71,6 +71,47 @@ def test_ed25519_event_signature_verifies_and_returns_provenance():
     assert len(result["signing_key_id"]) == 64
 
 
+def test_ed25519_v2_authenticates_collection_coverage_metadata():
+    private_key, public_pem = _keypair()
+    event = _signed_event(private_key)
+    event.update(
+        {
+            "signature_version": "ed25519-v2",
+            "agent_collection_time": datetime.now(timezone.utc).isoformat(),
+            "collection_protocol_version": "warsoc-agent-collection-v2",
+            "source_channel": "Security",
+            "source_channel_epoch": "epoch-9d4a69b6",
+            "source_sequence": 9021,
+        }
+    )
+    payload_hash = build_payload_hash(build_signable_event_payload(event))
+    event["payload_hash"] = payload_hash
+    event["agent_signature"] = private_key.sign(
+        build_event_signature_string(
+            event["agent_id"],
+            event["timestamp"],
+            event["event_uid"],
+            payload_hash,
+        ).encode("utf-8")
+    ).hex()
+
+    result = verify_event_signature(
+        event,
+        agent_id=event["agent_id"],
+        public_key_pem=public_pem,
+    )
+    assert result["signature_version"] == "ed25519-v2"
+    assert result["signature_verified"] is True
+
+    event["source_sequence"] = 9022
+    with pytest.raises(AgentEventSignatureError, match="hash mismatch"):
+        verify_event_signature(
+            event,
+            agent_id=event["agent_id"],
+            public_key_pem=public_pem,
+        )
+
+
 def test_mutated_signed_event_is_rejected():
     private_key, public_pem = _keypair()
     event = _signed_event(private_key)

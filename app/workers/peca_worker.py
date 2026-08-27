@@ -10,7 +10,7 @@ import copy
 import socket
 import traceback
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -21,7 +21,12 @@ from app.config.config import get_settings
 from pymongo import UpdateOne
 import uuid
 from app.utils.siem_catalog import SIEM_RULES
-from app.utils.compliance_catalog import COMPLIANCE_CATALOG
+from app.utils.compliance_catalog import COMPLIANCE_CATALOG, get_rule_by_event_id
+from app.utils.source_provenance import apply_source_provenance, compliance_source_allowed
+from app.utils.peca_retention import (
+    PECA_ACTIVE_RETENTION_MODEL,
+    apply_peca_tenant_retention,
+)
 from app.actions.alerting import dispatch_alert_if_entitled, is_email_trigger_severity
 
 try:
@@ -438,6 +443,15 @@ async def peca_worker():
                             
                             tenant_id = log_data.get("tenant_id")
 
+                            apply_source_provenance(log_data)
+                            if not compliance_source_allowed(log_data, "peca"):
+                                await increment_redis_counter(
+                                    redis,
+                                    "warsoc_peca_ineligible_source_total",
+                                )
+                                immediate_ack_ids.append(message_id)
+                                continue
+
                             # 🔍 1. Plan Verification
                             features = await get_tenant_features(redis, tenant_id)
                             if not _is_peca_subscribed(features):
@@ -446,21 +460,17 @@ async def peca_worker():
 
                             # 🔍 2. DYNAMIC TARGET ENFORCEMENT (SSOT-derived)
                             raw_event_id = log_data.get("event_id")
-                            is_syslog = log_data.get("type") == "network_log"
                             try:
                                 # Normalize incoming event IDs to string form for SSOT lookup
                                 event_id = str(raw_event_id).strip() if raw_event_id is not None else ""
                             except Exception:
                                 # Unknown or malformed event id: skip for PECA (SIEM keeps raw log)
-                                if not is_syslog:
-                                    immediate_ack_ids.append(message_id)
-                                    continue
-                                event_id = ""
+                                immediate_ack_ids.append(message_id)
+                                continue
 
-                            if not is_syslog:
-                                if not event_id or event_id not in WATCH_IDS:
-                                    immediate_ack_ids.append(message_id)
-                                    continue
+                            if not event_id or event_id not in WATCH_IDS:
+                                immediate_ack_ids.append(message_id)
+                                continue
 
                             # 🔒 3. ENCRYPT SENSITIVE PAYLOAD (Field-Level)
                             if "message" in log_data and log_data["message"]:
@@ -491,7 +501,6 @@ async def peca_worker():
                             log_data["encryption_version"] = "fernet-v1"
 
                             # 🏷 3. Tagging & Zero-Trust HMAC Sealing
-                            from app.utils.compliance_catalog import get_rule_by_event_id
                             matched_pack, matched_rule = get_rule_by_event_id(event_id)
                             
                             log_data["compliance_pack"] = matched_pack or "peca_forensic"
@@ -501,9 +510,24 @@ async def peca_worker():
                                 log_data["matched_rule_severity"] = matched_rule.get("severity")
                                 
                             log_data["tags"] = "PECA_FORENSIC"
-                            log_data["retention_policy"] = "365_DAYS"
                             log_data["ingested_at"] = datetime.now(timezone.utc).isoformat()
-                            log_data["_expire_at"] = datetime.now(timezone.utc) + timedelta(days=365)
+                            if (
+                                log_data.get("retention_model") == PECA_ACTIVE_RETENTION_MODEL
+                                and isinstance(log_data.get("tenant_retention_days_at_ingest"), int)
+                                and log_data["tenant_retention_days_at_ingest"] > 0
+                            ):
+                                apply_peca_tenant_retention(
+                                    log_data,
+                                    log_data["tenant_retention_days_at_ingest"],
+                                )
+                            else:
+                                # A pre-release queue entry has no trustworthy
+                                # tenant-retention snapshot. Preserve it outside
+                                # automatic archival rather than guessing.
+                                log_data.pop("_expire_at", None)
+                                log_data["retention_state"] = "HISTORICAL_REVIEW_REQUIRED"
+                                log_data["retention_basis"] = "HISTORICAL_UNCLASSIFIED"
+                                log_data["retention_policy"] = "MANUAL_REVIEW"
                             _normalize_document_timestamps(log_data)
 
                             #  PHASE 4: Server-Side Cryptographic Sealing (RSA-2048/PSS-SHA256)

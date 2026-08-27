@@ -54,6 +54,18 @@ class Settings(BaseSettings):
 
     # --- PRIVACY & ENCRYPTION ---
     encryption_key: str = os.getenv("ENCRYPTION_KEY", "")
+    source_envelope_encryption_key: str = os.getenv(
+        "SOURCE_ENVELOPE_ENCRYPTION_KEY", ""
+    )
+    source_envelope_key_id: str = os.getenv(
+        "SOURCE_ENVELOPE_KEY_ID", "source-envelope-v1"
+    ).strip()
+    source_envelope_key_version: int = int(
+        os.getenv("SOURCE_ENVELOPE_KEY_VERSION", "1")
+    )
+    source_envelope_decryption_keys_json: str = os.getenv(
+        "SOURCE_ENVELOPE_DECRYPTION_KEYS_JSON", "{}"
+    ).strip()
 
     # --- EXTERNAL INTEGRATIONS ---
     vt_api_key: str = os.getenv("VT_API_KEY", "")
@@ -170,6 +182,14 @@ def _looks_like_placeholder(value: str) -> bool:
     )
 
 
+def _has_minimum_secret_length(value: str, minimum_bytes: int = 32) -> bool:
+    """Validate opaque production secrets without logging their contents."""
+    try:
+        return len(str(value or "").encode("utf-8")) >= minimum_bytes
+    except UnicodeEncodeError:
+        return False
+
+
 def _is_valid_agent_cdn_url(value: str) -> bool:
     parsed = urlparse(str(value or "").strip())
     return (
@@ -246,6 +266,65 @@ def get_settings():
         missing = [name for name, value in required_values.items() if _looks_like_placeholder(value)]
         if missing:
             raise RuntimeError(f"FATAL: Missing production secrets: {', '.join(missing)}")
+        weak_secrets = [
+            name
+            for name, value in {
+                "JWT_SECRET_KEY": s.jwt_secret_key,
+                "SUPER_ADMIN_API_KEY": os.getenv("SUPER_ADMIN_API_KEY", ""),
+            }.items()
+            if not _has_minimum_secret_length(value)
+        ]
+        if weak_secrets:
+            raise RuntimeError(
+                "FATAL: Production secrets must be at least 32 UTF-8 bytes: "
+                + ", ".join(weak_secrets)
+            )
+        from cryptography.fernet import Fernet
+
+        try:
+            Fernet((s.source_envelope_encryption_key or s.encryption_key).encode("ascii"))
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "FATAL: SOURCE_ENVELOPE_ENCRYPTION_KEY or ENCRYPTION_KEY must be a Fernet key."
+            ) from exc
+        if not re.fullmatch(r"[A-Za-z0-9._-]{3,64}", s.source_envelope_key_id):
+            raise RuntimeError("FATAL: SOURCE_ENVELOPE_KEY_ID is invalid.")
+        if s.source_envelope_key_version < 1:
+            raise RuntimeError("FATAL: SOURCE_ENVELOPE_KEY_VERSION must be at least 1.")
+        try:
+            historical_source_keys = json.loads(s.source_envelope_decryption_keys_json or "{}")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "FATAL: SOURCE_ENVELOPE_DECRYPTION_KEYS_JSON must be valid JSON."
+            ) from exc
+        if not isinstance(historical_source_keys, dict):
+            raise RuntimeError(
+                "FATAL: SOURCE_ENVELOPE_DECRYPTION_KEYS_JSON must be a JSON object."
+            )
+        for historical_key_id, historical_entry in historical_source_keys.items():
+            if not re.fullmatch(r"[A-Za-z0-9._-]{3,64}", str(historical_key_id)):
+                raise RuntimeError(
+                    "FATAL: SOURCE_ENVELOPE_DECRYPTION_KEYS_JSON contains an invalid key ID."
+                )
+            if isinstance(historical_entry, str):
+                historical_key = historical_entry
+            elif isinstance(historical_entry, dict):
+                historical_key = historical_entry.get("key", "")
+                historical_version = historical_entry.get("version", 1)
+                if not isinstance(historical_version, int) or historical_version < 1:
+                    raise RuntimeError(
+                        "FATAL: Historical source-envelope key versions must be positive integers."
+                    )
+            else:
+                raise RuntimeError(
+                    "FATAL: Historical source-envelope keys must be strings or key/version objects."
+                )
+            try:
+                Fernet(str(historical_key).encode("ascii"))
+            except (AttributeError, TypeError, ValueError, UnicodeEncodeError) as exc:
+                raise RuntimeError(
+                    "FATAL: SOURCE_ENVELOPE_DECRYPTION_KEYS_JSON contains an invalid Fernet key."
+                ) from exc
         if not _is_valid_agent_cdn_url(s.agent_cdn_url):
             raise RuntimeError("FATAL: AGENT_CDN_URL must be an HTTPS URL that points directly to the Windows installer .exe.")
         if s.agent_event_signature_mode not in {"observe", "required"}:

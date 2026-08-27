@@ -43,6 +43,7 @@ def wazuh_mock_settings():
         wazuh_candidate_delivery_max_age_seconds = 3600
         wazuh_shadow_retention_days = 90
         wazuh_detection_mode = "shadow"
+        wazuh_primary_approved = False
 
     return MockSettings()
 
@@ -167,6 +168,7 @@ async def test_native_wazuh_candidate_links_to_canonical_evidence_via_event_reco
             "signature_verified": True,
             "source_assurance": "agent_signed",
             "timestamp": now.isoformat(),
+            "raw_event_data": {"system": {"channel": "Security"}},
         }
     )
 
@@ -184,6 +186,7 @@ async def test_native_wazuh_candidate_links_to_canonical_evidence_via_event_reco
         wazuh_agent_name="warsoc__lab_endpoint_01",
         windows_event_id="4625",
         windows_event_record_id=event_record_id,
+        windows_channel="Security",
         selected_security_fields={"targetUserName": "Administrator", "ipAddress": "192.168.1.50"},
         engine_reported_category="credential_attack",
         engine_reported_mitre_ids=["T1110"],
@@ -218,11 +221,29 @@ async def test_per_family_authority_promotes_only_approved_families_to_single_in
     now = datetime.now(timezone.utc)
     env = setup_dual_agent_env
     wazuh_mock_settings.wazuh_detection_mode = "primary"
+    wazuh_mock_settings.wazuh_primary_approved = True
 
     # Approve the credential_attacks family in registry
     await db.detection_rule_registry.update_one(
         {"rule_id": "60105"},
         {"$set": {"family_status": "approved"}},
+    )
+
+    canonical_event_uid = f"canonical-win-{secrets.token_hex(8)}"
+    await db.siem_cold_vault.insert_one(
+        {
+            "event_uid": canonical_event_uid,
+            "tenant_id": env["tenant_id"],
+            "agent_id": env["warsoc_agent_id"],
+            "event_id": "4625",
+            "event_record_id": "991122",
+            "source_ip": "192.168.1.50",
+            "user": "Administrator",
+            "signature_verified": True,
+            "source_assurance": "agent_signed",
+            "ingested_at": now,
+            "timestamp": now,
+        }
     )
 
     candidate = DetectionCandidate(
@@ -249,10 +270,70 @@ async def test_per_family_authority_promotes_only_approved_families_to_single_in
     incidents = await db.security_incidents.find({"tenant_id": env["tenant_id"]}).to_list(10)
     assert len(incidents) == 1
     incident = incidents[0]
-    assert incident["category"] == "credential_attack"
+    assert incident["rule_id"] == "credential_attacks"
     assert incident["evidence_authority"] == "warsoc_canonical_signed"
     assert "wazuh" in incident["detection_sources"]
-    assert incident["occurrence_count"] == 1
+    assert incident["status"] == "NEW"
+    assert incident["occurrences"] == 1
+    assert incident["event_uids"] == [canonical_event_uid]
+    assert "Wazuh" not in incident["title"]
+    assert "Wazuh" not in incident["message"]
+
+
+@pytest.mark.asyncio
+async def test_primary_candidate_without_exact_signed_lineage_remains_non_incident(
+    db, wazuh_mock_settings, setup_dual_agent_env
+):
+    now = datetime.now(timezone.utc)
+    env = setup_dual_agent_env
+    wazuh_mock_settings.wazuh_detection_mode = "primary"
+    wazuh_mock_settings.wazuh_primary_approved = True
+    await db.detection_rule_registry.update_one(
+        {"rule_id": "60105"},
+        {"$set": {"family_status": "approved"}},
+    )
+
+    # A matching RecordID from another endpoint in the same tenant must not
+    # satisfy the authoritative binding for this Wazuh agent.
+    await db.siem_cold_vault.insert_one(
+        {
+            "event_uid": "wrong-endpoint-event",
+            "tenant_id": env["tenant_id"],
+            "agent_id": "WARSOC_AGENT_OTHER",
+            "event_id": "4625",
+            "event_record_id": "445566",
+            "signature_verified": True,
+            "source_assurance": "agent_signed",
+            "ingested_at": now,
+            "timestamp": now,
+        }
+    )
+    candidate = DetectionCandidate(
+        connector_id=wazuh_mock_settings.wazuh_connector_id,
+        engine_instance_id=wazuh_mock_settings.wazuh_engine_instance_id,
+        engine_version=wazuh_mock_settings.wazuh_engine_version,
+        ruleset_version=wazuh_mock_settings.wazuh_ruleset_version,
+        engine_alert_id=f"alert-{secrets.token_hex(8)}",
+        engine_rule_id="60105",
+        engine_rule_level=5,
+        engine_detected_at=now,
+        wazuh_agent_id=env["wazuh_agent_id"],
+        windows_event_id="4625",
+        windows_event_record_id="445566",
+        engine_reported_category="credential_attack",
+        engine_reported_mitre_ids=["T1110"],
+    )
+
+    outcome = await admit_candidate(db, candidate, wazuh_mock_settings, received_at=now)
+    assert outcome.outcome == "accepted"
+    observation = await db.detection_engine_observations.find_one(
+        {"engine_alert_id": candidate.engine_alert_id}
+    )
+    assert observation["lineage_complete"] is False
+    assert observation["status"] == "shadow_observation"
+    assert await db.security_incidents.count_documents(
+        {"tenant_id": env["tenant_id"]}
+    ) == 0
 
 
 def test_projector_prevents_duplicate_windows_dispatch_when_native_agent_active():

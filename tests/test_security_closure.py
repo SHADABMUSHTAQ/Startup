@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,12 @@ async def test_pos_ingest_requires_signature_and_rejects_replay(async_client, mo
     queued_payload = json.loads(queued[0][1]["payload"])
     assert queued_payload["signature_verified"] is True
     assert queued_payload["source_assurance"] == "agent_signed"
+    assert queued_payload["source_envelope_uid"] == envelope["nonce"]
+    assert queued_payload["source_envelope_collection"] == "source_envelopes_fbr"
+    assert queued_payload["source_envelope_state"] == "COMMITTED"
+    assert queued_payload["retention_model"] == "TENANT_ENTITLEMENT_V1"
+    assert queued_payload["retention_state"] == "TENANT_POLICY"
+    assert queued_payload["retention_basis"] == "TENANT_RETENTION_ENTITLEMENT"
 
 
 @pytest.mark.asyncio
@@ -99,6 +106,64 @@ async def test_heartbeat_timestamp_is_required(async_client, mock_tenant_a):
     payload = response.json()
     assert payload["error"]["code"] == "invalid_request"
     assert "timestamp" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_v2_records_signed_coverage_and_rejects_replay(
+    async_client,
+    mock_tenant_a,
+    db,
+):
+    private_key = serialization.load_pem_private_key(
+        mock_tenant_a["private_key_pem"].encode("ascii"),
+        password=None,
+    )
+    observed_at = datetime.now(timezone.utc)
+    payload = {
+        "agent_id": mock_tenant_a["agent_id"],
+        "current_version": "4.2.9-Native-Signed",
+        "timestamp": observed_at.timestamp(),
+        "protocol_version": "heartbeat-v2",
+        "nonce": "heartbeat-v2-security-closure-001",
+        "agent_collection_time": observed_at.isoformat(),
+        "sensor_status": {
+            "channels": {
+                "Security": {
+                    "status": "ok",
+                    "channel_epoch": "security-epoch-001",
+                    "watermark": 420,
+                    "latest_record_id": 421,
+                }
+            }
+        },
+    }
+    raw_body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "X-WarSOC-Signature": private_key.sign(raw_body).hex(),
+    }
+
+    accepted = await async_client.post(
+        "/api/v1/agent/heartbeat",
+        content=raw_body,
+        headers=headers,
+    )
+    replayed = await async_client.post(
+        "/api/v1/agent/heartbeat",
+        content=raw_body,
+        headers=headers,
+    )
+
+    assert accepted.status_code == 200, accepted.text
+    assert replayed.status_code == 409, replayed.text
+    observation = await db.agent_coverage_observations.find_one(
+        {"agent_id": mock_tenant_a["agent_id"], "nonce": payload["nonce"]}
+    )
+    assert observation["protocol_version"] == "heartbeat-v2"
+    assert observation["clock_state"] == "TRUSTED"
+    assert observation["sensor_status"]["channels"]["Security"]["watermark"] == 420
+    assert observation["signed_body_sha256"]
+    assert len(observation["signing_key_id"]) == 64
 
 
 @pytest.mark.asyncio

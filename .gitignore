@@ -77,6 +77,7 @@ scripts/*
 !scripts/entrypoint.sh
 !scripts/wait_for_redis.py
 !scripts/launch_readiness_validator.py
+!scripts/ci_validate.py
 !scripts/measure_dashboard_reads.py
 !scripts/migrate_fbr_encryption.py
 !scripts/purge_legacy_upload_sources.py
@@ -92,9 +93,15 @@ scripts/*
 !scripts/uninstall_warsoc_relay.ps1
 !scripts/prepare_wazuh_lab_integration.ps1
 !scripts/seed_wazuh_shadow_registry.py
+!scripts/verify_evidence_package.py
 !build_agent.bat
 trigger_alerts.py
 verify.py
+
+# Local OCI migration transfer artifacts. The maintained deployment scripts
+# live under deploy/oci/; transfer manifests can reference private file hashes.
+/deploy_warsoc_release.sh
+/transfer.sha256
 
 # Local one-off debugging/repair scripts. Keep these out of production commits,
 # especially when they contain local database URLs or temporary credentials.

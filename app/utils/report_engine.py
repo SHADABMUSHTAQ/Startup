@@ -79,7 +79,11 @@ class ComplianceReportGenerator:
         elements = []
 
         # --- Header & Title ---
-        title_text = "WarSOC FBR Compliance Certificate" if report_type == "fbr_pos" else "WarSOC PECA Forensic Ledger"
+        title_text = (
+            "WarSOC FBR Evidence Readiness Report"
+            if report_type == "fbr_pos"
+            else "WarSOC PECA-Oriented Evidence Ledger"
+        )
         elements.append(Paragraph(f"<b>{title_text}</b>", self.title_style))
         elements.append(Paragraph(f"<b>Tenant ID:</b> {html.escape(self.tenant_id)}", self.body_style))
         elements.append(Paragraph(f"<b>Period:</b> {start_date.strftime('%B %Y')}", self.body_style))

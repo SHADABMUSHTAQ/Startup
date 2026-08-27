@@ -125,9 +125,9 @@ async def test_cross_rule_incident_deduplication(db, settings):
     # Verify initial incident state
     incidents = await db.security_incidents.find({"tenant_id": tenant_id}).to_list(10)
     assert len(incidents) == 1
-    assert incidents[0]["occurrence_count"] == 1
-    assert incidents[0]["mitre_ids"] == ["T1070.001"]
-    assert incidents[0]["related_events"] == [event_uid]
+    assert incidents[0]["occurrences"] == 1
+    assert incidents[0]["mitre"] == ["T1070.001"]
+    assert incidents[0]["event_uids"] == [event_uid]
 
     # 6. Admit Candidate B (Rule 60117, Level 9) for the SAME Event 1102
     cand_b = DetectionCandidate(
@@ -155,7 +155,7 @@ async def test_cross_rule_incident_deduplication(db, settings):
     # 7. Assert Strict Cross-Rule Semantic Idempotency
     incidents_after = await db.security_incidents.find({"tenant_id": tenant_id}).to_list(10)
     assert len(incidents_after) == 1, "Must NOT create a second incident for the same event"
-    assert incidents_after[0]["occurrence_count"] == 1, "Occurrence count must remain 1 for the same physical event"
-    assert incidents_after[0]["related_events"] == [event_uid], "Related events must contain exactly 1 event UID"
+    assert incidents_after[0]["occurrences"] == 1, "Occurrence count must remain 1 for the same physical event"
+    assert incidents_after[0]["event_uids"] == [event_uid], "Related events must contain exactly 1 event UID"
     assert incidents_after[0]["evidence_authority"] == "warsoc_canonical_signed"
-    assert incidents_after[0]["mitre_ids"] == ["T1070.001"]
+    assert incidents_after[0]["mitre"] == ["T1070.001"]

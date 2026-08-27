@@ -5,6 +5,12 @@
 **Scope:** Commercial flow, frontend, identity, RBAC, Windows agent, ingestion, SIEM, PECA, FBR, incidents, storage, Azure, reports, email, infrastructure, security and future phases.  
 **Rule:** An implemented feature is not called proven unless a current test or production artifact supports it.
 
+> **Retention supersession (2026-08-24):** Fixed 2,190-day FBR statements in
+> this historical snapshot are superseded by
+> `WARSOC_FBR_RETENTION_PRODUCT_DECISION_2026-08-24.md`. New FBR evidence uses
+> the tenant's normal general retention entitlement; historical locked evidence
+> is unchanged.
+
 ## 0. High-Priority Closure Update
 
 The 2026-07-22 high-priority implementation pass completed the following without enabling unprovisioned cloud resources:
@@ -228,7 +234,7 @@ Workers acknowledge only after required persistence succeeds. Transient failures
 ### Storage contract
 
 - Mongo hot target: 7 days.
-- Logical PECA vault policy: 365 days.
+- Historical snapshot: the former fixed PECA vault policy was 365 days; this is superseded for new evidence by the tenant retention entitlement.
 - Exact-machine Event 4688 was retrieved successfully from production.
 
 ### Current limitation
@@ -256,7 +262,9 @@ Endpoint evidence does not provide firewall, VPN, DNS, DHCP/NAT or perimeter-dev
 
 - Sensitive FBR payload fields use Fernet field encryption.
 - Mongo hot target: 7 days.
-- Logical FBR vault policy: 2,190 days.
+- New FBR evidence inherits the tenant's normal WarSOC retention entitlement.
+  The historical 2,190-day fallback remains only for already locked or
+  otherwise legacy evidence.
 - Exact-machine BOM-free invoice JSONL and native database deletion both passed.
 
 ## 10. Dashboard and Operator Workflow
@@ -283,8 +291,8 @@ The frontend API paths for auth, profile, team, incidents, live logs, compliance
 | Data | Hot policy | Logical cold policy |
 |---|---:|---:|
 | General/SIEM evidence and alerts | 7 days | Contract-driven, normally 90 days. |
-| PECA evidence | 7 days | 365 days. |
-| FBR evidence | 7 days | 2,190 days. |
+| PECA evidence | 7 days | Tenant retention entitlement for new evidence. |
+| FBR evidence | 7 days | Tenant retention entitlement for new evidence. |
 | Mutable incidents | Active-tenant operational record | Not immutable evidence. |
 
 Mongo TTL is not allowed to delete archive-managed evidence. The archiver is the deletion authority.
@@ -306,7 +314,14 @@ The archive reader uses the tenant-scoped ledger, downloads the blob, verifies S
 
 ### Verified retention deployment gap
 
-The deployed configuration still writes all evidence into one Azure container locked for 2,190 days. This prevents early deletion and satisfies the FBR floor, but physically over-retains PECA and shorter SIEM contracts. The code now routes contract-driven evidence to exact-duration keys such as `SIEM_90` and `GENERAL_180`, with fixed FBR/PECA targets and safe class/global fallbacks. Physical correction therefore requires operators to create and lock the matching Azure containers before setting those environment overrides. Existing six-year-locked blobs cannot be shortened or moved out of their current immutability obligation.
+The deployed configuration still writes evidence into one Azure container
+locked for 2,190 days. This prevents early deletion but physically over-retains
+new FBR, PECA and shorter SIEM contracts. Candidate code routes new FBR and PECA
+evidence through the matching `GENERAL_<tenant retention days>` key and SIEM
+through its duration key, with a safe global fallback. Physical correction
+therefore requires operators to create and lock the matching Azure containers
+before setting those environment overrides. Existing six-year-locked blobs
+cannot be shortened or moved out of their current immutability obligation.
 
 ### Daily roots
 

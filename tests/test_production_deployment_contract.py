@@ -53,6 +53,7 @@ def test_production_compose_is_private_fail_fast_and_sized_for_pilot():
     assert "container_name: warsoc-wazuh-dispatch-prod" in compose
     assert "container_name: warsoc-wazuh-candidate-api-prod" in compose
     assert '${WAZUH_CANDIDATE_BIND_IP:-127.0.0.1}:${WAZUH_CANDIDATE_PORT:-8443}:8010' in compose
+    assert 'container_name: warsoc-evidence-export-worker-prod\n    profiles: ["evidence-export"]' in compose
 
 
 def test_backend_contains_only_the_cdn_agent_download_route():
@@ -96,7 +97,7 @@ def test_normal_exports_are_explicitly_hot_tier_only():
 
 def test_pilot_manifest_covers_complete_executable_installation_chain():
     manifest_script = _read("scripts/generate_pilot_hash_manifest.ps1")
-    assert '[string]$Version = "4.2.8"' in manifest_script
+    assert '[string]$Version = "4.2.9"' in manifest_script
     assert '"Output\\warsoc_installer-$Version.exe"' in manifest_script
     assert '"Output\\pilot_hash_manifest-$Version.json"' in manifest_script
     assert "warsoc_agent.exe" in manifest_script

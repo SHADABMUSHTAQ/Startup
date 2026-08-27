@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -17,6 +16,7 @@ from app.wazuh_integration.contracts import (
     DetectionCandidateReceipt,
 )
 from app.wazuh_integration.security import purpose_hmac
+from app.utils.security_incidents import project_security_incident
 
 
 def _candidate_hash(candidate: DetectionCandidate) -> str:
@@ -25,6 +25,11 @@ def _candidate_hash(candidate: DetectionCandidate) -> str:
 
 
 def _utc_datetime(value: Any) -> datetime | None:
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
     if not isinstance(value, datetime):
         return None
     if value.tzinfo is None or value.utcoffset() is None:
@@ -165,33 +170,60 @@ async def admit_candidate(
         # EventRecordID can repeat after log clear, so we also match event_id
         # (which acts as a channel/provider proxy) and bound by recency.
         recency_cutoff = received_at - timedelta(hours=24)
+        evidence_conditions: list[dict[str, Any]] = [
+            {
+                "$or": [
+                    {"agent_id": warsoc_agent_id},
+                    {"source_id": warsoc_agent_id},
+                ]
+            }
+        ]
+        if candidate.windows_event_record_id:
+            evidence_conditions.append(
+                {
+                    "$or": [
+                        {"event_record_id": candidate.windows_event_record_id},
+                        {
+                            "processed_data.event_record_id": candidate.windows_event_record_id
+                        },
+                        {"record_id": candidate.windows_event_record_id},
+                    ]
+                }
+            )
+
         evidence_query: dict[str, Any] = {
             "tenant_id": tenant_id,
-            "$or": [
-                {"agent_id": warsoc_agent_id},
-                {"source_id": warsoc_agent_id},
-            ],
+            "signature_verified": True,
+            "source_assurance": "agent_signed",
+            "$and": evidence_conditions,
         }
-        if candidate.windows_event_record_id:
-            evidence_query["$or"] = [
-                {"event_record_id": candidate.windows_event_record_id},
-                {"processed_data.event_record_id": candidate.windows_event_record_id},
-                {"record_id": candidate.windows_event_record_id},
-            ]
-            if candidate.windows_event_id:
-                evidence_query["event_id"] = candidate.windows_event_id
-            if candidate.windows_channel:
-                evidence_query["channel"] = candidate.windows_channel
-            evidence_query["$or"].append({"ingested_at": {"$gte": recency_cutoff}})
-        elif candidate.windows_event_id:
+        if candidate.windows_event_id:
             evidence_query["event_id"] = candidate.windows_event_id
+        if candidate.windows_channel:
+            evidence_conditions.append(
+                {
+                    "$or": [
+                        {"channel": candidate.windows_channel},
+                        {"processed_data.channel": candidate.windows_channel},
+                        {"raw_event_data.system.channel": candidate.windows_channel},
+                        {"raw_data.system.channel": candidate.windows_channel},
+                    ]
+                }
+            )
 
         canonical_event = await db.siem_cold_vault.find_one(
             evidence_query, sort=[("_id", -1)]
         )
         if canonical_event:
+            evidence_time = _utc_datetime(
+                canonical_event.get("ingested_at")
+                or canonical_event.get("timestamp")
+            )
+            if evidence_time is None or evidence_time < recency_cutoff:
+                canonical_event = None
+        if canonical_event:
             event_uid = str(canonical_event.get("event_uid") or "")
-            lineage_complete = True
+            lineage_complete = bool(event_uid)
         else:
             event_uid = f"unlinked-{candidate.engine_alert_id[:16]}"
     else:
@@ -255,10 +287,10 @@ async def admit_candidate(
                 tenant_id=tenant_id,
             )
 
-        source_exists = await db.siem_cold_vault.find_one(
-            {"tenant_id": tenant_id, "event_uid": event_uid}, {"_id": 1}
+        canonical_event = await db.siem_cold_vault.find_one(
+            {"tenant_id": tenant_id, "event_uid": event_uid}
         )
-        if source_exists is None:
+        if canonical_event is None:
             return await _quarantine(
                 db,
                 candidate,
@@ -341,7 +373,7 @@ async def admit_candidate(
     alerts_col = getattr(db, "security_alerts", None)
     if alerts_col is not None:
         native_alert = await alerts_col.find_one(
-            {"tenant_id": tenant_id, "$or": [{"event_uid": event_uid}, {"source_ip": canonical_event.get("source_ip") if canonical_event else "127.0.0.1"}]}
+            {"tenant_id": tenant_id, "event_uid": event_uid}
         )
     native_detected = native_alert is not None
     native_rule_id = str(native_alert.get("event_id") or native_alert.get("type") or "") if native_alert else None
@@ -357,7 +389,9 @@ async def admit_candidate(
     attack_level = bool(rule.get("attack_level", False))
     is_primary_approved = (
         getattr(settings, "wazuh_detection_mode", "shadow") == "primary"
+        and bool(getattr(settings, "wazuh_primary_approved", False))
         and family_status == "approved"
+        and lineage_complete
     )
 
     observation = {
@@ -412,8 +446,9 @@ async def admit_candidate(
             reason_code="ALREADY_RECORDED",
         )
 
-    # 3G: If primary approved, reconcile with WarSOC incidents without overwriting evidence.
-    # Point 5: Gate on candidate_fingerprint so replaying the same alert is idempotent.
+    # 3G: Route approved candidates through WarSOC's standard incident projector.
+    # Wazuh provenance remains internal; customer-facing title and message stay
+    # under WarSOC semantics and the canonical signed event remains authoritative.
     incidents_col = getattr(db, "security_incidents", None)
     if is_primary_approved and incidents_col is not None:
         already_promoted = await db.detection_engine_observations.count_documents(
@@ -423,48 +458,54 @@ async def admit_candidate(
             # This fingerprint was already promoted — skip incident mutation.
             pass
         else:
-            recent_cutoff = received_at - timedelta(minutes=15)
-            existing_incident = await incidents_col.find_one(
-                {
-                    "tenant_id": tenant_id,
-                    "created_at": {"$gte": recent_cutoff},
-                    "category": category,
-                }
+            display_category = category.replace("_", " ").strip().title()
+            incident_alert = {
+                "tenant_id": tenant_id,
+                "event_uid": event_uid,
+                "event_id": candidate.windows_event_id,
+                "type": rule_family,
+                "matched_rule_id": rule_family,
+                "severity": severity,
+                "timestamp": (
+                    canonical_event.get("timestamp")
+                    or canonical_event.get("ingested_at")
+                    or received_at
+                ),
+                "display_title": f"{display_category} detected",
+                "summary": (
+                    "WarSOC correlated this activity with canonical signed "
+                    "endpoint evidence."
+                ),
+                "message": (
+                    "WarSOC correlated this activity with canonical signed "
+                    "endpoint evidence."
+                ),
+                "pack": "siem",
+                "engine_source": "WarSOC",
+                "mitre_id": mitre_ids,
+                "agent_id": canonical_event.get("agent_id"),
+                "source_ip": canonical_event.get("source_ip"),
+                "user": canonical_event.get("user"),
+                "context": canonical_event.get("context"),
+                "source_assurance": "agent_signed",
+            }
+            projection = await project_security_incident(
+                db,
+                incident_alert,
+                canonical_event,
             )
-            if existing_incident:
-                is_duplicate_event = bool(event_uid and event_uid in existing_incident.get("related_events", []))
-                update_op: dict[str, Any] = {
-                    "$addToSet": {
-                        "detection_sources": "wazuh",
-                        "related_events": event_uid,
-                        "mitre_ids": {"$each": mitre_ids},
-                    },
-                    "$set": {"updated_at": received_at},
-                }
-                if not is_duplicate_event:
-                    update_op["$inc"] = {"occurrence_count": 1}
+            if projection and projection.get("incident"):
+                incident_id = projection["incident"].get("incident_id")
                 await incidents_col.update_one(
-                    {"_id": existing_incident["_id"]},
-                    update_op,
+                    {"tenant_id": tenant_id, "incident_id": incident_id},
+                    {
+                        "$addToSet": {"detection_sources": "wazuh"},
+                        "$set": {
+                            "evidence_authority": "warsoc_canonical_signed",
+                            "updated_at": received_at,
+                        },
+                    },
                 )
-            else:
-                new_incident = {
-                    "incident_uid": f"INC_{secrets.token_hex(12).upper()}",
-                    "tenant_id": tenant_id,
-                    "category": category,
-                    "severity": severity,
-                    "title": f"{category.replace('_', ' ').title()} ({candidate.engine_rule_id})",
-                    "summary": f"Detection triggered by Wazuh rule {candidate.engine_rule_id} and verified against WarSOC canonical evidence.",
-                    "detection_sources": ["wazuh"],
-                    "mitre_ids": mitre_ids,
-                    "related_events": [event_uid] if event_uid else [],
-                    "occurrence_count": 1,
-                    "status": "open",
-                    "evidence_authority": "warsoc_canonical_signed",
-                    "created_at": received_at,
-                    "updated_at": received_at,
-                }
-                await incidents_col.insert_one(new_incident)
 
     connector_update = {
         "last_candidate_at": received_at,

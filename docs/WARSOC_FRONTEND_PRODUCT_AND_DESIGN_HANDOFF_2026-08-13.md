@@ -240,8 +240,8 @@ subnets or devices that were not observed.
 
 Current retention:
 
-- PECA: 7 days hot, 365 days immutable vault.
-- FBR: 7 days hot, 2,190 days immutable vault.
+- PECA: 7 days hot, then the tenant's normal WarSOC retention entitlement.
+- FBR: 7 days hot, then the tenant's normal WarSOC retention entitlement.
 
 FBR must show its two source states separately: file-integrity monitoring and
 the optional POS `pos_audit.log` business feed. Do not show invoice line-item
@@ -458,3 +458,34 @@ Do not edit `.env.production`, do not commit `.env.local`, and do not place any
 backend secret in a `VITE_` variable. If login succeeds but the session does not
 remain active, allow cookies for the local site and `api.warsoc.tech` in the
 test browser.
+
+## 18. Implementation Verification - 2026-08-26
+
+A local correction candidate on
+`codex/frontend-relay-retention-contract`, based exactly on frontend `6ffc9e0`,
+implements the required source contracts:
+
+1. Relay visibility requires the deployment kill switch plus a successful
+   `capability.enabled && capability.entitled` response. A 403/404 or malformed
+   response does not expose the workspace.
+2. Status renders `response.relays` and each relay's nested `devices[]`,
+   including clock confidence, device health and observed loss fields. It no
+   longer invents flattened relay fields.
+3. Activation sends `relay_name` and a complete `devices[]` item containing the
+   backend-defined device ID, validated vendor, model, source address,
+   transport, timezone and EPS values. The one-time response is memory-only and
+   shows its backend expiry.
+4. `capability.can_manage` is authoritative for activation controls. Manager,
+   analyst and auditor views are read-only; backend RBAC remains the security
+   boundary.
+5. Compliance reads `/compliance/retention/status`. Pricing, quote and legal
+   copy describe the same tenant entitlement for new SIEM, FBR and PECA
+   evidence, while preserving historical immutable locks and legal holds.
+   Missing retention data shows unavailable instead of a fabricated duration.
+6. Zero-warning ESLint, production Vite build, `git diff --check`, exact field
+   assertions and stale fixed-retention scans pass. The dashboard chunk is
+   1,388.72 kB minified / 431.32 kB gzip and remains a performance target.
+
+The correction is not pushed, deployed or paired-tested. Keep the backend relay
+disabled until authenticated activation, registration, nested status,
+revocation/recovery and role-negative acceptance pass against the exact release.

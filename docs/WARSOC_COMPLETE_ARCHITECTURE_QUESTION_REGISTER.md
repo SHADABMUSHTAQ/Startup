@@ -111,11 +111,11 @@ Can Tenant A read or mutate any Tenant B user, agent, evidence, incident, report
 
 ### 11. Is every evidence class routed to its correct locked Azure boundary?
 
-Can WarSOC prove SIEM/general routing to 90/180/270/360-day containers, PECA to 365 days, and FBR to 2,190 days without falling into an unlocked or shorter policy?
+Can WarSOC prove SIEM/general routing, including new PECA and FBR evidence, to the configured tenant-duration container without falling into an unlocked or shorter policy?
 
 **Current status:** `OPEN`. Code supports the routes; the separated production containers and mappings remain infrastructure proof.
 
-**Close with:** One bounded test per actual SIEM and general mapping plus PECA/FBR, proving tenant path, container, lock duration, hash, ledger, authorized readback, exact-ID deletion, unrelated-ID preservation, and fail-closed behavior for insufficient/missing policy. Staging and database-backup containers remain separate and are not evidence-WORM containers.
+**Close with:** One bounded test per actual SIEM/general mapping plus PECA and FBR-on-general routing, proving tenant path, container, lock duration, hash, ledger, authorized readback, exact-ID deletion, unrelated-ID preservation, and fail-closed behavior for insufficient/missing policy. Staging and database-backup containers remain separate and are not evidence-WORM containers.
 
 ### 12. Does archive-before-delete work on HostKey under success and failure?
 

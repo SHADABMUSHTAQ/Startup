@@ -82,7 +82,7 @@ class FakeRedis:
 class FakeTenantCollection:
     plan: str
 
-    async def find_one(self, query):
+    async def find_one(self, query, projection=None):
         tenant_id = query.get("tenant_id")
         if tenant_id:
             return {"tenant_id": tenant_id, "subscription_plan": self.plan}
@@ -210,6 +210,7 @@ def _patch_peca_worker(monkeypatch, fake_redis, logs_col, tenants_col):
             if name == "peca_vault": return logs_col
             if name == "dead_letter_logs": return logs_col
             if name == "users": return tenants_col
+            if name == "tenants": return tenants_col
             return logs_col
         def __getitem__(self, name):
             return self.__getattr__(name)
@@ -252,6 +253,7 @@ def _patch_fbr_worker(monkeypatch, fake_redis, logs_col, tenants_col):
             if name == "fbr_pos_summaries": return logs_col
             if name == "dead_letter_logs": return logs_col
             if name == "users": return tenants_col
+            if name == "tenants": return tenants_col
             return logs_col
         def __getitem__(self, name):
             return self.__getattr__(name)
@@ -275,7 +277,7 @@ def _patch_fbr_worker(monkeypatch, fake_redis, logs_col, tenants_col):
 @pytest.mark.asyncio
 @pytest.mark.chaos
 async def test_peca_worker_mongo_blackout_does_not_ack(monkeypatch):
-    payload = {"tenant_id": "TENANT-PECA", "event_id": "4625", "message": "failed logon", "event_uid": "static-uid-peca", "agent_id": "AGENT-X"}
+    payload = {"tenant_id": "TENANT-PECA", "event_id": "4625", "message": "failed logon", "event_uid": "static-uid-peca", "agent_id": "AGENT-X", "source_assurance": "agent_signed", "signature_verified": True}
     fake_redis = FakeRedis([[("raw_logs_queue", [("1-0", {"payload": json.dumps(payload)})])]])
     logs_col = FakePecaCollection(fail_on_insert=True)
     tenants_col = FakeTenantCollection(plan="PECA_PLAN")
@@ -295,7 +297,7 @@ async def test_peca_worker_mongo_blackout_does_not_ack(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.chaos
 async def test_peca_worker_duplicate_delivery_is_idempotent(monkeypatch):
-    payload = {"tenant_id": "TENANT-PECA", "event_id": "4625", "message": "failed logon", "event_uid": "static-uid-peca", "agent_id": "AGENT-X"}
+    payload = {"tenant_id": "TENANT-PECA", "event_id": "4625", "message": "failed logon", "event_uid": "static-uid-peca", "agent_id": "AGENT-X", "source_assurance": "agent_signed", "signature_verified": True}
     fake_redis = FakeRedis([
         [("raw_logs_queue", [("1-0", {"payload": json.dumps(payload)})])],
         [("raw_logs_queue", [("1-0", {"payload": json.dumps(payload)})])],
@@ -322,7 +324,7 @@ async def test_peca_worker_duplicate_delivery_is_idempotent(monkeypatch):
 async def test_fbr_worker_mongo_blackout_does_not_ack(monkeypatch):
     from datetime import datetime, timezone
     timestamp = datetime.now(timezone.utc).isoformat()
-    payload = {"tenant_id": "TENANT-FBR", "event_id": "FBR-INV-DEL", "message": "sale event", "event_uid": "static-uid-fbr", "agent_id": "AGENT-X", "timestamp": timestamp}
+    payload = {"tenant_id": "TENANT-FBR", "event_id": "FBR-INV-DEL", "message": "sale event", "event_uid": "static-uid-fbr", "agent_id": "AGENT-X", "timestamp": timestamp, "source_assurance": "agent_signed", "signature_verified": True}
     fake_redis = FakeRedis([[("raw_logs_queue", [("2-0", {"payload": json.dumps(payload)})])]])
     logs_col = FakeFbrCollection(fail_on_insert=True)
     tenants_col = FakeTenantCollection(plan="FBR_PLAN")
@@ -344,7 +346,7 @@ async def test_fbr_worker_mongo_blackout_does_not_ack(monkeypatch):
 async def test_fbr_worker_duplicate_delivery_is_idempotent(monkeypatch):
     from datetime import datetime, timezone
     timestamp = datetime.now(timezone.utc).isoformat()
-    payload = {"tenant_id": "TENANT-FBR", "event_id": "FBR-INV-DEL", "message": "sale event", "event_uid": "static-uid-fbr", "agent_id": "AGENT-X", "timestamp": timestamp}
+    payload = {"tenant_id": "TENANT-FBR", "event_id": "FBR-INV-DEL", "message": "sale event", "event_uid": "static-uid-fbr", "agent_id": "AGENT-X", "timestamp": timestamp, "source_assurance": "agent_signed", "signature_verified": True}
     fake_redis = FakeRedis([
         [("raw_logs_queue", [("2-0", {"payload": json.dumps(payload)})])],
         [("raw_logs_queue", [("2-0", {"payload": json.dumps(payload)})])],

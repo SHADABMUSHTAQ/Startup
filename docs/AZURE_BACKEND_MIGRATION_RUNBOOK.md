@@ -122,8 +122,9 @@ The intended private Azure containers are:
 | `warsoc-retention-180` | 180 days | `SIEM_180`, `GENERAL_180` |
 | `warsoc-retention-270` | 270 days | `SIEM_270`, `GENERAL_270` |
 | `warsoc-retention-360` | 360 days | `SIEM_360`, `GENERAL_360` |
-| `warsoc-peca-365` | 365 days | `PECA` |
-| `warsoc-fbr-2190` | 2,190 days | `FBR` |
+New FBR and PECA evidence use the `GENERAL_<tenant retention days>` route. They
+do not require class-specific statutory-retention containers. Existing FBR and
+PECA blobs in locked containers remain untouched.
 
 If these routes are enabled, `.env.prod` must contain the corresponding `AZURE_STORAGE_CONTAINER_*`, `AZURE_CONTAINER_IMMUTABILITY_LOCKED_*` and `AZURE_CONTAINER_IMMUTABILITY_DAYS_*` variables documented in `.env.example`. Unsupported tenant durations must continue falling back to the existing locked `AZURE_STORAGE_CONTAINER`.
 

@@ -250,8 +250,10 @@ def test_compliance_hot_retention_is_separate_from_vault_retention():
     assert storage_archiver._effective_retention_days("siem_cold_vault", 90) == 7
     assert storage_archiver._effective_retention_days("security_alerts", 90) == 7
     assert storage_archiver._effective_retention_days("logs", 90) == 7
-    assert storage_archiver.COMPLIANCE_VAULT_RETENTION_DAYS["fbr_pos_logs"] == 2190
-    assert storage_archiver.COMPLIANCE_VAULT_RETENTION_DAYS["peca_forensic_logs"] == 365
+    assert "fbr_pos_logs" not in storage_archiver.COMPLIANCE_VAULT_RETENTION_DAYS
+    assert "peca_forensic_logs" not in storage_archiver.COMPLIANCE_VAULT_RETENTION_DAYS
+    assert storage_archiver._effective_vault_retention_days("fbr_pos_logs", 180) == 180
+    assert storage_archiver._effective_vault_retention_days("peca_forensic_logs", 180) == 180
     assert storage_archiver._effective_vault_retention_days("siem_cold_vault", 365) == 365
 
 
@@ -285,15 +287,16 @@ def test_archive_container_routing_is_opt_in_and_collection_specific(monkeypatch
     monkeypatch.setenv("AZURE_STORAGE_CONTAINER", "legacy-vault")
     monkeypatch.setenv("AZURE_STORAGE_CONTAINER_SIEM", "siem-vault")
     monkeypatch.setenv("AZURE_STORAGE_CONTAINER_PECA", "peca-vault")
-    monkeypatch.setenv("AZURE_STORAGE_CONTAINER_FBR", "fbr-vault")
     monkeypatch.setenv("AZURE_STORAGE_CONTAINER_SIEM_90", "siem-90-vault")
+    monkeypatch.setenv("AZURE_STORAGE_CONTAINER_GENERAL_90", "general-90-vault")
     monkeypatch.setenv("AZURE_STORAGE_CONTAINER_GENERAL_180", "general-180-vault")
 
     assert storage_archiver._archive_container_name("siem_cold_vault", 90) == "siem-90-vault"
     assert storage_archiver._archive_container_name("siem_cold_vault", 180) == "siem-vault"
     assert storage_archiver._archive_container_name("security_alerts") == "siem-vault"
-    assert storage_archiver._archive_container_name("peca_forensic_logs") == "peca-vault"
-    assert storage_archiver._archive_container_name("fbr_pos_logs") == "fbr-vault"
+    assert storage_archiver._archive_container_name("peca_forensic_logs", 90) == "general-90-vault"
+    assert storage_archiver._archive_container_name("source_envelopes_peca", 90) == "general-90-vault"
+    assert storage_archiver._archive_container_name("fbr_pos_logs", 90) == "general-90-vault"
     assert storage_archiver._archive_container_name("analysis_results", 180) == "general-180-vault"
     assert storage_archiver._archive_container_name("analysis_results", 270) == "legacy-vault"
 
@@ -323,8 +326,58 @@ def test_blob_immutability_requires_locked_policy_through_retention():
     assert storage_archiver._blob_immutability_status(unlocked, required_until)["verified"] is False
 
 
+def test_fbr_archive_uses_one_tenant_retention_cohort():
+    documents = [
+        {"_id": "a", "retention_state": "RESOLVED", "tax_period_id": "PK-ST-2026-07", "effective_retention_until": "2032-07-31"},
+        {"_id": "b", "retention_state": "RESOLVED", "tax_period_id": "PK-ST-2026-08", "effective_retention_until": "2032-08-31"},
+        {"_id": "c", "retention_state": "UNRESOLVED"},
+        {"_id": "d", "retention_state": "RESOLVED", "tax_period_id": "PK-ST-2026-07", "effective_retention_until": "2032-07-31"},
+    ]
+    cohorts = storage_archiver._archive_cohorts("fbr_pos_logs", documents)
+    assert cohorts == [documents]
+
+
+def test_archive_batch_memory_boundary_stops_before_next_document():
+    documents = [
+        {"_id": "a", "message": "x" * 100},
+        {"_id": "b", "message": "y" * 100},
+    ]
+    selected = storage_archiver._bounded_archive_documents(documents, 180)
+    assert [document["_id"] for document in selected] == ["a"]
+
+
 @pytest.mark.asyncio
-async def test_archive_never_deletes_hot_records_without_verified_immutability(monkeypatch):
+async def test_blob_scope_can_lock_then_verify_when_explicitly_enabled(monkeypatch):
+    required_until = datetime(2032, 7, 10, tzinfo=timezone.utc)
+
+    class FakeBlob:
+        def __init__(self):
+            self.locked = False
+            self.policy = None
+
+        async def get_blob_properties(self):
+            return SimpleNamespace(
+                has_legal_hold=False,
+                immutability_policy=SimpleNamespace(
+                    policy_mode="Locked" if self.locked else "Unlocked",
+                    expiry_time=required_until if self.locked else None,
+                ),
+            )
+
+        async def set_immutability_policy(self, policy):
+            self.policy = policy
+            self.locked = True
+
+    monkeypatch.setenv("AZURE_BLOB_IMMUTABILITY_AUTO_LOCK", "true")
+    blob = FakeBlob()
+    status = await storage_archiver._ensure_blob_immutability(blob, required_until)
+    assert blob.policy is not None
+    assert status["verified"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("collection_name", ["fbr_pos_logs", "peca_forensic_logs"])
+async def test_archive_never_deletes_hot_records_without_verified_immutability(monkeypatch, collection_name):
     unlocked_properties = SimpleNamespace(
         has_legal_hold=False,
         immutability_policy=SimpleNamespace(
@@ -351,7 +404,7 @@ async def test_archive_never_deletes_hot_records_without_verified_immutability(m
 
     collections = {
         "storage_archives": FakeCollection(),
-        "fbr_pos_logs": FakeCollection(),
+        collection_name: FakeCollection(),
     }
 
     class FakeDb:
@@ -364,13 +417,13 @@ async def test_archive_never_deletes_hot_records_without_verified_immutability(m
             FakeContainer(),
             FakeDb(),
             "TENANT-A",
-            "fbr_pos_logs",
+            collection_name,
             [{"_id": "doc-1", "timestamp": datetime.now(timezone.utc)}],
             "run-1",
             1,
             90,
         )
-    collections["fbr_pos_logs"].delete_many.assert_not_awaited()
+    collections[collection_name].delete_many.assert_not_awaited()
     collections["storage_archives"].update_one.assert_not_awaited()
 
 
@@ -410,6 +463,17 @@ def test_container_scope_rejects_retention_shorter_than_collection_requirement()
 
 @pytest.mark.asyncio
 async def test_container_scope_archives_then_deletes_hot_records(monkeypatch):
+    monkeypatch.setattr(
+        storage_archiver,
+        "acquire_retention_fence",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        storage_archiver,
+        "release_retention_fence",
+        AsyncMock(return_value=None),
+    )
+
     class FakeBlob:
         async def upload_blob(self, *_args, **_kwargs):
             return None
@@ -422,10 +486,12 @@ async def test_container_scope_archives_then_deletes_hot_records(monkeypatch):
         def __init__(self):
             self.update_one = AsyncMock()
             self.delete_many = AsyncMock(return_value=SimpleNamespace(deleted_count=1))
+            self.find_one = AsyncMock(return_value=None)
 
     collections = {
         "storage_archives": FakeCollection(),
         "fbr_pos_logs": FakeCollection(),
+        "legal_holds": FakeCollection(),
     }
 
     class FakeDb:
@@ -434,7 +500,7 @@ async def test_container_scope_archives_then_deletes_hot_records(monkeypatch):
 
     monkeypatch.setenv("AZURE_IMMUTABILITY_REQUIRED", "true")
     monkeypatch.setenv("AZURE_IMMUTABILITY_SCOPE", "container")
-    monkeypatch.setenv("AZURE_STORAGE_CONTAINER_FBR", "fbr-vault")
+    monkeypatch.setenv("AZURE_STORAGE_CONTAINER_GENERAL_90", "general-90-vault")
     deleted = await storage_archiver._archive_batch(
         FakeContainer(),
         FakeDb(),
@@ -448,19 +514,91 @@ async def test_container_scope_archives_then_deletes_hot_records(monkeypatch):
             "has_immutability_policy": True,
             "has_legal_hold": False,
             "declared_locked": True,
-            "configured_days": 2190,
+            "configured_days": 90,
         },
     )
 
     assert deleted == 1
-    collections["storage_archives"].update_one.assert_awaited_once()
-    archive_update = collections["storage_archives"].update_one.await_args.args[1]
-    assert archive_update["$setOnInsert"]["container_name"] == "fbr-vault"
+    assert collections["storage_archives"].update_one.await_count == 2
+    archive_update = collections["storage_archives"].update_one.await_args_list[0].args[1]
+    assert archive_update["$setOnInsert"]["container_name"] == "general-90-vault"
     collections["fbr_pos_logs"].delete_many.assert_awaited_once()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("collection_name", ["fbr_pos_logs", "peca_forensic_logs"])
+async def test_archive_rechecks_hold_and_preserves_hot_records(monkeypatch, collection_name):
+    monkeypatch.setattr(
+        storage_archiver,
+        "acquire_retention_fence",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        storage_archiver,
+        "release_retention_fence",
+        AsyncMock(return_value=None),
+    )
+
+    class FakeBlob:
+        async def upload_blob(self, *_args, **_kwargs):
+            return None
+
+    class FakeContainer:
+        def get_blob_client(self, _name):
+            return FakeBlob()
+
+    class FakeCollection:
+        def __init__(self, hold=None):
+            self.update_one = AsyncMock()
+            self.delete_many = AsyncMock(return_value=SimpleNamespace(deleted_count=1))
+            self.find_one = AsyncMock(return_value=hold)
+
+    collections = {
+        "storage_archives": FakeCollection(),
+        collection_name: FakeCollection(),
+        "legal_holds": FakeCollection({"hold_id": "HOLD-1", "status": "ACTIVE"}),
+    }
+
+    class FakeDb:
+        def __getitem__(self, name):
+            return collections[name]
+
+    monkeypatch.setenv("AZURE_IMMUTABILITY_REQUIRED", "true")
+    monkeypatch.setenv("AZURE_IMMUTABILITY_SCOPE", "container")
+    deleted = await storage_archiver._archive_batch(
+        FakeContainer(),
+        FakeDb(),
+        "TENANT-A",
+        collection_name,
+        [{"_id": "doc-1", "event_uid": "event-1", "timestamp": datetime(2026, 7, 1, tzinfo=timezone.utc)}],
+        "run-hold",
+        1,
+        90,
+        {
+            "has_immutability_policy": True,
+            "has_legal_hold": False,
+            "declared_locked": True,
+            "configured_days": 90,
+        },
+    )
+    assert deleted == 0
+    collections[collection_name].delete_many.assert_not_awaited()
+    assert collections["storage_archives"].update_one.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_archive_retry_reuses_the_same_verified_blobs(monkeypatch):
+    monkeypatch.setattr(
+        storage_archiver,
+        "acquire_retention_fence",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        storage_archiver,
+        "release_retention_fence",
+        AsyncMock(return_value=None),
+    )
+
     class FakeDownloader:
         def __init__(self, payload):
             self.payload = payload
@@ -492,10 +630,12 @@ async def test_archive_retry_reuses_the_same_verified_blobs(monkeypatch):
         def __init__(self):
             self.update_one = AsyncMock()
             self.delete_many = AsyncMock(return_value=SimpleNamespace(deleted_count=1))
+            self.find_one = AsyncMock(return_value=None)
 
     collections = {
         "storage_archives": FakeCollection(),
         "siem_cold_vault": FakeCollection(),
+        "legal_holds": FakeCollection(),
     }
 
     class FakeDb:
@@ -584,8 +724,10 @@ def test_archive_managed_collections_have_no_independent_ttl_deletion():
         "ttl_detection_dispatch_outbox",
         "ttl_detection_dispatch_dlq",
         "ttl_detection_engine_observations",
-        "ttl_detection_candidate_quarantine",
-    }
+            "ttl_detection_candidate_quarantine",
+            "ttl_source_outbox_published",
+            "ttl_evidence_retention_fence",
+        }
     # TTL is limited to short-lived workflow/transport ledgers. Canonical
     # evidence remains archive-before-delete and never receives an independent
     # MongoDB expiry path.

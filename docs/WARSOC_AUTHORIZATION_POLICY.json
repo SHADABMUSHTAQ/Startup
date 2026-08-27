@@ -1,0 +1,87 @@
+{
+  "policy_version": "2026-08-20.evidence-program-v1",
+  "default_policy": "DENY_UNLESS_EXPLICITLY_AUTHENTICATED",
+  "public_routes": [
+    "GET /api/v1/sales/pricing",
+    "GET /health",
+    "POST /api/v1/auth/activate-invite",
+    "POST /api/v1/auth/login",
+    "POST /api/v1/auth/signup",
+    "POST /api/v1/sales/contact",
+    "POST /api/v1/sales/request-quote",
+    "POST /auth/activate-invite",
+    "POST /auth/login",
+    "POST /auth/signup"
+  ],
+  "platform_admin_routes": [
+    "GET /api/v1/admin/tenants",
+    "POST /api/v1/admin/provision",
+    "POST /api/v1/admin/rotate-key/{tenant_id}",
+    "POST /api/v1/archive-retrievals/{request_id}/approve"
+  ],
+  "service_identity_routes": {
+    "AGENT_IDENTITY": [
+      "GET /api/v1/agent/heartbeat/{tenant_id}",
+      "GET /firewall/agent/heartbeat/{tenant_id}",
+      "POST /api/v1/agent/deregister",
+      "POST /api/v1/agent/heartbeat",
+      "POST /api/v1/fbr/pos/ingest",
+      "POST /api/v1/ingest/pulse"
+    ],
+    "AGENT_ONE_TIME_ACTIVATION": [
+      "POST /api/v1/agent/register",
+      "POST /api/v1/agent/validate-activation"
+    ],
+    "METRICS_BEARER_OR_IP_ALLOWLIST": [
+      "GET /metrics"
+    ],
+    "RELAY_IDENTITY": [
+      "POST /api/v1/network-relay/ingest"
+    ],
+    "RELAY_KEY_RECOVERY_AUTHORIZATION": [
+      "POST /api/v1/network-relay/recover-key"
+    ],
+    "RELAY_ONE_TIME_ACTIVATION": [
+      "POST /api/v1/network-relay/register"
+    ],
+    "WEBSOCKET_ONE_TIME_TICKET": [
+      "WEBSOCKET /ws/alerts"
+    ]
+  },
+  "sensitive_role_requirements": {
+    "GET /api/v1/archive-retrievals/": ["admin", "auditor", "manager"],
+    "POST /api/v1/archive-retrievals/": ["admin", "auditor", "manager"],
+    "GET /api/v1/archive-retrievals/{request_id}": ["admin", "auditor", "manager"],
+    "POST /api/v1/archive-retrievals/{request_id}/download-links": ["admin", "auditor", "manager"],
+    "GET /api/v1/compliance/cases": ["admin", "auditor"],
+    "POST /api/v1/compliance/cases": ["admin", "auditor"],
+    "GET /api/v1/compliance/cases/{case_id}": ["admin", "auditor"],
+    "POST /api/v1/compliance/cases/{case_id}/close": ["admin"],
+    "POST /api/v1/compliance/cases/{case_id}/custody": ["admin", "auditor"],
+    "GET /api/v1/compliance/cases/{case_id}/exports": ["admin", "auditor"],
+    "POST /api/v1/compliance/cases/{case_id}/exports": ["admin", "auditor"],
+    "GET /api/v1/compliance/cases/{case_id}/exports/{export_id}": ["admin", "auditor"],
+    "POST /api/v1/compliance/cases/{case_id}/exports/{export_id}/download-link": ["admin", "auditor"],
+    "POST /api/v1/compliance/cases/{case_id}/items": ["admin", "auditor"],
+    "GET /api/v1/compliance/evidence": ["admin", "auditor"],
+    "GET /api/v1/compliance/evidence/{pack_id}": ["admin", "auditor"],
+    "GET /api/v1/compliance/export": ["admin", "auditor"],
+    "GET /api/v1/compliance/holds": ["admin", "auditor"],
+    "POST /api/v1/compliance/holds": ["admin"],
+    "POST /api/v1/compliance/holds/{hold_id}/release": ["admin"],
+    "GET /api/v1/compliance/retention/status": ["admin", "auditor"],
+    "GET /api/v1/logs/{log_id}/evidence": ["admin", "analyst", "auditor", "manager"]
+  },
+  "feature_gate_requirements": {
+    "/api/v1/network-relay": "settings.network_relay_enabled",
+    "/auth": "settings.enable_legacy_routes",
+    "/firewall": "settings.enable_legacy_routes",
+    "/upload": "settings.enable_legacy_routes"
+  },
+  "tenant_scoped_auth_types": [
+    "USER_JWT",
+    "USER_JWT_ENTITLEMENT",
+    "USER_JWT_RBAC",
+    "USER_JWT_RBAC_AND_PLATFORM_ADMIN_KEY"
+  ]
+}

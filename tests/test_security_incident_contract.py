@@ -193,6 +193,19 @@ def test_incident_serialization_reports_visible_occurrences_only():
     assert "superseded_event_uids" not in serialized
 
 
+def test_incident_serialization_keeps_detector_vendor_internal():
+    serialized = serialize_incident(
+        {
+            "incident_id": "INC-2",
+            "title": "Audit Log Cleared Detected",
+            "detection_sources": ["wazuh"],
+        }
+    )
+
+    assert serialized["detection_source"] == "WarSOC"
+    assert "detection_sources" not in serialized
+
+
 @pytest.mark.asyncio
 async def test_incident_api_groups_evidence_isolates_tenant_and_persists_workflow(
     async_client,

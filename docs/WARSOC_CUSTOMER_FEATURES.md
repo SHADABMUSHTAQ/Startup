@@ -81,8 +81,8 @@ WarSOC does not read or infer proprietary invoice tables automatically. Without 
 
 - Seven days of operational SIEM, PECA and FBR data in the hot tier.
 - Encrypted immutable archive storage after the hot window.
-- PECA-oriented evidence retention configured for 365 days.
-- FBR-oriented evidence retention configured for 2,190 days.
+- PECA-oriented evidence follows the tenant's normal WarSOC retention entitlement.
+- FBR-oriented evidence follows the tenant's normal WarSOC retention entitlement.
 - Verified hot-plus-cold retrieval for authorized views and exports.
 - CSV evidence export and human-readable PDF audit reports.
 

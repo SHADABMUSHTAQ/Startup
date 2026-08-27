@@ -18,6 +18,13 @@ from app.routes.auth import verify_agent_token
 from app.database import get_db
 from app.routes.ingest_pulse import _enforce_daily_ingest_quota, _enforce_raw_stream_capacity
 from app.utils.agent_crypto import AgentEventSignatureError, public_key_id
+from app.utils.source_provenance import apply_source_provenance
+from app.utils.source_evidence import (
+    SourceEvidenceConflict,
+    persist_source_envelope,
+    publish_source_outbox,
+)
+from app.utils.fbr_retention import tenant_fbr_retention_metadata
 
 logger = logging.getLogger("fbr_pos")
 router = APIRouter()
@@ -139,6 +146,13 @@ async def ingest_pos_logs(
 
         payload_hash = hashlib.sha256(bytes(buffer)).hexdigest()
         signing_key_id = public_key_id(public_key_pem)
+        tenant_retention = await db.tenants.find_one(
+            {"tenant_id": verified_tenant_id},
+            {"_id": 0, "retention_days": 1},
+        )
+        retention_metadata = tenant_fbr_retention_metadata(
+            (tenant_retention or {}).get("retention_days")
+        )
 
         stream_payloads = []
         for event in raw_events:
@@ -181,7 +195,12 @@ async def ingest_pos_logs(
                 "source_assurance": "agent_signed",
                 "signature_verification_status": "verified",
                 "signature_verified_at": datetime.now(timezone.utc).isoformat(),
+                "source_envelope_uid": nonce,
+                "source_envelope_collection": "source_envelopes_fbr",
+                "source_envelope_state": "COMMITTED",
             })
+            event_data.update(retention_metadata)
+            apply_source_provenance(event_data)
 
             stream_payloads.append(orjson.dumps(event_data).decode("utf-8"))
 
@@ -200,38 +219,81 @@ async def ingest_pos_logs(
         try:
             nonce_claimed = await redis.set(
                 nonce_key,
-                "1",
+                f"processing:{payload_hash}",
                 ex=POS_NONCE_TTL_SECONDS,
                 nx=True,
             )
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Replay protection unavailable") from exc
         if not nonce_claimed:
-            raise HTTPException(status_code=409, detail="POS request replay detected")
+            existing_hash = await redis.get(nonce_key)
+            if isinstance(existing_hash, bytes):
+                existing_hash = existing_hash.decode("utf-8", errors="replace")
+            if str(existing_hash) != f"processing:{payload_hash}":
+                raise HTTPException(status_code=409, detail="POS request replay detected")
 
-        await _enforce_daily_ingest_quota(redis, verified_tenant_id, len(buffer), db)
+        if nonce_claimed:
+            try:
+                await _enforce_daily_ingest_quota(redis, verified_tenant_id, len(buffer), db)
+            except Exception:
+                await redis.delete(nonce_key)
+                raise
 
-        queued_count = 0
-        async with redis.pipeline(transaction=True) as pipe:
-            for serialized_payload in stream_payloads:
-                payload_to_stream = {"payload": serialized_payload}
-                await pipe.xadd(
-                    RAW_LOGS_QUEUE,
-                    payload_to_stream,
-                )
-                queued_count += 1
-
-            if queued_count > 0:
-                await pipe.execute()
+        outbox_uids = await persist_source_envelope(
+            db,
+            tenant_id=verified_tenant_id,
+            source_principal_type="windows_agent",
+            source_principal_id=verified_agent_id,
+            source_channel="fbr_pos",
+            source_envelope_uid=nonce,
+            source_payload=bytes(buffer),
+            dispatch_events=[
+                {
+                    "event_uid": str(event.get("event_uid")),
+                    "serialized_payload": serialized_payload,
+                    "target_streams": [RAW_LOGS_QUEUE],
+                }
+                for event, serialized_payload in zip(raw_events, stream_payloads)
+            ],
+            retention_class="FBR",
+            auth_metadata={
+                "scheme": POS_SIGNATURE_VERSION,
+                "signature_algorithm": "Ed25519",
+                "signature": signature_hex,
+                "payload_hash": payload_hash,
+                "signing_key_id": signing_key_id,
+                "verification_version": "pos-http-body-v1",
+            },
+            source_timestamp=raw_payload.get("timestamp"),
+            retention_metadata=retention_metadata,
+        )
+        await redis.set(
+            nonce_key,
+            f"completed:{payload_hash}",
+            xx=True,
+            ex=POS_NONCE_TTL_SECONDS,
+        )
+        published_count = await publish_source_outbox(
+            db,
+            redis,
+            outbox_uids=outbox_uids,
+            limit=len(outbox_uids),
+        )
+        queued_count = len(outbox_uids)
 
         return ORJSONResponse(
             {
                 "status": "success",
                 "queued": queued_count,
-                "message": f"Successfully queued {queued_count} FBR POS events.",
+                "dispatch_published": published_count,
+                "dispatch_pending": queued_count - published_count,
+                "message": f"Durably accepted {queued_count} FBR POS events.",
             },
             status_code=202,
         )
+    except SourceEvidenceConflict as exc:
+        logger.warning("[SECURITY] POS source evidence identity conflict: agent=%s", locals().get("verified_agent_id"))
+        raise HTTPException(status_code=409, detail="Source evidence identity conflict") from exc
     except HTTPException:
         raise
     except Exception as exc:

@@ -4,10 +4,12 @@ import os
 import uuid
 
 import pytest
+from pymongo.errors import DuplicateKeyError
 
 from app.db.init_db import init_compliance_db
 from app.main import app as fastapi_app
 from app.database import init_db as init_core_db
+from app.routes.auth import get_password_hash
 
 
 @pytest.mark.asyncio
@@ -102,6 +104,20 @@ async def test_siem_vault_has_write_and_dashboard_indexes(db):
 
 
 @pytest.mark.asyncio
+async def test_compliance_schema_initialization_fails_closed(db, monkeypatch):
+    async def fail_index_inspection(*_args, **_kwargs):
+        raise RuntimeError("simulated schema failure")
+
+    monkeypatch.setattr(
+        "app.db.init_db._drop_ttl_indexes",
+        fail_index_inspection,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated schema failure"):
+        await init_compliance_db(db)
+
+
+@pytest.mark.asyncio
 async def test_core_startup_guarantees_siem_vault_indexes_before_compliance_backfills(db):
     await db["siem_cold_vault"].drop_indexes()
     await init_core_db()
@@ -133,3 +149,69 @@ async def test_alert_uid_index_deduplicates_identified_alerts_without_blocking_l
         ]
     )
     assert await db["security_alerts"].count_documents({"tenant_id": "TENANT-LEGACY"}) == 2
+
+
+@pytest.mark.asyncio
+async def test_user_login_identities_are_globally_unique_case_insensitive(db):
+    await init_compliance_db(db)
+    indexes = await db["users"].index_information()
+
+    assert indexes["uq_users_email_ci"]["unique"] is True
+    assert indexes["uq_users_username_ci"]["unique"] is True
+
+    await db["users"].insert_one(
+        {
+            "tenant_id": "TENANT-A",
+            "email": "Admin@Example.com",
+            "username": "TenantAdmin",
+        }
+    )
+    with pytest.raises(DuplicateKeyError):
+        await db["users"].insert_one(
+            {
+                "tenant_id": "TENANT-B",
+                "email": "admin@example.com",
+                "username": "different-user",
+            }
+        )
+    with pytest.raises(DuplicateKeyError):
+        await db["users"].insert_one(
+            {
+                "tenant_id": "TENANT-B",
+                "email": "different@example.com",
+                "username": "tenantadmin",
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_login_normalizes_email_case(async_client, db):
+    await db["tenants"].insert_one(
+        {
+            "tenant_id": "TENANT-LOGIN-CASE",
+            "status": "active",
+            "active": True,
+            "has_active_plan": True,
+        }
+    )
+    await db["users"].insert_one(
+        {
+            "tenant_id": "TENANT-LOGIN-CASE",
+            "email": "case@example.com",
+            "username": "case-user",
+            "hashed_password": get_password_hash("CaseLogin-2026!Secure"),
+            "role": "admin",
+            "status": "active",
+            "has_active_plan": True,
+        }
+    )
+
+    response = await async_client.post(
+        "/api/v1/auth/login",
+        json={
+            "username": "  CASE@EXAMPLE.COM ",
+            "password": "CaseLogin-2026!Secure",
+        },
+    )
+
+    assert response.status_code == 200

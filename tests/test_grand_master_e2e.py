@@ -330,26 +330,30 @@ async def test_grand_master_e2e(clean_slate, mock_tenant_a, mock_tenant_b, mongo
         fbr_string_ts = await settings_db["fbr_pos_logs"].count_documents({"tenant_id": mock_tenant_a["tenant_id"], "timestamp": {"$type": "string"}})
         assert fbr_string_ts == 0
 
-        alert_query = {
+        mass_deletion_alert_query = {
             "tenant_id": mock_tenant_a["tenant_id"],
             "$or": [
-                {"type": {"$regex": "ransomware", "$options": "i"}},
-                {"summary": {"$regex": "ransomware", "$options": "i"}},
-                {"message": {"$regex": "ransomware", "$options": "i"}},
-                {"alert_type": {"$regex": "ransomware", "$options": "i"}},
+                {"type": "Mass file deletion detected"},
+                {"summary": {"$regex": "Mass file deletion detected", "$options": "i"}},
+                {"message": {"$regex": "Mass file deletion detected", "$options": "i"}},
+                {"alert_type": "Mass file deletion detected"},
             ],
         }
 
-        # Wait for SIEM worker to process and generate alert
+        # Event 4660 is reliable deletion telemetry. The pilot does not claim
+        # ransomware file-write/rename coverage, so validate the enabled mass
+        # deletion rule instead of inferring ransomware from message text.
         deadline = time.monotonic() + 10.0
-        ransomware_alerts = 0
+        mass_deletion_alerts = 0
         while time.monotonic() < deadline:
-            ransomware_alerts = await settings_db["security_alerts"].count_documents(alert_query)
-            if ransomware_alerts >= 1:
+            mass_deletion_alerts = await settings_db["security_alerts"].count_documents(
+                mass_deletion_alert_query
+            )
+            if mass_deletion_alerts >= 1:
                 break
             await asyncio.sleep(1)
 
-        assert ransomware_alerts >= 1
+        assert mass_deletion_alerts >= 1
 
         total_logs = await settings_db["siem_cold_vault"].count_documents({"tenant_id": mock_tenant_a["tenant_id"]})
         total_fbr = await settings_db["fbr_pos_logs"].count_documents({"tenant_id": mock_tenant_a["tenant_id"]})

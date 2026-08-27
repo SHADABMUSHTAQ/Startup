@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 import orjson
 import pytest
 import httpx
+import jwt
 from pydantic import ValidationError
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization
@@ -35,8 +36,11 @@ from app.routes.network_relay import (
     RelayEvent,
     _admit_batch,
     _queue_event,
+    _tenant_relay_limit,
+    list_relay_status,
     settings as relay_settings,
 )
+from app.routes.auth import ALGORITHM, SECRET_KEY
 from app.utils.siem_catalog import SIEM_RULES
 from app.utils.siem_logic import CorrelationEngine
 from app.workers.siem_worker import (
@@ -73,6 +77,82 @@ def _relay_event(**overrides) -> RelayEvent:
     return RelayEvent.model_validate(values)
 
 
+def test_relay_entitlement_defaults_to_zero_and_respects_platform_cap():
+    original_limit = relay_settings.network_relay_max_per_tenant
+    relay_settings.network_relay_max_per_tenant = 2
+    try:
+        assert _tenant_relay_limit(None) == 0
+        assert _tenant_relay_limit({"status": "active"}) == 0
+        assert _tenant_relay_limit(
+            {"status": "active", "max_network_relays": 1}
+        ) == 1
+        assert _tenant_relay_limit(
+            {"status": "active", "max_network_relays": 99}
+        ) == 2
+    finally:
+        relay_settings.network_relay_max_per_tenant = original_limit
+
+
+@pytest.mark.asyncio
+async def test_relay_status_exposes_tenant_capability_and_nested_device_contract(db):
+    original_enabled = relay_settings.network_relay_enabled
+    relay_settings.network_relay_enabled = True
+    tenant_id = f"WARSOC_RELAY_UI_{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    try:
+        await db.tenants.insert_one(
+            {
+                "tenant_id": tenant_id,
+                "status": "active",
+                "max_network_relays": 1,
+            }
+        )
+        await db.network_relays.insert_one(
+            {
+                "tenant_id": tenant_id,
+                "relay_id": "WARSOC_RELAY_" + uuid.uuid4().hex,
+                "relay_name": "Branch Relay",
+                "version": "1.0.0",
+                "status": "active",
+                "last_seen": now,
+                "created_at": now,
+                "devices": [
+                    {
+                        "device_id": "branch-pfsense",
+                        "vendor": "pfsense",
+                        "model": "CE 2.8.1",
+                        "transport": "udp",
+                        "expected_eps": 100,
+                    }
+                ],
+            }
+        )
+
+        response = await list_relay_status(
+            current_user={"tenant_id": tenant_id, "role": "admin"},
+            _="admin",
+            db=db,
+        )
+
+        assert response["capability"] == {
+            "enabled": True,
+            "entitled": True,
+            "max_relays": 1,
+            "active_relays": 1,
+            "remaining_relays": 0,
+            "can_manage": True,
+            "metadata_only": True,
+            "validated_firewall_vendors": ["pfsense"],
+        }
+        assert response["relays"][0]["relay_name"] == "Branch Relay"
+        assert response["relays"][0]["device_count"] == 1
+        assert response["relays"][0]["devices"][0]["vendor"] == "pfsense"
+    finally:
+        relay_settings.network_relay_enabled = original_enabled
+        await db.tenants.delete_many({"tenant_id": tenant_id})
+        await db.network_relays.delete_many({"tenant_id": tenant_id})
+
+
 def _relay_batch(sequence: int = 1, previous_hash: str = RELAY_GENESIS_HASH) -> RelayBatch:
     return RelayBatch(
         schema_version="warsoc-relay-batch-v1",
@@ -84,6 +164,112 @@ def _relay_batch(sequence: int = 1, previous_hash: str = RELAY_GENESIS_HASH) -> 
         created_at=datetime.now(timezone.utc),
         events=[_relay_event()],
     )
+
+
+@pytest.mark.asyncio
+async def test_relay_route_commits_encrypted_source_before_redis_dispatch(
+    async_client,
+    db,
+    redis_client,
+):
+    original_enabled = relay_settings.network_relay_enabled
+    relay_settings.network_relay_enabled = True
+    tenant_id = f"WARSOC_RELAY_INGEST_{uuid.uuid4().hex[:8]}"
+    relay_id = f"WARSOC_RELAY_{uuid.uuid4().hex}"
+    chain_id = uuid.uuid4().hex
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    public_key = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("ascii")
+    signing_key_id = hashlib.sha256(
+        private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    ).hexdigest()
+    try:
+        await db.tenants.insert_one(
+            {
+                "tenant_id": tenant_id,
+                "status": "active",
+                "active": True,
+                "has_active_plan": True,
+                "max_agents": 1,
+                "max_network_relays": 1,
+                "retention_days": 90,
+            }
+        )
+        await db.network_relays.insert_one(
+            {
+                "tenant_id": tenant_id,
+                "relay_id": relay_id,
+                "public_key": public_key,
+                "signing_key_id": signing_key_id,
+                "status": "active",
+                "key_epoch": 1,
+                "last_sequence": 0,
+                "last_batch_hash": RELAY_GENESIS_HASH,
+                "chain_id": None,
+                "version": "1.0.0",
+                "devices": [
+                    {
+                        "device_id": "branch-firewall-1",
+                        "vendor": "fortinet",
+                        "transport": "udp",
+                        "source_addresses": ["10.0.0.1"],
+                        "expected_eps": 100,
+                    }
+                ],
+            }
+        )
+        event = _relay_event()
+        batch = RelayBatch(
+            schema_version="warsoc-relay-batch-v1",
+            relay_id=relay_id,
+            chain_id=chain_id,
+            key_epoch=1,
+            sequence=1,
+            previous_batch_hash=RELAY_GENESIS_HASH,
+            created_at=datetime.now(timezone.utc),
+            events=[event],
+        )
+        raw_body = orjson.dumps(batch.model_dump(mode="json"))
+        signature = private_key.sign(raw_body).hex()
+        token = jwt.encode(
+            {
+                "sub": relay_id,
+                "tenant_id": tenant_id,
+                "type": "network_relay",
+                "jti": uuid.uuid4().hex,
+                "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+            },
+            SECRET_KEY,
+            algorithm=ALGORITHM,
+        )
+
+        response = await async_client.post(
+            "/api/v1/network-relay/ingest",
+            content=raw_body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-WarSOC-Signature": signature,
+                "Content-Type": "application/json",
+            },
+        )
+        assert response.status_code == 202, response.text
+        assert response.json()["dispatch_published"] == 1
+        assert await db.source_envelopes_siem.count_documents(
+            {"source_principal_id": relay_id, "state": "COMMITTED"}
+        ) == 1
+        envelope = await db.source_envelopes_siem.find_one(
+            {"source_principal_id": relay_id}
+        )
+        assert envelope["dispatch_complete"] is True
+        assert event.raw_message not in envelope["encrypted_package"]
+        assert await redis_client.xlen("raw_logs_queue") == 1
+    finally:
+        relay_settings.network_relay_enabled = original_enabled
 
 
 def test_fortinet_traffic_and_vpn_are_normalized_without_packet_payload():
@@ -597,7 +783,7 @@ async def test_outbox_retries_exact_batch_prioritizes_control_and_acks_fifo(tmp_
 
 
 @pytest.mark.asyncio
-async def test_redis_batch_admission_is_atomic_and_duplicate_safe(redis_client):
+async def test_redis_batch_admission_is_atomic_duplicate_safe_and_does_not_dispatch(redis_client):
     batch = _relay_batch()
     relay_context = {
         "relay_id": batch.relay_id,
@@ -629,7 +815,10 @@ async def test_redis_batch_admission_is_atomic_and_duplicate_safe(redis_client):
         quota_bytes=1000,
         payload_bytes=100,
     ) == 2
-    assert await redis_client.xlen("raw_logs_queue") == 1
+    # Chain/quota admission is deliberately separate from dispatch. The route
+    # must commit the encrypted Mongo source envelope before its outbox writes
+    # the first Redis stream entry.
+    assert await redis_client.xlen("raw_logs_queue") == 0
     quota_keys = [key async for key in redis_client.scan_iter("warsoc:ingest:bytes:*")]
     assert len(quota_keys) == 2
     quota_values = [int(await redis_client.get(key)) for key in quota_keys]
@@ -647,7 +836,7 @@ async def test_redis_batch_admission_is_atomic_and_duplicate_safe(redis_client):
         quota_bytes=1000,
         payload_bytes=100,
     ) == 1
-    assert await redis_client.xlen("raw_logs_queue") == 2
+    assert await redis_client.xlen("raw_logs_queue") == 0
 
     platform_rejected = second.model_copy(
         update={"sequence": 3, "previous_batch_hash": second_hash}
@@ -662,7 +851,7 @@ async def test_redis_batch_admission_is_atomic_and_duplicate_safe(redis_client):
         platform_quota_bytes=200,
         payload_bytes=100,
     ) == -5
-    assert await redis_client.xlen("raw_logs_queue") == 2
+    assert await redis_client.xlen("raw_logs_queue") == 0
 
     wrong_epoch = _relay_batch()
     wrong_epoch = wrong_epoch.model_copy(
@@ -699,7 +888,7 @@ async def test_redis_batch_admission_is_atomic_and_duplicate_safe(redis_client):
         quota_bytes=1000,
         payload_bytes=100,
     ) == -1
-    assert await redis_client.xlen("raw_logs_queue") == 2
+    assert await redis_client.xlen("raw_logs_queue") == 0
 
     quota_rejected = second.model_copy(
         update={"sequence": 3, "previous_batch_hash": second_hash}
@@ -713,7 +902,7 @@ async def test_redis_batch_admission_is_atomic_and_duplicate_safe(redis_client):
         quota_bytes=200,
         payload_bytes=100,
     ) == -4
-    assert await redis_client.xlen("raw_logs_queue") == 2
+    assert await redis_client.xlen("raw_logs_queue") == 0
 
 
 def test_relay_events_encrypt_raw_vendor_evidence_before_queueing(monkeypatch):

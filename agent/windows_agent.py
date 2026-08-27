@@ -52,7 +52,9 @@ if not env_loaded:
     print(f"[WARN] .env not found in any standard location. Using system environment variables.")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-AGENT_VERSION = "4.2.8-Native-Signed"
+AGENT_VERSION = "4.2.9-Native-Signed-Coverage"
+EVENT_SIGNATURE_VERSION = "ed25519-v2"
+COLLECTION_PROTOCOL_VERSION = "warsoc-agent-collection-v2"
 TENANT_ID = os.getenv("TENANT_ID", "provision").strip() or "provision"
 PROGRAM_DATA_DIR = Path(os.getenv("PROGRAMDATA", str(_AGENT_DIR))) / "WarSOC"
 JWT_TOKEN_PATH = PROGRAM_DATA_DIR / ".agent_jwt"
@@ -130,6 +132,9 @@ WINDOWS_CHANNELS = ["Security", "System"]
 TELEMETRY_CONFIG_VERSION = "native-windows-v1"
 CHANNEL_STATUS = {}
 CHANNEL_STATUS_LOCK = threading.Lock()
+AGENT_RUNTIME_EPOCH = uuid.uuid4().hex
+SOURCE_SEQUENCE_LOCK = threading.Lock()
+SOURCE_SEQUENCE = 0
 SENSOR_COUNTERS = {
     "windows_parse_failures": 0,
     "pos_jsonl_rejections": 0,
@@ -354,6 +359,13 @@ def _canonical_json(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
 
 
+def _next_source_sequence():
+    global SOURCE_SEQUENCE
+    with SOURCE_SEQUENCE_LOCK:
+        SOURCE_SEQUENCE += 1
+        return SOURCE_SEQUENCE
+
+
 def _build_event_payload_hash(payload):
     signable_payload = {
         "source_ip": payload.get("source_ip", ""),
@@ -365,6 +377,16 @@ def _build_event_payload_hash(payload):
         "raw_event_data": payload.get("raw_event_data") if payload.get("raw_event_data") is not None else payload.get("raw_data", {}),
         "agent_version": payload.get("agent_version", ""),
     }
+    if str(payload.get("signature_version") or EVENT_SIGNATURE_VERSION).lower() == "ed25519-v2":
+        signable_payload.update(
+            {
+                "agent_collection_time": payload.get("agent_collection_time", ""),
+                "collection_protocol_version": payload.get("collection_protocol_version", ""),
+                "source_channel": payload.get("source_channel", ""),
+                "source_channel_epoch": payload.get("source_channel_epoch", ""),
+                "source_sequence": payload.get("source_sequence", ""),
+            }
+        )
     canonical = _canonical_json(signable_payload)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -399,6 +421,15 @@ def _sign_event_for_delivery(payload, signing_key):
     ):
         event.pop(field, None)
 
+    if not event.get("agent_collection_time"):
+        event["agent_collection_time"] = datetime.now(timezone.utc).isoformat()
+        event["collection_protocol_version"] = "warsoc-agent-legacy-spool-v1"
+    event.setdefault("collection_protocol_version", COLLECTION_PROTOCOL_VERSION)
+    event.setdefault("source_channel", "legacy_spool")
+    event.setdefault("source_channel_epoch", f"legacy-{AGENT_RUNTIME_EPOCH}")
+    event.setdefault("source_sequence", event["event_uid"])
+    event["signature_version"] = EVENT_SIGNATURE_VERSION
+
     payload_hash = _build_event_payload_hash(event)
     signature_input = (
         f"{AGENT_ID}|{event['timestamp']}|{event['event_uid']}|{payload_hash}"
@@ -406,7 +437,7 @@ def _sign_event_for_delivery(payload, signing_key):
     event.update(
         {
             "payload_hash": payload_hash,
-            "signature_version": "ed25519-v1",
+            "signature_version": EVENT_SIGNATURE_VERSION,
             "signature_algorithm": "Ed25519",
             "agent_signature": signing_key.sign(signature_input).hex(),
         }
@@ -1342,6 +1373,11 @@ def enqueue_payload(payload):
     durable_payload = dict(payload)
     durable_payload.setdefault("event_uid", uuid.uuid4().hex)
     durable_payload.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+    durable_payload.setdefault("agent_collection_time", datetime.now(timezone.utc).isoformat())
+    durable_payload.setdefault("collection_protocol_version", COLLECTION_PROTOCOL_VERSION)
+    durable_payload.setdefault("source_channel", durable_payload.get("event_type") or "agent_generic")
+    durable_payload.setdefault("source_channel_epoch", AGENT_RUNTIME_EPOCH)
+    durable_payload.setdefault("source_sequence", _next_source_sequence())
     return SPOOLER.append(durable_payload)
 
 def _estimate_payload_bytes(batch):
@@ -1606,10 +1642,14 @@ def heartbeat_thread():
                     )
             except Exception:
                 deployment_evidence = {}
+            heartbeat_time = datetime.now(timezone.utc)
             payload = {
                 "agent_id": AGENT_ID,
                 "current_version": AGENT_VERSION,
-                "timestamp": time.time(),
+                "timestamp": heartbeat_time.timestamp(),
+                "protocol_version": "heartbeat-v2",
+                "nonce": uuid.uuid4().hex,
+                "agent_collection_time": heartbeat_time.isoformat(),
                 "sensor_status": {
                     "telemetry_config_version": TELEMETRY_CONFIG_VERSION,
                     "audit_policy_status": deployment_evidence.get("status", "unknown"),
@@ -1804,15 +1844,36 @@ def native_log_hunter_thread():
     print(f"[*] Monitoring Event IDs: {sorted(TARGET_EVENT_IDS)}")
 
     watermark_file = PROGRAM_DATA_DIR / "spool" / "watermarks.json"
+    epoch_file = PROGRAM_DATA_DIR / "spool" / "watermark_epochs.json"
     highest_record_seen = {}
+    channel_epochs = {}
     try:
         if watermark_file.exists():
             with open(watermark_file, "r", encoding="utf-8") as watermark_handle:
                 highest_record_seen = json.load(watermark_handle)
     except Exception as exc:
         print(f"[WARN] Failed to load native event watermarks: {exc}")
+    try:
+        if epoch_file.exists():
+            with open(epoch_file, "r", encoding="utf-8") as epoch_handle:
+                loaded_epochs = json.load(epoch_handle)
+                if isinstance(loaded_epochs, dict):
+                    channel_epochs = {
+                        str(channel): str(epoch)
+                        for channel, epoch in loaded_epochs.items()
+                        if str(epoch).strip()
+                    }
+    except Exception as exc:
+        print(f"[WARN] Failed to load native channel epochs: {exc}")
 
-    def set_channel_status(channel, status, error=None, last_event_at=None):
+    def set_channel_status(
+        channel,
+        status,
+        error=None,
+        last_event_at=None,
+        watermark=None,
+        latest_record=None,
+    ):
         with CHANNEL_STATUS_LOCK:
             current = dict(CHANNEL_STATUS.get(channel) or {})
             current["status"] = status
@@ -1820,6 +1881,11 @@ def native_log_hunter_thread():
             current["last_error"] = str(error)[:500] if error else None
             if last_event_at:
                 current["last_event_at"] = last_event_at
+            current["channel_epoch"] = channel_epochs.get(channel)
+            if watermark is not None:
+                current["watermark"] = max(0, int(watermark))
+            if latest_record is not None:
+                current["latest_record_id"] = max(0, int(latest_record))
             CHANNEL_STATUS[channel] = current
 
     def close_handle(handle):
@@ -1840,16 +1906,27 @@ def native_log_hunter_thread():
                 win32evtlog.CloseEventLog(log_handle)
 
     for channel in WINDOWS_CHANNELS:
+        if channel not in channel_epochs:
+            channel_epochs[channel] = uuid.uuid4().hex
         if channel in highest_record_seen:
             continue
         try:
             highest_record_seen[channel] = latest_record_id(channel)
-            set_channel_status(channel, "ok")
+            set_channel_status(
+                channel,
+                "ok",
+                watermark=highest_record_seen[channel],
+                latest_record=highest_record_seen[channel],
+            )
             print(f"[*] Synced channel '{channel}'. Watermark: {highest_record_seen[channel]}")
         except Exception as exc:
             highest_record_seen[channel] = 0
             set_channel_status(channel, "error", exc)
             print(f"[WARN] Channel open failed ({channel}): {exc}")
+    try:
+        _persist_watermarks(epoch_file, channel_epochs)
+    except Exception as exc:
+        print(f"[WARN] Failed to persist native channel epochs: {exc}")
 
     while True:
         for channel in WINDOWS_CHANNELS:
@@ -1868,8 +1945,10 @@ def native_log_hunter_thread():
                         f"({channel_watermark} -> {probed_latest_record_id}); replaying surviving events."
                     )
                     channel_watermark = normalized_watermark
+                    channel_epochs[channel] = uuid.uuid4().hex
                     highest_record_seen[channel] = normalized_watermark
                     _persist_watermarks(watermark_file, highest_record_seen)
+                    _persist_watermarks(epoch_file, channel_epochs)
                 current_batch_highest = channel_watermark
                 query = f"*[System[EventRecordID > {channel_watermark}]]"
                 flags = win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryForwardDirection
@@ -1910,13 +1989,22 @@ def native_log_hunter_thread():
                                 "processed_data": parsed["processed_data"],
                                 "raw_event_data": parsed["raw_event_data"],
                                 "agent_version": AGENT_VERSION,
+                                "source_channel": channel,
+                                "source_channel_epoch": channel_epochs[channel],
+                                "source_sequence": record_id,
                             }
                             current_batch_highest = _durably_enqueue_native_event(
                                 payload,
                                 record_id,
                                 current_batch_highest,
                             )
-                            set_channel_status(channel, "ok", last_event_at=parsed["timestamp"])
+                            set_channel_status(
+                                channel,
+                                "ok",
+                                last_event_at=parsed["timestamp"],
+                                watermark=current_batch_highest,
+                                latest_record=probed_latest_record_id,
+                            )
                         except SpoolWriteError as exc:
                             spool_blocked = True
                             set_channel_status(channel, "degraded", exc)
@@ -1947,7 +2035,12 @@ def native_log_hunter_thread():
                         set_channel_status(channel, "degraded", exc)
                         print(f"[WARN] Failed to persist native event watermarks: {exc}")
                 if not spool_blocked:
-                    set_channel_status(channel, "ok")
+                    set_channel_status(
+                        channel,
+                        "ok",
+                        watermark=current_batch_highest,
+                        latest_record=probed_latest_record_id,
+                    )
             except Exception as exc:
                 with CHANNEL_STATUS_LOCK:
                     SENSOR_COUNTERS["channel_failures"] += 1

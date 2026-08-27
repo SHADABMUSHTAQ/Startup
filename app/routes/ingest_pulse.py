@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import uuid
 import orjson
 from fastapi import APIRouter, HTTPException, Depends, Request, Query
@@ -24,6 +25,8 @@ from app.database import get_db
 from app.routes.auth import get_current_user, verify_agent_token
 from app.utils.agent_crypto import (
     AgentEventSignatureError,
+    build_signable_event_payload,
+    canonical_json,
     parse_utc_timestamp,
     timestamp_age_seconds,
     verify_event_signature,
@@ -32,6 +35,15 @@ from app.utils.endpoint_health import (
     EVENT_SIGNATURE_STATUS_KEY_PREFIX,
     EVENT_SIGNATURE_STATUS_TTL_SECONDS,
 )
+from app.utils.source_provenance import apply_source_provenance
+from app.utils.source_evidence import (
+    SourceEvidenceConflict,
+    persist_source_envelope,
+    publish_source_outbox,
+    retention_class_for_event,
+)
+from app.utils.fbr_retention import tenant_fbr_retention_metadata
+from app.utils.peca_retention import tenant_peca_retention_metadata
 
 router = APIRouter()
 settings = get_settings()
@@ -413,7 +425,11 @@ def _classify_clock_integrity(
     return "allow", delta_seconds
 
 
-def _normalize_stream_payloads(raw_payload, agent_context: dict) -> list[dict]:
+def _normalize_stream_payloads(
+    raw_payload,
+    agent_context: dict,
+    default_timestamp: str | None = None,
+) -> list[dict]:
     tenant_id = agent_context["tenant_id"]
     agent_id = agent_context["agent_id"]
     public_key = agent_context.get("public_key")
@@ -426,7 +442,7 @@ def _normalize_stream_payloads(raw_payload, agent_context: dict) -> list[dict]:
     else:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
-    for payload in payloads:
+    for payload_index, payload in enumerate(payloads):
         if not isinstance(payload, dict):
             continue
 
@@ -435,22 +451,37 @@ def _normalize_stream_payloads(raw_payload, agent_context: dict) -> list[dict]:
         else:
             metric_source = [payload]
 
-        for metric in metric_source:
+        for metric_index, metric in enumerate(metric_source):
             if not isinstance(metric, dict):
                 continue
 
             fields = metric.get("fields") if isinstance(metric.get("fields"), dict) else metric
             tags = metric.get("tags") if isinstance(metric.get("tags"), dict) else {}
             raw_event_id = fields.get("event_id", payload.get("event_id"))
+            supplied_event_uid = fields.get("event_uid") or payload.get("event_uid")
+            if supplied_event_uid:
+                event_uid = str(supplied_event_uid)
+            else:
+                identity_payload = orjson.dumps(
+                    {
+                        "agent_id": agent_id,
+                        "payload_index": payload_index,
+                        "metric_index": metric_index,
+                        "metric": metric,
+                    },
+                    option=orjson.OPT_SORT_KEYS,
+                )
+                event_uid = f"legacy-{hashlib.sha256(identity_payload).hexdigest()}"
+
             candidate = {
                 "agent_id": tags.get("agent_id") or tags.get("tenant_id") or fields.get("agent_id") or agent_id,
                 "source_ip": fields.get("src_ip") or tags.get("src_ip") or payload.get("source_ip") or "0.0.0.0",
                 "user": fields.get("user") or tags.get("user") or payload.get("user") or "SYSTEM",
                 "event_id": "" if raw_event_id is None else str(raw_event_id).strip(),
                 "event_type": fields.get("event_type") or payload.get("event_type") or "",
-                "event_uid": str(fields.get("event_uid") or payload.get("event_uid") or uuid.uuid4().hex),
+                "event_uid": event_uid,
                 "message": fields.get("message", payload.get("message", "Unknown Event")),
-                "timestamp": fields.get("timestamp") or tags.get("timestamp") or payload.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+                "timestamp": fields.get("timestamp") or tags.get("timestamp") or payload.get("timestamp") or default_timestamp or datetime.now(timezone.utc).isoformat(),
                 "raw_data": payload.get("raw_data") if payload.get("raw_data") is not None else fields,
                 "raw_event_data": (
                     payload.get("raw_event_data")
@@ -462,6 +493,11 @@ def _normalize_stream_payloads(raw_payload, agent_context: dict) -> list[dict]:
                 "payload_hash": fields.get("payload_hash") or payload.get("payload_hash"),
                 "signature_version": fields.get("signature_version") or payload.get("signature_version"),
                 "signature_algorithm": fields.get("signature_algorithm") or payload.get("signature_algorithm"),
+                "agent_collection_time": fields.get("agent_collection_time") or payload.get("agent_collection_time"),
+                "collection_protocol_version": fields.get("collection_protocol_version") or payload.get("collection_protocol_version"),
+                "source_channel": fields.get("source_channel") or payload.get("source_channel"),
+                "source_channel_epoch": fields.get("source_channel_epoch") or payload.get("source_channel_epoch"),
+                "source_sequence": fields.get("source_sequence") if fields.get("source_sequence") is not None else payload.get("source_sequence"),
                 # Do not invent a value before signature verification. Signed
                 # agents authenticate the exact version they supplied; an
                 # omitted version remains explicitly unknown.
@@ -615,22 +651,57 @@ def _validate_agent_ingest_envelope(raw_payload, agent_id: str) -> tuple[list, s
     return events_data, nonce
 
 
-async def _consume_agent_ingest_nonce(nonce: str, agent_id: str, redis_client) -> None:
+async def _consume_agent_ingest_nonce(
+    nonce: str,
+    agent_id: str,
+    redis_client,
+    request_hash: str | None = None,
+) -> bool:
     if not redis_client:
         raise HTTPException(status_code=503, detail="Redis unavailable for replay protection")
     nonce_key = f"warsoc:nonce:{agent_id}:{nonce}"
+    nonce_value = f"processing:{request_hash}" if request_hash else "consumed"
     nonce_accepted = await redis_client.set(
         nonce_key,
-        "consumed",
+        nonce_value,
         nx=True,
         ex=300,
     )
+    if nonce_accepted:
+        return True
+    if not request_hash:
+        logger.warning("[SECURITY] Replay attack blocked for agent %s", agent_id)
+        raise HTTPException(
+            status_code=409,
+            detail="Conflict: Replay attack detected (Nonce already consumed)",
+        )
+    existing_value = await redis_client.get(nonce_key)
+    if isinstance(existing_value, bytes):
+        existing_value = existing_value.decode("utf-8", errors="replace")
+    if str(existing_value) == f"processing:{request_hash}":
+        return False
     if not nonce_accepted:
         logger.warning("[SECURITY] Replay attack blocked for agent %s", agent_id)
         raise HTTPException(
             status_code=409,
             detail="Conflict: Replay attack detected (Nonce already consumed)",
         )
+    return False
+
+
+async def _complete_agent_ingest_nonce(
+    nonce: str,
+    agent_id: str,
+    redis_client,
+    request_hash: str,
+) -> None:
+    nonce_key = f"warsoc:nonce:{agent_id}:{nonce}"
+    await redis_client.set(
+        nonce_key,
+        f"completed:{request_hash}",
+        xx=True,
+        ex=300,
+    )
 
 
 async def _consume_agent_ingest_envelope(raw_payload, agent_id: str, redis_client):
@@ -683,7 +754,15 @@ async def ingest_pulse_logs(
         )
         original_raw_payload = raw_payload
 
-        sanitized_payloads = _normalize_stream_payloads(raw_events, agent_context)
+        envelope_timestamp = datetime.fromtimestamp(
+            float(raw_payload["timestamp"]),
+            tz=timezone.utc,
+        ).isoformat()
+        sanitized_payloads = _normalize_stream_payloads(
+            raw_events,
+            agent_context,
+            default_timestamp=envelope_timestamp,
+        )
 
         if not sanitized_payloads:
             raise HTTPException(status_code=400, detail="No valid events found in payload")
@@ -714,6 +793,7 @@ async def ingest_pulse_logs(
             log_data["tenant_id"] = verified_tenant_id
             log_data["agent_id"] = verified_agent_id
             log_data.pop("agent_hmac_signature", None)
+            apply_source_provenance(log_data)
             siem_hot_event = _is_siem_hot_event(log_data)
             if siem_hot_event:
                 log_data["siem_hot_enqueued"] = True
@@ -740,17 +820,26 @@ async def ingest_pulse_logs(
             incoming_stream_bytes=raw_stream_bytes,
             incoming_redis_bytes=raw_stream_bytes + hot_stream_bytes,
         )
-        await _consume_agent_ingest_nonce(
+        request_hash = hashlib.sha256(orjson.dumps(original_raw_payload)).hexdigest()
+        nonce_is_new = await _consume_agent_ingest_nonce(
             envelope_nonce,
             verified_agent_id,
             redis_client,
+            request_hash=request_hash,
         )
-        await _enforce_daily_ingest_quota(
-            redis_client,
-            verified_tenant_id,
-            raw_payload_bytes,
-            db,
-        )
+        if nonce_is_new:
+            try:
+                await _enforce_daily_ingest_quota(
+                    redis_client,
+                    verified_tenant_id,
+                    raw_payload_bytes,
+                    db,
+                )
+            except Exception:
+                await redis_client.delete(
+                    f"warsoc:nonce:{verified_agent_id}:{envelope_nonce}"
+                )
+                raise
 
 
         security_config = _get_security_config()
@@ -773,24 +862,153 @@ async def ingest_pulse_logs(
         current_utc_timestamp = datetime.now(timezone.utc).isoformat()
         verified_signature_count = 0
         unsigned_legacy_count = 0
-        async with redis.pipeline(transaction=True) as pipe:
-            for log_data, serialized_payload, siem_hot_event in prepared_payloads:
-                payload_to_stream = {"payload": serialized_payload}
+        tenant_retention = await db.tenants.find_one(
+            {"tenant_id": verified_tenant_id},
+            {"_id": 0, "retention_days": 1},
+        )
+        fbr_retention_metadata = tenant_fbr_retention_metadata(
+            (tenant_retention or {}).get("retention_days")
+        )
+        peca_retention_metadata = tenant_peca_retention_metadata(
+            (tenant_retention or {}).get("retention_days")
+        )
+        retention_groups: dict[
+            tuple[str, str],
+            tuple[list[tuple[dict, str, bool]], dict | None],
+        ] = {}
+        for log_data, serialized_payload, siem_hot_event in prepared_payloads:
+            retention_class = retention_class_for_event(log_data, "windows_endpoint")
+            retention_metadata = None
+            cohort = "default"
+            if retention_class == "FBR":
+                retention_metadata = fbr_retention_metadata
+                log_data.update(retention_metadata)
+            elif retention_class == "PECA":
+                retention_metadata = peca_retention_metadata
+                log_data.update(retention_metadata)
+            group_key = (retention_class, cohort)
+            if group_key not in retention_groups:
+                retention_groups[group_key] = ([], retention_metadata)
+            retention_groups[group_key][0].append(
+                (log_data, serialized_payload, siem_hot_event)
+            )
+            if log_data.get("signature_verified") is True:
+                verified_signature_count += 1
+            elif log_data.get("signature_verification_status") == "unsigned_legacy":
+                unsigned_legacy_count += 1
 
-                await pipe.xadd(
-                    RAW_LOGS_QUEUE,
-                    payload_to_stream,
+        outbox_uids: list[str] = []
+        for (retention_class, cohort), (group, retention_metadata) in retention_groups.items():
+            source_envelope_uid = (
+                f"{envelope_nonce}:{retention_class.lower()}"
+                if cohort == "default"
+                else f"{envelope_nonce}:{retention_class.lower()}:{cohort}"
+            )
+            normalized_group = []
+            for log_data, _serialized_payload, siem_hot_event in group:
+                log_data.update(
+                    {
+                        "source_envelope_uid": source_envelope_uid,
+                        "source_envelope_collection": (
+                            f"source_envelopes_{retention_class.lower()}"
+                        ),
+                        "source_envelope_state": "COMMITTED",
+                    }
                 )
-                if siem_hot_event:
-                    await pipe.xadd(
-                        SIEM_HOT_QUEUE,
-                        payload_to_stream,
+                normalized_group.append(
+                    (
+                        log_data,
+                        orjson.dumps(log_data).decode("utf-8"),
+                        siem_hot_event,
                     )
-                if log_data.get("signature_verified") is True:
-                    verified_signature_count += 1
-                elif log_data.get("signature_verification_status") == "unsigned_legacy":
-                    unsigned_legacy_count += 1
+                )
+            group = normalized_group
+            signed_material = [
+                {
+                    "event_uid": item[0].get("event_uid"),
+                    "timestamp": item[0].get("timestamp"),
+                    "payload_hash": item[0].get("payload_hash"),
+                    "agent_signature": item[0].get("agent_signature"),
+                    "signature_version": item[0].get("signature_version"),
+                    "signable_payload": build_signable_event_payload(item[0]),
+                }
+                for item in group
+            ]
+            group_uids = await persist_source_envelope(
+                db,
+                tenant_id=verified_tenant_id,
+                source_principal_type="windows_agent",
+                source_principal_id=verified_agent_id,
+                source_channel="windows_endpoint",
+                source_envelope_uid=source_envelope_uid,
+                source_payload=canonical_json(signed_material).encode("utf-8"),
+                dispatch_events=[
+                    {
+                        "event_uid": str(log_data.get("event_uid")),
+                        "serialized_payload": serialized_payload,
+                        "target_streams": [RAW_LOGS_QUEUE]
+                        + ([SIEM_HOT_QUEUE] if siem_hot_event else []),
+                    }
+                    for log_data, serialized_payload, siem_hot_event in group
+                ],
+                retention_class=retention_class,
+                auth_metadata={
+                    "scheme": "agent-event-ed25519-or-jwt-observe",
+                    "verification_version": (
+                        "endpoint-event-v2"
+                        if all(
+                            item[0].get("signature_version") == "ed25519-v2"
+                            for item in group
+                        )
+                        else "endpoint-event-v1-or-mixed"
+                    ),
+                    "signing_key_id": group[0][0].get("signing_key_id"),
+                    "event_signature_versions": sorted(
+                        {
+                            str(item[0].get("signature_version"))
+                            for item in group
+                            if item[0].get("signature_version")
+                        }
+                    ),
+                    "collection_protocol_versions": sorted(
+                        {
+                            str(item[0].get("collection_protocol_version"))
+                            for item in group
+                            if item[0].get("collection_protocol_version")
+                        }
+                    ),
+                    "source_channels": sorted(
+                        {
+                            str(item[0].get("source_channel"))
+                            for item in group
+                            if item[0].get("source_channel")
+                        }
+                    ),
+                    "signature_verified_count": sum(
+                        1 for item in group if item[0].get("signature_verified") is True
+                    ),
+                    "event_count": len(group),
+                },
+                source_timestamp=group[0][0].get("timestamp"),
+                retention_metadata=retention_metadata,
+            )
+            outbox_uids.extend(group_uids)
 
+        await _complete_agent_ingest_nonce(
+            envelope_nonce,
+            verified_agent_id,
+            redis_client,
+            request_hash,
+        )
+
+        published_count = await publish_source_outbox(
+            db,
+            redis,
+            outbox_uids=outbox_uids,
+            limit=len(outbox_uids),
+        )
+
+        async with redis.pipeline(transaction=True) as pipe:
             if verified_signature_count:
                 await pipe.incrby(
                     "warsoc_endpoint_event_signatures_verified_total",
@@ -823,9 +1041,14 @@ async def ingest_pulse_logs(
             "status": "success",
             "queued": len(payload_items),
             "rejected": 0,
-            "message": f"Successfully queued {len(payload_items)} logs in Redis Stream.",
+            "dispatch_published": published_count,
+            "dispatch_pending": len(outbox_uids) - published_count,
+            "message": f"Durably accepted {len(payload_items)} endpoint events.",
             "action": "ALLOW",
         })
+    except SourceEvidenceConflict as exc:
+        logger.warning("[SECURITY] Source evidence conflict: agent=%s", locals().get("verified_agent_id"))
+        raise HTTPException(status_code=409, detail="Source evidence identity conflict") from exc
     except HTTPException:
         raise
     except Exception as exc:

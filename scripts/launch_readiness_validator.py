@@ -198,11 +198,14 @@ class Validator:
         self.agent_download_flow()
         agent_id, agent_jwt, private_key = self.agent_flow()
         if agent_id and agent_jwt and private_key:
-            self.blacklist_flow(agent_id, private_key)
-            websocket_probe = self.start_websocket_probe()
-            self.ingest_and_pipeline(agent_id, agent_jwt, private_key)
-            self.dashboard_live_read_flow()
-            self.finish_websocket_probe(websocket_probe)
+            try:
+                self.blacklist_flow(agent_id, private_key)
+                websocket_probe = self.start_websocket_probe()
+                self.ingest_and_pipeline(agent_id, agent_jwt, private_key)
+                self.dashboard_live_read_flow()
+                self.finish_websocket_probe(websocket_probe)
+            finally:
+                self.deregister_agent(agent_id, private_key)
 
         self.rbac_flow(admin_password)
         self.export_checks()
@@ -416,6 +419,31 @@ class Validator:
             "/api/v1/agent/heartbeat",
             body_bytes=body,
             headers={"X-WarSOC-Signature": signature},
+        )
+
+    def deregister_agent(self, agent_id: str, private_key) -> None:
+        payload = {
+            "agent_id": agent_id,
+            "current_version": "launch-validator",
+            "timestamp": time.time(),
+            "protocol_version": "heartbeat-v1",
+        }
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        response = self.admin.request(
+            "POST",
+            "/api/v1/agent/deregister",
+            body_bytes=body,
+            headers={"X-WarSOC-Signature": private_key.sign(body).hex()},
+        )
+        seat_freed = (
+            bool(response.body.get("seat_freed"))
+            if isinstance(response.body, dict)
+            else False
+        )
+        self.record(
+            "Temporary agent deregistration",
+            response.status == 200 and seat_freed,
+            f"HTTP {response.status}",
         )
 
     def blacklist_flow(self, agent_id: str, private_key):

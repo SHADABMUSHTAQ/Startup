@@ -184,7 +184,7 @@ Closure is deliberately right-sized for the selected low-cost launch: it proves 
 **Priority:** P0
 **Gap type:** Infrastructure proof gap
 
-**Verified state:** The archiver supports duration-aware SIEM/general containers plus fixed PECA 365-day and FBR 2,190-day classes. The existing six-year fallback avoids early deletion but over-retains shorter-lived data.
+**Verified state:** The archiver supports duration-aware SIEM/general containers. New FBR and PECA evidence inherit the tenant's normal retention entitlement and use the matching general route. Historical locked evidence keeps its original policy.
 
 **Why it matters:** Incorrect routing can either delete evidence too early or retain personal/security data far longer than contracted.
 

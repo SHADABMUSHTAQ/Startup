@@ -214,13 +214,16 @@ Each PECA evidence record is canonicalized and signed with RSA-PSS-SHA256 using 
 | SIEM alerts | 7 days | Tenant general archive | `SIEM_HOT_RETENTION_DAYS` and tenant contract |
 | SIEM evidence vault | 7 days | Tenant general archive | `SIEM_HOT_RETENTION_DAYS` and tenant contract |
 | Raw/general logs | 7 days | Tenant general archive | `RAW_LOG_HOT_RETENTION_DAYS` and tenant contract |
-| FBR evidence | 7 days | 2190 days / 6 years | Compliance catalog |
-| PECA evidence | 7 days | 365 days | Compliance catalog |
+| FBR evidence | 7 days | Tenant general archive | Tenant retention entitlement |
+| PECA evidence | 7 days | Tenant general archive | Tenant retention entitlement |
 | CSV uploads/results | Tenant/general policy, with TTL safeguards | Tenant general archive if selected | Tenant contract and database indexes |
 
-General archive options in the UI are 3, 6, 9, or 12 months. They do not shorten FBR or PECA compliance retention.
+The tenant's configured general retention entitlement applies to new SIEM,
+general, FBR and PECA monitoring evidence. FBR and PECA packs change detection,
+evidence and reporting scope; they do not create a separate active retention
+duration.
 
-Production currently uses one private Azure evidence container with a locked, container-scoped 2190-day immutability policy. That lock satisfies the six-year FBR floor, but it physically over-retains PECA and shorter SIEM/general contracts. A 3/6/9/12-month contract controls WarSOC metadata and retrieval expectations; it does not make the underlying blob deletable before the locked container policy expires. Exact physical deletion dates require separate future containers or storage accounts by retention class. The existing locked policy cannot be shortened.
+Historical blobs already stored in the existing locked Azure container retain that physical policy and cannot be shortened. New FBR evidence is archived only through the tenant's matching general duration route after that route exists and its immutability policy is verified. Missing or insufficient routing fails closed and preserves Mongo data.
 
 The archiver runs continuously on a daily interval in production Compose. Production requires verified Azure immutability. It:
 
@@ -299,7 +302,10 @@ The production Compose service is disabled by default behind the `network-syslog
 - Platform run `18282be9f1` completed with zero failures across provisioning, authentication, agent enrollment, ingest, SIEM, FBR, PECA, WebSocket, mitigation, RBAC, email, CSV, and PDF.
 - The real Windows endpoint produced all 11 PECA controls and the approved FBR invoice/FIM scenarios. An ordinary database write did not produce a FIM alert.
 - The 50-agent soak registered and ingested 50 agents, rejected seat 51, produced SIEM in 5.18 seconds, and completed in 7.22 seconds without pending Redis work.
-- Azure immutability, archive-before-delete, SHA-256 verification, cold retrieval, and cold-backed FBR/PECA CSV/PDF exports passed.
+- Historical acceptance proved Azure immutability, archive-before-delete,
+  SHA-256 verification and the retired cold-backed export path. Current normal
+  CSV/PDF routes are hot-tier only; historical bytes require the disabled,
+  isolated asynchronous retrieval workflow.
 - A real browser loaded login, dashboard, compliance, team access, and activation-code flows without console errors.
 
 The 2026-08-12 authenticated browser walkthrough additionally verified incident
@@ -326,7 +332,10 @@ and paired frontend acceptance remain required.
 4. Complete the customer admin handover through an approved secure channel; do not email a reusable plaintext password.
 5. Complete one team invitation through the recipient mailbox and verify the intended role.
 6. Install the exact manifest-approved Azure artifact and confirm Active health, Security/System channels, and required POS SACL state.
-7. Generate a small approved detection proof and confirm SIEM/FBR/PECA, WebSocket, alert workflow, email, CSV/PDF, and archive retrieval.
+7. Generate a small approved detection proof and confirm SIEM/FBR/PECA,
+   WebSocket, alert workflow, email and hot-tier CSV/PDF. Exercise archive
+   retrieval only in an acceptance environment where its feature flag, Azure
+   staging lifecycle and least-privilege identity have been approved.
 8. Confirm daily MongoDB backup health and periodically restore into an isolated database.
 
 ## 17. Improvement priorities without product expansion

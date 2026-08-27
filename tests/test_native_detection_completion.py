@@ -9,12 +9,15 @@ from pathlib import Path
 
 import pytest
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.routes.ingest_pulse import _consume_agent_ingest_envelope
 from app.routes.agent_orchestration import _sanitize_sensor_status
 from app.routes.pos import PosAuditEvent
+from app.utils.agent_crypto import verify_event_signature
 from app.utils.siem_catalog import SIEM_RULES
 from app.workers import email_daemon
 from app.workers.fbr_worker import (
@@ -645,6 +648,49 @@ def test_native_watermark_resets_when_windows_channel_is_cleared(monkeypatch, tm
     assert agent._watermark_after_channel_probe(0, 0) == 0
     assert agent._latest_record_id_from_log_bounds(58493, 40251) == 98743
     assert agent._latest_record_id_from_log_bounds(0, 0) == 0
+
+
+def test_agent_v2_signature_covers_native_channel_epoch_and_sequence(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    public_pem = private_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("ascii")
+    event = {
+        "event_id": "4688",
+        "event_uid": "Security:9001",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "agent_collection_time": datetime.now(timezone.utc).isoformat(),
+        "collection_protocol_version": agent.COLLECTION_PROTOCOL_VERSION,
+        "source_channel": "Security",
+        "source_channel_epoch": "epoch-security-001",
+        "source_sequence": 9001,
+        "source_ip": "192.0.2.10",
+        "user": "Operator",
+        "message": "process created",
+        "event_type": "process_create",
+        "processed_data": {},
+        "raw_event_data": {},
+        "agent_version": agent.AGENT_VERSION,
+    }
+    signed = agent._sign_event_for_delivery(event, private_key)
+
+    verified = verify_event_signature(
+        signed,
+        agent_id=agent.AGENT_ID,
+        public_key_pem=public_pem,
+    )
+    assert verified["signature_version"] == "ed25519-v2"
+    assert verified["signature_verified"] is True
+
+    signed["source_channel_epoch"] = "tampered-epoch"
+    with pytest.raises(Exception, match="hash mismatch"):
+        verify_event_signature(
+            signed,
+            agent_id=agent.AGENT_ID,
+            public_key_pem=public_pem,
+        )
 
 
 def test_native_spool_hard_limit_blocks_without_deleting_unacknowledged_data(monkeypatch, tmp_path):

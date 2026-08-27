@@ -35,6 +35,7 @@ _RUNTIME_CONFIG = _load_runtime_config()
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List
+from app.utils.siem_privacy import decrypt_siem_value
 
 router = APIRouter()
 
@@ -50,6 +51,8 @@ _SENSITIVE_COMPLIANCE_FIELDS = (
     "raw_event_data",
     "raw_data",
     "processed_data",
+    "raw_message",
+    "command_line_ciphertext",
 )
 
 
@@ -112,16 +115,7 @@ def _safe_path_segment(value: str) -> str:
 
 
 def _decrypt_export_field(value: Any) -> Any:
-    if not value or not isinstance(value, str) or not _fernet:
-        return value
-    try:
-        plaintext = _fernet.decrypt(value.encode()).decode()
-    except Exception:
-        return value
-    try:
-        return json.loads(plaintext)
-    except Exception:
-        return plaintext
+    return decrypt_siem_value(value, _fernet)
 
 
 def _prepare_csv_export_doc(doc: dict, *, decrypt_sensitive: bool) -> dict:
@@ -130,6 +124,8 @@ def _prepare_csv_export_doc(doc: dict, *, decrypt_sensitive: bool) -> dict:
         for field in _SENSITIVE_COMPLIANCE_FIELDS:
             if field in prepared:
                 prepared[field] = _decrypt_export_field(prepared.get(field))
+        if "command_line_ciphertext" in prepared:
+            prepared["command_line"] = prepared.pop("command_line_ciphertext")
     return prepared
 
 def _parse_time(time_str: str) -> Optional[datetime]:
@@ -280,7 +276,10 @@ async def export_csv(
     if data_type == "alerts":
         export_docs = aggregate_security_alerts(export_docs)
     export_docs = [
-        _prepare_csv_export_doc(doc, decrypt_sensitive=data_type == "compliance")
+        _prepare_csv_export_doc(
+            doc,
+            decrypt_sensitive=data_type in {"compliance", "logs"},
+        )
         for doc in export_docs
     ]
 

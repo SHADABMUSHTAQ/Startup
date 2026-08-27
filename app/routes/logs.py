@@ -15,6 +15,7 @@ from app.utils.archive_reader import fetch_archived_documents
 from app.utils.alert_incidents import aggregate_security_alerts
 from app.utils.alert_context import operator_alert_document
 from app.utils.telemetry_groups import aggregate_endpoint_events
+from app.utils.siem_privacy import decrypt_siem_value
 
 # 📊 MASTER BUILD: Logs Gateway
 # Strictly Decoupled, Paginated, and Tenant-Isolated
@@ -56,6 +57,7 @@ _LIST_PROJECTION = {
     "raw_event": 0,
     "raw_data": 0,
     "processed_data": 0,
+    "command_line_ciphertext": 0,
     RAW_RETENTION_ANCHOR_FIELD: 0,
     "_expire_at": 0,
 }
@@ -89,16 +91,7 @@ def _allowed_evidence_collections(current_user: dict) -> list[str]:
 
 
 def _decrypt_evidence_field(value):
-    if not value or not isinstance(value, str) or _fernet is None:
-        return value
-    try:
-        plaintext = _fernet.decrypt(value.encode()).decode()
-        try:
-            return json.loads(plaintext)
-        except Exception:
-            return plaintext
-    except Exception:
-        return value
+    return decrypt_siem_value(value, _fernet)
 
 @router.get("")
 @audit_log("View Logs")
@@ -407,8 +400,10 @@ async def get_forensic_evidence(
     return {
         "status": "success",
         "raw_event_data": _decrypt_evidence_field(raw_event_data),
+        "raw_message": _decrypt_evidence_field(doc.get("raw_message")),
         "raw_data": _decrypt_evidence_field(doc.get("raw_data")),
         "processed_data": _decrypt_evidence_field(doc.get("processed_data")),
+        "command_line": _decrypt_evidence_field(doc.get("command_line_ciphertext")),
     }
 
 @router.post("/inject")

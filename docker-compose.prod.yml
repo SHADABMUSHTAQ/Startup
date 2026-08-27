@@ -276,8 +276,6 @@ services:
       AZURE_STORAGE_CONNECTION_STRING: ${AZURE_STORAGE_CONNECTION_STRING:?AZURE_STORAGE_CONNECTION_STRING required}
       AZURE_STORAGE_CONTAINER: ${AZURE_STORAGE_CONTAINER:-warsoc-cold-storage}
       AZURE_STORAGE_CONTAINER_SIEM: ${AZURE_STORAGE_CONTAINER_SIEM:-}
-      AZURE_STORAGE_CONTAINER_PECA: ${AZURE_STORAGE_CONTAINER_PECA:-}
-      AZURE_STORAGE_CONTAINER_FBR: ${AZURE_STORAGE_CONTAINER_FBR:-}
       AZURE_STORAGE_CONTAINER_GENERAL: ${AZURE_STORAGE_CONTAINER_GENERAL:-}
       AZURE_IMMUTABILITY_REQUIRED: ${AZURE_IMMUTABILITY_REQUIRED:-true}
       AZURE_IMMUTABILITY_SCOPE: ${AZURE_IMMUTABILITY_SCOPE:-blob}
@@ -285,10 +283,6 @@ services:
       AZURE_CONTAINER_IMMUTABILITY_DAYS: ${AZURE_CONTAINER_IMMUTABILITY_DAYS:-0}
       AZURE_CONTAINER_IMMUTABILITY_LOCKED_SIEM: ${AZURE_CONTAINER_IMMUTABILITY_LOCKED_SIEM:-}
       AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM: ${AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM:-}
-      AZURE_CONTAINER_IMMUTABILITY_LOCKED_PECA: ${AZURE_CONTAINER_IMMUTABILITY_LOCKED_PECA:-}
-      AZURE_CONTAINER_IMMUTABILITY_DAYS_PECA: ${AZURE_CONTAINER_IMMUTABILITY_DAYS_PECA:-}
-      AZURE_CONTAINER_IMMUTABILITY_LOCKED_FBR: ${AZURE_CONTAINER_IMMUTABILITY_LOCKED_FBR:-}
-      AZURE_CONTAINER_IMMUTABILITY_DAYS_FBR: ${AZURE_CONTAINER_IMMUTABILITY_DAYS_FBR:-}
       AZURE_CONTAINER_IMMUTABILITY_LOCKED_GENERAL: ${AZURE_CONTAINER_IMMUTABILITY_LOCKED_GENERAL:-}
       AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL: ${AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL:-}
       ARCHIVE_BATCH_SIZE: ${ARCHIVE_BATCH_SIZE:-5000}
@@ -310,6 +304,35 @@ services:
           cpus: '0.75'
           memory: 768M
           pids: 256
+
+  evidence-export-worker:
+    <<: *warsoc-process-security
+    build: .
+    container_name: warsoc-evidence-export-worker-prod
+    profiles: ["evidence-export"]
+    command: python -m app.workers.evidence_export_worker
+    restart: on-failure
+    logging: *warsoc-logging
+    env_file:
+      - ${WARSOC_ENV_FILE:-.env.prod}
+    environment:
+      APP_ENV: production
+      MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:?MONGODB_DB_NAME required}
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=0700
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - warsoc-internal
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+          pids: 128
 
   archive-retrieval-worker:
     <<: *warsoc-process-security

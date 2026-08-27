@@ -5,10 +5,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from pymongo.errors import DuplicateKeyError
 
 from app.database import get_db
 from app.routes.auth import get_current_user
 from app.utils.limiter import limiter
+from app.utils.security_policy import USER_IDENTITY_COLLATION
 from app.utils.totp import (
     TOTP_DIGITS,
     TOTP_INTERVAL_SECONDS,
@@ -96,7 +98,8 @@ async def update_profile(
             {
                 "email": normalized_email,
                 "_id": {"$ne": current_user["_id"]},
-            }
+            },
+            collation=USER_IDENTITY_COLLATION,
         )
         if existing:
             raise HTTPException(status_code=400, detail="Email address already in use")
@@ -109,7 +112,10 @@ async def update_profile(
         updates["product_updates"] = bool(payload.product_updates)
 
     if updates:
-        await db["users"].update_one({"_id": current_user["_id"]}, {"$set": updates})
+        try:
+            await db["users"].update_one({"_id": current_user["_id"]}, {"$set": updates})
+        except DuplicateKeyError as exc:
+            raise HTTPException(status_code=400, detail="Email address already in use") from exc
 
     fresh_user = await db["users"].find_one({"_id": current_user["_id"]})
     if not fresh_user:

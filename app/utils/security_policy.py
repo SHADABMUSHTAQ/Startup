@@ -18,6 +18,11 @@ def _configured_agent_ceiling() -> int:
 PLATFORM_MAX_AGENTS = _configured_agent_ceiling()
 PASSWORD_MIN_LENGTH = max(16, int(os.getenv("PASSWORD_MIN_LENGTH", "16")))
 PASSWORD_MAX_BYTES = 72
+USER_IDENTITY_COLLATION = {"locale": "en", "strength": 2}
+
+
+def normalize_user_identity(value: Any) -> str:
+    return str(value or "").strip().lower()
 
 
 def effective_agent_limit(value: Any, default: int = 10) -> int:

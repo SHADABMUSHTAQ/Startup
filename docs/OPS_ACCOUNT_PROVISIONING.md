@@ -72,12 +72,12 @@ The GUI asks for:
 - optional daily quota
 - customer admin email/name/password
 
-Retention days is the custom tenant default/archive setting. Compliance vault retention is policy-driven:
+Retention days is the tenant's normal WarSOC evidence entitlement:
 
-- FBR POS evidence: 2190 days
-- PECA forensic evidence: 365 days
+- FBR POS/invoice-integrity evidence: tenant retention entitlement
+- PECA evidence-pack records: tenant retention entitlement
 
-Mongo hot storage for SIEM, FBR, and PECA is seven days. Production currently uses one Azure evidence container locked for 2190 days, so PECA and shorter 3/6/9/12-month general contracts are physically over-retained in Azure. Do not promise exact physical deletion at the shorter date until retention-class container routing is implemented.
+Mongo hot storage for SIEM, FBR, and PECA is seven days. New FBR and PECA evidence route through the matching general tenant-retention class. Existing blobs already written to a locked Azure container keep their original immutable obligation and must not be moved, shortened, or deleted early.
 
 The tool does not store the super-admin key or customer password on disk.
 

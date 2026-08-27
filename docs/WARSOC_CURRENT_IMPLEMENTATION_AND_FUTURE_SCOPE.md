@@ -204,7 +204,7 @@ POS schemas or safely read arbitrary production databases.
 |---|---|---|---|
 | Mongo hot tier | `ACTIVE` | SIEM/raw/PECA/FBR operational window is seven days with tenant/time indexes and bounded reads. | Exact-host query/working-set soak. |
 | Azure archiver | `ACTIVE` behavior, deployment parity open | Upload, SHA-256 verify, immutability verify, ledger commit, then exact-ID Mongo deletion. Failure preserves Mongo data. | Re-prove against final Azure account and release. |
-| Physical retention split | `SOURCE-PROVEN`; cloud pending | Code supports 90/180/270/360-day general/SIEM classes, 365-day PECA, and 2,190-day FBR. Existing six-year fallback over-retains shorter classes safely. | Create/test/lock every private container before setting duration-specific env values. |
+| Physical retention split | `SOURCE-PROVEN`; cloud pending | Code supports duration-aware general/SIEM classes. New FBR and PECA evidence inherit tenant retention and use the matching general class; historical locked evidence is unchanged. | Create/test/lock every private duration container before setting duration-specific env values. |
 | Historical retrieval | `IMPLEMENTED-DISABLED` | Async ledger/worker design avoids proxying GiB archives through the API. Browser UI and Azure staging/RBAC acceptance are incomplete. | Staging lifecycle, user-delegation SAS, rehydration, limits, and UI acceptance. |
 | Backup/restore | `SOURCE-PROVEN` drill | Mongo backup is separate from evidence archive. Final replacement-host recovery remains unproved. | Final-host encrypted backup and blank-host RPO/RTO drill. |
 
@@ -387,8 +387,7 @@ Mongo indexes, queue lag, archive throughput, and query latency must be measured
 
 Before commercial retention promises are expanded:
 
-1. create private immutable containers for 90, 180, 270, 360, PECA 365, and FBR
-   2,190-day classes;
+1. create private immutable containers for the approved tenant/general durations (currently 90, 180, 270 and 360 days);
 2. test each unlocked policy with harmless data, then lock it;
 3. configure duration-specific environment variables only after every target
    exists and is locked;

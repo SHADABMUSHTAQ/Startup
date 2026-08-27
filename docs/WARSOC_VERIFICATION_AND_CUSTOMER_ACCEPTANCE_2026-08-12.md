@@ -135,11 +135,11 @@ different contexts or deleting event-granular evidence.
 - MongoDB is the seven-day operational hot tier for SIEM, PECA and FBR evidence.
 - Azure is the immutable evidence archive; archive-before-delete remains
   fail-closed on upload, hash, ledger or immutability verification failure.
-- The existing locked six-year fallback safely prevents early deletion but
-  over-retains shorter contracts.
-- Exact 90/180/270/360-day, PECA 365-day and FBR 2,190-day physical retention
-  requires separate locked Azure containers before duration-specific routing is
-  enabled.
+- Existing locked historical evidence remains governed by its original Azure
+  immutability policy and is not rewritten or shortened.
+- New FBR and PECA evidence use the tenant's normal general retention route.
+  Exact tenant-duration physical retention requires the matching locked Azure
+  containers before duration-specific routing is enabled.
 - Historical archive retrieval remains disabled until staging, lifecycle,
   user-delegation SAS, allowance and asynchronous UI acceptance are proven.
 - Normal customer APIs must not proxy or materialize archive bytes in the API

@@ -25,6 +25,7 @@ async def provision_and_login_admin(
     *,
     api_prefix: str = "/api/v1",
     max_agents: int = 10,
+    retention_days: int = 365,
 ) -> dict:
     unique = uuid.uuid4().hex[:8]
     username = f"{prefix}_{unique}"
@@ -43,7 +44,7 @@ async def provision_and_login_admin(
             "admin_email": email,
             "admin_name": f"{prefix} Administrator",
             "admin_password": password,
-            "retention_days": 365,
+            "retention_days": retention_days,
         },
     )
     assert provision.status_code == 200, provision.text

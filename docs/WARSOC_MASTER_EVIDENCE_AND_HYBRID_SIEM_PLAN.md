@@ -223,8 +223,8 @@ Original payloads are immutable. Normalization, MITRE/CWE mapping, severity, cor
 ### Phase 8: Retention, Archival, and Disaster Recovery
 
 - Maintain short hot windows for operational search; target seven days for SIEM, PECA, and FBR hot collections unless a reviewed requirement changes it.
-- Physically separate retention domains instead of applying one six-year Azure policy to every record type.
-- Target FBR cold evidence according to the approved six-year product policy.
+- Physically separate retention domains rather than applying one long Azure policy to every record type.
+- Archive new FBR monitoring evidence through the tenant's normal WarSOC retention entitlement and matching general route; do not position WarSOC as the customer's statutory tax-record repository.
 - Apply PECA Section 32's minimum one-year traffic-data retention only where legal review determines that the customer role and approved policy require it; WarSOC must not infer statutory service-provider status from telemetry.
 - Keep general SIEM retention contract-driven and capacity-bounded.
 - Archive only after upload, hash, immutability, ledger, and retrieval verification. On any failure, retain the Mongo copy.

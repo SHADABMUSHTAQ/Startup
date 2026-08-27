@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 from collections import Counter
 import concurrent.futures
+import json
 import os
 import sys
 import time
@@ -18,12 +20,40 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from launch_readiness_validator import ApiClient
 
 
-def public_key_pem() -> str:
+def agent_keypair() -> tuple[ed25519.Ed25519PrivateKey, str]:
     key = ed25519.Ed25519PrivateKey.generate()
-    return key.public_key().public_bytes(
+    public_key = key.public_key().public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     ).decode("utf-8")
+    return key, public_key
+
+
+def deregister_agents(
+    admin: ApiClient,
+    agents: list[tuple[str, str, ed25519.Ed25519PrivateKey]],
+) -> None:
+    failures = 0
+    for agent_id, _, private_key in agents:
+        payload = {
+            "agent_id": agent_id,
+            "current_version": "native-50-agent-soak",
+            "timestamp": time.time(),
+            "protocol_version": "heartbeat-v1",
+        }
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        response = admin.request(
+            "POST",
+            "/api/v1/agent/deregister",
+            body_bytes=body,
+            headers={"X-WarSOC-Signature": private_key.sign(body).hex()},
+        )
+        if response.status != 200:
+            failures += 1
+    print(
+        f"[{'PASS' if failures == 0 else 'FAIL'}] Temporary agent cleanup: "
+        f"{len(agents) - failures}/{len(agents)}"
+    )
 
 
 def ingest_agent(base_url: str, agent_jwt: str, events: list[dict]) -> tuple[int, object]:
@@ -82,22 +112,26 @@ def main() -> int:
         return 1
     print(f"[PASS] Provisioned tenant {tenant_id} with 50 seats")
 
-    agents: list[tuple[str, str]] = []
+    agents: list[tuple[str, str, ed25519.Ed25519PrivateKey]] = []
+    atexit.register(deregister_agents, admin, agents)
     for index in range(50):
         activation = admin.request("POST", "/api/v1/agent/generate-activation", {})
         code = activation.body.get("activation_code") if isinstance(activation.body, dict) else None
         if activation.status != 200 or not code:
             failures.append(f"activation {index}: HTTP {activation.status}")
             break
+        private_key, public_key = agent_keypair()
         registration = admin.request(
             "POST",
             "/api/v1/agent/register",
-            {"activation_code": code, "public_key": public_key_pem()},
+            {"activation_code": code, "public_key": public_key},
         )
         if registration.status != 200:
             failures.append(f"registration {index}: HTTP {registration.status}")
             break
-        agents.append((registration.body["agent_id"], registration.body["agent_jwt"]))
+        agents.append(
+            (registration.body["agent_id"], registration.body["agent_jwt"], private_key)
+        )
 
     print(f"[{'PASS' if len(agents) == 50 else 'FAIL'}] Registered agents: {len(agents)}/50")
     if len(agents) != 50:
@@ -107,12 +141,13 @@ def main() -> int:
     if extra_activation.status in {403, 409}:
         quota_status = extra_activation.status
     else:
+        _, extra_public_key = agent_keypair()
         extra_registration = admin.request(
             "POST",
             "/api/v1/agent/register",
             {
                 "activation_code": extra_activation.body.get("activation_code", ""),
-                "public_key": public_key_pem(),
+                "public_key": extra_public_key,
             },
         )
         quota_status = extra_registration.status
@@ -124,7 +159,7 @@ def main() -> int:
     expected_4688_uids = set()
     jobs = []
     emitted_at = datetime.now(timezone.utc).isoformat()
-    for index, (_, agent_jwt) in enumerate(agents):
+    for index, (_, agent_jwt, _) in enumerate(agents):
         process_uid = f"{run_id}-agent-{index:02d}-4688"
         expected_4688_uids.add(process_uid)
         events = [

@@ -80,6 +80,32 @@ async def _backfill_expire_at(collection, retention_days: int):
         ],
     )
 
+
+async def _legacy_backfill_fbr_tax_retention_state(collection):
+    """Retained for offline legacy analysis; never run during initialization."""
+
+    await collection.update_many(
+        {"retention_state": {"$exists": False}},
+        {
+            "$set": {
+                "retention_state": "UNRESOLVED",
+                "retention_basis": "TAX_PERIOD_PENDING",
+                "tax_period_id": None,
+                "tax_period_start": None,
+                "tax_period_end": None,
+                "base_retention_until": None,
+                "effective_retention_until": None,
+                "automatic_archive_expiry_allowed": False,
+                "retention_calculation_version": "fbr-tax-period-v1",
+            },
+            "$unset": {"_expire_at": ""},
+        },
+    )
+    await collection.update_many(
+        {"retention_state": "UNRESOLVED", "_expire_at": {"$exists": True}},
+        {"$unset": {"_expire_at": ""}},
+    )
+
 async def _aggressive_create_index(collection, keys, **kwargs):
     try:
         await collection.create_index(keys, **kwargs)
@@ -121,8 +147,9 @@ async def _aggressive_create_index(collection, keys, **kwargs):
                 try:
                     await collection.drop_index(kwargs["name"])
                     logger.warning(f"Dropped conflicting index by name: {kwargs['name']}")
-                except Exception:
-                    pass
+                except OperationFailure as err:
+                    if err.code != 27 and "IndexNotFound" not in str(err):
+                        raise
             await collection.create_index(keys, **kwargs)
             logger.info(f"Successfully recreated index for {keys}")
         else:
@@ -131,11 +158,33 @@ async def _aggressive_create_index(collection, keys, **kwargs):
 async def init_compliance_db(db):
     try:
         logger.info("Initializing PTA/ETO 2002 Sections 5 & 6 Compliance Layer...")
+
+        # Browser login has no tenant selector, so email and username must be
+        # globally unambiguous. The case-insensitive collation also closes
+        # races between app-level duplicate checks.
+        identity_collation = {"locale": "en", "strength": 2}
+        await _aggressive_create_index(
+            db.users,
+            [("email", 1)],
+            name="uq_users_email_ci",
+            unique=True,
+            partialFilterExpression={"email": {"$type": "string"}},
+            collation=identity_collation,
+        )
+        await _aggressive_create_index(
+            db.users,
+            [("username", 1)],
+            name="uq_users_username_ci",
+            unique=True,
+            partialFilterExpression={"username": {"$type": "string"}},
+            collation=identity_collation,
+        )
         
         # Archive-managed collections keep retention metadata, but only the
         # verified Azure archiver may delete their hot records.
         await _drop_ttl_indexes(db.peca_forensic_logs, "peca_forensic_logs")
-        await _backfill_expire_at(db.peca_forensic_logs, retention_days=365)
+        # Do not backfill or rewrite historical PECA retention. New records
+        # receive an explicit tenant-entitlement marker during ingestion.
         # Drop legacy unique index if present; PECA must allow repeated event IDs across tenants/time.
         peca_indexes = await db.peca_forensic_logs.index_information()
         legacy_event_idx = peca_indexes.get("event_id_1")
@@ -154,12 +203,17 @@ async def init_compliance_db(db):
             [("tenant_id", 1), ("timestamp", -1), ("ingested_at", -1), ("_id", -1)],
             name="idx_peca_operator_page",
         )
+        await _aggressive_create_index(
+            db.peca_forensic_logs,
+            [("tenant_id", 1), ("retention_model", 1), ("timestamp", 1)],
+            name="idx_peca_tenant_retention_archive",
+        )
         #  LEGAL PHYSICS: Hard engine-level block on cross-tenant overwrites
         await _aggressive_create_index(db.peca_forensic_logs, [("tenant_id", 1), ("event_uid", 1)], unique=True, name="idx_peca_tenant_event_uid")
 
-        # 2. FBR POS Compliance: 6 Year vault-retention metadata.
+        # 2. FBR POS evidence: seven-day hot window, then tenant retention.
+        # Historical tax-period records are not rewritten by initialization.
         await _drop_ttl_indexes(db.fbr_pos_logs, "fbr_pos_logs")
-        await _backfill_expire_at(db.fbr_pos_logs, retention_days=365 * 6)
         await _aggressive_create_index(
             db.fbr_pos_logs,
             [("tenant_id", 1), ("timestamp", -1)],
@@ -171,6 +225,11 @@ async def init_compliance_db(db):
             name="idx_fbr_operator_page",
         )
         await _aggressive_create_index(db.fbr_pos_logs, [("fbr_invoice_id", 1)])
+        await _aggressive_create_index(
+            db.fbr_pos_logs,
+            [("tenant_id", 1), ("retention_model", 1), ("timestamp", 1)],
+            name="idx_fbr_tenant_retention_archive",
+        )
         #  LEGAL PHYSICS: Hard engine-level block on cross-tenant overwrites
         await _aggressive_create_index(db.fbr_pos_logs, [("tenant_id", 1), ("event_uid", 1)], unique=True, name="idx_fbr_tenant_event_uid")
 
@@ -573,6 +632,198 @@ async def init_compliance_db(db):
             unique=True,
             name="uq_archive_storage_daily",
         )
+
+        # Authenticated source bytes are committed before Redis fan-out. Domain
+        # collections remain separate even where the commercial retention model
+        # is shared.
+        for source_collection_name in (
+            "source_envelopes_siem",
+            "source_envelopes_peca",
+            "source_envelopes_fbr",
+        ):
+            source_collection = db[source_collection_name]
+            await _drop_ttl_indexes(source_collection, source_collection_name)
+            await _aggressive_create_index(
+                source_collection,
+                [
+                    ("tenant_id", 1),
+                    ("source_principal_type", 1),
+                    ("source_principal_id", 1),
+                    ("source_channel", 1),
+                    ("source_envelope_uid", 1),
+                ],
+                unique=True,
+                name="uq_source_envelope_identity",
+            )
+            await _aggressive_create_index(
+                source_collection,
+                [("tenant_id", 1), ("dispatch_complete", 1), ("timestamp", 1)],
+                name="idx_source_envelope_archive",
+            )
+            if source_collection_name == "source_envelopes_fbr":
+                await _aggressive_create_index(
+                    source_collection,
+                    [
+                        ("tenant_id", 1),
+                        ("retention_model", 1),
+                        ("dispatch_complete", 1),
+                        ("timestamp", 1),
+                    ],
+                    name="idx_fbr_source_tenant_retention_archive",
+                )
+            elif source_collection_name == "source_envelopes_peca":
+                await _aggressive_create_index(
+                    source_collection,
+                    [
+                        ("tenant_id", 1),
+                        ("retention_model", 1),
+                        ("dispatch_complete", 1),
+                        ("timestamp", 1),
+                    ],
+                    name="idx_peca_source_tenant_retention_archive",
+                )
+
+        await _aggressive_create_index(
+            db.source_evidence_outbox,
+            [("outbox_uid", 1)],
+            unique=True,
+            name="uq_source_outbox_uid",
+        )
+        await _aggressive_create_index(
+            db.source_evidence_outbox,
+            [("ready", 1), ("status", 1), ("next_attempt_at", 1), ("created_at", 1)],
+            name="idx_source_outbox_dispatch",
+        )
+        await _aggressive_create_index(
+            db.source_evidence_outbox,
+            [("delete_after", 1)],
+            expireAfterSeconds=0,
+            name="ttl_source_outbox_published",
+        )
+        await _drop_ttl_indexes(
+            db.agent_coverage_observations,
+            "agent_coverage_observations",
+        )
+        await _aggressive_create_index(
+            db.agent_coverage_observations,
+            [("tenant_id", 1), ("agent_id", 1), ("server_received_time", -1)],
+            name="idx_agent_coverage_tenant_agent_time",
+        )
+        await _aggressive_create_index(
+            db.agent_coverage_observations,
+            [("tenant_id", 1), ("agent_id", 1), ("protocol_version", 1), ("nonce", 1)],
+            unique=True,
+            partialFilterExpression={"nonce": {"$type": "string"}},
+            name="uq_agent_coverage_v2_nonce",
+        )
+        await _aggressive_create_index(
+            db.legal_holds,
+            [("hold_id", 1)],
+            unique=True,
+            name="uq_legal_hold_id",
+        )
+        await _aggressive_create_index(
+            db.legal_holds,
+            [("tenant_id", 1), ("status", 1), ("scope_type", 1), ("created_at", -1)],
+            name="idx_legal_holds_tenant_status_scope",
+        )
+        await _aggressive_create_index(
+            db.legal_holds,
+            [("tenant_id", 1), ("collection", 1), ("event_uid", 1), ("status", 1)],
+            name="idx_legal_holds_event_scope",
+        )
+        await _aggressive_create_index(
+            db.evidence_hold_audit,
+            [("operation_id", 1)],
+            unique=True,
+            name="uq_evidence_hold_operation",
+        )
+        await _aggressive_create_index(
+            db.evidence_hold_audit,
+            [("tenant_id", 1), ("hold_id", 1), ("created_at", 1)],
+            name="idx_evidence_hold_audit_lifecycle",
+        )
+        await _aggressive_create_index(
+            db.evidence_retention_fences,
+            [("lock_id", 1)],
+            unique=True,
+            name="uq_evidence_retention_fence",
+        )
+        await _aggressive_create_index(
+            db.evidence_retention_fences,
+            [("expires_at", 1)],
+            expireAfterSeconds=0,
+            name="ttl_evidence_retention_fence",
+        )
+        await _aggressive_create_index(
+            db.evidence_cases,
+            [("case_id", 1)],
+            unique=True,
+            name="uq_evidence_case_id",
+        )
+        await _aggressive_create_index(
+            db.evidence_cases,
+            [("tenant_id", 1), ("status", 1), ("created_at", -1)],
+            name="idx_evidence_cases_tenant_status",
+        )
+        await _aggressive_create_index(
+            db.evidence_case_items,
+            [("case_item_id", 1)],
+            unique=True,
+            name="uq_evidence_case_item_id",
+        )
+        await _aggressive_create_index(
+            db.evidence_case_items,
+            [("tenant_id", 1), ("case_id", 1), ("collection", 1), ("document_id", 1)],
+            unique=True,
+            partialFilterExpression={"state": {"$in": ["PENDING", "COMMITTED"]}},
+            name="uq_evidence_case_source_reference",
+        )
+        await _aggressive_create_index(
+            db.evidence_custody_events,
+            [("custody_event_id", 1)],
+            unique=True,
+            name="uq_evidence_custody_event_id",
+        )
+        await _aggressive_create_index(
+            db.evidence_custody_events,
+            [("tenant_id", 1), ("case_id", 1), ("sequence", 1)],
+            unique=True,
+            partialFilterExpression={"state": "COMMITTED"},
+            name="uq_evidence_custody_sequence",
+        )
+        await _aggressive_create_index(
+            db.daily_forensic_ledgers,
+            [("tenant_id", 1), ("date", 1)],
+            unique=True,
+            name="uq_daily_forensic_ledger_tenant_date",
+        )
+        await _aggressive_create_index(
+            db.daily_forensic_ledgers,
+            [("anchor_status", 1), ("date", 1)],
+            name="idx_daily_forensic_anchor_retry",
+        )
+        await _aggressive_create_index(
+            db.evidence_exports,
+            [("export_id", 1)],
+            unique=True,
+            name="uq_evidence_export_id",
+        )
+        await _aggressive_create_index(
+            db.evidence_exports,
+            [("tenant_id", 1), ("case_id", 1), ("created_at", -1)],
+            name="idx_evidence_exports_tenant_case",
+        )
+        await _aggressive_create_index(
+            db.evidence_exports,
+            [("status", 1), ("created_at", 1)],
+            name="idx_evidence_exports_worker_queue",
+        )
+        await _aggressive_create_index(
+            db.fbr_reconciliation_results,
+            [("tenant_id", 1), ("invoice_id", 1), ("evaluated_at", -1)],
+            name="idx_fbr_reconciliation_tenant_invoice",
+        )
         await _aggressive_create_index(
             db.user_activation_tokens,
             [("token_hash", 1)],
@@ -664,5 +915,6 @@ async def init_compliance_db(db):
 
         logger.info(" 7-Tier Database Layer Hardened: Capacity TTL active and audit-veto enforced.")
         
-    except Exception as e:
-        logger.error(f"Critical failure in compliance DB initialization: {e}")
+    except Exception:
+        logger.exception("Critical failure in compliance DB initialization")
+        raise
