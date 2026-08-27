@@ -6,7 +6,9 @@ x-warsoc-bridge-security: &warsoc-bridge-security
 
 services:
   warsoc-wazuh-bridge-init:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.wazuh-bridge
     image: warsoc-wazuh-bridge:${WAZUH_BRIDGE_IMAGE_TAG:-local}
     entrypoint: []
     command:
@@ -29,7 +31,9 @@ services:
 
   warsoc-wazuh-bridge:
     <<: *warsoc-bridge-security
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.wazuh-bridge
     image: warsoc-wazuh-bridge:${WAZUH_BRIDGE_IMAGE_TAG:-local}
     container_name: warsoc-wazuh-bridge
     entrypoint: []

@@ -117,6 +117,7 @@ def test_production_requires_signed_endpoint_events_by_default():
 def test_wazuh_bridge_initializes_spool_for_non_root_runtime():
     compose = _read("docker-compose.wazuh-bridge.yml")
     assert "warsoc-wazuh-bridge-init:" in compose
+    assert compose.count("dockerfile: Dockerfile.wazuh-bridge") == 2
     assert "install -d -o 1000 -g 1000 -m 0700 /var/lib/warsoc-wazuh" in compose
     assert 'user: "0:0"' in compose
     assert "- CHOWN" in compose

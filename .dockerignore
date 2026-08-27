@@ -32,6 +32,7 @@ temp_agent_enroll.json
 *.txt
 !requirements.txt
 !requirements-dev.txt
+!requirements-wazuh-bridge.txt
 *.bak
 test_*_output.txt
 omni_audit_*.txt
