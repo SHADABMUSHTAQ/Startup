@@ -166,6 +166,13 @@ def _candidate_from_alert(
     wazuh_agent_id = str(agent_info.get("id") or "").strip() or None
     wazuh_agent_name = str(agent_info.get("name") or "").strip() or None
 
+    # Projected records are emitted by the manager itself (agent 000). Their
+    # authoritative lineage is the signed WarSOC dispatch, not a native agent
+    # binding. Keep native agent identity only for alerts without dispatch lineage.
+    if dispatch_uid:
+        wazuh_agent_id = None
+        wazuh_agent_name = None
+
     if not dispatch_uid and not wazuh_agent_id:
         raise ValueError("approved Wazuh alert is missing both WarSOC dispatch lineage and Wazuh agent identity")
 

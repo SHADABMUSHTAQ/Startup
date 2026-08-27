@@ -62,6 +62,8 @@ services:
       WAZUH_RULE_REGISTRY_PATH: /etc/warsoc-wazuh/rule-registry.json
       WAZUH_BRIDGE_MANAGER_HOST: wazuh.manager
       WAZUH_BRIDGE_MANAGER_PORT: "15140"
+    group_add:
+      - "${WAZUH_ALERTS_GROUP_ID:-999}"
     ports:
       - "${WAZUH_BRIDGE_BIND_IP:-127.0.0.1}:${WAZUH_BRIDGE_PORT:-9443}:8020"
     volumes:

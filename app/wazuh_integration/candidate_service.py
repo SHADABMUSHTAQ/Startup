@@ -145,7 +145,7 @@ async def admit_candidate(
     lineage_complete = False
     canonical_event = None
 
-    if candidate.wazuh_agent_id:
+    if candidate.wazuh_agent_id and not candidate.trigger_dispatch_uid:
         # Resolve tenant and endpoint strictly from authoritative server-side binding (Requirement 3A)
         binding = await db.detection_engine_agent_bindings.find_one(
             {

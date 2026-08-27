@@ -100,6 +100,7 @@ def test_alert_tailer_spools_approved_candidate_before_checkpoint(tmp_path):
         assert len(rows) == 1
         candidate = DetectionCandidate.model_validate_json(rows[0]["payload"])
         assert candidate.trigger_dispatch_uid == DISPATCH_UID
+        assert candidate.wazuh_agent_id is None
         checkpoint = spool.checkpoint("wazuh-alerts-json-v1")
         assert checkpoint["byte_offset"] == alerts.stat().st_size
     finally:

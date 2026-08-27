@@ -183,6 +183,22 @@ async def test_candidate_tenant_and_semantics_come_from_warsoc_state():
 
 
 @pytest.mark.asyncio
+async def test_projected_candidate_uses_dispatch_lineage_over_manager_agent_identity():
+    db = _approved_db()
+    outcome = await admit_candidate(
+        db,
+        _candidate(wazuh_agent_id="000", wazuh_agent_name="wazuh.manager"),
+        _settings(),
+        received_at=datetime.now(timezone.utc),
+    )
+
+    assert outcome.outcome == "accepted"
+    observation = db.detection_engine_observations.insert_one.await_args.args[0]
+    assert observation["tenant_id"] == "WARSOC_TRUSTED_TENANT"
+    assert observation["dispatch_uid"] == DISPATCH_UID
+
+
+@pytest.mark.asyncio
 async def test_candidate_semantic_mismatch_is_quarantined_not_projected():
     db = _approved_db()
     outcome = await admit_candidate(

@@ -125,6 +125,7 @@ def test_wazuh_bridge_initializes_spool_for_non_root_runtime():
     assert "- FOWNER" in compose
     assert "condition: service_completed_successfully" in compose
     assert "warsoc_wazuh_bridge_spool:/var/lib/warsoc-wazuh" in compose
+    assert '"${WAZUH_ALERTS_GROUP_ID:-999}"' in compose
 
 
 def test_database_backup_is_encrypted_offsite_and_fail_closed():
