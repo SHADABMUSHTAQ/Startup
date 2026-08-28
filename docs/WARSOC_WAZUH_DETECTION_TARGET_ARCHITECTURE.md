@@ -1,6 +1,6 @@
 # WarSOC Wazuh Detection Target Architecture
 
-**Document status:** Final reviewed target and integration contract; foundation implemented behind disabled gates, not deployed and not a production claim
+**Document status:** Final reviewed target and integration contract; controlled four-family shadow deployment active as of 2026-08-28, primary promotion disabled
 
 **Decision date:** 2026-08-10
 

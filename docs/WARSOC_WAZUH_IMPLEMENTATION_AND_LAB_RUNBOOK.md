@@ -1,8 +1,8 @@
 # WarSOC Wazuh Implementation and Two-Laptop Lab Runbook
 
-**Status:** Two-host shadow transport accepted; production disabled; rule-quality and release gates pending
+**Status:** Controlled two-host shadow active as of 2026-08-28; primary promotion, broad rule coverage, HA and firewall projection remain disabled
 
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-28
 
 ## 1. Non-Negotiable Boundary
 

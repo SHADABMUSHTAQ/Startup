@@ -1,6 +1,7 @@
 # WarSOC Wazuh Execution Mind Map
 
-**Status:** Authoritative execution index for the current Wazuh integration
+**Status:** Authoritative execution index; controlled shadow active, primary disabled
+**Runtime snapshot:** 2026-08-28, backend `3a35e3f`
 
 **Architecture authority:**
 `docs/WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md`
@@ -118,7 +119,7 @@ flowchart LR
 | 1 | Contracts, threat model, queues and ownership | Code and contract complete | Versioned contracts, encrypted bounded outbox/spools, strict field registry, signed health channel and disabled-by-default settings exist |
 | 2 | Isolated Wazuh lab | Two-host shadow transport accepted | Local and separate-host 4.14.7 canaries, bidirectional mTLS, signed transport, tenant isolation, negative transport and selected outage recovery pass. |
 | 3 | Compatibility harness | Contracts and two-host live path complete | Maintained Wazuh and adjacent WarSOC regression gates pass; physical saturation and rule-quality corpora remain. |
-| 4 | Shadow integration | Transport accepted; deployment disabled | Signed cross-host dispatch/candidate lineage produced shadow-only observations with zero customer side effects. Production enablement still requires host-firewall, capacity, rollback and rule-quality approval. |
+| 4 | Shadow integration | Controlled deployment active | OCI Compute A and temporary laptop Compute B use private mTLS over Tailscale. A projected Event 4625 completed rule 100512 and returned a lineage-complete shadow observation with zero incident promotion. |
 | 5 | Limited primary promotion | Blocked | Requires accepted Gate 4 metrics and one-family rollback proof |
 | 6 | Firewall projection to Wazuh | Blocked separately | Network relay must pass its own packaged service, real-device and production-pilot gate first |
 | 7 | Security release | Blocked | Requires complete acceptance artifacts, rollback and residual-risk approval |
@@ -263,6 +264,23 @@ Additional checks:
 This record proves code contracts and the isolated two-host shadow transport.
 It does not substitute for physical-host firewall proof, live saturation,
 ruleset rollback or rule-quality evidence required before production promotion.
+
+### Controlled Shadow Activation - 2026-08-28
+
+- Runtime identity: backend `3a35e3f`, Wazuh manager `4.14.7`.
+- Mode: `shadow`; global primary approval: `false`.
+- Active rules: 100511/1102, 100512/4625, 100513/7045 and 100514/4688.
+- Transport: private Tailscale bindings with mutual TLS in both directions.
+- Positive runtime proof: Event 4625 -> rule 100512 -> validated
+  `shadow_observation`; no WarSOC incident or compliance side effect.
+- Maintained Wazuh/deployment selection: 55 passed.
+- Cleanup: canary database and quarantine records removed; connector remains
+  healthy and active.
+- Operational boundary: Compute B is a temporary laptop dependency with no HA;
+  Docker Desktop and Tailscale must stay running and leaf certificates must be
+  rotated before expiry.
+- Firewall boundary: network relay and firewall-to-Wazuh projection remain
+  disabled and require their own acceptance.
 
 The current cross-system/customer-flow verification record is
 `docs/WARSOC_VERIFICATION_AND_CUSTOMER_ACCEPTANCE_2026-08-12.md`.

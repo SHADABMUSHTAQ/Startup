@@ -1,6 +1,6 @@
 # WarSOC Wazuh and Firewall Integration Implementation Ledger
 
-**Snapshot date:** 2026-08-20
+**Snapshot date:** 2026-08-28
 **Document role:** Detailed implementation, verification, and remaining-gate record
 **Audience:** WarSOC engineering, operations, security review, and product leadership
 **Data classification:** Internal architecture metadata only; no customer data, credentials, activation codes, private addresses, or raw evidence
@@ -9,8 +9,9 @@
 
 The Wazuh and firewall programs have completed their architecture, backend
 foundation, maintained contract tests, and controlled lab transport phases.
-They have not completed production enablement or broad customer-hardware
-acceptance.
+Wazuh is now active in a narrow, private shadow deployment. Primary promotion,
+firewall production enablement and broad customer-hardware acceptance are not
+complete.
 
 The exact current state is:
 
@@ -18,8 +19,8 @@ The exact current state is:
 |---|---|---|
 | WarSOC native Windows SIEM/FBR/PECA | Active production path | Continues independently of Wazuh and the firewall relay. |
 | Wazuh contracts and bridge implementation | RC2 implemented and regression-proven | Versioned projection, durable transport, exact signed-evidence validation, standard WarSOC incident projection, and failure controls exist. |
-| Wazuh separate-host shadow transport | Two-host lab-proven | A signed canary completed the private mTLS path and produced a WarSOC shadow observation with no customer side effects. |
-| Wazuh primary candidate family | RC2 code/lab-proven; production disabled | `audit_log_cleared` is the only approved primary family. Production flags remain disabled until exact deployment acceptance. |
+| Wazuh separate-host shadow transport | Controlled shadow active | OCI Compute A and temporary laptop Compute B run private mTLS dispatch/candidate paths. A projected Event 4625 canary produced a lineage-complete shadow observation with no customer side effects. |
+| Wazuh primary candidate family | Disabled | All four projected families remain shadow-only; `WAZUH_PRIMARY_APPROVED=false`. |
 | Firewall relay backend | Implemented and regression-proven | Relay enrollment, strict parsers, bounded spools, signed batches, admission, health, and correlation contracts exist. |
 | pfSense integration | Virtual-lab-proven | pfSense CE 2.8.1 pass/block records completed the controlled Hyper-V relay path. |
 | Other firewall vendors | Parser/fixture candidate only | Fortinet, Cisco ASA, and MikroTik parser contracts exist but do not have accepted physical-device evidence. |
@@ -27,9 +28,10 @@ The exact current state is:
 | Customer firewall UI | Local correction source-complete; deployment acceptance open | A local frontend candidate based on `6ffc9e0` uses backend capability/entitlement gating, nested relay/device status, complete activation, revoke and MFA key-recovery contracts, read-only non-admin roles and memory-only one-time codes. Lint/build pass; it is not pushed, deployed or paired-tested. |
 | Firewall metadata through Wazuh | Designed but blocked | It requires both relay production acceptance and a separately approved Wazuh network rule family. |
 
-Therefore, it is accurate to say that the integration foundations and controlled
-labs are complete. It is not accurate to say that Wazuh or general customer
-firewall onboarding is production-complete.
+Therefore, it is accurate to say that the Wazuh controlled shadow integration
+is active and the firewall foundation has controlled lab proof. It is not
+accurate to claim Wazuh primary authority, broad Wazuh coverage, high
+availability, or general customer firewall onboarding.
 
 ## 2. Non-Negotiable Product Ownership
 
@@ -348,7 +350,7 @@ The approved production defaults are:
 ```dotenv
 AGENT_EVENT_SIGNATURE_MODE=required
 NETWORK_RELAY_ENABLED=false
-WAZUH_DETECTION_MODE=disabled
+WAZUH_DETECTION_MODE=shadow
 WAZUH_PRIMARY_APPROVED=false
 ENABLE_SECURITY_ALERT_EMAILS=false
 ```
@@ -360,13 +362,13 @@ ports and direct public UDP syslog are prohibited.
 ## 8. Customer Claims Allowed Today
 
 WarSOC may claim its current native Windows SIEM/FBR/PECA capabilities according
-to their documented evidence boundaries. It may internally state that Wazuh
-shadow transport and pfSense relay transport have passed controlled labs.
+to their documented evidence boundaries. Internally, it may state that the
+four-family Wazuh shadow path is active and that pfSense relay transport passed
+a controlled lab.
 
 WarSOC must not yet claim:
 
-- production Wazuh-assisted detection;
-- broad Wazuh ruleset coverage;
+- Wazuh primary detection authority or broad stock-rule coverage;
 - customer-visible Wazuh functionality;
 - production firewall ingestion;
 - support for every pfSense/Fortinet/Cisco ASA/MikroTik device;
@@ -376,17 +378,36 @@ WarSOC must not yet claim:
 
 ## 9. Exact Next Sequence
 
-1. Keep Wazuh and relay production flags disabled.
+1. Keep Wazuh in `shadow`, keep global primary approval false, and keep the
+   network relay disabled.
 2. Freeze a signed/hash-approved relay artifact and complete the Windows service
    lifecycle gate.
 3. Complete one exact customer firewall model acceptance and a 24-hour non-POS
    pilot.
 4. Build positive/negative/noise corpora for one low-risk Wazuh rule family.
 5. Prove physical saturation and rollback on the intended Compute-B host.
-6. Enable Wazuh shadow for that one family only after approval.
+6. Maintain the four pinned shadow families and add no family without registry,
+   corpus and rollback approval.
 7. Project accepted firewall metadata to Wazuh only after both the firewall and
    Wazuh gates independently pass.
 8. Design and separately accept the customer relay UI last.
+
+## 9.1 Controlled Wazuh Activation Record - 2026-08-28
+
+Backend `3a35e3f` closed the exact OCI/laptop shadow path. The deployed registry
+hash is pinned to `warsoc-projected-shadow-v1`; rules 100511 through 100514 cover
+only Events 1102, 4625, 7045 and 4688. An Event 4625 canary completed durable
+dispatch, Wazuh rule 100512, signed candidate return and WarSOC lineage
+validation. It created one shadow observation and zero incidents. The 55-test
+Wazuh/deployment selection passed, public candidate access was blocked,
+unauthenticated mutual-TLS requests were rejected, and the connector returned
+healthy after recovery checks. Test database/quarantine artifacts were removed.
+
+The temporary Compute B laptop is not highly available. Docker Desktop and
+Tailscale must remain online, and the 90-day leaf certificates require planned
+rotation. Wazuh indexer/dashboard are intentionally stopped for host capacity;
+the manager provides the approved detection path. Firewall projection remains
+disabled.
 
 ## 10. Source-of-Truth Map
 

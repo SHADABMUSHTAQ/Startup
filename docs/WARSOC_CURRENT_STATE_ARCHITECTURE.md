@@ -1,12 +1,12 @@
 # WarSOC Current-State Architecture and Operational Contract
 
 **Document status:** Authoritative as-built map
-**Snapshot date:** 2026-08-24
-**Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the production-disabled network-relay candidate, and the production-disabled Wazuh candidate-detector path.
+**Snapshot date:** 2026-08-28
+**Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the production-disabled network-relay candidate, and the controlled Wazuh shadow-detector path.
 
-**Current pushed repository pair:** backend `467e4f6`, frontend `6ffc9e0`
-**Current reviewed backend workspace:** base `6c3900f` plus the uncommitted 2026-08-24 release candidate described in sections 1.9 through 1.11
-**Current production identity observed before candidate deployment:** backend `d92fb65`, frontend `6ffc9e0`
+**Current pushed backend identity:** `3a35e3f`
+**Current OCI backend identity for the Wazuh shadow activation:** `3a35e3f`
+**Frontend identity:** outside the Wazuh activation change; the last identity recorded by this document remains `6ffc9e0`
 
 This document describes what the current source code does. It is not a sales claim and it does not treat an implemented path as production-proven unless verification evidence exists.
 
@@ -150,29 +150,35 @@ Parser unit tests and simulated correlations do not equal real-device proof.
 
 ### 1.5 Wazuh detection target boundary
 
-`WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md` defines the reviewed target for
-using the Wazuh manager as a replaceable generic detection subsystem. The
-production-disabled backend and Compute-B bridge foundation is implemented and its focused
-contract suite passes. The isolated one-host live harness proves bidirectional
-mTLS, canary rule 100500, signed candidate return, shadow-only persistence,
-selected failure recovery and negative transport checks. The separate two-host
-lab additionally proves private Tailscale binding, bidirectional mTLS, signed
-dispatch/candidate lineage, tenant isolation and manager/bridge/candidate-API
-recovery. The subsystem is not deployed, promoted, or customer-visible; neither lab host is an approved
-production Compute B. RC2 permits only the `audit_log_cleared` family to become
-a primary candidate after all global, registry, and exact signed-lineage gates
-pass; other curated families remain shadow-only. The current WarSOC SIEM remains authoritative. Wazuh must not own
+`WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md` defines the reviewed contract for
+using the Wazuh manager as a replaceable generic detection subsystem. On
+2026-08-28, backend `3a35e3f` activated a controlled two-host shadow deployment:
+OCI Compute A runs the projector, durable dispatcher and candidate validator;
+the temporary colleague-hosted Compute B runs Wazuh manager 4.14.7 and the
+WarSOC bridge. Both application endpoints bind only to Tailscale addresses and
+require mutual TLS. The Wazuh manager, indexer, dashboard, enrollment and API
+are not exposed publicly.
+
+The active registry is `warsoc-projected-shadow-v1`. It permits only four
+minimized Windows projections: Event 1102/rule 100511 (`audit_log_cleared`),
+4625/100512 (`authentication_failure`), 7045/100513
+(`service_installation`), and 4688/100514 (`process_creation`). All four are
+shadow-only in this deployment. `WAZUH_DETECTION_MODE=shadow` and
+`WAZUH_PRIMARY_APPROVED=false` prevent incident promotion. The current WarSOC
+SIEM remains authoritative. Wazuh must not own
 endpoint enrollment, tenant identity,
 canonical evidence, FBR, PECA, incidents, storage, retrieval, customer access,
-or response. No production feature or claim changes until the recorded shadow
-acceptance gates pass.
+or response. Wazuh remains hidden from customer APIs and UI.
 
 The hardened bridge foundation uses encrypted byte/age-bounded spools, bounded
 retry and receipt metadata, truncation/digest-safe `alerts.json` checkpoints,
 strict per-source projection fields, opaque tenant correlation HMACs, candidate
 event-time validation, pinned registry hashes, signed health/loss records and
-stage counters. This is implementation readiness, not evidence of live Wazuh
-detection quality.
+stage counters. A controlled Event 4625 canary completed canonical persistence,
+durable dispatch, Wazuh rule 100512, signed candidate return, WarSOC lineage
+validation and shadow persistence with zero incident promotion. This proves the
+approved transport and one positive family path; it is not broad Wazuh rule
+quality, capacity, high-availability or customer-firewall acceptance.
 
 ### 1.6 August 14 release-candidate verification delta
 
@@ -187,7 +193,7 @@ The August 14 work changed bounded query behavior and frontend failure handling;
 7. **FBR truth:** the seven-day vault contains five `FIM-DB-MOD` and two `FBR-INV-MOD` records. Zero fresh FBR records in the last 24 hours is expected when no qualifying POS file tamper or signed invoice operation occurs. Native POS-path FIM proves protected-file activity; invoice semantics still require the documented POS JSONL/API contract.
 8. **Azure read proof:** the running storage archiver reported no archive/immutability/critical error in the observed 24-hour window. A read-only retrieval of the latest PECA archive downloaded 31,205,879 bytes for 1,039 records, matched the ledger payload SHA-256 and companion hash blob, and confirmed container-scoped immutability. No archive byte was proxied through the API or written to the application host.
 
-The unresolved release boundaries remain explicit: the 4.2.8 installer has a verified manifest but no Authenticode publisher signature; no fresh destructive FBR test was generated against the current protected POS path; the dashboard route is still a large lazy chunk; `NETWORK_RELAY_ENABLED=false`; Wazuh shadow integration is disabled; and `ARCHIVE_RETRIEVAL_ENABLED=false`.
+At that dated checkpoint, the unresolved boundaries included disabled Wazuh shadow integration. The later 2026-08-28 activation in section 1.14 supersedes only that Wazuh statement; the other boundaries remain independently governed.
 
 ### 1.7 August 20 FBR/PECA Phase 0 truth hardening
 
@@ -357,7 +363,8 @@ publisher signature/CDN       OPEN
 candidate production deploy   OPEN
 live role and pipeline proof  OPEN
 FBR/PECA duration routing     CODE COMPLETE / CLOUD ROUTES PENDING
-Wazuh and network relay       DISABLED CANDIDATES
+Wazuh shadow                  ACTIVE / PRIMARY DISABLED
+network relay                DISABLED CANDIDATE
 ```
 
 ### 1.12 August 24 PECA retention product decision
@@ -418,6 +425,39 @@ yet runtime-accepted on a real isolated Redis/Azure stack:
 This delta does not enable network relay, Wazuh or archive retrieval and does
 not approve production deployment. The exact closure commands and evidence
 requirements are recorded in `WARSOC_RELEASE_VALIDATION_2026-08-26.md`.
+
+### 1.14 August 28 controlled Wazuh shadow activation
+
+The Wazuh candidate detector is now active only as a private, shadow-only
+subsystem. The activation does not change the native SIEM, FBR, PECA, incident,
+archive or customer UI authorities.
+
+1. Backend `3a35e3f` is pushed and deployed on OCI Compute A. Wazuh manager
+   4.14.7 and the bridge run on a separate temporary Compute B laptop.
+2. Dispatch and candidate endpoints are reachable only over Tailscale and use
+   a private mutual-TLS PKI. Public access to the candidate port is blocked;
+   unauthenticated TLS requests are rejected.
+3. The pinned ruleset contains only rules 100511 through 100514. No stock rule
+   can cross the bridge without an approved dispatch UID and registry match.
+4. A controlled signed Event 4625 canary produced rule 100512 and one complete
+   `shadow_observation`. It produced no WarSOC incident and no FBR/PECA side
+   effect. Canary Mongo records and quarantine artifacts were removed after
+   validation.
+5. Runtime fixes closed standalone seed import resolution, TLS/alert-volume
+   permissions, and dispatch-lineage precedence over Wazuh manager agent `000`.
+6. The maintained Wazuh and deployment-contract selection passed 55 tests.
+   Core API, MongoDB and Redis remained healthy after activation.
+7. Primary mode remains prohibited: `WAZUH_PRIMARY_APPROVED=false`. Wazuh Active
+   Response, email, customer agents, FBR/PECA ownership and customer-visible
+   provenance remain disabled.
+8. Compute B is a temporary lab dependency, not highly available customer
+   infrastructure. The laptop, Docker Desktop and Tailscale must remain online.
+   Leaf certificates require rotation before their 90-day expiry. Wazuh indexer
+   and dashboard remain stopped on that host because detection validation needs
+   the manager only and the laptop has limited RAM.
+9. Firewall metadata is not projected to Wazuh. `NETWORK_RELAY_ENABLED=false`
+   remains unchanged and its independent packaged-service, customer-device and
+   pilot gates remain open.
 
 ## 2. Product Boundary
 
@@ -1609,7 +1649,7 @@ Status meanings:
 | Capacity ceiling | Maximum 50 active agents per tenant and 50 aggregate active agents on the shared host | PROVEN by contract tests; prior synthetic soak | Mongo-backed floors prevent Redis restarts from bypassing either boundary. Real customer mix must still be monitored because event volume per endpoint varies. |
 | Linux/syslog | Linux endpoint telemetry | OUT OF SCOPE | Linux remains outside the Windows SMB pilot and no Linux agent/intake is claimed. |
 | Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | PFSENSE LAB-PROVEN CANDIDATE / DISABLED | Cloud API, strict metadata-only Fortinet/Cisco ASA/MikroTik/pfSense parsers, bounded encrypted spools, Fernet-protected raw cloud evidence, exact retry, DPAPI identity, separate Windows service/installer, lifecycle recovery, atomic Redis admission, per-device coverage state, source isolation, and backlog-safe limited hybrid correlations are implemented. A pfSense CE 2.8.1 Hyper-V lab proved native BSD syslog parsing, logged pass/block evidence, Ed25519 relay attestation, encrypted outage retention, unclean restart recovery, zero duplicate event UIDs, and continuous batch hashes. Tenant entitlement now defaults to zero and the status API publishes the exact capability plus nested device state. A local frontend correction matches this contract and passes lint/build, but is not pushed or paired-tested. `NETWORK_RELAY_ENABLED=false`; packaged Windows-service acceptance, exact customer hardware, other appliance proof, retention, capacity, external notification and pilot proof remain open. |
-| Internal Wazuh detector | Receive minimized WarSOC projections and return validated candidate observations | RC2 CODE/LAB-PROVEN / PRODUCTION DISABLED | Maintained Wazuh contracts and both local and separate-host live mTLS canaries pass with zero customer side effects. RC2 approves only `audit_log_cleared` as a primary candidate family; promotion additionally requires the global flag and exact recent signed WarSOC evidence for the bound endpoint. Approved candidates use the standard WarSOC incident schema and customer APIs hide detector-vendor provenance. Authentication failure, service installation, and process creation remain shadow-only. Exact deployment identity, physical saturation, rollback, and post-deploy acceptance remain open. |
+| Internal Wazuh detector | Receive minimized WarSOC projections and return validated candidate observations | CONTROLLED SHADOW ACTIVE / PRIMARY DISABLED | OCI Compute A and temporary laptop Compute B run private mTLS dispatch and candidate paths for four pinned projected Windows families. A live Event 4625 canary completed rule 100512 and produced one lineage-complete shadow observation with zero incident promotion; 55 maintained Wazuh/deployment tests pass. WarSOC remains authoritative and customer APIs hide detector-vendor provenance. Primary promotion, broad stock rules, capacity/HA approval and firewall projection remain disabled. |
 | External threat-intelligence enrichment | Third-party reputation/provider lookups | OUT OF SCOPE | No live provider integration is claimed for the current pilot. Native SIEM/FBR/PECA operation does not depend on it. |
 
 ## 23. Failure Map
@@ -1753,7 +1793,7 @@ Do not declare the current release fully accepted until all of the following are
 | Wazuh execution mind map and gate status | `docs/WARSOC_WAZUH_EXECUTION_MIND_MAP.md` |
 | Detailed Wazuh and firewall phase implementation ledger | `docs/WARSOC_WAZUH_FIREWALL_IMPLEMENTATION_LEDGER_2026-08-13.md` |
 | Firewall relay and customer-safe detection frontend contract | `docs/WARSOC_FIREWALL_WAZUH_FRONTEND_BUILD_GUIDE.md` |
-| Disabled Wazuh contracts, projector, outbox, bridge and candidate validator | `app/wazuh_integration/`, `app/workers/wazuh_dispatch_worker.py`, and `docker-compose.wazuh-bridge.yml` |
+| Controlled Wazuh shadow contracts, projector, outbox, bridge and candidate validator | `app/wazuh_integration/`, `app/workers/wazuh_dispatch_worker.py`, and `docker-compose.wazuh-bridge.yml` |
 | Wazuh lab implementation and acceptance procedure | `docs/WARSOC_WAZUH_IMPLEMENTATION_AND_LAB_RUNBOOK.md` |
 | Cross-system verification and customer-flow acceptance | `docs/WARSOC_VERIFICATION_AND_CUSTOMER_ACCEPTANCE_2026-08-12.md` |
 | Sanitized customer capability statement | `docs/WARSOC_CUSTOMER_FEATURES.md` |
