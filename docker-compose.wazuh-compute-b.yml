@@ -1,0 +1,172 @@
+x-warsoc-compute-b-logging: &warsoc-compute-b-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  wazuh-manager:
+    image: wazuh/wazuh-manager:4.14.7@sha256:8665c9807a5765253c79e4b072a1b7462c997bd69be949118a8d82ce44dd33e9
+    container_name: warsoc-wazuh-manager-prod
+    hostname: wazuh.manager
+    restart: unless-stopped
+    environment:
+      INDEXER_URL: ""
+      INDEXER_USERNAME: ""
+      INDEXER_PASSWORD: ""
+      API_USERNAME: ""
+      API_PASSWORD: ""
+    volumes:
+      - warsoc_wazuh_manager_api:/var/ossec/api/configuration
+      - warsoc_wazuh_manager_etc:/var/ossec/etc
+      - warsoc_wazuh_manager_logs:/var/ossec/logs
+      - warsoc_wazuh_manager_queue:/var/ossec/queue
+      - warsoc_wazuh_manager_var:/var/ossec/var/multigroups
+      - warsoc_wazuh_manager_integrations:/var/ossec/integrations
+      - warsoc_wazuh_manager_active_response:/var/ossec/active-response/bin
+      - warsoc_wazuh_manager_agentless:/var/ossec/agentless
+      - warsoc_wazuh_manager_wodles:/var/ossec/wodles
+      - ./deploy/wazuh/manager/ossec-manager-only.conf:/wazuh-config-mount/etc/ossec.conf:ro
+      - ./deploy/wazuh/rules/warsoc_projected_shadow_rules.xml:/wazuh-config-mount/etc/warsoc-rules/warsoc_projected_shadow_rules.xml:ro
+      - ./deploy/wazuh/manager/filebeat.down:/etc/services.d/filebeat/down:ro
+    networks:
+      wazuh_compute_b_private:
+        ipv4_address: 172.31.40.10
+        aliases:
+          - wazuh.manager
+    healthcheck:
+      test: ["CMD-SHELL", "/var/ossec/bin/wazuh-control status | grep -q 'wazuh-analysisd is running'"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 90s
+    logging: *warsoc-compute-b-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.50"
+          memory: 2G
+          pids: 512
+
+  warsoc-wazuh-bridge-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.wazuh-bridge
+    image: warsoc-wazuh-bridge:${WAZUH_BRIDGE_IMAGE_TAG:-oci-manager-only}
+    container_name: warsoc-wazuh-bridge-init
+    entrypoint: []
+    command:
+      - /bin/sh
+      - -c
+      - install -d -o 1000 -g 1000 -m 0700 /var/lib/warsoc-wazuh
+    user: "0:0"
+    restart: "no"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    volumes:
+      - warsoc_wazuh_bridge_spool:/var/lib/warsoc-wazuh
+
+  warsoc-wazuh-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.wazuh-bridge
+    image: warsoc-wazuh-bridge:${WAZUH_BRIDGE_IMAGE_TAG:-oci-manager-only}
+    container_name: warsoc-wazuh-bridge-prod
+    entrypoint: []
+    command:
+      - uvicorn
+      - app.wazuh_integration.bridge_runtime:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8020"
+      - --ssl-keyfile
+      - /run/warsoc-wazuh-tls/compute-b-server.key
+      - --ssl-certfile
+      - /run/warsoc-wazuh-tls/compute-b-server.crt
+      - --ssl-ca-certs
+      - /run/warsoc-wazuh-tls/compute-a-ca.crt
+      - --ssl-cert-reqs
+      - "2"
+    restart: unless-stopped
+    env_file:
+      - ${WAZUH_BRIDGE_ENV_FILE:-.env.wazuh-compute-b}
+    environment:
+      WAZUH_BRIDGE_ENABLED: "true"
+      WAZUH_BRIDGE_SPOOL_PATH: /var/lib/warsoc-wazuh/bridge.sqlite3
+      WAZUH_ALERTS_JSON_PATH: /var/ossec/logs/alerts/alerts.json
+      WAZUH_RULE_REGISTRY_PATH: /etc/warsoc-wazuh/rule-registry.json
+      WAZUH_BRIDGE_MANAGER_HOST: wazuh.manager
+      WAZUH_BRIDGE_MANAGER_PORT: "15140"
+    group_add:
+      - "999"
+    ports:
+      - "${WAZUH_BRIDGE_BIND_IP:?WAZUH_BRIDGE_BIND_IP is required}:${WAZUH_BRIDGE_PORT:-9443}:8020"
+    volumes:
+      - warsoc_wazuh_bridge_spool:/var/lib/warsoc-wazuh
+      - warsoc_wazuh_manager_logs:/var/ossec/logs:ro
+      - ./deploy/wazuh/registry/warsoc-projected-shadow-v1.json:/etc/warsoc-wazuh/rule-registry.json:ro
+      - ${WAZUH_BRIDGE_TLS_DIR:-./keys/wazuh-compute-b}:/run/warsoc-wazuh-tls:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      warsoc-wazuh-bridge-init:
+        condition: service_completed_successfully
+      wazuh-manager:
+        condition: service_healthy
+    networks:
+      wazuh_compute_b_private:
+        ipv4_address: 172.31.40.20
+      warsoc_runtime:
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import socket; s=socket.create_connection(('127.0.0.1',8020),5); s.close()
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *warsoc-compute-b-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 384M
+          pids: 128
+
+volumes:
+  warsoc_wazuh_manager_api:
+  warsoc_wazuh_manager_etc:
+  warsoc_wazuh_manager_logs:
+  warsoc_wazuh_manager_queue:
+  warsoc_wazuh_manager_var:
+  warsoc_wazuh_manager_integrations:
+  warsoc_wazuh_manager_active_response:
+  warsoc_wazuh_manager_agentless:
+  warsoc_wazuh_manager_wodles:
+  warsoc_wazuh_bridge_spool:
+
+networks:
+  wazuh_compute_b_private:
+    name: warsoc-wazuh-compute-b-private
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.40.0/24
+  warsoc_runtime:
+    external: true
+    name: warsoc-production_warsoc-internal
