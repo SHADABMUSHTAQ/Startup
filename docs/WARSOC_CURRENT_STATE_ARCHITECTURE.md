@@ -4,8 +4,8 @@
 **Snapshot date:** 2026-08-28
 **Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the production-disabled network-relay candidate, and the controlled Wazuh shadow-detector path.
 
-**Current pushed backend identity:** `3a35e3f`
-**Current OCI backend identity for the Wazuh shadow activation:** `3a35e3f`
+**Current OCI runtime code identity for the Wazuh shadow activation:** `3a35e3f`
+**Repository note:** later documentation-only commits do not change that runtime code identity
 **Frontend identity:** outside the Wazuh activation change; the last identity recorded by this document remains `6ffc9e0`
 
 This document describes what the current source code does. It is not a sales claim and it does not treat an implemented path as production-proven unless verification evidence exists.
