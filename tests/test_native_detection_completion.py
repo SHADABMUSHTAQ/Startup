@@ -693,6 +693,116 @@ def test_agent_v2_signature_covers_native_channel_epoch_and_sequence(monkeypatch
         )
 
 
+def test_legacy_spool_signature_is_stable_across_retries(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    event = {
+        "event_id": "4625",
+        "event_uid": "Security:9002",
+        "timestamp": "2026-08-29T12:00:00+00:00",
+        "message": "legacy failed login",
+        "processed_data": {},
+        "raw_event_data": {},
+        "agent_version": agent.AGENT_VERSION,
+    }
+
+    first = agent._sign_event_for_delivery(event, private_key)
+    second = agent._sign_event_for_delivery(event, private_key)
+
+    assert first == second
+    assert first["agent_collection_time"] == event["timestamp"]
+    assert first["collection_protocol_version"] == "warsoc-agent-legacy-spool-v1"
+
+
+def test_missing_legacy_timestamp_uses_stable_untrusted_fallback(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    event = {
+        "event_id": "4625",
+        "message": "legacy event without collection time",
+        "processed_data": {},
+        "raw_event_data": {},
+    }
+
+    first = agent._sign_event_for_delivery(event, private_key)
+    second = agent._sign_event_for_delivery(event, private_key)
+
+    assert first == second
+    assert first["timestamp"] == "1970-01-01T00:00:00+00:00"
+    assert first["event_uid"].startswith("legacy-")
+
+
+def test_sender_isolates_409_conflict_without_deadlocking_later_events(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    events = [
+        {
+            "event_id": "4625",
+            "event_uid": "Security:conflict",
+            "timestamp": "2026-08-29T12:00:00+00:00",
+            "processed_data": {},
+            "raw_event_data": {},
+        },
+        {
+            "event_id": "7045",
+            "event_uid": "System:accepted",
+            "timestamp": "2026-08-29T12:00:01+00:00",
+            "processed_data": {},
+            "raw_event_data": {},
+        },
+    ]
+
+    class FakeSpooler:
+        def __init__(self):
+            self.consumed = False
+            self.quarantined = []
+            self.cleared = []
+
+        def consume_batch(self):
+            if self.consumed:
+                raise KeyboardInterrupt
+            self.consumed = True
+            return events, "processing-test.jsonl"
+
+        def quarantine(self, event, reason):
+            self.quarantined.append((event["event_uid"], reason))
+
+        def append(self, _event):
+            raise AssertionError("permanent conflicts must not be requeued")
+
+        def clear_batch(self, filename):
+            self.cleared.append(filename)
+
+    class FakeResponse:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+        def __bool__(self):
+            return self.status_code < 400
+
+    responses = iter([FakeResponse(409), FakeResponse(409), FakeResponse(202)])
+    submitted = []
+
+    def fake_request(_method, _url, *, json, timeout):
+        submitted.append((json, timeout))
+        return next(responses)
+
+    spooler = FakeSpooler()
+    monkeypatch.setattr(agent, "SPOOLER", spooler)
+    monkeypatch.setattr(agent, "_load_or_create_signing_key", lambda: private_key)
+    monkeypatch.setattr(agent, "secure_request", fake_request)
+    monkeypatch.setattr(agent.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(KeyboardInterrupt):
+        agent.ingest_sender_thread()
+
+    assert spooler.quarantined == [("Security:conflict", "backend_rejected:409")]
+    assert spooler.cleared == ["processing-test.jsonl"]
+    assert len(submitted) == 3
+    assert submitted[1][0]["payload"][0]["agent_signature"]
+    assert submitted[2][0]["payload"][0]["agent_signature"]
+
+
 def test_native_spool_hard_limit_blocks_without_deleting_unacknowledged_data(monkeypatch, tmp_path):
     agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
     spooler = agent.DiskSpooler(

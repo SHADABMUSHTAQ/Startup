@@ -52,7 +52,7 @@ if not env_loaded:
     print(f"[WARN] .env not found in any standard location. Using system environment variables.")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-AGENT_VERSION = "4.2.9-Native-Signed-Coverage"
+AGENT_VERSION = "4.2.10-Native-Signed-Coverage"
 EVENT_SIGNATURE_VERSION = "ed25519-v2"
 COLLECTION_PROTOCOL_VERSION = "warsoc-agent-collection-v2"
 TENANT_ID = os.getenv("TENANT_ID", "provision").strip() or "provision"
@@ -402,7 +402,13 @@ def _build_ingest_envelope(events):
 def _sign_event_for_delivery(payload, signing_key):
     """Attach deterministic Ed25519 provenance without mutating the spooled object."""
     event = dict(payload)
-    event.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+    # Older spool records may predate collection-time metadata. Derive every
+    # fallback from stable spooled bytes so an HTTP retry signs the same event
+    # instead of reusing its evidence UID with different authenticated bytes.
+    event.setdefault(
+        "timestamp",
+        event.get("agent_collection_time") or "1970-01-01T00:00:00+00:00",
+    )
     if not str(event.get("event_uid") or "").strip():
         event["event_uid"] = "legacy-" + hashlib.sha256(
             _canonical_json(event).encode("utf-8")
@@ -422,7 +428,7 @@ def _sign_event_for_delivery(payload, signing_key):
         event.pop(field, None)
 
     if not event.get("agent_collection_time"):
-        event["agent_collection_time"] = datetime.now(timezone.utc).isoformat()
+        event["agent_collection_time"] = event["timestamp"]
         event["collection_protocol_version"] = "warsoc-agent-legacy-spool-v1"
     event.setdefault("collection_protocol_version", COLLECTION_PROTOCOL_VERSION)
     event.setdefault("source_channel", "legacy_spool")
@@ -1506,28 +1512,40 @@ def ingest_sender_thread():
                 # TRANSMISSION
                 resp = secure_request("POST", INGEST_URL, json=_build_ingest_envelope(chunk), timeout=20)
 
-                if resp and resp.status_code in (200, 202):
+                if resp is not None and resp.status_code in (200, 202):
                     # SUCCESS: Reset batch size back to max if it was previously throttled
                     if OUTBOUND_BATCH_SIZE < ORIGINAL_BATCH_SIZE:
                         OUTBOUND_BATCH_SIZE = ORIGINAL_BATCH_SIZE
                     time.sleep(_successful_delivery_delay_seconds(chunk))
                     continue
 
-                elif resp and resp.status_code == 422:
-                    # POISON PILL RECOVERY: Isolate malformed log
-                    print(f"[WARN] Batch chunk rejected (422). Isolating broken records...")
+                elif resp is not None and resp.status_code in (409, 422):
+                    # A malformed record or evidence-identity conflict must not
+                    # deadlock every later event in the durable spool. Retry the
+                    # records individually, quarantine permanent conflicts, and
+                    # preserve transient failures for another pass.
+                    print(
+                        f"[WARN] Batch chunk rejected ({resp.status_code}). "
+                        "Isolating conflicting records..."
+                    )
                     transient_retry = False
                     for single_log in chunk:
-                        sr = secure_request("POST", INGEST_URL, json=_build_ingest_envelope([single_log]), timeout=10)
-                        if sr and sr.status_code in (200, 202):
+                        signed_single = _sign_event_for_delivery(single_log, signing_key)
+                        sr = secure_request(
+                            "POST",
+                            INGEST_URL,
+                            json=_build_ingest_envelope([signed_single]),
+                            timeout=10,
+                        )
+                        if sr is not None and sr.status_code in (200, 202):
                             time.sleep(_successful_delivery_delay_seconds([single_log]))
                             continue
 
-                        status = sr.status_code if sr else "timeout"
-                        if sr and sr.status_code in (400, 422):
+                        status = sr.status_code if sr is not None else "timeout"
+                        if sr is not None and sr.status_code in (400, 409, 422):
                             SPOOLER.quarantine(single_log, f"backend_rejected:{status}")
                             print(f"[QUARANTINE] Backend rejected forensic event: {single_log.get('event_id')}")
-                        elif sr and sr.status_code == 413:
+                        elif sr is not None and sr.status_code == 413:
                             SPOOLER.append(_truncate_single_log_payload(single_log))
                             print(f"[WARN] Oversized isolated event trimmed and re-queued: {single_log.get('event_id')}")
                         else:
@@ -1540,9 +1558,9 @@ def ingest_sender_thread():
 
                 else:
                     # FAILURE RECOVERY STATE
-                    code = resp.status_code if resp else "timeout"
+                    code = resp.status_code if resp is not None else "timeout"
 
-                    if resp and resp.status_code == 413:
+                    if resp is not None and resp.status_code == 413:
                         print(f"[FAIL] Backend rejected payload: 413.")
 
                         # Fix the Uvicorn Keep-Alive Socket Poisoning
@@ -1568,7 +1586,7 @@ def ingest_sender_thread():
                             OUTBOUND_BATCH_SIZE = ORIGINAL_BATCH_SIZE
 
                     else:
-                        if resp and resp.status_code == 429:
+                        if resp is not None and resp.status_code == 429:
                             print("[WARN] Backend rate limited (429). Backing off for 10s...")
                             retain_original = True
                             all_success = False

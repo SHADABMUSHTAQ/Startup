@@ -165,6 +165,25 @@ async def persist_source_envelope(
     now = datetime.now(timezone.utc)
     source_hash = _sha256(source_payload)
     dispatch_hash = _dispatch_set_hash(normalized_events)
+    outbox_descriptors = []
+    for item in normalized_events:
+        outbox_uid = _sha256(
+            "|".join(
+                (
+                    tenant_id,
+                    source_principal_id,
+                    source_channel,
+                    item["event_uid"],
+                )
+            ).encode("utf-8")
+        )
+        outbox_descriptors.append(
+            {
+                "outbox_uid": outbox_uid,
+                "payload_hash": _sha256(item["serialized_payload"].encode("utf-8")),
+                "target_streams": item["target_streams"],
+            }
+        )
     envelope_identity = {
         "tenant_id": tenant_id,
         "source_principal_type": source_principal_type,
@@ -219,6 +238,29 @@ async def persist_source_envelope(
             raise SourceEvidenceConflict("Source envelope UID was reused with different evidence")
         envelope_id = existing["_id"]
     else:
+        # A delivery retry uses a fresh anti-replay nonce, but its authenticated
+        # event UIDs and bytes remain stable. If every event is already durably
+        # represented by an identical outbox row, return that durable identity
+        # without creating an orphan duplicate source envelope. Any byte or
+        # routing difference remains an evidence conflict and fails closed.
+        existing_outboxes = []
+        for descriptor in outbox_descriptors:
+            existing_outbox = await db[SOURCE_OUTBOX_COLLECTION].find_one(
+                {"outbox_uid": descriptor["outbox_uid"]},
+                {"payload_hash": 1, "target_streams": 1},
+            )
+            if existing_outbox and (
+                existing_outbox.get("payload_hash") != descriptor["payload_hash"]
+                or sorted(existing_outbox.get("target_streams") or [])
+                != descriptor["target_streams"]
+            ):
+                raise SourceEvidenceConflict(
+                    "Source event UID was reused with different evidence"
+                )
+            existing_outboxes.append(existing_outbox)
+        if existing_outboxes and all(existing_outboxes):
+            return [descriptor["outbox_uid"] for descriptor in outbox_descriptors]
+
         try:
             insert_result = await collection.insert_one(envelope_document)
             envelope_id = insert_result.inserted_id
@@ -236,18 +278,10 @@ async def persist_source_envelope(
 
     outbox_uids: list[str] = []
     for index, item in enumerate(normalized_events):
-        outbox_uid = _sha256(
-            "|".join(
-                (
-                    tenant_id,
-                    source_principal_id,
-                    source_channel,
-                    item["event_uid"],
-                )
-            ).encode("utf-8")
-        )
+        descriptor = outbox_descriptors[index]
+        outbox_uid = descriptor["outbox_uid"]
         outbox_uids.append(outbox_uid)
-        payload_hash = _sha256(item["serialized_payload"].encode("utf-8"))
+        payload_hash = descriptor["payload_hash"]
         existing_outbox = await db[SOURCE_OUTBOX_COLLECTION].find_one(
             {"outbox_uid": outbox_uid},
             {"payload_hash": 1, "target_streams": 1},

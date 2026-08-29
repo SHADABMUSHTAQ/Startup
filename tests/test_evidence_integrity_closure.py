@@ -191,6 +191,41 @@ async def test_source_envelope_rejects_uid_reuse_with_different_payload(db):
 
 
 @pytest.mark.asyncio
+async def test_identical_event_retry_with_new_envelope_does_not_create_orphan(db):
+    common = {
+        "tenant_id": "WARSOC_TEST_SOURCE_REDELIVERY",
+        "source_principal_type": "windows_agent",
+        "source_principal_id": "WARSOC_AGENT_SOURCE_REDELIVERY",
+        "source_channel": "windows_endpoint",
+        "source_payload": b'{"signed":"same"}',
+        "dispatch_events": [
+            {
+                "event_uid": "same-durable-event",
+                "serialized_payload": '{"event_uid":"same-durable-event"}',
+                "target_streams": ["raw_logs_queue"],
+            }
+        ],
+        "retention_class": "SIEM",
+        "auth_metadata": {"scheme": "ed25519-v2"},
+    }
+
+    first = await persist_source_envelope(
+        db,
+        source_envelope_uid="delivery-nonce-one:siem",
+        **common,
+    )
+    second = await persist_source_envelope(
+        db,
+        source_envelope_uid="delivery-nonce-two:siem",
+        **common,
+    )
+
+    assert first == second
+    assert await db.source_envelopes_siem.count_documents({}) == 1
+    assert await db.source_evidence_outbox.count_documents({}) == 1
+
+
+@pytest.mark.asyncio
 async def test_source_outbox_retries_without_losing_committed_envelope(db, redis_client):
     outbox_uids = await persist_source_envelope(
         db,
