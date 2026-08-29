@@ -33,7 +33,13 @@ def is_email_trigger_severity(severity: str | None) -> bool:
 
 
 async def dispatch_alert_if_entitled(
-    db, redis: Redis, tenant_id: str, alert_data: dict, required_pack: str
+    db,
+    redis: Redis,
+    tenant_id: str,
+    alert_data: dict,
+    required_pack: str,
+    *,
+    raise_on_error: bool = False,
 ) -> bool:
     """
     Entitlement Gate: Dispatches an alert to the mail worker only if the tenant 
@@ -133,4 +139,6 @@ async def dispatch_alert_if_entitled(
         
     except Exception as e:
         logger.error(f"Failed to dispatch alert for {tenant_id}: {e}")
+        if raise_on_error:
+            raise
         return False

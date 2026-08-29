@@ -248,6 +248,12 @@ async def init_compliance_db(db):
             [("tenant_id", 1), ("timestamp", -1)],
             name="idx_security_alerts_tenant_timestamp",
         )
+        await _aggressive_create_index(
+            db.security_alerts,
+            [("source", 1), ("watchdog_delivery.next_attempt_at", 1)],
+            name="idx_security_alerts_watchdog_delivery",
+            partialFilterExpression={"source": "network_relay_watchdog"},
+        )
         # Legacy FBR/correlation alerts used a non-indexed retention field. Give
         # them a full hot-retention window before the absolute TTL applies.
         await db.security_alerts.update_many(
@@ -563,6 +569,14 @@ async def init_compliance_db(db):
         await db.tenants.update_many(
             {"retention_days": {"$exists": False}},
             {"$set": {"retention_days": DEFAULT_TENANT_RETENTION_DAYS}},
+        )
+
+        # 6.1 NETWORK RELAY ENTITLEMENT: seed relay contract cap so pre-existing
+        # tenants remain unable to activate relays until an operator explicitly
+        # sets max_network_relays on their tenant document. Zero is fail-closed.
+        await db.tenants.update_many(
+            {"max_network_relays": {"$exists": False}},
+            {"$set": {"max_network_relays": 0}},
         )
         
         #  PERFORMANCE HARDENING: Unified Tenant Exploration

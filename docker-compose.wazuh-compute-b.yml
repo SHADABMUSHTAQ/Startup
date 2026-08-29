@@ -5,6 +5,29 @@ x-warsoc-compute-b-logging: &warsoc-compute-b-logging
     max-file: "3"
 
 services:
+  wazuh-manager-config-init:
+    image: wazuh/wazuh-manager:4.14.7@sha256:8665c9807a5765253c79e4b072a1b7462c997bd69be949118a8d82ce44dd33e9
+    container_name: warsoc-wazuh-manager-config-init
+    entrypoint: []
+    command:
+      - /bin/sh
+      - -c
+      - install -o 0 -g 999 -m 0660 /source/ossec.conf /target/ossec.conf
+    user: "0:0"
+    restart: "no"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    volumes:
+      - ./deploy/wazuh/manager/ossec-manager-only.conf:/source/ossec.conf:ro
+      - warsoc_wazuh_manager_etc:/target
+
   wazuh-manager:
     image: wazuh/wazuh-manager:4.14.7@sha256:8665c9807a5765253c79e4b072a1b7462c997bd69be949118a8d82ce44dd33e9
     container_name: warsoc-wazuh-manager-prod
@@ -26,9 +49,11 @@ services:
       - warsoc_wazuh_manager_active_response:/var/ossec/active-response/bin
       - warsoc_wazuh_manager_agentless:/var/ossec/agentless
       - warsoc_wazuh_manager_wodles:/var/ossec/wodles
-      - ./deploy/wazuh/manager/ossec-manager-only.conf:/wazuh-config-mount/etc/ossec.conf:ro
-      - ./deploy/wazuh/rules/warsoc_projected_shadow_rules.xml:/wazuh-config-mount/etc/warsoc-rules/warsoc_projected_shadow_rules.xml:ro
+      - ./deploy/wazuh/rules:/var/ossec/etc/warsoc-rules:ro
       - ./deploy/wazuh/manager/filebeat.down:/etc/services.d/filebeat/down:ro
+    depends_on:
+      wazuh-manager-config-init:
+        condition: service_completed_successfully
     networks:
       wazuh_compute_b_private:
         ipv4_address: 172.31.40.10

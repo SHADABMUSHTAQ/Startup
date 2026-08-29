@@ -19,7 +19,7 @@ The exact current state is:
 |---|---|---|
 | WarSOC native Windows SIEM/FBR/PECA | Active production path | Continues independently of Wazuh and the firewall relay. |
 | Wazuh contracts and bridge implementation | RC2 implemented and regression-proven | Versioned projection, durable transport, exact signed-evidence validation, standard WarSOC incident projection, and failure controls exist. |
-| Wazuh separate-host shadow transport | Controlled shadow active | OCI Compute A and temporary laptop Compute B run private mTLS dispatch/candidate paths. A projected Event 4625 canary produced a lineage-complete shadow observation with no customer side effects. |
+| Wazuh shadow transport | Controlled shadow active | OCI runs the WarSOC services plus an isolated, bounded manager-only Wazuh/bridge pair. Private Docker DNS, bidirectional mTLS and signed requests carry detector traffic; Tailscale exposes only private administration. Two Event 4625 canaries produced lineage-complete shadow observations with no incident side effects, including one after the old laptop stack stopped. |
 | Wazuh primary candidate family | Disabled | All four projected families remain shadow-only; `WAZUH_PRIMARY_APPROVED=false`. |
 | Firewall relay backend | Implemented and regression-proven | Relay enrollment, strict parsers, bounded spools, signed batches, admission, health, and correlation contracts exist. |
 | pfSense integration | Virtual-lab-proven | pfSense CE 2.8.1 pass/block records completed the controlled Hyper-V relay path. |
@@ -179,6 +179,25 @@ Wazuh 4.14.7 laptop as Compute B. It proved:
 Two defects found by the live run were corrected: fresh bridge volumes are now
 initialized for the non-root UID, and Wazuh manager configuration is applied to
 the host-mounted source of truth rather than only the running container.
+
+### Phase W4.1: Always-On OCI Manager-Only Cutover
+
+**Status:** Complete for controlled shadow operation.
+
+The temporary laptop dependency was replaced with digest-pinned Wazuh manager
+4.14.7 and a non-root WarSOC bridge on OCI. The manager has no host port and
+uses a private internal subnet, a deterministic one-shot config initializer,
+read-only WarSOC rules, persistent manager state, bounded CPU/RAM/PIDs and no
+indexer, dashboard, enrollment, Wazuh agent, Active Response or email. The
+bridge retains encrypted bounded spools and exposes health only on the OCI
+Tailscale address. Detector runtime traffic stays on private Docker DNS with
+mTLS and signed request contracts.
+
+Both post-cutover Event 4625 canaries delivered on the first outbox attempt,
+matched rule 100512, returned complete lineage and created zero incidents. The
+second passed after all old laptop Wazuh containers were stopped and their
+restart policies disabled. This removes the laptop dependency but does not
+create host-level HA because core WarSOC and shadow Wazuh share one OCI VM.
 
 ### Phase W5: Rule-Family Quality and Promotion
 
@@ -355,9 +374,10 @@ WAZUH_PRIMARY_APPROVED=false
 ENABLE_SECURITY_ALERT_EMAILS=false
 ```
 
-Optional Compose profiles for Wazuh and network syslog are not part of the
-normal production startup. Direct public Wazuh manager/API/indexer/dashboard
-ports and direct public UDP syslog are prohibited.
+The Wazuh dispatcher/candidate profile and separate manager-only Compose stack
+are active for shadow observation. Network syslog remains outside normal
+production startup. Direct public Wazuh manager/API/indexer/dashboard ports and
+direct public UDP syslog are prohibited.
 
 ## 8. Customer Claims Allowed Today
 
@@ -394,20 +414,36 @@ WarSOC must not yet claim:
 
 ## 9.1 Controlled Wazuh Activation Record - 2026-08-28
 
-Backend `3a35e3f` closed the exact OCI/laptop shadow path. The deployed registry
+Backend `3a35e3f` first closed the exact OCI/laptop shadow path. Deployment
+foundation `7cd02e0` then removed the laptop runtime dependency with a pinned
+OCI manager-only stack. The deployed registry
 hash is pinned to `warsoc-projected-shadow-v1`; rules 100511 through 100514 cover
 only Events 1102, 4625, 7045 and 4688. An Event 4625 canary completed durable
 dispatch, Wazuh rule 100512, signed candidate return and WarSOC lineage
-validation. It created one shadow observation and zero incidents. The 55-test
-Wazuh/deployment selection passed, public candidate access was blocked,
-unauthenticated mutual-TLS requests were rejected, and the connector returned
-healthy after recovery checks. Test database/quarantine artifacts were removed.
+validation. Two OCI canaries created shadow observations and zero incidents;
+the second passed after the laptop stack was stopped. The 55-test
+Wazuh/deployment selection and four manager-only deployment checks passed,
+public candidate/bridge access was blocked, unauthenticated mutual-TLS requests
+were rejected, and the connector returned healthy after recovery checks. Test
+database/quarantine artifacts were removed.
 
-The temporary Compute B laptop is not highly available. Docker Desktop and
-Tailscale must remain online, and the 90-day leaf certificates require planned
-rotation. Wazuh indexer/dashboard are intentionally stopped for host capacity;
-the manager provides the approved detection path. Firewall projection remains
-disabled.
+No laptop must remain online. The former laptop containers are stopped with
+restart disabled and retained only for rollback. The OCI VM is still a shared
+single-host failure domain, and leaf certificates require planned rotation.
+Indexer/dashboard are intentionally absent because the manager-only path is the
+approved detector scope. Firewall projection remains disabled.
+
+### 9.1 August 29 relay reliability addendum
+
+The current backend candidate adds fail-closed relay entitlement resolution,
+tenant-scoped operator-update locking, durable cross-cycle watchdog delivery
+retries, bounded watchdog scheduling, and static rate-limit evidence for the
+public relay compatibility contract. These changes strengthen the existing
+relay foundation; they do not expand vendor support, enable the production
+feature flag, or promote firewall metadata into Wazuh. The complete maintained
+backend campaign passed (`563 passed, 1 skipped`) after isolating pytest on
+Redis database 14 from the local release-validation worker on database 15;
+Bandit, `pip-audit`, compile, parser, inventory, and diff checks also passed.
 
 ## 10. Source-of-Truth Map
 

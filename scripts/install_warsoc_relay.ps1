@@ -164,3 +164,22 @@ if ($service.Status -ne "Running") {
     throw "WarSOC Relay did not remain running. Review the protected service-error.log as SYSTEM."
 }
 Write-Host "WarSOC Relay installed and running." -ForegroundColor Green
+$installedVersion = $config.relay_version
+Write-Host "Installed relay version: $installedVersion" -ForegroundColor Cyan
+try {
+    $contract = Invoke-RestMethod -Uri "$($config.backend_url)/api/v1/network-relay/contract" -Method Get -TimeoutSec 10
+    Write-Host "Backend minimum relay version: $($contract.minimum_version)" -ForegroundColor Cyan
+    try {
+        if ([version]$installedVersion -lt [version]$contract.minimum_version) {
+            Write-Host "WARNING: installed relay $installedVersion is BELOW the backend minimum $($contract.minimum_version). Evidence ingest will be rejected with 403 until the relay is upgraded." -ForegroundColor Red
+        } else {
+            Write-Host "Relay version satisfies the backend contract." -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "Compare the installed version against the backend minimum above before leaving site." -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "Backend minimum relay version: unavailable (backend unreachable). Confirm it in the WarSOC dashboard relay status." -ForegroundColor Yellow
+}
+Write-Host "If the relay version is below the backend minimum, evidence ingest is rejected" -ForegroundColor Yellow
+Write-Host "with a 403 status; health and control records remain accepted so the relay stays visible." -ForegroundColor Yellow

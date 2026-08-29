@@ -7,16 +7,16 @@
     "Runtime middleware and nested dependency behavior require test evidence in addition to this artifact."
   ],
   "summary": {
-    "route_count": 122,
+    "route_count": 124,
     "manual_review_required": 0,
-    "feature_gated_routes": 30
+    "feature_gated_routes": 31
   },
   "routes": [
     {
       "method": "POST",
       "route": "/api/v1/admin/provision",
       "source_file": "app/routes/admin.py",
-      "source_line": 83,
+      "source_line": 102,
       "handler": "provision_tenant",
       "router_module": "admin",
       "feature_condition": null,
@@ -32,6 +32,7 @@
       ],
       "response_schema": "ProvisionResponse",
       "rate_size_boundary_evidence": [
+        "rate_limit:5/minute",
         "source_marker:quota"
       ],
       "review_state": "STATICALLY_CLASSIFIED"
@@ -40,7 +41,7 @@
       "method": "POST",
       "route": "/api/v1/admin/rotate-key/{tenant_id}",
       "source_file": "app/routes/admin.py",
-      "source_line": 248,
+      "source_line": 468,
       "handler": "rotate_tenant_key",
       "router_module": "admin",
       "feature_condition": null,
@@ -60,7 +61,7 @@
       "method": "GET",
       "route": "/api/v1/admin/tenants",
       "source_file": "app/routes/admin.py",
-      "source_line": 237,
+      "source_line": 262,
       "handler": "list_tenants",
       "router_module": "admin",
       "feature_condition": null,
@@ -74,6 +75,30 @@
       "request_schemas": [],
       "response_schema": null,
       "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "POST",
+      "route": "/api/v1/admin/tenants/{tenant_id}/max-network-relays",
+      "source_file": "app/routes/admin.py",
+      "source_line": 308,
+      "handler": "update_tenant_relay_limit",
+      "router_module": "admin",
+      "feature_condition": null,
+      "auth_type": "PLATFORM_ADMIN_KEY",
+      "auth_evidence": [
+        "get_db",
+        "verify_admin"
+      ],
+      "allowed_roles": [],
+      "tenant_scope": "PLATFORM_ADMIN_OPERATION",
+      "request_schemas": [
+        "RelayLimitUpdateRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "rate_limit:5/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -141,7 +166,9 @@
       "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
       "request_schemas": [],
       "response_schema": "ActivationResponse",
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:60/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -202,7 +229,9 @@
         "AgentRegisterRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:60/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -223,7 +252,9 @@
         "ActivationValidateRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:120/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -250,7 +281,8 @@
       "response_schema": null,
       "rate_size_boundary_evidence": [
         "Query(ge=1, le=365)",
-        "Query(ge=1, le=500)"
+        "Query(ge=1, le=500)",
+        "rate_limit:30/minute"
       ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
@@ -277,7 +309,9 @@
         "AlertUpdate"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:30/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -425,7 +459,9 @@
         "TwoFactorCode"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:5/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -445,7 +481,9 @@
       "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
       "request_schemas": [],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:5/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -486,7 +524,9 @@
         "TwoFactorCode"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:5/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -507,7 +547,9 @@
         "ActivateInviteRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:10/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -553,7 +595,9 @@
         "LoginSchema"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:5/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -674,7 +718,9 @@
         "UserCreate"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:5/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -825,7 +871,9 @@
         "CreateEvidenceCaseRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:20/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -874,7 +922,9 @@
         "CustodyActionRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:20/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -900,7 +950,9 @@
         "CustodyActionRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:60/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -952,7 +1004,9 @@
         "EvidenceExportRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:10/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -1000,7 +1054,9 @@
       "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
       "request_schemas": [],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:10/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -1026,7 +1082,9 @@
         "AddEvidenceCaseItemRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:60/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -1184,7 +1242,9 @@
         "EvidenceHoldRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:10/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -1209,7 +1269,9 @@
         "EvidenceHoldReleaseRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:10/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -1455,7 +1517,8 @@
       "request_schemas": [],
       "response_schema": null,
       "rate_size_boundary_evidence": [
-        "Query(ge=1, le=500)"
+        "Query(ge=1, le=500)",
+        "rate_limit:60/minute"
       ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
@@ -1480,7 +1543,9 @@
       "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
       "request_schemas": [],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:30/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -1505,7 +1570,9 @@
       "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
       "request_schemas": [],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:60/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -1531,7 +1598,8 @@
       "request_schemas": [],
       "response_schema": null,
       "rate_size_boundary_evidence": [
-        "Query(ge=1, le=100)"
+        "Query(ge=1, le=100)",
+        "rate_limit:60/minute"
       ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
@@ -1558,7 +1626,9 @@
         "IncidentUpdate"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:30/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -1622,6 +1692,7 @@
       "request_schemas": [],
       "response_schema": null,
       "rate_size_boundary_evidence": [
+        "rate_limit:300/second",
         "source_marker:quota",
         "source_marker:rate_limit"
       ],
@@ -1806,10 +1877,29 @@
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
+      "method": "GET",
+      "route": "/api/v1/network-relay/contract",
+      "source_file": "app/routes/network_relay.py",
+      "source_line": 906,
+      "handler": "relay_contract",
+      "router_module": "network_relay",
+      "feature_condition": "settings.network_relay_enabled",
+      "auth_type": "PUBLIC_BOUNDED",
+      "auth_evidence": [],
+      "allowed_roles": [],
+      "tenant_scope": "NOT_APPLICABLE",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "rate_limit:10/minute"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
       "method": "POST",
       "route": "/api/v1/network-relay/generate-activation",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 545,
+      "source_line": 605,
       "handler": "generate_relay_activation",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",
@@ -1827,14 +1917,16 @@
         "RelayActivationRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:20/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
       "method": "POST",
       "route": "/api/v1/network-relay/ingest",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 1486,
+      "source_line": 1569,
       "handler": "ingest_relay_batch",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",
@@ -1848,6 +1940,7 @@
       "request_schemas": [],
       "response_schema": null,
       "rate_size_boundary_evidence": [
+        "rate_limit:120/minute",
         "source_marker:content-length",
         "source_marker:max_batch",
         "source_marker:max_body",
@@ -1859,7 +1952,7 @@
       "method": "POST",
       "route": "/api/v1/network-relay/recover-key",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 1008,
+      "source_line": 1089,
       "handler": "recover_relay_key",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",
@@ -1874,6 +1967,7 @@
       ],
       "response_schema": null,
       "rate_size_boundary_evidence": [
+        "rate_limit:10/minute",
         "source_marker:replay"
       ],
       "review_state": "STATICALLY_CLASSIFIED"
@@ -1882,7 +1976,7 @@
       "method": "POST",
       "route": "/api/v1/network-relay/register",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 595,
+      "source_line": 655,
       "handler": "register_relay",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",
@@ -1896,14 +1990,16 @@
         "RelayRegisterRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:20/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
       "method": "GET",
       "route": "/api/v1/network-relay/status",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 843,
+      "source_line": 920,
       "handler": "list_relay_status",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",
@@ -1929,7 +2025,7 @@
       "method": "POST",
       "route": "/api/v1/network-relay/{relay_id}/authorize-key-recovery",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 942,
+      "source_line": 1023,
       "handler": "authorize_relay_key_recovery",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",
@@ -1947,14 +2043,16 @@
         "RelayRecoveryAuthorizationRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:5/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
       "method": "POST",
       "route": "/api/v1/network-relay/{relay_id}/revoke",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 898,
+      "source_line": 979,
       "handler": "revoke_relay",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",
@@ -1972,7 +2070,9 @@
         "RelayRevokeRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:10/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -2019,7 +2119,9 @@
         "ContactRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:5/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -2036,7 +2138,9 @@
       "tenant_scope": "NOT_APPLICABLE",
       "request_schemas": [],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:60/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -2057,7 +2161,9 @@
         "QuoteRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:3/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -2097,7 +2203,9 @@
       "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
       "request_schemas": [],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:5/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -2261,7 +2369,9 @@
         "ActivateInviteRequest"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:10/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -2307,7 +2417,9 @@
         "LoginSchema"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:5/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -2387,7 +2499,9 @@
         "UserCreate"
       ],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:5/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -2668,7 +2782,9 @@
       "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
       "request_schemas": [],
       "response_schema": null,
-      "rate_size_boundary_evidence": [],
+      "rate_size_boundary_evidence": [
+        "rate_limit:5/minute"
+      ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {

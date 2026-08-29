@@ -2,6 +2,7 @@ import json
 import os
 import re
 from functools import lru_cache
+from packaging.version import InvalidVersion, Version
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -90,6 +91,12 @@ class Settings(BaseSettings):
     )
     network_relay_device_silence_seconds: int = int(
         os.getenv("NETWORK_RELAY_DEVICE_SILENCE_SECONDS", "900")
+    )
+    network_relay_minimum_version: str = os.getenv(
+        "NETWORK_RELAY_MINIMUM_VERSION", "0.0.0"
+    ).strip()
+    network_relay_watchdog_interval_seconds: int = int(
+        os.getenv("NETWORK_RELAY_WATCHDOG_INTERVAL_SECONDS", "300")
     )
     # Generic external detection remains isolated and disabled until every
     # shadow acceptance gate has passed. It never owns FBR or PECA evidence.
@@ -246,6 +253,39 @@ def ensure_keys_exist():
         print(f"[KEYS] [ERROR] Error generating dynamic Master Keys: {e}")
 
 
+def _validate_network_relay_version_gate(s: "Settings") -> None:
+    """An enabled relay feature must always carry an explicit minimum relay
+    version. The 0.0.0/empty default means "gate disabled", so starting with
+    the feature on and the variable unset would silently accept every relay
+    build — refuse to boot instead (fail-closed)."""
+    if not s.network_relay_enabled:
+        return
+    minimum_version = (s.network_relay_minimum_version or "").strip()
+    if minimum_version in {"", "0.0.0"}:
+        raise RuntimeError(
+            "FATAL: NETWORK_RELAY_ENABLED=true requires an explicit "
+            "NETWORK_RELAY_MINIMUM_VERSION (e.g. 1.0.0) so the relay version "
+            "gate cannot be silently disabled."
+        )
+    try:
+        Version(minimum_version)
+    except InvalidVersion as exc:
+        raise RuntimeError(
+            "FATAL: NETWORK_RELAY_MINIMUM_VERSION must be a valid PEP 440 version string."
+        ) from exc
+
+
+def _validate_network_relay_watchdog_settings(s: "Settings") -> None:
+    if not s.network_relay_enabled:
+        return
+    interval = s.network_relay_watchdog_interval_seconds
+    if not 30 <= interval <= 86400:
+        raise RuntimeError(
+            "FATAL: NETWORK_RELAY_WATCHDOG_INTERVAL_SECONDS must be between "
+            "30 and 86400 when network relay is enabled."
+        )
+
+
 @lru_cache()
 def get_settings():
     ensure_keys_exist()
@@ -253,6 +293,9 @@ def get_settings():
     # Fail fast: refuse to start if critical secrets are missing
     if not s.jwt_secret_key:
         raise RuntimeError("FATAL: JWT_SECRET_KEY is not set. Check your .env file.")
+    # The relay version gate must never silently default to disabled.
+    _validate_network_relay_version_gate(s)
+    _validate_network_relay_watchdog_settings(s)
     if s.environment.lower() == "production":
         required_values = {
             "JWT_SECRET_KEY": s.jwt_secret_key,
@@ -349,6 +392,12 @@ def get_settings():
             raise RuntimeError(
                 "FATAL: NETWORK_RELAY_DEVICE_SILENCE_SECONDS must be between 180 and 86400."
             )
+        try:
+            Version(s.network_relay_minimum_version)
+        except InvalidVersion as exc:
+            raise RuntimeError(
+                "FATAL: NETWORK_RELAY_MINIMUM_VERSION must be a valid PEP 440 version string."
+            ) from exc
         if s.wazuh_detection_mode not in {"disabled", "shadow", "primary"}:
             raise RuntimeError(
                 "FATAL: WAZUH_DETECTION_MODE must be 'disabled', 'shadow', or 'primary'."

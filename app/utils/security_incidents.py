@@ -490,8 +490,15 @@ async def project_and_publish_incident(
     redis_client,
     alert: Mapping[str, Any],
     source_event: Mapping[str, Any] | None = None,
+    *,
+    publish_duplicates: bool = False,
 ) -> dict[str, Any]:
-    """Project an alert and publish a small tenant-scoped incident envelope."""
+    """Project an alert and publish a small tenant-scoped incident envelope.
+
+    Durable retry callers may request duplicate publication after an earlier
+    attempt committed Mongo but lost the Redis acknowledgement. The default
+    remains duplicate-suppressed for normal detection traffic.
+    """
     operator = operator_alert_document(alert, source_event)
     projection = await project_security_incident(db, alert, source_event)
     if not projection or not projection.get("incident"):
@@ -501,7 +508,9 @@ async def project_and_publish_incident(
     operator["incident_id"] = incident.get("incident_id")
     operator["incident_key"] = incident.get("incident_key")
     operator["occurrences"] = incident.get("occurrences", 1)
-    if redis_client is not None and not projection.get("duplicate"):
+    if redis_client is not None and (
+        publish_duplicates or not projection.get("duplicate")
+    ):
         envelope = {
             "type": "incident.created" if projection.get("created") else "incident.updated",
             "tenant_id": incident.get("tenant_id"),

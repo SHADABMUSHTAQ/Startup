@@ -13,7 +13,9 @@ def _compose() -> dict:
 
 
 def test_manager_is_pinned_private_persistent_and_bounded():
-    manager = _compose()["services"]["wazuh-manager"]
+    compose = _compose()
+    manager = compose["services"]["wazuh-manager"]
+    config_init = compose["services"]["wazuh-manager-config-init"]
     assert manager["image"].startswith("wazuh/wazuh-manager:4.14.7@sha256:")
     assert "ports" not in manager
     assert manager["restart"] == "unless-stopped"
@@ -27,6 +29,11 @@ def test_manager_is_pinned_private_persistent_and_bounded():
     assert "/var/ossec/etc" in destinations
     assert "/var/ossec/logs" in destinations
     assert "/var/ossec/queue" in destinations
+    assert config_init["restart"] == "no"
+    assert config_init["user"] == "0:0"
+    assert "warsoc_wazuh_manager_etc:/target" in config_init["volumes"]
+    assert manager["depends_on"]["wazuh-manager-config-init"]["condition"] == "service_completed_successfully"
+    assert "./deploy/wazuh/rules:/var/ossec/etc/warsoc-rules:ro" in manager["volumes"]
 
 
 def test_manager_config_accepts_only_bridge_projection_listener():

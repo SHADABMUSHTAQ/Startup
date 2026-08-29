@@ -1,7 +1,7 @@
 # WarSOC Wazuh Execution Mind Map
 
-**Status:** Authoritative execution index; controlled shadow active, primary disabled
-**Runtime snapshot:** 2026-08-28, backend `3a35e3f`
+**Status:** Authoritative execution index; OCI manager-only shadow active, primary disabled
+**Runtime snapshot:** 2026-08-28, backend `3a35e3f`, deployment foundation `7cd02e0`
 
 **Architecture authority:**
 `docs/WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md`
@@ -73,12 +73,13 @@ mindmap
       No plaintext fallback
       No unbounded Redis backlog
     Deployment boundary
-      Compute A WarSOC
-      Compute B Wazuh and bridge
-      Tailscale private overlay
+      OCI WarSOC application containers
+      OCI isolated Wazuh and bridge containers
+      Docker-private runtime networks
+      Tailscale-only administration
       Separate mTLS trust directions
       Host ports private or loopback
-      Local co-location is lab-only
+      Single-host failure boundary declared
     Promotion gates
       Disabled
       Shadow
@@ -97,12 +98,12 @@ flowchart LR
     C --> D["Current WarSOC SIEM, FBR and PECA paths"]
     C --> E["Approved generic telemetry projector"]
     E --> F["Encrypted bounded dispatch outbox"]
-    F -->|"mTLS + HMAC over Tailscale"| G["Compute B durable bridge input spool"]
+    F -->|"mTLS + HMAC over private Docker DNS"| G["Isolated durable bridge input spool"]
     G --> H["Docker-private Wazuh JSON listener"]
     H --> I["Pinned Wazuh rules"]
     I --> J["alerts.json"]
     J --> K["Rotation-safe candidate tailer and encrypted spool"]
-    K -->|"mTLS + HMAC over Tailscale"| L["WarSOC candidate API"]
+    K -->|"mTLS + HMAC over private Docker DNS"| L["WarSOC candidate API"]
     L --> M["Dispatch, tenant, evidence and registry validation"]
     M --> N["Shadow observation ledger"]
     N -. "future approved family" .-> O["WarSOC incident projection"]
@@ -119,7 +120,7 @@ flowchart LR
 | 1 | Contracts, threat model, queues and ownership | Code and contract complete | Versioned contracts, encrypted bounded outbox/spools, strict field registry, signed health channel and disabled-by-default settings exist |
 | 2 | Isolated Wazuh lab | Two-host shadow transport accepted | Local and separate-host 4.14.7 canaries, bidirectional mTLS, signed transport, tenant isolation, negative transport and selected outage recovery pass. |
 | 3 | Compatibility harness | Contracts and two-host live path complete | Maintained Wazuh and adjacent WarSOC regression gates pass; physical saturation and rule-quality corpora remain. |
-| 4 | Shadow integration | Controlled deployment active | OCI Compute A and temporary laptop Compute B use private mTLS over Tailscale. A projected Event 4625 completed rule 100512 and returned a lineage-complete shadow observation with zero incident promotion. |
+| 4 | Shadow integration | Controlled deployment active | OCI runs the WarSOC services plus an isolated, bounded manager-only Wazuh/bridge pair. Two projected Event 4625 canaries completed rule 100512 with complete lineage and zero incident promotion; one passed after the old laptop stack was stopped. |
 | 5 | Limited primary promotion | Blocked | Requires accepted Gate 4 metrics and one-family rollback proof |
 | 6 | Firewall projection to Wazuh | Blocked separately | Network relay must pass its own packaged service, real-device and production-pilot gate first |
 | 7 | Security release | Blocked | Requires complete acceptance artifacts, rollback and residual-risk approval |
@@ -270,15 +271,16 @@ ruleset rollback or rule-quality evidence required before production promotion.
 - Runtime identity: backend `3a35e3f`, Wazuh manager `4.14.7`.
 - Mode: `shadow`; global primary approval: `false`.
 - Active rules: 100511/1102, 100512/4625, 100513/7045 and 100514/4688.
-- Transport: private Tailscale bindings with mutual TLS in both directions.
+- Transport: private Docker runtime networks with mutual TLS and request
+  signing; Tailscale-only bindings remain for administrative health access.
 - Positive runtime proof: Event 4625 -> rule 100512 -> validated
   `shadow_observation`; no WarSOC incident or compliance side effect.
 - Maintained Wazuh/deployment selection: 55 passed.
 - Cleanup: canary database and quarantine records removed; connector remains
   healthy and active.
-- Operational boundary: Compute B is a temporary laptop dependency with no HA;
-  Docker Desktop and Tailscale must stay running and leaf certificates must be
-  rotated before expiry.
+- Operational boundary: laptops are no longer in the detection path. The OCI
+  manager-only topology is still a single-host deployment without HA; leaf
+  certificates require rotation and measured capacity remains a promotion gate.
 - Firewall boundary: network relay and firewall-to-Wazuh projection remain
   disabled and require their own acceptance.
 

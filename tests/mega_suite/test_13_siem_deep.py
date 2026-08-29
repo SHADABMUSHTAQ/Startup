@@ -9,7 +9,13 @@ import json
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from app.database import db_manager
-from app.workers.siem_worker import siem_worker
+from app.workers.siem_worker import (
+    RAW_LOGS_QUEUE,
+    SIEM_GROUP,
+    SIEM_HOT_GROUP,
+    SIEM_HOT_QUEUE,
+    siem_worker,
+)
 from tests.helpers import provision_and_login_admin
 
 def _now_iso():
@@ -33,9 +39,29 @@ def _http_event(event_id, event_uid, tenant_id, agent_id, message, source_ip, us
 
 
 @pytest_asyncio.fixture
-async def running_siem_worker():
+async def running_siem_worker(db, redis_client):
     task = asyncio.create_task(siem_worker())
     try:
+        # A full-suite run may schedule this fixture while Mongo/Redis cleanup
+        # is still settling. Do not ingest until both consumer groups exist on
+        # the same isolated Redis database used by the test.
+        ready = False
+        for _ in range(100):
+            if task.done():
+                error = task.exception()
+                raise AssertionError(f"SIEM worker exited during startup: {error!r}")
+            try:
+                raw_groups = await redis_client.xinfo_groups(RAW_LOGS_QUEUE)
+                hot_groups = await redis_client.xinfo_groups(SIEM_HOT_QUEUE)
+                raw_names = {str(group.get("name")) for group in raw_groups}
+                hot_names = {str(group.get("name")) for group in hot_groups}
+                if SIEM_GROUP in raw_names and SIEM_HOT_GROUP in hot_names:
+                    ready = True
+                    break
+            except Exception:
+                pass
+            await asyncio.sleep(0.05)
+        assert ready, "SIEM worker consumer groups did not become ready"
         yield
     finally:
         task.cancel()
@@ -177,7 +203,10 @@ async def test_siem_deep_dive(running_siem_worker):
 
         print("[*] Waiting for SIEM Worker to process...")
         alerts = []
-        for _ in range(40):
+        # Normally completes in under two seconds. The larger bound prevents a
+        # busy full-suite process from turning scheduler delay into a false
+        # detector regression; assertions below still require every rule.
+        for _ in range(120):
             alerts = await db.security_alerts.find(
                 {"tenant_id": tenant_id}
             ).to_list(length=100)

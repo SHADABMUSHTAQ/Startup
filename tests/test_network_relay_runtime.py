@@ -456,7 +456,9 @@ async def test_cloud_registration_status_revocation_and_dead_key_recovery(
     assert second["registration_recovered"] is True
     assert await db["network_relays"].count_documents({"tenant_id": tenant_id}) == 1
 
-    status = await list_relay_status(current_user=admin, _="admin", db=db)
+    status = await list_relay_status(
+        request=request, current_user=admin, _="admin", db=db
+    )
     assert status["relays"][0]["devices"][0]["vendor"] == "pfsense"
     assert status["relays"][0]["health"] == "OFFLINE"
 
@@ -521,8 +523,11 @@ async def test_cloud_registration_status_revocation_and_dead_key_recovery(
 
 
 @pytest.mark.asyncio
-async def test_relay_status_tracks_device_events_losses_and_silence(db, monkeypatch):
+async def test_relay_status_tracks_device_events_losses_and_silence(
+    db, redis_client, monkeypatch
+):
     monkeypatch.setattr(relay_settings, "network_relay_enabled", True)
+    request = _request(redis_client)
     tenant_id = "WARSOC_RELAY_DEVICE_STATUS"
     relay_id = f"WARSOC_RELAY_{'a' * 32}"
     now = datetime.now(timezone.utc)
@@ -588,7 +593,7 @@ async def test_relay_status_tracks_device_events_losses_and_silence(db, monkeypa
     await _persist_batch_receipt(db, context, first_batch, "c" * 64, now)
 
     status = await list_relay_status(
-        current_user={"tenant_id": tenant_id}, _="admin", db=db
+        request=request, current_user={"tenant_id": tenant_id}, _="admin", db=db
     )
     assert status["relays"][0]["health"] == "ACTIVE"
     assert status["relays"][0]["devices"][0]["health"] == "ACTIVE"
@@ -630,7 +635,7 @@ async def test_relay_status_tracks_device_events_losses_and_silence(db, monkeypa
     await _persist_batch_receipt(db, context, second_batch, "d" * 64, failure_time)
 
     status = await list_relay_status(
-        current_user={"tenant_id": tenant_id}, _="admin", db=db
+        request=request, current_user={"tenant_id": tenant_id}, _="admin", db=db
     )
     device_status = status["relays"][0]["devices"][0]
     assert device_status["health"] == "DEGRADED"
@@ -642,6 +647,6 @@ async def test_relay_status_tracks_device_events_losses_and_silence(db, monkeypa
         {"$set": {"last_event_at": now - timedelta(seconds=901)}},
     )
     status = await list_relay_status(
-        current_user={"tenant_id": tenant_id}, _="admin", db=db
+        request=request, current_user={"tenant_id": tenant_id}, _="admin", db=db
     )
     assert status["relays"][0]["devices"][0]["health"] == "SILENT"

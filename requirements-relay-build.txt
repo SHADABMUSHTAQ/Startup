@@ -1,3 +1,15 @@
-# Windows-only packaging dependency. Runtime libraries remain pinned in
-# requirements.txt and must be installed into the same Python environment.
+# Windows-only packaging dependencies for the WarSOC Network Relay build.
+# Runtime libraries remain pinned in requirements.txt and must be installed
+# into the same Python environment before running build_relay.bat.
+#
+# Gate 1 (signed, reproducible build) pins the exact toolchain used to produce
+# relay/dist/warsoc_relay.exe. The manifest script (scripts/relay_build_manifest.py)
+# verifies these pins before building and records the SHA-256 of the artifact.
+#
+# Toolchain baseline (2026-07-29 build):
+#   Python 3.13.11 (MSC v.1944 64 bit AMD64)
+#   pyinstaller==6.21.0
+#   cryptography==50.0.0
+#   pydantic==2.13.4
+#   httpx==0.28.1
 pyinstaller==6.21.0

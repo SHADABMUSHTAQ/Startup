@@ -88,9 +88,9 @@ function Get-ErrorMessage {
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "WarSOC Ops Provisioning"
-$form.Size = New-Size 760 680
+$form.Size = New-Size 760 764
 $form.StartPosition = "CenterScreen"
-$form.MinimumSize = New-Size 760 680
+$form.MinimumSize = New-Size 760 764
 
 $font = New-Font "Segoe UI" 9
 $form.Font = $font
@@ -189,6 +189,21 @@ $quotaHint.Size = New-Size 360 24
 $form.Controls.Add($quotaHint)
 $y += 34
 
+Add-Label "Max relays" $y | Out-Null
+$relaysBox = New-Object System.Windows.Forms.NumericUpDown
+$relaysBox.Location = New-Point 195 $y
+$relaysBox.Size = New-Size 100 24
+$relaysBox.Minimum = 0
+$relaysBox.Maximum = 10
+$relaysBox.Value = 0
+$form.Controls.Add($relaysBox)
+$relayHint = New-Object System.Windows.Forms.Label
+$relayHint.Text = "0 = relays disabled for this tenant. Max 10."
+$relayHint.Location = New-Point 310 ($y + 2)
+$relayHint.Size = New-Size 360 24
+$form.Controls.Add($relayHint)
+$y += 34
+
 Add-Label "Admin email" $y | Out-Null
 $emailBox = Add-TextBox $y "admin@customer.com"
 $y += 34
@@ -225,6 +240,32 @@ $clearButton.Size = New-Size 85 32
 $form.Controls.Add($clearButton)
 $y += 44
 
+# Relay entitlement update path for existing tenants (plan Commit 1): the
+# operator lists tenants, picks one, sets the new cap, and clicks Update.
+$script:TenantRelayLimits = @{}
+
+Add-Label "Update relay limit" $y | Out-Null
+$updateTenantCombo = New-Object System.Windows.Forms.ComboBox
+$updateTenantCombo.DropDownStyle = "DropDownList"
+$updateTenantCombo.Location = New-Point 195 $y
+$updateTenantCombo.Size = New-Size 280 24
+$form.Controls.Add($updateTenantCombo)
+
+$updateRelaysBox = New-Object System.Windows.Forms.NumericUpDown
+$updateRelaysBox.Location = New-Point 485 $y
+$updateRelaysBox.Size = New-Size 55 24
+$updateRelaysBox.Minimum = 0
+$updateRelaysBox.Maximum = 10
+$updateRelaysBox.Value = 0
+$form.Controls.Add($updateRelaysBox)
+
+$updateRelayButton = New-Object System.Windows.Forms.Button
+$updateRelayButton.Text = "Update"
+$updateRelayButton.Location = New-Point 548 ($y - 1)
+$updateRelayButton.Size = New-Size 170 27
+$form.Controls.Add($updateRelayButton)
+$y += 44
+
 $outputBox = New-Object System.Windows.Forms.TextBox
 $outputBox.Location = New-Point 18 $y
 $outputBox.Size = New-Size 700 210
@@ -244,6 +285,33 @@ $generateButton.Add_Click({
     Write-OutputBox "Generated a strong temporary admin password. Copy it before closing this tool."
 })
 
+$updateTenantCombo.Add_SelectedIndexChanged({
+    $selected = $updateTenantCombo.SelectedItem
+    if ($selected -and $script:TenantRelayLimits.ContainsKey($selected)) {
+        $updateRelaysBox.Value = [Math]::Min([Math]::Max($script:TenantRelayLimits[$selected], 0), 10)
+    }
+})
+
+$updateRelayButton.Add_Click({
+    try {
+        $apiBase = Normalize-ApiBase $apiBaseBox.Text
+        $adminKey = $adminKeyBox.Text.Trim()
+        if (-not $adminKey) { throw "Super admin key is required." }
+        $selected = $updateTenantCombo.SelectedItem
+        if (-not $selected) { throw "Click 'List Tenants' first, then pick a tenant to update." }
+        $tenantId = ($selected -split '\|')[0].Trim()
+        $body = @{ max_network_relays = [int]$updateRelaysBox.Value } | ConvertTo-Json
+        $headers = @{ "X-Admin-Key" = $adminKey }
+        $result = Invoke-RestMethod -Uri "$apiBase/admin/tenants/$tenantId/max-network-relays" -Method Post -Headers $headers -ContentType "application/json" -Body $body -TimeoutSec 30
+        Write-OutputBox ("Relay limit for {0}: {1} -> {2} (active relays: {3})." -f `
+            $tenantId, $result.previous_max_network_relays, $result.max_network_relays, $result.active_relays)
+        $script:TenantRelayLimits[$selected] = [int]$result.max_network_relays
+        if ($result.warning) { Write-OutputBox ("WARNING: " + $result.warning) }
+    } catch {
+        Write-OutputBox ("ERROR: " + (Get-ErrorMessage $_))
+    }
+})
+
 $clearButton.Add_Click({
     $outputBox.Clear()
 })
@@ -256,10 +324,20 @@ $listButton.Add_Click({
         $headers = @{ "X-Admin-Key" = $adminKey }
         $result = Invoke-RestMethod -Uri "$apiBase/admin/tenants" -Method Get -Headers $headers -TimeoutSec 30
         Write-OutputBox "Tenants:"
+        $updateTenantCombo.Items.Clear()
+        $script:TenantRelayLimits = @{}
         foreach ($tenant in $result.tenants) {
-            Write-OutputBox (" - {0} | {1} | plan={2} | agents={3} | packs={4}" -f `
+            Write-OutputBox (" - {0} | {1} | plan={2} | agents={3} | relays={4} | packs={5}" -f `
                 $tenant.tenant_id, $tenant.company_name, $tenant.plan_type, $tenant.max_agents, `
+                $(if ($null -eq $tenant.max_network_relays) { "-" } else { $tenant.max_network_relays }), `
                 (($tenant.compliance_packs | ForEach-Object { $_ }) -join ","))
+            $display = "{0} | {1}" -f $tenant.tenant_id, $tenant.company_name
+            [void]$updateTenantCombo.Items.Add($display)
+            $script:TenantRelayLimits[$display] = [int]$(if ($null -eq $tenant.max_network_relays) { 0 } else { $tenant.max_network_relays })
+        }
+        if ($updateTenantCombo.Items.Count -gt 0) {
+            $updateTenantCombo.SelectedIndex = 0
+            Write-OutputBox "Pick a tenant under 'Update relay limit' to change its cap."
         }
     } catch {
         Write-OutputBox ("ERROR: " + (Get-ErrorMessage $_))
@@ -288,6 +366,7 @@ $provisionButton.Add_Click({
             admin_email = $emailBox.Text.Trim()
             admin_name = $nameBox.Text.Trim()
             admin_password = $password
+            max_network_relays = [int]$relaysBox.Value
         }
 
         if ([int]$quotaBox.Value -gt 0) {

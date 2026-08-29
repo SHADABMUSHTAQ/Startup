@@ -15,6 +15,7 @@ import jwt
 import orjson
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization
+from packaging.version import InvalidVersion, Version
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import ORJSONResponse
@@ -203,6 +204,40 @@ def _tenant_relay_limit(tenant: dict | None) -> int:
     except (TypeError, ValueError):
         return 0
     return max(0, min(configured, settings.network_relay_max_per_tenant))
+
+
+async def _resolve_tenant_relay_limit(
+    redis, tenant: dict | None, tenant_id: str
+) -> int:
+    """Resolve a relay entitlement without allowing cache drift to grant more.
+
+    The tenant document is the canonical grant. Redis is a hot-path mirror and
+    may only lower that grant, never raise it above Mongo. This makes partial
+    cross-store updates fail closed: a stale-high cache cannot authorize an
+    extra relay, while a stale-low cache temporarily restricts activation.
+    Cache misses and Redis failures fall back to the canonical document.
+    """
+    document_limit = _tenant_relay_limit(tenant)
+    if document_limit <= 0:
+        return 0
+    if redis is not None:
+        try:
+            cached = _redis_text(
+                await redis.get(f"tenant_max_network_relays:{tenant_id}")
+            )
+        except Exception:
+            cached = None
+        if cached is not None:
+            try:
+                configured = int(cached.strip())
+            except (TypeError, ValueError):
+                configured = None
+            if configured is not None:
+                cached_limit = max(
+                    0, min(configured, settings.network_relay_max_per_tenant)
+                )
+                return min(document_limit, cached_limit)
+    return document_limit
 
 
 def _canonical_public_key(value: str) -> str:
@@ -532,11 +567,36 @@ async def _relay_context(
     if not relay or not _tenant_is_active(tenant):
         raise HTTPException(status_code=403, detail="Relay tenant is inactive")
 
+    # Version gate (hardening): compute the rejection signal here; the ingest
+    # route enforces it per record class so control/health records (the
+    # relay's own heartbeat) still land when the relay is outdated — the
+    # operator must see the relay to push an upgrade.
+    relay_version = str(relay.get("version") or "0.0.0").strip()
+    minimum_version = settings.network_relay_minimum_version
+    version_gate = None
+    if minimum_version and minimum_version != "0.0.0":
+        try:
+            if Version(relay_version) < Version(minimum_version):
+                version_gate = {
+                    "error": "relay_version_below_minimum",
+                    "message": "Relay version below minimum; update required.",
+                    "current_version": relay_version,
+                    "minimum_version": minimum_version,
+                }
+        except InvalidVersion:
+            version_gate = {
+                "error": "relay_version_invalid",
+                "message": "Relay version is not a valid PEP 440 string; update required.",
+                "current_version": relay_version,
+                "minimum_version": minimum_version,
+            }
+
     return {
         "relay_id": relay_id,
         "tenant_id": tenant_id,
         "public_key": public_key,
         "relay": relay,
+        "version_gate": version_gate,
     }
 
 
@@ -554,14 +614,14 @@ async def generate_relay_activation(
     tenant = await db["tenants"].find_one({"tenant_id": tenant_id})
     if not _tenant_is_active(tenant):
         raise HTTPException(status_code=403, detail="Tenant contract is inactive")
+    redis = getattr(request.app.state, "redis", None)
     active_count = await db["network_relays"].count_documents(
         {"tenant_id": tenant_id, "status": {"$nin": list(INACTIVE_RELAY_STATUSES)}}
     )
-    tenant_limit = _tenant_relay_limit(tenant)
+    tenant_limit = await _resolve_tenant_relay_limit(redis, tenant, tenant_id)
     if active_count >= tenant_limit:
         raise HTTPException(status_code=403, detail="Network relay contract limit reached")
 
-    redis = getattr(request.app.state, "redis", None)
     if redis is None:
         raise HTTPException(status_code=503, detail="Relay activation unavailable")
     code = "WARSOC-RELAY-" + secrets.token_urlsafe(18).replace("-", "").replace("_", "")
@@ -626,6 +686,7 @@ async def register_relay(request: Request, body: RelayRegisterRequest, db=Depend
             "key_epoch": int(existing.get("key_epoch") or 1),
             "signature_version": RELAY_SIGNATURE_VERSION,
             "schema_version": RELAY_SCHEMA_VERSION,
+            "minimum_version": settings.network_relay_minimum_version,
             "registration_recovered": True,
         }
     if await db["network_relays"].find_one({"activation_digest": activation_digest}):
@@ -658,7 +719,7 @@ async def register_relay(request: Request, body: RelayRegisterRequest, db=Depend
         active_count = await db["network_relays"].count_documents(
             {"tenant_id": tenant_id, "status": {"$nin": list(INACTIVE_RELAY_STATUSES)}}
         )
-        tenant_limit = _tenant_relay_limit(tenant)
+        tenant_limit = await _resolve_tenant_relay_limit(redis, tenant, tenant_id)
         if active_count >= tenant_limit:
             raise HTTPException(status_code=403, detail="Network relay contract limit reached")
 
@@ -726,6 +787,7 @@ async def register_relay(request: Request, body: RelayRegisterRequest, db=Depend
         "key_epoch": 1,
         "signature_version": RELAY_SIGNATURE_VERSION,
         "schema_version": RELAY_SCHEMA_VERSION,
+        "minimum_version": settings.network_relay_minimum_version,
     }
 
 
@@ -839,8 +901,24 @@ def _relay_public_status(
     }
 
 
+@router.get("/contract")
+@limiter.limit("10/minute")
+async def relay_contract(request: Request):
+    """Public relay compatibility contract so installers and operators can
+    compare an installed relay version against the backend minimum before
+    evidence ingest gets rejected. Rate-limited like every other unauthenticated
+    boundary (PUBLIC_BOUNDED) even though it only exposes version constants."""
+    _feature_guard()
+    return {
+        "minimum_version": settings.network_relay_minimum_version,
+        "signature_version": RELAY_SIGNATURE_VERSION,
+        "schema_version": RELAY_SCHEMA_VERSION,
+    }
+
+
 @router.get("/status")
 async def list_relay_status(
+    request: Request,
     current_user: dict = Depends(get_current_user),
     _: str = Depends(RoleChecker(["admin", "manager", "analyst", "auditor"])),
     db=Depends(get_db),
@@ -848,7 +926,9 @@ async def list_relay_status(
     _feature_guard()
     tenant_id = str(current_user.get("tenant_id") or "")
     tenant = await db["tenants"].find_one({"tenant_id": tenant_id})
-    tenant_limit = _tenant_relay_limit(tenant)
+    tenant_limit = await _resolve_tenant_relay_limit(
+        getattr(request.app.state, "redis", None), tenant, tenant_id
+    )
     rows = await db["network_relays"].find({"tenant_id": tenant_id}).sort(
         "created_at", -1
     ).to_list(length=100)
@@ -881,6 +961,7 @@ async def list_relay_status(
             == "admin",
             "metadata_only": True,
             "validated_firewall_vendors": ["pfsense"],
+            "minimum_relay_version": settings.network_relay_minimum_version,
         },
         "relays": [
             _relay_public_status(
@@ -1062,6 +1143,7 @@ async def recover_relay_key(request: Request, body: RelayRecoverRequest, db=Depe
             "key_epoch": int(existing["key_epoch"]),
             "signature_version": RELAY_SIGNATURE_VERSION,
             "schema_version": RELAY_SCHEMA_VERSION,
+            "minimum_version": settings.network_relay_minimum_version,
             "recovery_replayed": True,
         }
     if await db["network_relays"].find_one({"last_recovery_digest": activation_digest}):
@@ -1156,6 +1238,7 @@ async def recover_relay_key(request: Request, body: RelayRecoverRequest, db=Depe
         "key_epoch": new_epoch,
         "signature_version": RELAY_SIGNATURE_VERSION,
         "schema_version": RELAY_SCHEMA_VERSION,
+        "minimum_version": settings.network_relay_minimum_version,
         "previous_chain_closed": True,
     }
 
@@ -1521,6 +1604,15 @@ async def ingest_relay_batch(
         raise HTTPException(status_code=422, detail="Invalid network relay batch") from exc
     if batch.relay_id != relay_context["relay_id"]:
         raise HTTPException(status_code=403, detail="Relay identity mismatch")
+    if relay_context.get("version_gate") and any(
+        event.record_class == "evidence" for event in batch.events
+    ):
+        # Evidence from an outdated relay is rejected with a structured
+        # update-required signal; control/health-only batches are still
+        # accepted so the relay stays visible to operators. The body is
+        # returned directly (not via HTTPException) so the relay-facing
+        # contract survives the sanitized public error envelope.
+        return ORJSONResponse(status_code=403, content=relay_context["version_gate"])
     if len(batch.events) > settings.network_relay_max_batch_events:
         raise HTTPException(status_code=413, detail="Relay batch contains too many events")
     now = datetime.now(timezone.utc)

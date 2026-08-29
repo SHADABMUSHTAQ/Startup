@@ -18,6 +18,7 @@ from app.utils.compliance_chain import (
     verify_ledger_entry,
 )
 from app.utils.evidence_anchor import anchor_daily_ledger
+from app.workers.network_relay_watchdog import run_network_relay_watchdog
 
 # 🏗 COMPLIANCE CRON: Daily compliance maintenance worker
 # Architecture: Standalone asyncio worker.  Does NOT share the FastAPI event loop.
@@ -379,6 +380,7 @@ async def compliance_cron():
     last_monthly_run = None
     last_heartbeat_run = None
     last_anchor_run = None
+    last_watchdog_run = None
 
     while True:
         now = datetime.now(timezone.utc)
@@ -423,6 +425,26 @@ async def compliance_cron():
                 last_monthly_run = now
             except Exception as e:
                 logger.error(f"[!] Monthly report generation failed: {e}")
+
+        # 5. Network Relay Watchdog (every watchdog_interval_seconds when enabled)
+        if settings.network_relay_enabled:
+            watchdog_interval = settings.network_relay_watchdog_interval_seconds
+            if last_watchdog_run is None or (now - last_watchdog_run).total_seconds() >= watchdog_interval:
+                try:
+                    result = await run_network_relay_watchdog(
+                        db,
+                        app_redis,
+                        silence_seconds=settings.network_relay_device_silence_seconds,
+                    )
+                    if result["alerts_emitted"] > 0:
+                        logger.info(
+                            "Network relay watchdog: found=%d silent devices, emitted=%d alerts",
+                            result["silent_devices_found"],
+                            result["alerts_emitted"],
+                        )
+                except Exception as e:
+                    logger.error(f"[!] Network relay watchdog failed: {e}")
+                last_watchdog_run = now
 
         # Sleep a short duration to prevent CPU spin, evaluating schedules dynamically based on DEAD_AIR_THRESHOLD
         sleep_duration = min(60, max(5, DEAD_AIR_THRESHOLD // 2))

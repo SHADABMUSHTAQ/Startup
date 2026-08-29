@@ -95,6 +95,8 @@ scripts/*
 !scripts/prepare_wazuh_lab_integration.ps1
 !scripts/seed_wazuh_shadow_registry.py
 !scripts/verify_evidence_package.py
+!scripts/relay_build_manifest.py
+!scripts/generate_api_security_inventory.py
 !build_agent.bat
 trigger_alerts.py
 verify.py

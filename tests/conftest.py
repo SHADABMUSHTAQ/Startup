@@ -20,13 +20,18 @@ os.environ["MONGODB_DB_NAME"] = _test_db_name
 
 _runtime_redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
 _parsed_redis_url = urlsplit(_runtime_redis_url)
+# Database 15 is used by the local release-validation worker. Keep pytest on
+# a separate default database so a live worker cannot join test consumer groups.
+_test_redis_db = os.getenv("TEST_REDIS_DB", "14").strip()
+if not _test_redis_db.isdigit() or not 0 <= int(_test_redis_db) <= 15:
+    raise RuntimeError("TEST_REDIS_DB must be an integer between 0 and 15")
 _test_redis_url = os.getenv(
     "TEST_REDIS_URL",
     urlunsplit(
         (
             _parsed_redis_url.scheme,
             _parsed_redis_url.netloc,
-            "/15",
+            f"/{_test_redis_db}",
             _parsed_redis_url.query,
             _parsed_redis_url.fragment,
         )
