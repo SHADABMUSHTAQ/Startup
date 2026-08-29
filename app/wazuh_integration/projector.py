@@ -172,14 +172,17 @@ def _security_fields(
 
 def _correlation_keys(settings, tenant_id: str, document: dict[str, Any], endpoint_id: str) -> CorrelationKeys:
     secret = settings.wazuh_correlation_hmac_key
+    processed_data = document.get("processed_data")
+    if not isinstance(processed_data, dict):
+        processed_data = {}
     source_ip = str(
-        (document.get("processed_data") or {}).get("source_network_address")
-        or (document.get("processed_data") or {}).get("src_ip")
+        processed_data.get("source_network_address")
+        or processed_data.get("src_ip")
         or document.get("source_ip")
         or ""
     ).strip()
     actor = str(
-        (document.get("processed_data") or {}).get("user")
+        processed_data.get("user")
         or document.get("user")
         or ""
     ).strip()

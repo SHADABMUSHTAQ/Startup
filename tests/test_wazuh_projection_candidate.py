@@ -77,6 +77,17 @@ def test_projection_is_minimized_hashed_and_secret_redacted():
     assert "password" not in projected.security_fields
 
 
+def test_projection_accepts_encrypted_processed_data_and_uses_safe_root_fallbacks():
+    event = _signed_windows_event()
+    event["processed_data"] = "fernet-v1:encrypted-canonical-payload"
+
+    projected = build_detection_input(event, [], _settings())
+
+    assert projected.correlation_keys.corr_tenant_source is not None
+    assert projected.correlation_keys.corr_tenant_actor is not None
+    assert projected.security_fields == {}
+
+
 def test_projection_rejects_unsigned_or_misclassified_windows_event():
     event = _signed_windows_event()
     event["signature_verified"] = False
