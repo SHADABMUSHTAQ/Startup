@@ -44,7 +44,9 @@ Its source/build manifest reproduces exactly. The setup workflow now creates a
 strict source/listener contract, a server-validated `relay-config.json`, and a
 separate one-time activation secret. The generic setup kit contains neither.
 The relay and bundled NSSM binary are not Authenticode-signed, so the generated
-kit is lab-only until publisher signing and final artifact publication pass.
+kit uses an explicit exact-hash pilot policy. The dashboard warns that Windows
+may show Unknown publisher and exposes the approved SHA-256. General commercial
+publisher trust remains open until Authenticode signing is funded.
 
 The complete clean backend campaign closed with 570 passed, one explicitly
 skipped and zero assertion failures on 2026-08-30. The skip is the opt-in
@@ -54,7 +56,8 @@ Bandit and diff hygiene also passed. Frontend lint, production build and
 high-severity dependency audit passed. Backend `5664dc8` is deployed on OCI and
 healthy; frontend `67162a3` is live on Vercel. The public relay contract is live,
 and its authenticated status and setup-package routes are present. Package
-availability remains false until a signed versioned setup ZIP is published.
+availability remains false until the versioned pilot ZIP is uploaded and its
+exact SHA-256 is configured with the URL on OCI.
 
 ### 1.1 SIEM architecture and scope decision (2026-08-02)
 
@@ -539,7 +542,7 @@ committed, deployed and accepted against the production environment.
 - It does not use Safepay or self-service payment for the current commercial flow.
 - It does not use Sysmon.
 - It does not currently ingest Linux endpoint telemetry. The separate network relay does not change that boundary.
-- The entitled customer network relay is enabled for the validated pfSense path. Fortinet, Cisco ASA and MikroTik parsers remain implemented but are not commercially offered without separate real-device acceptance. The setup kit remains lab-only until publisher signing and versioned artifact publication pass.
+- The entitled customer network relay is enabled for the validated pfSense path. Fortinet, Cisco ASA and MikroTik parsers remain implemented but are not commercially offered without separate real-device acceptance. The unsigned pilot setup kit requires exact SHA-256 verification and an explicit Unknown publisher warning; publisher-trusted commercial distribution remains open.
 - It does not guarantee that every normal Windows event becomes an alert. Normal events are evidence and correlation inputs; only dangerous or contextually suspicious activity alerts.
 - It does not make a PDF cryptographically signed. The PECA source records contain the forensic signatures; the PDF is a human-readable summary.
 - It does not automatically email an agent installer link to analysts. Agent activation and download are tenant-admin actions.

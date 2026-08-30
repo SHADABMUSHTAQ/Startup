@@ -247,6 +247,8 @@ async def test_provisioned_tenant_can_generate_relay_activation_end_to_end(
         ]
         assert body["setup"]["configuration"]["devices"][0]["device_id"] == "branch-firewall-1"
         assert body["setup"]["package_available"] is False
+        assert body["setup"]["package_sha256"] is None
+        assert body["setup"]["publisher_trust"] == "hash_allowlisted_pilot"
 
         unavailable_package = await async_client.get(
             "/api/v1/network-relay/setup-package"
@@ -257,11 +259,17 @@ async def test_provisioned_tenant_can_generate_relay_activation_end_to_end(
             "network_relay_installer_url",
             "https://artifacts.warsoc.test/warsoc_relay_setup-1.0.0.zip",
         )
+        monkeypatch.setattr(
+            relay_settings,
+            "network_relay_installer_sha256",
+            "a" * 64,
+        )
         package = await async_client.get("/api/v1/network-relay/setup-package")
         assert package.status_code == 307, package.text
         assert package.headers["location"] == (
             "https://artifacts.warsoc.test/warsoc_relay_setup-1.0.0.zip"
         )
+        assert package.headers["x-warsoc-artifact-sha256"] == "a" * 64
 
         # The cache is fail-closed on the hot path: dropping it to 0 blocks
         # activation even though the Mongo tenant document still says 1.
@@ -814,6 +822,39 @@ def test_relay_watchdog_interval_startup_check_is_bounded():
             )
 
 
+def test_relay_setup_package_requires_a_direct_url_and_exact_sha256():
+    from app.config.config import _validate_network_relay_package_settings
+
+    _validate_network_relay_package_settings(
+        types.SimpleNamespace(
+            network_relay_installer_url="",
+            network_relay_installer_sha256="",
+        )
+    )
+    _validate_network_relay_package_settings(
+        types.SimpleNamespace(
+            network_relay_installer_url=(
+                "https://artifacts.warsoc.test/warsoc_relay_setup-1.0.0.zip"
+            ),
+            network_relay_installer_sha256="a" * 64,
+        )
+    )
+    for url, sha256 in (
+        ("https://artifacts.warsoc.test/relay.zip", ""),
+        ("", "a" * 64),
+        ("http://artifacts.warsoc.test/relay.zip", "a" * 64),
+        ("https://artifacts.warsoc.test/relay.exe", "a" * 64),
+        ("https://artifacts.warsoc.test/relay.zip", "not-a-sha256"),
+    ):
+        with pytest.raises(RuntimeError):
+            _validate_network_relay_package_settings(
+                types.SimpleNamespace(
+                    network_relay_installer_url=url,
+                    network_relay_installer_sha256=sha256,
+                )
+            )
+
+
 @pytest.mark.asyncio
 async def test_relay_status_exposes_tenant_capability_and_nested_device_contract(
     db, redis_client
@@ -872,8 +913,13 @@ async def test_relay_status_exposes_tenant_capability_and_nested_device_contract
             "minimum_relay_version": relay_settings.network_relay_minimum_version,
             "setup_package_available": bool(
                 relay_settings.network_relay_installer_url
+                and relay_settings.network_relay_installer_sha256
             ),
             "setup_package_endpoint": "/api/v1/network-relay/setup-package",
+            "setup_package_sha256": (
+                relay_settings.network_relay_installer_sha256 or None
+            ),
+            "publisher_trust": "hash_allowlisted_pilot",
         }
         assert response["relays"][0]["relay_name"] == "Branch Relay"
         assert response["relays"][0]["device_count"] == 1
@@ -898,6 +944,10 @@ async def test_relay_contract_endpoint_exposes_version_contract(async_client):
         assert body["minimum_version"] == relay_settings.network_relay_minimum_version
         assert body["signature_version"] == RELAY_SIGNATURE_VERSION
         assert body["schema_version"] == RELAY_SCHEMA_VERSION
+        assert body["setup_package_sha256"] == (
+            relay_settings.network_relay_installer_sha256 or None
+        )
+        assert body["publisher_trust"] == "hash_allowlisted_pilot"
     finally:
         relay_settings.network_relay_enabled = original_enabled
 

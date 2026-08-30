@@ -378,7 +378,9 @@ executable with SHA-256
 `16DCDCF382F0587BE50BCCE2FED1AA306ED4CF2B280D1A3727847B1BF5496B3C`.
 Its source and pinned build-manifest evidence match. The exact executable and
 bundled NSSM copy remain unsigned, so the current setup ZIP is a lab artifact,
-not a customer production release.
+not a publisher-trusted production release. Operations approved exact-hash
+allowlisting for the controlled no-customer pilot stage; the dashboard must
+show both the Windows publisher warning and package SHA-256.
 
 ## 12. Production Gate
 
@@ -397,7 +399,8 @@ correlation proof. Free/evaluation VM throughput limits are not production
 capacity evidence, and an exact physical/customer model still requires its own
 controlled acceptance.
 
-Customer package distribution remains closed until all of these pass:
+General commercial package distribution remains closed until all of these pass.
+The controlled unsigned pilot may proceed with exact-hash verification:
 
 1. Reproduce the Windows relay build in the pinned/release environment, code-sign or formally hash-allowlist it, and repeat malware scanning on the exact release artifact. The local unsigned candidate build is evidence, not release certification.
 2. On a disposable Windows Server, prove NSSM restart, DPAPI identity reload, source-scoped firewall rules, DACL/SACL behavior, graceful stop, crash recovery, and uninstall evidence preservation.
@@ -412,6 +415,12 @@ build manifest, builds without the lab override, uploads without overwrite,
 downloads the public versioned blob, and verifies its SHA-256 before emitting
 the `NETWORK_RELAY_INSTALLER_URL` value. It cannot run without a trusted
 code-signing certificate and an exact write-capable Azure blob SAS URL.
+
+The no-cost pilot command is `scripts/publish_relay_pilot_kit.ps1`. It accepts
+only the explicitly marked secret-free lab/pilot ZIP, uploads without
+overwrite, downloads the public versioned artifact, verifies the exact hash,
+and emits both `NETWORK_RELAY_INSTALLER_URL` and
+`NETWORK_RELAY_INSTALLER_SHA256`. The backend refuses a URL without its hash.
 
 Current Windows endpoint, SIEM, FBR, and PECA production paths do not depend on
 the relay and remain unchanged when no tenant has relay entitlement.
@@ -436,6 +445,7 @@ The UI provides only WarSOC concepts:
    ports, Azure secrets, or device-authentication claims for legacy UDP.
 
 Backend `NETWORK_RELAY_ENABLED=true` and the frontend feature switch are active
-together. Tenant entitlement still defaults to disabled. Until the signed kit
-and first exact customer-host acceptance close Section 12, operations must not
-grant production relay entitlement or advertise the kit as customer-ready.
+together. Tenant entitlement still defaults to disabled. An entitled pilot may
+use the unsigned kit only after matching its displayed SHA-256. Until publisher
+signing and first exact customer-host acceptance close Section 12, operations
+must not describe it as a publisher-trusted commercial installer.

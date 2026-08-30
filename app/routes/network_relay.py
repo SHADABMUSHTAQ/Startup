@@ -717,8 +717,13 @@ async def generate_relay_activation(
         "setup": {
             "configuration_filename": "relay-config.json",
             "configuration": runtime_configuration,
-            "package_available": bool(settings.network_relay_installer_url),
+            "package_available": bool(
+                settings.network_relay_installer_url
+                and settings.network_relay_installer_sha256
+            ),
             "package_endpoint": "/api/v1/network-relay/setup-package",
+            "package_sha256": settings.network_relay_installer_sha256 or None,
+            "publisher_trust": "hash_allowlisted_pilot",
         },
     }
 
@@ -987,7 +992,12 @@ async def relay_contract(request: Request):
         "minimum_version": settings.network_relay_minimum_version,
         "signature_version": RELAY_SIGNATURE_VERSION,
         "schema_version": RELAY_SCHEMA_VERSION,
-        "setup_package_available": bool(settings.network_relay_installer_url),
+        "setup_package_available": bool(
+            settings.network_relay_installer_url
+            and settings.network_relay_installer_sha256
+        ),
+        "setup_package_sha256": settings.network_relay_installer_sha256 or None,
+        "publisher_trust": "hash_allowlisted_pilot",
     }
 
 
@@ -1009,12 +1019,18 @@ async def download_relay_setup_package(
     )
     if tenant_limit <= 0:
         raise HTTPException(status_code=403, detail="Network relay is not entitled")
-    if not settings.network_relay_installer_url:
+    if not (
+        settings.network_relay_installer_url
+        and settings.network_relay_installer_sha256
+    ):
         raise HTTPException(status_code=503, detail="Relay setup package is unavailable")
     return RedirectResponse(
         url=settings.network_relay_installer_url,
         status_code=307,
-        headers={"Cache-Control": "no-store"},
+        headers={
+            "Cache-Control": "no-store",
+            "X-WarSOC-Artifact-SHA256": settings.network_relay_installer_sha256,
+        },
     )
 
 
@@ -1064,8 +1080,13 @@ async def list_relay_status(
             "metadata_only": True,
             "validated_firewall_vendors": ["pfsense"],
             "minimum_relay_version": settings.network_relay_minimum_version,
-            "setup_package_available": bool(settings.network_relay_installer_url),
+            "setup_package_available": bool(
+                settings.network_relay_installer_url
+                and settings.network_relay_installer_sha256
+            ),
             "setup_package_endpoint": "/api/v1/network-relay/setup-package",
+            "setup_package_sha256": settings.network_relay_installer_sha256 or None,
+            "publisher_trust": "hash_allowlisted_pilot",
         },
         "relays": [
             _relay_public_status(

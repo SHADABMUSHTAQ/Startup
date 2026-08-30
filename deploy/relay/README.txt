@@ -10,10 +10,16 @@ to WarSOC over HTTPS. It does not capture network packet payloads.
 Before installation
 -------------------
 1. Use the WarSOC Firewall Relays screen to create a relay setup.
-2. Download relay-config.json from that screen.
-3. Copy relay-config.json into this extracted folder.
-4. Keep the one-time activation code available. Do not save it in the config.
-5. Use an always-on Windows Server host. Workstation or agent co-location
+2. Before extracting this unsigned pilot kit, run:
+
+     Get-FileHash .\warsoc_relay_setup-1.0.0.zip -Algorithm SHA256
+
+   Confirm the result exactly matches the SHA-256 displayed by WarSOC. Stop if
+   it differs. Windows may display Unknown publisher for this pilot release.
+3. Download relay-config.json from the WarSOC screen.
+4. Copy relay-config.json into this extracted folder.
+5. Keep the one-time activation code available. Do not save it in the config.
+6. Use an always-on Windows Server host. Workstation or agent co-location
    requires an explicit approved override.
 
 Install

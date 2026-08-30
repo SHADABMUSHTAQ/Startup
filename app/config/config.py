@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     network_relay_installer_url: str = os.getenv(
         "NETWORK_RELAY_INSTALLER_URL", ""
     ).strip()
+    network_relay_installer_sha256: str = os.getenv(
+        "NETWORK_RELAY_INSTALLER_SHA256", ""
+    ).strip().lower()
     network_relay_watchdog_interval_seconds: int = int(
         os.getenv("NETWORK_RELAY_WATCHDOG_INTERVAL_SECONDS", "300")
     )
@@ -297,6 +300,28 @@ def _validate_network_relay_watchdog_settings(s: "Settings") -> None:
         )
 
 
+def _validate_network_relay_package_settings(s: "Settings") -> None:
+    url = (s.network_relay_installer_url or "").strip()
+    sha256 = (s.network_relay_installer_sha256 or "").strip()
+    if not url and not sha256:
+        return
+    if bool(url) != bool(sha256):
+        raise RuntimeError(
+            "FATAL: NETWORK_RELAY_INSTALLER_URL and "
+            "NETWORK_RELAY_INSTALLER_SHA256 must be configured together."
+        )
+    if not _is_valid_https_download_url(url, suffix=".zip"):
+        raise RuntimeError(
+            "FATAL: NETWORK_RELAY_INSTALLER_URL must be an HTTPS URL that "
+            "points directly to the versioned relay setup .zip."
+        )
+    if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise RuntimeError(
+            "FATAL: NETWORK_RELAY_INSTALLER_SHA256 must be a 64-character "
+            "lowercase hexadecimal SHA-256 value."
+        )
+
+
 @lru_cache()
 def get_settings():
     ensure_keys_exist()
@@ -307,6 +332,7 @@ def get_settings():
     # The relay version gate must never silently default to disabled.
     _validate_network_relay_version_gate(s)
     _validate_network_relay_watchdog_settings(s)
+    _validate_network_relay_package_settings(s)
     if s.environment.lower() == "production":
         required_values = {
             "JWT_SECRET_KEY": s.jwt_secret_key,
@@ -409,14 +435,6 @@ def get_settings():
             raise RuntimeError(
                 "FATAL: NETWORK_RELAY_MINIMUM_VERSION must be a valid PEP 440 version string."
             ) from exc
-        if s.network_relay_installer_url and not _is_valid_https_download_url(
-            s.network_relay_installer_url,
-            suffix=".zip",
-        ):
-            raise RuntimeError(
-                "FATAL: NETWORK_RELAY_INSTALLER_URL must be an HTTPS URL that "
-                "points directly to the versioned relay setup .zip."
-            )
         if s.wazuh_detection_mode not in {"disabled", "shadow", "primary"}:
             raise RuntimeError(
                 "FATAL: WAZUH_DETECTION_MODE must be 'disabled', 'shadow', or 'primary'."

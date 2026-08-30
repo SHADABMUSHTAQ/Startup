@@ -87,12 +87,17 @@ def test_network_relay_setup_package_is_versioned_validated_and_secret_free():
     route = _read("app/routes/network_relay.py")
     builder = _read("scripts/build_relay_setup_kit.ps1")
     release = _read("scripts/release_relay_setup_kit.ps1")
+    pilot_release = _read("scripts/publish_relay_pilot_kit.ps1")
     readme = _read("deploy/relay/README.txt")
 
     assert 'network_relay_installer_url: str = os.getenv(' in config
+    assert 'network_relay_installer_sha256: str = os.getenv(' in config
+    assert "_validate_network_relay_package_settings(s)" in config
     assert 'suffix=".zip"' in config
     assert '@router.get("/setup-package")' in route
     assert "settings.network_relay_installer_url" in route
+    assert "settings.network_relay_installer_sha256" in route
+    assert '"X-WarSOC-Artifact-SHA256"' in route
     assert '"configuration_filename": "relay-config.json"' in route
     assert "contains_activation_secret = $false" in builder
     assert "contains_customer_configuration = $false" in builder
@@ -102,7 +107,12 @@ def test_network_relay_setup_package_is_versioned_validated_and_secret_free():
     assert '"If-None-Match" = "*"' in release
     assert "The downloaded Azure artifact hash does not match" in release
     assert "NETWORK_RELAY_INSTALLER_URL=$publicUrl" in release
+    assert "NETWORK_RELAY_INSTALLER_SHA256=$zipHash" in release
     assert "lab_override_used = $false" in release
+    assert "lab_override_used -ne $true" in pilot_release
+    assert '"If-None-Match" = "*"' in pilot_release
+    assert "NETWORK_RELAY_INSTALLER_SHA256=$zipHash" in pilot_release
+    assert "windows_warning_expected = $true" in pilot_release
     assert "one-time activation code" in readme
     assert "Do not forward pfSense directly to the public WarSOC API" in readme
 

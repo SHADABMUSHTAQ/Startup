@@ -161,7 +161,10 @@ try {
         relay_signature = "Valid"
         nssm_signature = "Valid"
         lab_override_used = $false
-        oci_environment = "NETWORK_RELAY_INSTALLER_URL=$publicUrl"
+        oci_environment = @(
+            "NETWORK_RELAY_INSTALLER_URL=$publicUrl"
+            "NETWORK_RELAY_INSTALLER_SHA256=$zipHash"
+        )
     } | ConvertTo-Json -Depth 4
 }
 finally {
