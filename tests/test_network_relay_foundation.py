@@ -198,7 +198,7 @@ async def test_tenant_relay_limit_uses_mongo_grant_and_fail_closed_cache(
 
 @pytest.mark.asyncio
 async def test_provisioned_tenant_can_generate_relay_activation_end_to_end(
-    async_client, db, redis_client
+    async_client, db, redis_client, monkeypatch
 ):
     """Commit 1 exit criteria: a freshly provisioned tenant (max_network_relays=1)
     can immediately mint a relay activation code — no 403 entitlement rejection —
@@ -227,6 +227,9 @@ async def test_provisioned_tenant_can_generate_relay_activation_end_to_end(
                         "transport": "udp",
                     }
                 ],
+                "listeners": [
+                    {"transport": "udp", "bind_host": "10.0.0.10", "port": 5514}
+                ],
             },
         )
         assert activation.status_code == 200, activation.text
@@ -235,6 +238,29 @@ async def test_provisioned_tenant_can_generate_relay_activation_end_to_end(
         assert (
             body["expires_in_seconds"]
             == relay_settings.network_relay_activation_ttl_seconds
+        )
+        assert body["setup"]["configuration_filename"] == "relay-config.json"
+        assert body["setup"]["configuration"]["schema_version"] == "warsoc-relay-runtime-v1"
+        assert body["setup"]["configuration"]["backend_url"] == "https://api.warsoc.test"
+        assert body["setup"]["configuration"]["listeners"] == [
+            {"transport": "udp", "bind_host": "10.0.0.10", "port": 5514}
+        ]
+        assert body["setup"]["configuration"]["devices"][0]["device_id"] == "branch-firewall-1"
+        assert body["setup"]["package_available"] is False
+
+        unavailable_package = await async_client.get(
+            "/api/v1/network-relay/setup-package"
+        )
+        assert unavailable_package.status_code == 503, unavailable_package.text
+        monkeypatch.setattr(
+            relay_settings,
+            "network_relay_installer_url",
+            "https://artifacts.warsoc.test/warsoc_relay_setup-1.0.0.zip",
+        )
+        package = await async_client.get("/api/v1/network-relay/setup-package")
+        assert package.status_code == 307, package.text
+        assert package.headers["location"] == (
+            "https://artifacts.warsoc.test/warsoc_relay_setup-1.0.0.zip"
         )
 
         # The cache is fail-closed on the hot path: dropping it to 0 blocks
@@ -252,6 +278,9 @@ async def test_provisioned_tenant_can_generate_relay_activation_end_to_end(
                         "source_addresses": ["10.0.0.2/32"],
                         "transport": "udp",
                     }
+                ],
+                "listeners": [
+                    {"transport": "udp", "bind_host": "10.0.0.10", "port": 5514}
                 ],
             },
         )
@@ -291,6 +320,9 @@ async def test_admin_updates_tenant_relay_limit_end_to_end(
                         "source_addresses": ["10.0.0.1/32"],
                         "transport": "udp",
                     }
+                ],
+                "listeners": [
+                    {"transport": "udp", "bind_host": "10.0.0.10", "port": 5514}
                 ],
             },
         )
@@ -352,6 +384,9 @@ async def test_admin_updates_tenant_relay_limit_end_to_end(
                         "source_addresses": ["10.0.0.1/32"],
                         "transport": "udp",
                     }
+                ],
+                "listeners": [
+                    {"transport": "udp", "bind_host": "10.0.0.10", "port": 5514}
                 ],
             },
         )
@@ -835,6 +870,10 @@ async def test_relay_status_exposes_tenant_capability_and_nested_device_contract
             "metadata_only": True,
             "validated_firewall_vendors": ["pfsense"],
             "minimum_relay_version": relay_settings.network_relay_minimum_version,
+            "setup_package_available": bool(
+                relay_settings.network_relay_installer_url
+            ),
+            "setup_package_endpoint": "/api/v1/network-relay/setup-package",
         }
         assert response["relays"][0]["relay_name"] == "Branch Relay"
         assert response["relays"][0]["device_count"] == 1

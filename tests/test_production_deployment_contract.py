@@ -65,8 +65,8 @@ def test_backend_contains_only_the_cdn_agent_download_route():
 
     assert '@router.get("/download")' in orchestration
     assert "settings.agent_cdn_url" in orchestration
-    assert "parsed.scheme == \"https\"" in orchestration
-    assert 'parsed.path.lower().endswith(".exe")' in orchestration
+    assert "_is_valid_agent_cdn_url(cdn_url)" in orchestration
+    assert "_is_valid_https_download_url" in config
     assert '"AGENT_CDN_URL": s.agent_cdn_url' in config
     assert "must be an HTTPS URL that points directly" in config
     assert 'detail="Agent download is temporarily unavailable."' in orchestration
@@ -80,6 +80,25 @@ def test_backend_contains_only_the_cdn_agent_download_route():
     assert "COPY ./deploy/wazuh/registry /app/deploy/wazuh/registry" in dockerfile
     assert "!scripts/launch_readiness_validator.py" in dockerignore
     assert "agent/" in dockerignore
+
+
+def test_network_relay_setup_package_is_versioned_validated_and_secret_free():
+    config = _read("app/config/config.py")
+    route = _read("app/routes/network_relay.py")
+    builder = _read("scripts/build_relay_setup_kit.ps1")
+    readme = _read("deploy/relay/README.txt")
+
+    assert 'network_relay_installer_url: str = os.getenv(' in config
+    assert 'suffix=".zip"' in config
+    assert '@router.get("/setup-package")' in route
+    assert "settings.network_relay_installer_url" in route
+    assert '"configuration_filename": "relay-config.json"' in route
+    assert "contains_activation_secret = $false" in builder
+    assert "contains_customer_configuration = $false" in builder
+    assert "Relay executable does not match" in builder
+    assert "Get-AuthenticodeSignature" in builder
+    assert "one-time activation code" in readme
+    assert "Do not forward pfSense directly to the public WarSOC API" in readme
 
 
 def test_normal_exports_are_explicitly_hot_tier_only():

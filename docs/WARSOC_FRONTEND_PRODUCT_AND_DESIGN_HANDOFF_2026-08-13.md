@@ -329,7 +329,7 @@ Quote form collects company, name, work email and optional phone, then sends
 `POST /sales/request-quote`. A quote is not payment, capacity reservation or
 account creation. Success says it was received for manual review and invoicing.
 
-## 12. Firewall Relays - Design, Keep Hidden
+## 12. Firewall Relays
 
 Hide while `NETWORK_RELAY_ENABLED=false`.
 
@@ -339,14 +339,17 @@ last event, clock confidence, parse failures, dropped events/bytes and health.
 Admin setup:
 
 1. Name relay.
-2. Register approved firewall devices.
-3. Generate one-time activation code.
-4. Copy setup details.
-5. Confirm first relay heartbeat and first event per device.
+2. Register the approved pfSense device and its source IP/CIDR.
+3. Register the explicit unicast LAN listener address and UDP port on the
+   always-on customer relay host.
+4. Generate the one-time activation and server-validated configuration.
+5. Download the approved relay kit and `relay-config.json` separately.
+6. Confirm the first relay heartbeat and first event from the pfSense device.
 
 Connections:
 
 - `POST /network-relay/generate-activation`
+- `GET /network-relay/setup-package` (entitled admin only)
 - `GET /network-relay/status`
 - `POST /network-relay/{relay_id}/revoke`
 - `POST /network-relay/{relay_id}/authorize-key-recovery`

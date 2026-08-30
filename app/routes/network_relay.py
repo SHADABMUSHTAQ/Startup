@@ -18,11 +18,12 @@ from cryptography.hazmat.primitives import serialization
 from packaging.version import InvalidVersion, Version
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import ORJSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.config.config import get_settings
 from app.database import get_db
+from app.network_relay.runtime import RelayRuntimeConfig
 from app.routes.auth import (
     AGENT_TOKEN_EXPIRE_MINUTES,
     ALGORITHM,
@@ -331,18 +332,69 @@ class RelayDeviceSpec(BaseModel):
         return cleaned
 
 
+class RelayListenerSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    transport: Literal["udp", "tcp"] = "udp"
+    bind_host: str
+    port: int = Field(default=5514, ge=1, le=65535)
+
+    @field_validator("bind_host")
+    @classmethod
+    def validate_bind_host(cls, value: str) -> str:
+        address = ipaddress.ip_address(value)
+        if address.is_unspecified or address.is_multicast:
+            raise ValueError("relay listener must use an explicit unicast address")
+        return str(address)
+
+
 class RelayActivationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     relay_name: str = Field(min_length=3, max_length=100)
     devices: list[RelayDeviceSpec] = Field(min_length=1, max_length=50)
+    listeners: list[RelayListenerSpec] = Field(min_length=1, max_length=2)
 
     @model_validator(mode="after")
     def unique_devices(self):
         ids = [device.device_id for device in self.devices]
         if len(ids) != len(set(ids)):
             raise ValueError("Relay device IDs must be unique")
+        device_transports = {device.transport for device in self.devices}
+        if "api" in device_transports or "tls" in device_transports:
+            raise ValueError("customer relay setup currently supports UDP or TCP syslog")
+        listener_transports = [listener.transport for listener in self.listeners]
+        if len(listener_transports) != len(set(listener_transports)):
+            raise ValueError("Relay listener transports must be unique")
+        if device_transports != set(listener_transports):
+            raise ValueError("Every device transport must have exactly one relay listener")
         return self
+
+
+def _runtime_configuration(body: RelayActivationRequest) -> dict[str, Any]:
+    configuration = RelayRuntimeConfig(
+        backend_url=settings.backend_public_url,
+        relay_version=settings.network_relay_minimum_version,
+        devices=[
+            {
+                "device_id": device.device_id,
+                "vendor": device.vendor,
+                "source_addresses": device.source_addresses,
+                "transport": device.transport,
+                "expected_eps": device.expected_eps,
+            }
+            for device in body.devices
+        ],
+        listeners=[
+            {
+                "transport": listener.transport,
+                "bind_host": listener.bind_host,
+                "port": listener.port,
+            }
+            for listener in body.listeners
+        ],
+    )
+    return configuration.model_dump(mode="json", exclude_none=True)
 
 
 class RelayRegisterRequest(BaseModel):
@@ -624,12 +676,21 @@ async def generate_relay_activation(
 
     if redis is None:
         raise HTTPException(status_code=503, detail="Relay activation unavailable")
+    try:
+        runtime_configuration = _runtime_configuration(body)
+    except ValueError as exc:
+        logger.error("Relay runtime configuration is invalid: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Relay setup configuration is unavailable",
+        ) from exc
     code = "WARSOC-RELAY-" + secrets.token_urlsafe(18).replace("-", "").replace("_", "")
     activation = {
         "purpose": "network_relay",
         "tenant_id": tenant_id,
         "relay_name": body.relay_name,
         "devices": [device.model_dump() for device in body.devices],
+        "listeners": [listener.model_dump() for listener in body.listeners],
         "created_by": current_user.get("username") or current_user.get("email"),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -644,10 +705,22 @@ async def generate_relay_activation(
             "action": "network_relay_activation_created",
             "relay_name": body.relay_name,
             "device_ids": [device.device_id for device in body.devices],
+            "listener_transports": [
+                listener.transport for listener in body.listeners
+            ],
             "timestamp": datetime.now(timezone.utc),
         }
     )
-    return {"activation_code": code, "expires_in_seconds": ttl}
+    return {
+        "activation_code": code,
+        "expires_in_seconds": ttl,
+        "setup": {
+            "configuration_filename": "relay-config.json",
+            "configuration": runtime_configuration,
+            "package_available": bool(settings.network_relay_installer_url),
+            "package_endpoint": "/api/v1/network-relay/setup-package",
+        },
+    }
 
 
 @router.post("/register")
@@ -740,6 +813,7 @@ async def register_relay(request: Request, body: RelayRegisterRequest, db=Depend
             "last_sequence": 0,
             "last_batch_hash": RELAY_GENESIS_HASH,
             "devices": activation["devices"],
+            "listeners": activation.get("listeners") or [],
             "status": "active",
             "created_at": now,
             "last_seen": None,
@@ -913,7 +987,35 @@ async def relay_contract(request: Request):
         "minimum_version": settings.network_relay_minimum_version,
         "signature_version": RELAY_SIGNATURE_VERSION,
         "schema_version": RELAY_SCHEMA_VERSION,
+        "setup_package_available": bool(settings.network_relay_installer_url),
     }
+
+
+@router.get("/setup-package")
+@limiter.limit("10/minute")
+async def download_relay_setup_package(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    _: str = Depends(RoleChecker(["admin"])),
+    db=Depends(get_db),
+):
+    _feature_guard()
+    tenant_id = str(current_user.get("tenant_id") or "")
+    tenant = await db["tenants"].find_one({"tenant_id": tenant_id})
+    if not _tenant_is_active(tenant):
+        raise HTTPException(status_code=403, detail="Tenant contract is inactive")
+    tenant_limit = await _resolve_tenant_relay_limit(
+        getattr(request.app.state, "redis", None), tenant, tenant_id
+    )
+    if tenant_limit <= 0:
+        raise HTTPException(status_code=403, detail="Network relay is not entitled")
+    if not settings.network_relay_installer_url:
+        raise HTTPException(status_code=503, detail="Relay setup package is unavailable")
+    return RedirectResponse(
+        url=settings.network_relay_installer_url,
+        status_code=307,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/status")
@@ -962,6 +1064,8 @@ async def list_relay_status(
             "metadata_only": True,
             "validated_firewall_vendors": ["pfsense"],
             "minimum_relay_version": settings.network_relay_minimum_version,
+            "setup_package_available": bool(settings.network_relay_installer_url),
+            "setup_package_endpoint": "/api/v1/network-relay/setup-package",
         },
         "relays": [
             _relay_public_status(

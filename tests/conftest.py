@@ -42,6 +42,7 @@ if _test_redis_url == _runtime_redis_url:
 os.environ["REDIS_URL"] = _test_redis_url
 os.environ["ENABLE_SELF_SIGNUP"] = "true"
 os.environ.setdefault("SUPER_ADMIN_API_KEY", "warsoc-test-super-admin-key-2026")
+os.environ["BACKEND_PUBLIC_URL"] = "https://api.warsoc.test"
 
 import pytest
 import pytest_asyncio

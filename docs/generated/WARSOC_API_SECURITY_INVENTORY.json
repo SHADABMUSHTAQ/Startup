@@ -7,9 +7,9 @@
     "Runtime middleware and nested dependency behavior require test evidence in addition to this artifact."
   ],
   "summary": {
-    "route_count": 124,
+    "route_count": 125,
     "manual_review_required": 0,
-    "feature_gated_routes": 31
+    "feature_gated_routes": 32
   },
   "routes": [
     {
@@ -1880,7 +1880,7 @@
       "method": "GET",
       "route": "/api/v1/network-relay/contract",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 906,
+      "source_line": 980,
       "handler": "relay_contract",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",
@@ -1899,7 +1899,7 @@
       "method": "POST",
       "route": "/api/v1/network-relay/generate-activation",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 605,
+      "source_line": 657,
       "handler": "generate_relay_activation",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",
@@ -1926,7 +1926,7 @@
       "method": "POST",
       "route": "/api/v1/network-relay/ingest",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 1569,
+      "source_line": 1673,
       "handler": "ingest_relay_batch",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",
@@ -1952,7 +1952,7 @@
       "method": "POST",
       "route": "/api/v1/network-relay/recover-key",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 1089,
+      "source_line": 1193,
       "handler": "recover_relay_key",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",
@@ -1976,7 +1976,7 @@
       "method": "POST",
       "route": "/api/v1/network-relay/register",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 655,
+      "source_line": 728,
       "handler": "register_relay",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",
@@ -1997,9 +1997,34 @@
     },
     {
       "method": "GET",
+      "route": "/api/v1/network-relay/setup-package",
+      "source_file": "app/routes/network_relay.py",
+      "source_line": 996,
+      "handler": "download_relay_setup_package",
+      "router_module": "network_relay",
+      "feature_condition": "settings.network_relay_enabled",
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "rate_limit:10/minute"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
       "route": "/api/v1/network-relay/status",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 920,
+      "source_line": 1022,
       "handler": "list_relay_status",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",
@@ -2025,7 +2050,7 @@
       "method": "POST",
       "route": "/api/v1/network-relay/{relay_id}/authorize-key-recovery",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 1023,
+      "source_line": 1127,
       "handler": "authorize_relay_key_recovery",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",
@@ -2052,7 +2077,7 @@
       "method": "POST",
       "route": "/api/v1/network-relay/{relay_id}/revoke",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 979,
+      "source_line": 1083,
       "handler": "revoke_relay",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",

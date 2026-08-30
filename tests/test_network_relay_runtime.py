@@ -35,6 +35,7 @@ from app.routes.network_relay import (
     RelayBatch,
     RelayDeviceSpec,
     RelayEvent,
+    RelayListenerSpec,
     RelayRecoverRequest,
     RelayRegisterRequest,
     RelayRevokeRequest,
@@ -143,6 +144,31 @@ def test_runtime_config_rejects_wildcard_ambiguous_and_unused_listeners(tmp_path
             listeners=[
                 {"transport": "udp", "bind_host": "10.0.0.10", "port": 5514},
                 {"transport": "tcp", "bind_host": "10.0.0.10", "port": 6514},
+            ],
+        )
+
+
+def test_activation_contract_rejects_unsafe_or_unmatched_listeners():
+    device = RelayDeviceSpec(
+        device_id="branch-pfsense",
+        vendor="pfsense",
+        source_addresses=["10.0.0.1/32"],
+        transport="udp",
+    )
+    with pytest.raises(ValidationError, match="explicit unicast"):
+        RelayActivationRequest(
+            relay_name="Branch Relay",
+            devices=[device],
+            listeners=[
+                RelayListenerSpec(transport="udp", bind_host="0.0.0.0", port=5514)
+            ],
+        )
+    with pytest.raises(ValidationError, match="exactly one relay listener"):
+        RelayActivationRequest(
+            relay_name="Branch Relay",
+            devices=[device],
+            listeners=[
+                RelayListenerSpec(transport="tcp", bind_host="10.0.0.10", port=5514)
             ],
         )
 
@@ -431,6 +457,13 @@ async def test_cloud_registration_status_revocation_and_dead_key_recovery(
                     vendor="pfsense",
                     source_addresses=["10.0.0.1/32"],
                     transport="udp",
+                )
+            ],
+            listeners=[
+                RelayListenerSpec(
+                    transport="udp",
+                    bind_host="10.0.0.10",
+                    port=5514,
                 )
             ],
         ),

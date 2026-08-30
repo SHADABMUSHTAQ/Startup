@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     network_relay_minimum_version: str = os.getenv(
         "NETWORK_RELAY_MINIMUM_VERSION", "0.0.0"
     ).strip()
+    network_relay_installer_url: str = os.getenv(
+        "NETWORK_RELAY_INSTALLER_URL", ""
+    ).strip()
     network_relay_watchdog_interval_seconds: int = int(
         os.getenv("NETWORK_RELAY_WATCHDOG_INTERVAL_SECONDS", "300")
     )
@@ -198,11 +201,19 @@ def _has_minimum_secret_length(value: str, minimum_bytes: int = 32) -> bool:
 
 
 def _is_valid_agent_cdn_url(value: str) -> bool:
+    return _is_valid_https_download_url(value, suffix=".exe")
+
+
+def _is_valid_https_download_url(value: str, *, suffix: str) -> bool:
     parsed = urlparse(str(value or "").strip())
     return (
         parsed.scheme == "https"
         and bool(parsed.netloc)
-        and parsed.path.lower().endswith(".exe")
+        and parsed.path.lower().endswith(suffix)
+        and not parsed.username
+        and not parsed.password
+        and not parsed.query
+        and not parsed.fragment
     )
 
 
@@ -398,6 +409,14 @@ def get_settings():
             raise RuntimeError(
                 "FATAL: NETWORK_RELAY_MINIMUM_VERSION must be a valid PEP 440 version string."
             ) from exc
+        if s.network_relay_installer_url and not _is_valid_https_download_url(
+            s.network_relay_installer_url,
+            suffix=".zip",
+        ):
+            raise RuntimeError(
+                "FATAL: NETWORK_RELAY_INSTALLER_URL must be an HTTPS URL that "
+                "points directly to the versioned relay setup .zip."
+            )
         if s.wazuh_detection_mode not in {"disabled", "shadow", "primary"}:
             raise RuntimeError(
                 "FATAL: WAZUH_DETECTION_MODE must be 'disabled', 'shadow', or 'primary'."

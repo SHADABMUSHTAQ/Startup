@@ -77,7 +77,8 @@ Candidate routes:
 
 | Route | Caller | Purpose |
 |---|---|---|
-| `POST /api/v1/network-relay/generate-activation` | Tenant admin | Create a short-lived, one-time activation bound to an approved device list. |
+| `POST /api/v1/network-relay/generate-activation` | Tenant admin | Create a short-lived activation plus a server-validated runtime configuration bound to approved devices and listeners. |
+| `GET /api/v1/network-relay/setup-package` | Entitled tenant admin | Redirect to the approved versioned relay kit without exposing its storage URL in capability JSON. |
 | `POST /api/v1/network-relay/register` | New relay | Consume the activation, register an Ed25519 public key, and receive a relay JWT. |
 | `GET /api/v1/network-relay/status` | Entitled tenant user | Read tenant-scoped relay health and registered device coverage. |
 | `POST /api/v1/network-relay/{relay_id}/revoke` | Tenant admin | Revoke cloud admission for a relay. |
@@ -92,10 +93,16 @@ The registration contract includes:
 - Relay name and host identity.
 - Separate relay public key and key ID.
 - Registered device ID, vendor, model, source IP/CIDR, transport, timezone, and expected EPS.
+- Explicit relay listener transport, unicast LAN address, and port. Device and listener transports must match.
 - Per-tenant relay limit.
 - Relay lifecycle status and revocation state.
 - Idempotent registration nonce and retry-safe activation claim.
 - Audited key-epoch recovery with previous-chain continuity metadata.
+
+The generated `relay-config.json` never contains the activation code. The
+generic setup kit never contains customer configuration or activation secrets.
+The admin downloads both separately and enters the one-time code only when the
+elevated installer requests it.
 
 ## 5. Signed Batch and Admission Contract
 

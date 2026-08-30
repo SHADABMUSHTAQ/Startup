@@ -114,6 +114,8 @@ Use a compact setup form with these required fields:
 - Transport.
 - Device timezone.
 - Expected events per second.
+- Relay LAN listener IP and UDP port. The address must be the explicit unicast
+  address of the always-on Windows relay host, not `0.0.0.0`.
 
 ### Generate activation
 
@@ -135,13 +137,24 @@ Content-Type: application/json
       "timezone": "UTC",
       "expected_eps": 100
     }
+  ],
+  "listeners": [
+    {
+      "transport": "udp",
+      "bind_host": "192.0.2.10",
+      "port": 5514
+    }
   ]
 }
 ```
 
-The response contains `activation_code` and `expires_in_seconds`. Show the code
-once with a copy button and expiry. Do not persist it in local storage, logs,
-analytics, URLs, or browser history.
+The response contains `activation_code`, `expires_in_seconds`, and a `setup`
+object containing the validated `relay-config.json` data. Show the code once
+with a copy button and expiry. Offer the configuration as a local JSON download.
+When `setup.package_available=true`, the admin may open the authenticated
+`GET /network-relay/setup-package` route to download the approved versioned
+setup kit. Do not persist the code in local storage, logs, analytics, URLs, or
+browser history, and do not insert it into the configuration file.
 
 ## 5. Relay actions
 

@@ -1,8 +1,8 @@
 # WarSOC Current-State Architecture and Operational Contract
 
 **Document status:** Authoritative as-built map
-**Snapshot date:** 2026-08-28
-**Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the production-disabled network-relay candidate, and the controlled Wazuh shadow-detector path.
+**Snapshot date:** 2026-08-30
+**Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the controlled pfSense network-relay path, and the controlled Wazuh shadow-detector path.
 
 **Current OCI application identity for the Wazuh shadow activation:** `3a35e3f`
 **Always-on Wazuh deployment foundation:** `7cd02e0`
@@ -27,21 +27,27 @@ WarSOC currently has a coherent end-to-end architecture. The application enforce
 10. Normal compliance views, search, CSV exports, and PDF reports read bounded hot Mongo data and archive-ledger availability. Historical bytes require the feature-gated asynchronous retrieval workflow.
 11. The dashboard separates normal endpoint telemetry, immutable detection evidence, and mutable operator incidents.
 
-The public Azure artifact remains Windows agent `4.2.8-Native-Signed`. The
-reviewed source candidate is `4.2.9-Native-Signed-Coverage`. Its local installer
-SHA-256 is `960BF349C023A1FB79065F7ACC692A089ADEF583585DEB2BDFFCC3DC60003670`
-and packaged agent SHA-256 is
-`B9B2F9B7E308395861CC6887DD020FE0A0BFD85EA2257DB240B2FFC0FA6C75EE`.
-The 4.2.9 installer is not Authenticode-signed, uploaded, installed or
-production-accepted. The accepted 4.2.8 object must remain available until all
-four steps pass.
+The public Azure artifact is Windows agent `4.2.10` at the approved versioned
+artifact URL. Its installer SHA-256 is
+`DAC9991A6CDA6E802E0DF6C2E70B5A6BDCFA1096A41E2142070BE6154A6E6ACF`.
+The production backend requires signed endpoint events. The executable is still
+not Authenticode publisher-signed, so exact-hash verification remains a pilot
+control rather than an enterprise publisher-trust claim.
 
 The last complete exact-machine native workflow remains the 2026-07-21 `4.2.6-Native-Signed` run: enrollment, fresh heartbeats, SIEM alerting, PECA Event 4688 evidence, FBR invoice evidence, native FBR database-deletion correlation, 7,191 verified endpoint signatures and zero rejected signatures. Agent 4.2.8 preserves that architecture and adds the bounded DTD/entity-rejecting Windows XML parser guard plus bounded historical spool replay. Existing 4.2.6 agents remain compatible only while the backend permits their signed event format; new installations use 4.2.8.
 
-The disabled network-relay candidate has also passed 36 focused parser, schema, signing, encrypted-spool, outbox, Redis-admission, lifecycle, source-isolation and hybrid-correlation tests. A locally built 29,263,064-byte Windows relay candidate had SHA-256 `04602CBBCEEA8EF2BE18D5FD1C9DC2F89DADD0B9B8BA140C9B4444264BE055E3` and produced no detection in an enabled Microsoft Defender custom scan. It is unsigned and was not installed as a Windows service. A pfSense CE 2.8.1 Hyper-V appliance supplied native pass/block syslog proof, but this is not exact customer-hardware acceptance; these facts keep the production gate closed.
+The network-relay backend is enabled under tenant entitlement, with pfSense as
+the only validated commercial vendor. The current relay executable is
+30,189,810 bytes with SHA-256
+`16DCDCF382F0587BE50BCCE2FED1AA306ED4CF2B280D1A3727847B1BF5496B3C`.
+Its source/build manifest reproduces exactly. The setup workflow now creates a
+strict source/listener contract, a server-validated `relay-config.json`, and a
+separate one-time activation secret. The generic setup kit contains neither.
+The relay and bundled NSSM binary are not Authenticode-signed, so the generated
+kit is lab-only until publisher signing and final artifact publication pass.
 
-The complete clean backend campaign closed with 523 passed, one explicitly
-skipped and zero assertion failures on 2026-08-24. The skip is the opt-in
+The complete clean backend campaign closed with 570 passed, one explicitly
+skipped and zero assertion failures on 2026-08-30. The skip is the opt-in
 isolated-stack destructive E2E harness. `pip check`, `pip-audit`, Python
 compilation, production Compose parsing, generated API inventory, high-severity
 Bandit and diff hygiene also passed. Frontend lint, production build and
@@ -56,7 +62,7 @@ not claim their source breadth, scale, or product maturity:
 
 | SIEM responsibility | WarSOC owner | Current boundary |
 |---|---|---|
-| Collection | Windows agent; disabled customer-side network relay candidate | Native Windows Security/System events are active. Firewall metadata is not active. |
+| Collection | Windows agent; entitled customer-side pfSense relay | Native Windows Security/System events are active. The relay accepts source-restricted pfSense syslog on the customer LAN and sends signed HTTPS batches; no public cloud syslog listener or PCAP is used. |
 | Parsing and normalization | Windows XML parser, POS JSONL parser, network vendor parsers | Network parsers are candidate-only. No packet payload or PCAP is collected. |
 | Buffering | Redis Streams with independent consumer groups | SIEM, FBR, and PECA acknowledge independently. |
 | Detection and correlation | `siem_worker.py`, `siem_logic.py`, `siem_catalog.py` | Rules run only when their required trusted telemetry family and fields exist. |
@@ -367,7 +373,7 @@ candidate production deploy   OPEN
 live role and pipeline proof  OPEN
 FBR/PECA duration routing     CODE COMPLETE / CLOUD ROUTES PENDING
 Wazuh shadow                  ACTIVE / PRIMARY DISABLED
-network relay                DISABLED CANDIDATE
+network relay                BACKEND ENABLED / SIGNED CUSTOMER KIT OPEN
 ```
 
 ### 1.12 August 24 PECA retention product decision
@@ -531,20 +537,22 @@ committed, deployed and accepted against the production environment.
 - It does not require customers to disable Windows Defender.
 - It does not use Safepay or self-service payment for the current commercial flow.
 - It does not use Sysmon.
-- It does not currently ingest Linux telemetry. A separate network relay candidate exists, but network-device ingestion remains disabled and outside the active Windows SMB pilot contract.
-- A feature-gated customer network relay exists in the source tree with strict metadata-only vendor parsers, encrypted bounded spools, pre-queue Fernet protection for raw vendor records, exact retries, a separate Windows service runtime, DPAPI identity, explicit listeners, source-scoped installer controls, lifecycle recovery, per-device coverage state, and source-isolated SIEM correlations. `NETWORK_RELAY_ENABLED` defaults to `false`; no production network-device claim exists until physical acceptance passes.
+- It does not currently ingest Linux endpoint telemetry. The separate network relay does not change that boundary.
+- The entitled customer network relay is enabled for the validated pfSense path. Fortinet, Cisco ASA and MikroTik parsers remain implemented but are not commercially offered without separate real-device acceptance. The setup kit remains lab-only until publisher signing and versioned artifact publication pass.
 - It does not guarantee that every normal Windows event becomes an alert. Normal events are evidence and correlation inputs; only dangerous or contextually suspicious activity alerts.
 - It does not make a PDF cryptographically signed. The PECA source records contain the forensic signatures; the PDF is a human-readable summary.
 - It does not automatically email an agent installer link to analysts. Agent activation and download are tenant-admin actions.
 - Manual log injection is disabled by default in production and returns 404 unless operations explicitly enables `ENABLE_MANUAL_LOG_INJECTION` for a controlled exercise.
 
-### 2.3 Disabled network-relay candidate
+### 2.3 Controlled pfSense network relay
 
-The candidate is documented in `NETWORK_RELAY_BACKEND_FOUNDATION.md`. It does not change the current Windows pilot path, public ports, FBR truth sources, PECA 11-control catalog, or hot/cold retention. A local frontend correction based on `6ffc9e0` now matches the request, nested response, entitlement and role contracts in `WARSOC_FIREWALL_WAZUH_FRONTEND_BUILD_GUIDE.md`; it passes source/build gates but is not pushed, deployed or paired-tested. Every relay backend source file, parser, worker, installer, test and configuration migrates with the backend; `NETWORK_RELAY_ENABLED=false` keeps the capability inactive until deliberate paired acceptance.
+The relay is documented in `NETWORK_RELAY_BACKEND_FOUNDATION.md`. It does not change the Windows endpoint path, public ports, FBR truth sources, PECA catalog or retention. The frontend uses the exact device/listener request, nested status, entitlement and role contracts in `WARSOC_FIREWALL_WAZUH_FRONTEND_BUILD_GUIDE.md`. The backend feature switch is enabled on OCI; tenant entitlement remains fail-closed and defaults to zero.
 
 Candidate capabilities include separate relay identities, retry-safe one-time activation, Ed25519-signed HTTPS batches, atomic Redis admission, strict Fortinet/Cisco ASA/MikroTik/pfSense metadata parsing, encrypted bounded evidence/control spools, encrypted raw cloud evidence, exact retry bodies, Windows DPAPI protection, NSSM lifecycle, revocation and dead-key recovery, per-device active/degraded/silent state, network-source isolation, receipt-time VPN spray detection, non-alert VPN-to-Windows context, and chronology-checked same-host high-risk-to-public-network correlation.
 
-The feature must remain disabled until the exact Windows build passes service/ACL/DPAPI/crash tests, every offered vendor has real-device proof, tenant EPS and disk behavior are measured, traffic-data retention is legally approved and configured, and a controlled pilot completes.
+Only pfSense may be presented as validated. Customer release of the downloadable
+kit still requires Authenticode signing, versioned artifact publication, and an
+exact customer-host installation/heartbeat/event acceptance record.
 
 ## 3. End-to-End Data Flow
 
@@ -1691,7 +1699,7 @@ Status meanings:
 | Installer code signing | Publisher reputation and Defender trust | PARTIAL | Exact hash allowlisting supports the pilot while Defender stays enabled; the binary remains unsigned. |
 | Capacity ceiling | Maximum 50 active agents per tenant and 50 aggregate active agents on the shared host | PROVEN by contract tests; prior synthetic soak | Mongo-backed floors prevent Redis restarts from bypassing either boundary. Real customer mix must still be monitored because event volume per endpoint varies. |
 | Linux/syslog | Linux endpoint telemetry | OUT OF SCOPE | Linux remains outside the Windows SMB pilot and no Linux agent/intake is claimed. |
-| Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | PFSENSE LAB-PROVEN CANDIDATE / DISABLED | Cloud API, strict metadata-only Fortinet/Cisco ASA/MikroTik/pfSense parsers, bounded encrypted spools, Fernet-protected raw cloud evidence, exact retry, DPAPI identity, separate Windows service/installer, lifecycle recovery, atomic Redis admission, per-device coverage state, source isolation, and backlog-safe limited hybrid correlations are implemented. A pfSense CE 2.8.1 Hyper-V lab proved native BSD syslog parsing, logged pass/block evidence, Ed25519 relay attestation, encrypted outage retention, unclean restart recovery, zero duplicate event UIDs, and continuous batch hashes. Tenant entitlement now defaults to zero and the status API publishes the exact capability plus nested device state. A local frontend correction matches this contract and passes lint/build, but is not pushed or paired-tested. `NETWORK_RELAY_ENABLED=false`; packaged Windows-service acceptance, exact customer hardware, other appliance proof, retention, capacity, external notification and pilot proof remain open. |
+| Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | PFSENSE BACKEND ENABLED / CUSTOMER KIT SIGNING OPEN | The pfSense lab proved native pass/block syslog parsing, relay attestation, encrypted outage retention, restart recovery, deduplication and batch-chain continuity. Tenant entitlement defaults to zero. The API publishes nested relay/device health and generates an explicit unicast listener configuration separately from the one-time activation. The generic kit is reproducible and secret-free but remains unsigned/lab-only. Other vendor parsers are not commercially validated. |
 | Internal Wazuh detector | Receive minimized WarSOC projections and return validated candidate observations | CONTROLLED SHADOW ACTIVE / PRIMARY DISABLED | An OCI-local, manager-only Wazuh 4.14.7 deployment uses digest-pinned images, private Docker networks, mTLS, signed batches, bounded resources and encrypted spools. Two post-cutover Event 4625 canaries completed rule 100512 with first-attempt delivery, complete lineage and zero incident promotion; the second passed with the old laptop stack stopped. WarSOC remains authoritative and customer APIs hide detector-vendor provenance. Primary promotion, broad stock rules, full capacity/HA approval and firewall projection remain disabled. |
 | External threat-intelligence enrichment | Third-party reputation/provider lookups | OUT OF SCOPE | No live provider integration is claimed for the current pilot. Native SIEM/FBR/PECA operation does not depend on it. |
 

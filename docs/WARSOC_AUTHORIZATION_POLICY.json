@@ -1,5 +1,5 @@
 {
-  "policy_version": "2026-08-29.relay-production-v1",
+  "policy_version": "2026-08-30.relay-setup-v1",
   "default_policy": "DENY_UNLESS_EXPLICITLY_AUTHENTICATED",
   "public_routes": [
     "GET /api/v1/network-relay/contract",
@@ -51,6 +51,7 @@
     ]
   },
   "sensitive_role_requirements": {
+    "GET /api/v1/network-relay/setup-package": ["admin"],
     "GET /api/v1/archive-retrievals/": ["admin", "auditor", "manager"],
     "POST /api/v1/archive-retrievals/": ["admin", "auditor", "manager"],
     "GET /api/v1/archive-retrievals/{request_id}": ["admin", "auditor", "manager"],

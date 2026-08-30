@@ -96,6 +96,7 @@ scripts/*
 !scripts/seed_wazuh_shadow_registry.py
 !scripts/verify_evidence_package.py
 !scripts/relay_build_manifest.py
+!scripts/build_relay_setup_kit.ps1
 !scripts/generate_api_security_inventory.py
 !build_agent.bat
 trigger_alerts.py
@@ -121,6 +122,9 @@ relay/build/
 relay/dist/
 relay/config/
 relay/
+!deploy/relay/
+!deploy/relay/README.txt
+!deploy/relay/THIRD_PARTY_NOTICES.txt
 
 # Cryptographic Keys
 keys/

@@ -1,0 +1,8 @@
+Third-Party Notices
+===================
+
+NSSM 2.24
+---------
+The Non-Sucking Service Manager (NSSM) is included to run the WarSOC relay as
+a Windows service. NSSM 2.24 is distributed as public-domain software.
+Project information and source: https://nssm.cc/
