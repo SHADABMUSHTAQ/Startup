@@ -97,6 +97,7 @@ scripts/*
 !scripts/verify_evidence_package.py
 !scripts/relay_build_manifest.py
 !scripts/build_relay_setup_kit.ps1
+!scripts/release_relay_setup_kit.ps1
 !scripts/generate_api_security_inventory.py
 !build_agent.bat
 trigger_alerts.py

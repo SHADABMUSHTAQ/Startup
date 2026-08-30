@@ -373,11 +373,19 @@ The suite verifies parser conservatism, packet/raw rejection, schema rejection, 
 
 It does not replace real-device acceptance.
 
-The Windows relay candidate was built locally as a 29,263,064-byte executable with SHA-256 `04602CBBCEEA8EF2BE18D5FD1C9DC2F89DADD0B9B8BA140C9B4444264BE055E3`. Microsoft Defender real-time protection was enabled and a custom scan produced no matching detection. The executable is unsigned, and only CLI/package startup was exercised; the packaged binary was not installed as a Windows service or connected to a physical firewall.
+The current Windows relay candidate is a reproducible 30,189,810-byte
+executable with SHA-256
+`16DCDCF382F0587BE50BCCE2FED1AA306ED4CF2B280D1A3727847B1BF5496B3C`.
+Its source and pinned build-manifest evidence match. The exact executable and
+bundled NSSM copy remain unsigned, so the current setup ZIP is a lab artifact,
+not a customer production release.
 
 ## 12. Production Gate
 
-Do not set `NETWORK_RELAY_ENABLED=true` yet.
+The OCI backend switch and frontend workspace are enabled, but access remains
+fail-closed behind tenant entitlement and tenant-admin RBAC. pfSense is the
+only commercially eligible vendor. Generic public syslog and non-pfSense
+vendor onboarding remain disabled.
 
 The vendor-validation model and first executable lab gate are defined in:
 
@@ -389,7 +397,7 @@ correlation proof. Free/evaluation VM throughput limits are not production
 capacity evidence, and an exact physical/customer model still requires its own
 controlled acceptance.
 
-The gate remains closed until all of these pass:
+Customer package distribution remains closed until all of these pass:
 
 1. Reproduce the Windows relay build in the pinned/release environment, code-sign or formally hash-allowlist it, and repeat malware scanning on the exact release artifact. The local unsigned candidate build is evidence, not release certification.
 2. On a disposable Windows Server, prove NSSM restart, DPAPI identity reload, source-scoped firewall rules, DACL/SACL behavior, graceful stop, crash recovery, and uninstall evidence preservation.
@@ -398,16 +406,26 @@ The gate remains closed until all of these pass:
 5. Run one non-POS pilot relay for at least 24 hours and review drops, spool growth, detection latency, and false positives.
 6. Decide and configure the legally reviewed Azure retention class for PECA-oriented traffic metadata. Until then it remains SIEM evidence and must not be marketed as a one-year PECA traffic vault.
 
-Current Windows endpoint, SIEM, FBR, and PECA production paths do not depend on this feature and remain unchanged while it is disabled.
+The release command is `scripts/release_relay_setup_kit.ps1`. It signs staged
+copies of the relay and NSSM, reconciles the signed relay hash with a staged
+build manifest, builds without the lab override, uploads without overwrite,
+downloads the public versioned blob, and verifies its SHA-256 before emitting
+the `NETWORK_RELAY_INSTALLER_URL` value. It cannot run without a trusted
+code-signing certificate and an exact write-capable Azure blob SAS URL.
+
+Current Windows endpoint, SIEM, FBR, and PECA production paths do not depend on
+the relay and remain unchanged when no tenant has relay entitlement.
 
 ## 13. Customer UI Boundary
 
-The authoritative frontend `main` branch does not currently contain a Network
-Relays workspace or `VITE_NETWORK_RELAY_ENABLED` integration. This is the
-correct production state while the backend gate remains closed; it must not be
-described as a hidden or completed customer feature.
+The authoritative frontend `main` branch contains the entitled Network Relays
+workspace and `VITE_NETWORK_RELAY_ENABLED` integration. It uses the exact
+backend device/listener contract, downloads the generated `relay-config.json`,
+keeps the one-time activation code only in component memory, and exposes the
+authenticated package endpoint only when the backend reports an approved
+artifact.
 
-A future separately reviewed UI must provide only WarSOC concepts:
+The UI provides only WarSOC concepts:
 
 1. one-time relay activation for explicitly registered device contracts;
 2. role-scoped relay/device health and required-reason revocation;
@@ -417,6 +435,7 @@ A future separately reviewed UI must provide only WarSOC concepts:
 5. no packet payloads, raw vendor-message browsing, Wazuh identity, internal
    ports, Azure secrets, or device-authentication claims for legacy UDP.
 
-Backend `NETWORK_RELAY_ENABLED=true` and the future frontend implementation must
-only be enabled together after Section 12 closes. Until then, endpoint, SIEM,
-FBR, and PECA customer flows remain unchanged.
+Backend `NETWORK_RELAY_ENABLED=true` and the frontend feature switch are active
+together. Tenant entitlement still defaults to disabled. Until the signed kit
+and first exact customer-host acceptance close Section 12, operations must not
+grant production relay entitlement or advertise the kit as customer-ready.

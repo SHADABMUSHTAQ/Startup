@@ -86,6 +86,7 @@ def test_network_relay_setup_package_is_versioned_validated_and_secret_free():
     config = _read("app/config/config.py")
     route = _read("app/routes/network_relay.py")
     builder = _read("scripts/build_relay_setup_kit.ps1")
+    release = _read("scripts/release_relay_setup_kit.ps1")
     readme = _read("deploy/relay/README.txt")
 
     assert 'network_relay_installer_url: str = os.getenv(' in config
@@ -97,6 +98,11 @@ def test_network_relay_setup_package_is_versioned_validated_and_secret_free():
     assert "contains_customer_configuration = $false" in builder
     assert "Relay executable does not match" in builder
     assert "Get-AuthenticodeSignature" in builder
+    assert "Set-AuthenticodeSignature" in release
+    assert '"If-None-Match" = "*"' in release
+    assert "The downloaded Azure artifact hash does not match" in release
+    assert "NETWORK_RELAY_INSTALLER_URL=$publicUrl" in release
+    assert "lab_override_used = $false" in release
     assert "one-time activation code" in readme
     assert "Do not forward pfSense directly to the public WarSOC API" in readme
 

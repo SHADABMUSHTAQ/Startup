@@ -4,10 +4,10 @@
 **Snapshot date:** 2026-08-30
 **Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the controlled pfSense network-relay path, and the controlled Wazuh shadow-detector path.
 
-**Current OCI application identity for the Wazuh shadow activation:** `3a35e3f`
+**Current OCI application identity:** `5664dc8`
 **Always-on Wazuh deployment foundation:** `7cd02e0`
 **Repository note:** the manager-only deployment package changes the Wazuh runtime boundary; it does not replace the core application image identity
-**Frontend identity:** outside the Wazuh activation change; the last identity recorded by this document remains `6ffc9e0`
+**Current Vercel frontend identity:** `67162a3`
 
 This document describes what the current source code does. It is not a sales claim and it does not treat an implemented path as production-proven unless verification evidence exists.
 
@@ -51,9 +51,10 @@ skipped and zero assertion failures on 2026-08-30. The skip is the opt-in
 isolated-stack destructive E2E harness. `pip check`, `pip-audit`, Python
 compilation, production Compose parsing, generated API inventory, high-severity
 Bandit and diff hygiene also passed. Frontend lint, production build and
-high-severity dependency audit passed. Production backend `d92fb65` remained
-healthy before candidate deployment. These results accept the local release
-candidate; they do not prove that the candidate is pushed, deployed or live.
+high-severity dependency audit passed. Backend `5664dc8` is deployed on OCI and
+healthy; frontend `67162a3` is live on Vercel. The public relay contract is live,
+and its authenticated status and setup-package routes are present. Package
+availability remains false until a signed versioned setup ZIP is published.
 
 ### 1.1 SIEM architecture and scope decision (2026-08-02)
 
