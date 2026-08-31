@@ -42,6 +42,14 @@ OUTBOX_LEASE_SECONDS = max(15, int(os.getenv("SOURCE_OUTBOX_LEASE_SECONDS", "60"
 OUTBOX_RETENTION_DAYS = max(1, int(os.getenv("SOURCE_OUTBOX_RETENTION_DAYS", "30")))
 RAW_STREAM_MAX_ENTRIES = max(1, int(os.getenv("RAW_STREAM_MAX_ENTRIES", "500000")))
 SOURCE_ENVELOPE_SCHEMA = "warsoc-source-envelope-v1"
+_VOLATILE_DISPATCH_FIELDS = frozenset(
+    {
+        "signature_verified_at",
+        "source_envelope_uid",
+        "source_envelope_collection",
+        "source_envelope_state",
+    }
+)
 
 
 class SourceEvidenceConflict(RuntimeError):
@@ -50,6 +58,30 @@ class SourceEvidenceConflict(RuntimeError):
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _dispatch_evidence_hash(serialized_payload: str) -> str:
+    """Hash durable event content without server-generated delivery metadata."""
+
+    try:
+        decoded = json.loads(serialized_payload)
+    except (TypeError, json.JSONDecodeError):
+        return _sha256(str(serialized_payload).encode("utf-8"))
+    if not isinstance(decoded, dict):
+        return _sha256(str(serialized_payload).encode("utf-8"))
+    stable_payload = {
+        key: value
+        for key, value in decoded.items()
+        if key not in _VOLATILE_DISPATCH_FIELDS
+    }
+    return _sha256(
+        json.dumps(
+            stable_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    )
 
 
 def _catalog_event_ids(pack_id: str) -> set[str]:
@@ -110,7 +142,7 @@ def _dispatch_set_hash(dispatch_events: list[dict]) -> str:
     normalized = [
         {
             "event_uid": str(item["event_uid"]),
-            "payload_hash": _sha256(item["serialized_payload"].encode("utf-8")),
+            "evidence_hash": _dispatch_evidence_hash(item["serialized_payload"]),
             "target_streams": sorted(set(item["target_streams"])),
         }
         for item in dispatch_events
@@ -158,6 +190,7 @@ async def persist_source_envelope(
             {
                 "event_uid": event_uid,
                 "serialized_payload": serialized,
+                "evidence_hash": _dispatch_evidence_hash(serialized),
                 "target_streams": streams,
             }
         )
@@ -181,8 +214,53 @@ async def persist_source_envelope(
             {
                 "outbox_uid": outbox_uid,
                 "payload_hash": _sha256(item["serialized_payload"].encode("utf-8")),
+                "evidence_hash": item["evidence_hash"],
                 "target_streams": item["target_streams"],
             }
+        )
+
+    async def existing_evidence_hash(existing_outbox: dict) -> str | None:
+        stored_hash = str(existing_outbox.get("evidence_hash") or "").strip()
+        if stored_hash:
+            return stored_hash
+        envelope_collection = existing_outbox.get("envelope_collection")
+        envelope_id = existing_outbox.get("envelope_id")
+        envelope_index = existing_outbox.get("envelope_event_index")
+        if not envelope_collection or envelope_id is None or envelope_index is None:
+            return None
+        envelope = await db[str(envelope_collection)].find_one(
+            {"_id": envelope_id, "state": "COMMITTED"}
+        )
+        if not envelope:
+            return None
+        package = _decode_package(
+            envelope["encrypted_package"],
+            key_id=envelope.get("encryption_key_id"),
+            key_version=envelope.get("encryption_key_version"),
+        )
+        try:
+            stored_payload = package["dispatch_payloads"][int(envelope_index)]
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("Source outbox envelope reference is invalid") from exc
+        derived_hash = _dispatch_evidence_hash(stored_payload)
+        await db[SOURCE_OUTBOX_COLLECTION].update_one(
+            {"_id": existing_outbox["_id"], "evidence_hash": {"$exists": False}},
+            {"$set": {"evidence_hash": derived_hash, "updated_at": now}},
+        )
+        return derived_hash
+
+    async def outbox_conflicts(existing_outbox: dict, descriptor: dict) -> bool:
+        stored_evidence_hash = await existing_evidence_hash(existing_outbox)
+        if stored_evidence_hash is None:
+            return (
+                existing_outbox.get("payload_hash") != descriptor["payload_hash"]
+                or sorted(existing_outbox.get("target_streams") or [])
+                != descriptor["target_streams"]
+            )
+        return (
+            stored_evidence_hash != descriptor["evidence_hash"]
+            or sorted(existing_outbox.get("target_streams") or [])
+            != descriptor["target_streams"]
         )
     envelope_identity = {
         "tenant_id": tenant_id,
@@ -247,13 +325,8 @@ async def persist_source_envelope(
         for descriptor in outbox_descriptors:
             existing_outbox = await db[SOURCE_OUTBOX_COLLECTION].find_one(
                 {"outbox_uid": descriptor["outbox_uid"]},
-                {"payload_hash": 1, "target_streams": 1},
             )
-            if existing_outbox and (
-                existing_outbox.get("payload_hash") != descriptor["payload_hash"]
-                or sorted(existing_outbox.get("target_streams") or [])
-                != descriptor["target_streams"]
-            ):
+            if existing_outbox and await outbox_conflicts(existing_outbox, descriptor):
                 raise SourceEvidenceConflict(
                     "Source event UID was reused with different evidence"
                 )
@@ -284,12 +357,8 @@ async def persist_source_envelope(
         payload_hash = descriptor["payload_hash"]
         existing_outbox = await db[SOURCE_OUTBOX_COLLECTION].find_one(
             {"outbox_uid": outbox_uid},
-            {"payload_hash": 1, "target_streams": 1},
         )
-        if existing_outbox and (
-            existing_outbox.get("payload_hash") != payload_hash
-            or sorted(existing_outbox.get("target_streams") or []) != item["target_streams"]
-        ):
+        if existing_outbox and await outbox_conflicts(existing_outbox, descriptor):
             raise SourceEvidenceConflict("Source event UID was reused with different evidence")
         await db[SOURCE_OUTBOX_COLLECTION].update_one(
             {"outbox_uid": outbox_uid},
@@ -304,6 +373,7 @@ async def persist_source_envelope(
                     "envelope_id": envelope_id,
                     "envelope_event_index": index,
                     "payload_hash": payload_hash,
+                    "evidence_hash": descriptor["evidence_hash"],
                     "target_streams": item["target_streams"],
                     "status": "pending",
                     "ready": False,

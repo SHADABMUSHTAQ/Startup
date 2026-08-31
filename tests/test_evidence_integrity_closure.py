@@ -18,6 +18,7 @@ from app.utils.source_evidence import (
     SOURCE_OUTBOX_COLLECTION,
     SourceEvidenceConflict,
     _decode_package,
+    _dispatch_evidence_hash,
     _encode_package,
     persist_source_envelope,
     publish_source_outbox,
@@ -223,6 +224,125 @@ async def test_identical_event_retry_with_new_envelope_does_not_create_orphan(db
     assert first == second
     assert await db.source_envelopes_siem.count_documents({}) == 1
     assert await db.source_evidence_outbox.count_documents({}) == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_ignores_only_server_generated_dispatch_metadata(db):
+    first_payload = {
+        "event_uid": "Security:epoch-1:100",
+        "event_id": "5157",
+        "message": "connection allowed",
+        "payload_hash": "a" * 64,
+        "agent_signature": "b" * 128,
+        "signature_verified_at": "2026-08-31T19:00:00+00:00",
+        "source_envelope_uid": "nonce-one:siem",
+        "source_envelope_collection": "source_envelopes_siem",
+        "source_envelope_state": "COMMITTED",
+    }
+    second_payload = {
+        **first_payload,
+        "signature_verified_at": "2026-08-31T19:01:00+00:00",
+        "source_envelope_uid": "nonce-two:siem",
+    }
+    assert _dispatch_evidence_hash(json.dumps(first_payload)) == _dispatch_evidence_hash(
+        json.dumps(second_payload)
+    )
+
+    common = {
+        "tenant_id": "WARSOC_TEST_VOLATILE_RETRY",
+        "source_principal_type": "windows_agent",
+        "source_principal_id": "WARSOC_AGENT_VOLATILE_RETRY",
+        "source_channel": "windows_endpoint",
+        "retention_class": "SIEM",
+        "auth_metadata": {"scheme": "ed25519-v2"},
+    }
+    first = await persist_source_envelope(
+        db,
+        source_envelope_uid="nonce-one:siem",
+        source_payload=b'{"signed":"same"}',
+        dispatch_events=[
+            {
+                "event_uid": first_payload["event_uid"],
+                "serialized_payload": json.dumps(first_payload),
+                "target_streams": ["raw_logs_queue", "siem_hot_queue"],
+            }
+        ],
+        **common,
+    )
+    await db.source_evidence_outbox.update_one(
+        {"outbox_uid": first[0]},
+        {"$unset": {"evidence_hash": ""}},
+    )
+    second = await persist_source_envelope(
+        db,
+        source_envelope_uid="nonce-two:siem",
+        source_payload=b'{"signed":"same"}',
+        dispatch_events=[
+            {
+                "event_uid": second_payload["event_uid"],
+                "serialized_payload": json.dumps(second_payload),
+                "target_streams": ["raw_logs_queue", "siem_hot_queue"],
+            }
+        ],
+        **common,
+    )
+
+    assert first == second
+    assert await db.source_envelopes_siem.count_documents({}) == 1
+    outbox = await db.source_evidence_outbox.find_one({"outbox_uid": first[0]})
+    assert outbox["evidence_hash"] == _dispatch_evidence_hash(json.dumps(first_payload))
+
+
+@pytest.mark.asyncio
+async def test_retry_still_rejects_changed_evidence_content(db):
+    common = {
+        "tenant_id": "WARSOC_TEST_CHANGED_RETRY",
+        "source_principal_type": "windows_agent",
+        "source_principal_id": "WARSOC_AGENT_CHANGED_RETRY",
+        "source_channel": "windows_endpoint",
+        "retention_class": "SIEM",
+        "auth_metadata": {"scheme": "ed25519-v2"},
+    }
+    await persist_source_envelope(
+        db,
+        source_envelope_uid="nonce-one:siem",
+        source_payload=b'{"signed":"one"}',
+        dispatch_events=[
+            {
+                "event_uid": "Security:epoch-2:200",
+                "serialized_payload": json.dumps(
+                    {
+                        "event_uid": "Security:epoch-2:200",
+                        "message": "original",
+                        "payload_hash": "c" * 64,
+                    }
+                ),
+                "target_streams": ["raw_logs_queue"],
+            }
+        ],
+        **common,
+    )
+
+    with pytest.raises(SourceEvidenceConflict):
+        await persist_source_envelope(
+            db,
+            source_envelope_uid="nonce-two:siem",
+            source_payload=b'{"signed":"two"}',
+            dispatch_events=[
+                {
+                    "event_uid": "Security:epoch-2:200",
+                    "serialized_payload": json.dumps(
+                        {
+                            "event_uid": "Security:epoch-2:200",
+                            "message": "changed",
+                            "payload_hash": "d" * 64,
+                        }
+                    ),
+                    "target_streams": ["raw_logs_queue"],
+                }
+            ],
+            **common,
+        )
 
 
 @pytest.mark.asyncio
