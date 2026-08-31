@@ -2,6 +2,7 @@ import asyncio
 import base64
 import importlib.util
 import hashlib
+import inspect
 import json
 import sys
 import types
@@ -777,6 +778,25 @@ def test_native_watermark_resets_when_windows_channel_is_cleared(monkeypatch, tm
     assert agent._watermark_after_channel_probe(0, 0) == 0
     assert agent._latest_record_id_from_log_bounds(58493, 40251) == 98743
     assert agent._latest_record_id_from_log_bounds(0, 0) == 0
+
+    before_clear = agent._native_event_uid("Security", "epoch-before", 1)
+    after_clear = agent._native_event_uid("Security", "epoch-after", 1)
+    assert before_clear == "Security:epoch-before:1"
+    assert after_clear == "Security:epoch-after:1"
+    assert before_clear != after_clear
+
+
+def test_native_event_uid_requires_complete_source_identity(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+
+    with pytest.raises(ValueError, match="channel, epoch, and record ID"):
+        agent._native_event_uid("Security", "", 1)
+    with pytest.raises(ValueError, match="channel, epoch, and record ID"):
+        agent._native_event_uid("Security", "epoch", 0)
+
+    collector_source = inspect.getsource(agent.native_log_hunter_thread)
+    assert '"event_uid": _native_event_uid(' in collector_source
+    assert '"event_uid": parsed["event_uid"]' not in collector_source
 
 
 def test_agent_v2_signature_covers_native_channel_epoch_and_sequence(monkeypatch, tmp_path):

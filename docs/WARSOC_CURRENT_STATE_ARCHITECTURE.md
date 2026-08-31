@@ -1,10 +1,10 @@
 # WarSOC Current-State Architecture and Operational Contract
 
 **Document status:** Authoritative as-built map
-**Snapshot date:** 2026-08-30
+**Snapshot date:** 2026-08-31
 **Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the controlled pfSense network-relay path, and the controlled Wazuh shadow-detector path.
 
-**Current OCI application identity:** `5664dc8`
+**Current OCI application identity:** `976be27`
 **Always-on Wazuh deployment foundation:** `7cd02e0`
 **Repository note:** the manager-only deployment package changes the Wazuh runtime boundary; it does not replace the core application image identity
 **Current Vercel frontend identity:** `67162a3`
@@ -27,28 +27,33 @@ WarSOC currently has a coherent end-to-end architecture. The application enforce
 10. Normal compliance views, search, CSV exports, and PDF reports read bounded hot Mongo data and archive-ledger availability. Historical bytes require the feature-gated asynchronous retrieval workflow.
 11. The dashboard separates normal endpoint telemetry, immutable detection evidence, and mutable operator incidents.
 
-The public Azure artifact is Windows agent `4.2.10` at the approved versioned
+The public Azure artifact is Windows agent `4.2.11` at the approved versioned
 artifact URL. Its installer SHA-256 is
-`DAC9991A6CDA6E802E0DF6C2E70B5A6BDCFA1096A41E2142070BE6154A6E6ACF`.
+`534BEF422B0DFBE7B4D16088823E23D9C633C4BA9093E2FBF89E605CE074CB43`.
 The production backend requires signed endpoint events. The executable is still
 not Authenticode publisher-signed, so exact-hash verification remains a pilot
 control rather than an enterprise publisher-trust claim.
 
-Agent `4.2.11-Native-Signed-Compact` is the current source candidate, not a
-published or production-accepted artifact. It preserves each Windows event as
-an individual signed record but replaces the duplicate plaintext XML field with
-an exact zlib-compressed, Base64-encoded representation plus the original XML
-SHA-256 and byte counts. The normalized system, event-data, and detection fields
-remain unchanged. This compact representation is signed and then follows the
-same ingestion, Redis, SIEM, PECA, Mongo, evidence, and Azure paths as the older
-record. No 5157 or 4688 event is sampled, merged, or discarded: 5157 destination
-tuples remain available to stateful scan correlation, and 4688 process, parent,
-command-line, actor, and elevation context remains available to WarSOC and the
-Wazuh projection. Existing signed collection-v2 agents remain accepted. The
-candidate becomes a release only after a new installer, manifest, hash,
-artifact upload, clean-machine installation, and runtime acceptance proof.
+Agent `4.2.12-Native-Signed-Compact` is the current tested source candidate, not
+yet a published or production-accepted artifact. It preserves the 4.2.11
+lossless compact XML representation and every normalized SIEM/Wazuh/PECA field.
+It additionally scopes each native Windows event UID to the persisted channel
+epoch as well as the channel and record ID. This prevents a cleared or recreated
+Windows event channel from reusing a previously accepted evidence identity.
+Backend conflict checks remain fail-closed; the fix does not suppress or weaken
+replay detection. No 5157 or 4688 event is sampled, merged, or discarded. The
+candidate installer is 18,859,406 bytes with SHA-256
+`609DF53DD86D828CD33C7037FD6CA6B46F78D9AC8257486EE8E6261C1DBF3D15`.
+Existing signed collection-v2 and collection-v3 agents remain accepted. The
+candidate becomes the public release only after immutable artifact upload,
+exact-hash verification, installation, and runtime acceptance proof.
 
-The last complete exact-machine native workflow remains the 2026-07-21 `4.2.6-Native-Signed` run: enrollment, fresh heartbeats, SIEM alerting, PECA Event 4688 evidence, FBR invoice evidence, native FBR database-deletion correlation, 7,191 verified endpoint signatures and zero rejected signatures. Agent 4.2.8 preserves that architecture and adds the bounded DTD/entity-rejecting Windows XML parser guard plus bounded historical spool replay. Existing 4.2.6 agents remain compatible only while the backend permits their signed event format; new installations use 4.2.8.
+The 2026-07-21 `4.2.6-Native-Signed` run remains a historical complete
+exact-machine workflow baseline: enrollment, fresh heartbeats, SIEM alerting,
+PECA Event 4688 evidence, FBR invoice evidence, native FBR database-deletion
+correlation, 7,191 verified endpoint signatures and zero rejected signatures.
+Later signed releases preserve those paths and add the bounded XML parser,
+durable spool isolation, coverage metadata and compact exact-event encoding.
 
 The network-relay backend is enabled under tenant entitlement, with pfSense as
 the only validated commercial vendor. The current relay executable is
@@ -62,13 +67,15 @@ kit uses an explicit exact-hash pilot policy. The dashboard warns that Windows
 may show Unknown publisher and exposes the approved SHA-256. General commercial
 publisher trust remains open until Authenticode signing is funded.
 
-The complete clean backend campaign closed with 570 passed, one explicitly
-skipped and zero assertion failures on 2026-08-30. The skip is the opt-in
-isolated-stack destructive E2E harness. `pip check`, `pip-audit`, Python
-compilation, production Compose parsing, generated API inventory, high-severity
-Bandit and diff hygiene also passed. Frontend lint, production build and
-high-severity dependency audit passed. Backend `5664dc8` is deployed on OCI and
-healthy; frontend `67162a3` is live on Vercel. The public relay contract is live,
+The complete clean backend campaign closed with 575 passed, one explicitly
+skipped and zero assertion failures on 2026-08-31. The skip is the opt-in
+isolated-stack destructive E2E harness. `pip check`, Python compilation and diff
+hygiene passed; Bandit was not installed in the local project environment and no
+production dependency was added merely to run it. Earlier full-tree
+high-severity Bandit and dependency-audit evidence remains unchanged because this
+candidate changes only the Windows agent identity and package metadata. Backend
+`976be27` is deployed on OCI and healthy; frontend `67162a3` is live on Vercel.
+The public relay contract is live,
 and its authenticated status and setup-package routes are present. Package
 availability remains false until the versioned pilot ZIP is uploaded and its
 exact SHA-256 is configured with the URL on OCI.
@@ -1554,10 +1561,10 @@ The API creates the incident collections and indexes and performs the bounded ho
 - Docker JSON logs rotate at 10 MB with five files per service.
 - API and workers use read-only filesystems with explicit writable volumes/tmpfs.
 - Application containers run as a non-root user with `no-new-privileges`, all Linux capabilities dropped, and a 256-process ceiling.
-- Current production source: DigitalOcean 4 vCPU / 8 GB RAM until the emergency cutover.
-- Immediate production target: one hardened Azure Ubuntu VM with 4 vCPU / 8 GiB RAM. This changes the host, not the Docker application topology.
+- Current production compute: hardened OCI Ubuntu ARM64 VM with 4 OCPU, 24 GiB RAM and private Docker-only MongoDB/Redis ports.
+- DigitalOcean is a retired historical source and is not the active backend.
 - Frontend target: Vercel at `https://warsoc.tech`.
-- API hostname: `https://api.warsoc.tech`; its A record moves from DigitalOcean to the Azure static IP after stateful restore acceptance.
+- API hostname: `https://api.warsoc.tech`; its A record resolves to OCI `139.185.60.39`.
 - Agent artifact: separate public Azure storage.
 - Evidence: separate private immutable Azure storage.
 
@@ -1586,8 +1593,8 @@ The API creates the incident collections and indexes and performs the bounded ho
 - The installer redirect remains Admin-only and CDN-backed. Configuration failures now return one generic service-unavailable message, while the 307 response is explicitly non-cacheable and suppresses referrer disclosure. The exact authenticated browser click remains a named acceptance step because it creates a one-time activation credential.
 - The authenticated installer redirect remains an open browser acceptance step. The backend contract is Admin-only, validates an HTTPS `.exe` CDN URL and returns a 307; protected browser automation refused the executable download and was not bypassed. The acceptance script now records socket/HTTP failures individually instead of aborting when an exception has no `Response` object.
 - Compliance pagination now reports `archive_available` and `archive_retrieval_required` while keeping `archive_read_performed=false`; ordinary evidence pages, CSV and PDF no longer imply that the API process read historical Azure bytes.
-- Current installer: `warsoc_installer-4.2.8.exe`, 17,797,079 bytes, SHA-256 `04D594A771B0E7F047D4CFDFF5359AC83B8934E5C592D2843ADD59D276E72F67`.
-- The versioned manifest is `pilot_hash_manifest-4.2.8.json` and also covers the packaged agent, NSSM, native telemetry script, and tenant policy.
+- Current public installer: `warsoc_installer-4.2.11.exe`, 18,858,913 bytes, SHA-256 `534BEF422B0DFBE7B4D16088823E23D9C633C4BA9093E2FBF89E605CE074CB43`.
+- The 4.2.12 candidate manifest is `pilot_hash_manifest-4.2.12.json`; it covers the installer, packaged agent, NSSM, native telemetry script, and tenant policy. The candidate is not the public release until its Azure object and runtime installation are hash-verified.
 
 ### 22.2 Production preflight
 
@@ -1598,6 +1605,7 @@ Historical production preflight run `15545d8ce7` passed on 2026-07-16:
 - MongoDB `27017`, Redis `6379`, and API `8000` are closed externally.
 - The deployed frontend is bound to `https://api.warsoc.tech/api/v1`, its same-origin API proxy returns the expected unauthenticated 401, and its contact form uses the WarSOC backend.
 - Production preflight `83aa506f9e` on 2026-08-13 reconfirmed DNS/TLS separation, frontend assets, API binding and health, CORS, security headers, blocked public docs and private data ports, plus an exact SHA-256 match between local installer 4.2.8 and the public Azure artifact.
+- OCI production preflight `c13bbef3e7` on 2026-08-31 passed DNS/TLS separation, frontend assets and API binding, backend health, security headers, CORS, blocked public docs, externally closed MongoDB/Redis/API ports, and the exact local-to-Azure 4.2.11 installer size and SHA-256.
 - The older authenticated redirect observation targeted 4.2.4. Preflight `83aa506f9e` proves the direct 4.2.8 Azure object; repeat the authenticated 307 assertion against backend `7e81a9d` to close the route-level release proof.
 
 ### 22.3 Production platform pipeline

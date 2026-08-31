@@ -74,7 +74,11 @@ def test_ed25519_event_signature_verifies_and_returns_provenance():
 
 @pytest.mark.parametrize(
     "protocol_version",
-    ["warsoc-agent-collection-v2", "warsoc-agent-collection-v3"],
+    [
+        "warsoc-agent-collection-v2",
+        "warsoc-agent-collection-v3",
+        "warsoc-agent-collection-v4",
+    ],
 )
 def test_ed25519_v2_authenticates_collection_coverage_metadata(protocol_version):
     private_key, public_pem = _keypair()

@@ -54,9 +54,9 @@ if not env_loaded:
     print(f"[WARN] .env not found in any standard location. Using system environment variables.")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-AGENT_VERSION = "4.2.11-Native-Signed-Compact"
+AGENT_VERSION = "4.2.12-Native-Signed-Compact"
 EVENT_SIGNATURE_VERSION = "ed25519-v2"
-COLLECTION_PROTOCOL_VERSION = "warsoc-agent-collection-v3"
+COLLECTION_PROTOCOL_VERSION = "warsoc-agent-collection-v4"
 WINDOWS_EVENT_XML_ENCODING = "zlib-base64-v1"
 TENANT_ID = os.getenv("TENANT_ID", "provision").strip() or "provision"
 PROGRAM_DATA_DIR = Path(os.getenv("PROGRAMDATA", str(_AGENT_DIR))) / "WarSOC"
@@ -1865,6 +1865,16 @@ def _latest_record_id_from_log_bounds(oldest_record_id, record_count):
     return max(0, int(oldest_record_id or 0)) + count - 1
 
 
+def _native_event_uid(channel, channel_epoch, record_id):
+    """Identify an event uniquely across Windows channel clear/recreate cycles."""
+    normalized_channel = str(channel or "").strip()
+    normalized_epoch = str(channel_epoch or "").strip()
+    normalized_record_id = max(0, int(record_id or 0))
+    if not normalized_channel or not normalized_epoch or not normalized_record_id:
+        raise ValueError("Native event identity requires channel, epoch, and record ID")
+    return f"{normalized_channel}:{normalized_epoch}:{normalized_record_id}"
+
+
 def _durably_enqueue_native_event(payload, record_id, current_watermark):
     """Advance a source cursor only after the event is durable in the spool."""
     enqueue_payload(payload)
@@ -2017,7 +2027,11 @@ def native_log_hunter_thread():
                                 "source_ip": parsed["source_ip"],
                                 "user": parsed["user"],
                                 "event_id": event_id,
-                                "event_uid": parsed["event_uid"],
+                                "event_uid": _native_event_uid(
+                                    channel,
+                                    channel_epochs[channel],
+                                    record_id,
+                                ),
                                 "message": build_windows_event_message(parsed),
                                 "timestamp": parsed["timestamp"],
                                 "processed_data": parsed["processed_data"],
