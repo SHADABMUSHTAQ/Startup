@@ -1,9 +1,11 @@
 import asyncio
 import base64
 import importlib.util
+import hashlib
 import json
 import sys
 import types
+import zlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -534,6 +536,16 @@ def test_native_xml_and_jsonl_parsers(monkeypatch, tmp_path):
     assert parsed["source_ip"] == "203.0.113.10"
     assert parsed["processed_data"]["target_user"] == "admin"
     assert parsed["event_uid"] == "Security:1234"
+    compact_xml = parsed["raw_event_data"]
+    restored_xml = zlib.decompress(
+        base64.b64decode(compact_xml["event_xml_zlib_b64"])
+    ).decode("utf-8")
+    assert restored_xml == xml
+    assert compact_xml["event_xml_encoding"] == "zlib-base64-v1"
+    assert compact_xml["event_xml_sha256"] == hashlib.sha256(xml.encode("utf-8")).hexdigest()
+    assert compact_xml["event_xml_original_bytes"] == len(xml.encode("utf-8"))
+    assert compact_xml["event_xml_compressed_bytes"] < compact_xml["event_xml_original_bytes"]
+    assert "event_xml" not in compact_xml
 
     with pytest.raises(ValueError, match="DTD or entity"):
         agent.parse_windows_event_xml(
@@ -586,6 +598,8 @@ def test_native_xml_and_jsonl_parsers(monkeypatch, tmp_path):
         assert native["event_id"] == event_id
         assert native["processed_data"][expected_field]
         assert native["raw_event_data"]["system"]["channel"] == channel
+        assert native["raw_event_data"]["event_xml_encoding"] == "zlib-base64-v1"
+        assert "event_xml" not in native["raw_event_data"]
         assert "{" not in agent.build_windows_event_message(native)
 
     failed_login = agent.parse_windows_event_xml(
@@ -613,6 +627,121 @@ def test_native_xml_and_jsonl_parsers(monkeypatch, tmp_path):
     assert agent.parse_pos_audit_line(line)["event_id"] == "FBR-INV-DEL"
     with pytest.raises(ValueError):
         agent.parse_pos_audit_line('{"event_id":"FIM-DB-MOD"}')
+
+
+def test_high_volume_windows_events_are_losslessly_compacted_without_losing_siem_fields(
+    monkeypatch, tmp_path
+):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+
+    def event_xml(event_id, record_id, fields):
+        data = "".join(
+            f'<Data Name="{name}">{value}</Data>' for name, value in fields.items()
+        )
+        rendering = "Windows Security event details. " * 80
+        return f"""<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+          <System>
+            <Provider Name="Microsoft-Windows-Security-Auditing"/>
+            <EventID>{event_id}</EventID><Level>0</Level><Task>0</Task><Opcode>0</Opcode>
+            <Keywords>0x0</Keywords>
+            <TimeCreated SystemTime="2026-08-30T08:30:00Z"/>
+            <EventRecordID>{record_id}</EventRecordID><Channel>Security</Channel>
+            <Computer>WORKSTATION-01</Computer><Security UserID="S-1-5-18"/>
+          </System>
+          <EventData>{data}</EventData>
+          <RenderingInfo><Message>{rendering}</Message></RenderingInfo>
+        </Event>"""
+
+    process_xml = event_xml(
+        "4688",
+        "4688001",
+        {
+            "SubjectUserName": "alice",
+            "NewProcessName": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "NewProcessId": "0x1240",
+            "ParentProcessName": r"C:\Windows\explorer.exe",
+            "CommandLine": "powershell.exe -NoProfile -Command whoami",
+            "TokenElevationType": "%%1937",
+        },
+    )
+    process = agent.parse_windows_event_xml(process_xml)
+    assert process["processed_data"] == {
+        "provider": "Microsoft-Windows-Security-Auditing",
+        "channel": "Security",
+        "computer": "WORKSTATION-01",
+        "user": "alice",
+        "new_process_name": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        "new_process_id": "0x1240",
+        "parent_process_name": r"C:\Windows\explorer.exe",
+        "command_line": "powershell.exe -NoProfile -Command whoami",
+        "token_elevation_type": "%%1937",
+    }
+
+    blocked_445_xml = event_xml(
+        "5157",
+        "5157001",
+        {
+            "Application": r"\device\harddiskvolume3\windows\system32\svchost.exe",
+            "SourceAddress": "10.0.0.9",
+            "SourcePort": "50123",
+            "DestAddress": "10.0.0.10",
+            "DestPort": "445",
+            "Protocol": "6",
+        },
+    )
+    blocked_3389_xml = event_xml(
+        "5157",
+        "5157002",
+        {
+            "Application": r"\device\harddiskvolume3\windows\system32\svchost.exe",
+            "SourceAddress": "10.0.0.9",
+            "SourcePort": "50124",
+            "DestAddress": "10.0.0.11",
+            "DestPort": "3389",
+            "Protocol": "6",
+        },
+    )
+    blocked_events = [
+        agent.parse_windows_event_xml(blocked_445_xml),
+        agent.parse_windows_event_xml(blocked_3389_xml),
+    ]
+    assert [event["event_uid"] for event in blocked_events] == [
+        "Security:5157001",
+        "Security:5157002",
+    ]
+    assert [event["processed_data"]["destination_address"] for event in blocked_events] == [
+        "10.0.0.10",
+        "10.0.0.11",
+    ]
+    assert [event["processed_data"]["destination_port"] for event in blocked_events] == [
+        "445",
+        "3389",
+    ]
+    assert all(event["processed_data"]["protocol"] == "6" for event in blocked_events)
+    assert all(event["processed_data"]["application"] for event in blocked_events)
+
+    compact_total = 0
+    legacy_total = 0
+    for parsed, exact_xml in (
+        (process, process_xml),
+        (blocked_events[0], blocked_445_xml),
+        (blocked_events[1], blocked_3389_xml),
+    ):
+        compact_total += len(json.dumps(parsed, separators=(",", ":")).encode("utf-8"))
+        legacy = dict(parsed)
+        legacy["raw_event_data"] = {
+            "system": parsed["raw_event_data"]["system"],
+            "event_data": parsed["raw_event_data"]["event_data"],
+            "event_xml": exact_xml,
+        }
+        legacy_total += len(json.dumps(legacy, separators=(",", ":")).encode("utf-8"))
+
+        restored = zlib.decompress(
+            base64.b64decode(parsed["raw_event_data"]["event_xml_zlib_b64"])
+        ).decode("utf-8")
+        assert restored == exact_xml
+
+    assert compact_total < legacy_total * 0.65
 
 
 def test_native_spool_failure_cannot_advance_watermark(monkeypatch, tmp_path):

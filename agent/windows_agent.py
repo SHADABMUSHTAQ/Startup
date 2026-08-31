@@ -14,9 +14,11 @@ import json
 import ipaddress
 import threading
 import glob
+import base64
 import hashlib
 import uuid
 import copy
+import zlib
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from datetime import datetime, timezone # ADDED TIMEZONE
@@ -52,9 +54,10 @@ if not env_loaded:
     print(f"[WARN] .env not found in any standard location. Using system environment variables.")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-AGENT_VERSION = "4.2.10-Native-Signed-Coverage"
+AGENT_VERSION = "4.2.11-Native-Signed-Compact"
 EVENT_SIGNATURE_VERSION = "ed25519-v2"
-COLLECTION_PROTOCOL_VERSION = "warsoc-agent-collection-v2"
+COLLECTION_PROTOCOL_VERSION = "warsoc-agent-collection-v3"
+WINDOWS_EVENT_XML_ENCODING = "zlib-base64-v1"
 TENANT_ID = os.getenv("TENANT_ID", "provision").strip() or "provision"
 PROGRAM_DATA_DIR = Path(os.getenv("PROGRAMDATA", str(_AGENT_DIR))) / "WarSOC"
 JWT_TOKEN_PATH = PROGRAM_DATA_DIR / ".agent_jwt"
@@ -940,6 +943,19 @@ def _xml_local_name(tag):
     return str(tag or "").split("}", 1)[-1]
 
 
+def encode_windows_event_xml(xml_text):
+    """Losslessly compact exact Windows XML before signing and spooling it."""
+    raw_bytes = str(xml_text).encode("utf-8")
+    compressed = zlib.compress(raw_bytes, level=9)
+    return {
+        "event_xml_encoding": WINDOWS_EVENT_XML_ENCODING,
+        "event_xml_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+        "event_xml_original_bytes": len(raw_bytes),
+        "event_xml_compressed_bytes": len(compressed),
+        "event_xml_zlib_b64": base64.b64encode(compressed).decode("ascii"),
+    }
+
+
 def parse_windows_event_xml(xml_text):
     """Parse Windows Event XML into locale-independent system and event fields."""
     if not isinstance(xml_text, str) or not xml_text.strip():
@@ -1189,7 +1205,7 @@ def parse_windows_event_xml(xml_text):
         "raw_event_data": {
             "system": system_data,
             "event_data": fields,
-            "event_xml": xml_text,
+            **encode_windows_event_xml(xml_text),
         },
     }
 

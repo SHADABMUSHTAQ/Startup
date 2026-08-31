@@ -72,14 +72,18 @@ def test_ed25519_event_signature_verifies_and_returns_provenance():
     assert len(result["signing_key_id"]) == 64
 
 
-def test_ed25519_v2_authenticates_collection_coverage_metadata():
+@pytest.mark.parametrize(
+    "protocol_version",
+    ["warsoc-agent-collection-v2", "warsoc-agent-collection-v3"],
+)
+def test_ed25519_v2_authenticates_collection_coverage_metadata(protocol_version):
     private_key, public_pem = _keypair()
     event = _signed_event(private_key)
     event.update(
         {
             "signature_version": "ed25519-v2",
             "agent_collection_time": datetime.now(timezone.utc).isoformat(),
-            "collection_protocol_version": "warsoc-agent-collection-v2",
+            "collection_protocol_version": protocol_version,
             "source_channel": "Security",
             "source_channel_epoch": "epoch-9d4a69b6",
             "source_sequence": 9021,
@@ -143,7 +147,7 @@ def test_ed25519_v2_metadata_survives_ingest_normalization():
         {
             "signature_version": "ed25519-v2",
             "agent_collection_time": datetime.now(timezone.utc).isoformat(),
-            "collection_protocol_version": "warsoc-agent-collection-v2",
+            "collection_protocol_version": "warsoc-agent-collection-v3",
             "source_channel": "Security",
             "source_channel_epoch": "epoch-normalization",
             "source_sequence": 4625,
@@ -171,7 +175,7 @@ def test_ed25519_v2_metadata_survives_ingest_normalization():
 
     assert len(normalized) == 1
     assert normalized[0]["agent_collection_time"] == event["agent_collection_time"]
-    assert normalized[0]["collection_protocol_version"] == "warsoc-agent-collection-v2"
+    assert normalized[0]["collection_protocol_version"] == "warsoc-agent-collection-v3"
     assert normalized[0]["source_channel"] == "Security"
     assert normalized[0]["source_channel_epoch"] == "epoch-normalization"
     assert normalized[0]["source_sequence"] == 4625

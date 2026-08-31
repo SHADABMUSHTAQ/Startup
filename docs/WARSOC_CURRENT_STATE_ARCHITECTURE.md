@@ -34,6 +34,20 @@ The production backend requires signed endpoint events. The executable is still
 not Authenticode publisher-signed, so exact-hash verification remains a pilot
 control rather than an enterprise publisher-trust claim.
 
+Agent `4.2.11-Native-Signed-Compact` is the current source candidate, not a
+published or production-accepted artifact. It preserves each Windows event as
+an individual signed record but replaces the duplicate plaintext XML field with
+an exact zlib-compressed, Base64-encoded representation plus the original XML
+SHA-256 and byte counts. The normalized system, event-data, and detection fields
+remain unchanged. This compact representation is signed and then follows the
+same ingestion, Redis, SIEM, PECA, Mongo, evidence, and Azure paths as the older
+record. No 5157 or 4688 event is sampled, merged, or discarded: 5157 destination
+tuples remain available to stateful scan correlation, and 4688 process, parent,
+command-line, actor, and elevation context remains available to WarSOC and the
+Wazuh projection. Existing signed collection-v2 agents remain accepted. The
+candidate becomes a release only after a new installer, manifest, hash,
+artifact upload, clean-machine installation, and runtime acceptance proof.
+
 The last complete exact-machine native workflow remains the 2026-07-21 `4.2.6-Native-Signed` run: enrollment, fresh heartbeats, SIEM alerting, PECA Event 4688 evidence, FBR invoice evidence, native FBR database-deletion correlation, 7,191 verified endpoint signatures and zero rejected signatures. Agent 4.2.8 preserves that architecture and adds the bounded DTD/entity-rejecting Windows XML parser guard plus bounded historical spool replay. Existing 4.2.6 agents remain compatible only while the backend permits their signed event format; new installations use 4.2.8.
 
 The network-relay backend is enabled under tenant entitlement, with pfSense as
@@ -946,6 +960,13 @@ The current engine understands these core native IDs and custom FBR IDs:
 `1100`, `1102`, `4616`, `4624`, `4625`, `4648`, `4657`, `4660`, `4663`, `4670`, `4672`, `4688`, `4697`, `4698`, `4719`, `4720`, `4726`, `4732`, `4768`, `4769`, `4776`, `4798`, `5140`, `5156`, `5157`, `7045`, `FBR-INV-DEL`, `FBR-INV-MOD`, and `FIM-DB-MOD`.
 
 Event 5157 is treated as a blocked connection. Event 5156, when supplied by a reviewed source, is permitted-connection evidence and must never be mislabelled as a block. The default Windows SMB audit policy collects Filtering Platform failures (5157), not every permitted connection, to prevent a high-volume 5156 flood.
+
+High-volume native events are not coalesced. The source candidate compacts only
+the exact XML representation before signing and spooling it. Every event keeps
+its event UID, source channel epoch, source sequence, timestamp, normalized
+fields, and Ed25519 evidence boundary. This reduces repeated wire, queue, hot
+Mongo, signed PECA, source-envelope, and Azure bytes without weakening SIEM
+thresholds or distinct destination-host/port correlation.
 
 ### 11.3 Stateless/signature coverage
 
