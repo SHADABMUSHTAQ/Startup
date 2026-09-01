@@ -44,6 +44,7 @@ RAW_STREAM_MAX_ENTRIES = max(1, int(os.getenv("RAW_STREAM_MAX_ENTRIES", "500000"
 SOURCE_ENVELOPE_SCHEMA = "warsoc-source-envelope-v1"
 _VOLATILE_DISPATCH_FIELDS = frozenset(
     {
+        "cloud_receipt_time",
         "signature_verified_at",
         "source_envelope_uid",
         "source_envelope_collection",
@@ -74,6 +75,16 @@ def _dispatch_evidence_hash(serialized_payload: str) -> str:
         for key, value in decoded.items()
         if key not in _VOLATILE_DISPATCH_FIELDS
     }
+    if (
+        decoded.get("source_type") == "network_device"
+        and decoded.get("source_assurance") == "relay_attested"
+        and decoded.get("raw_data_encryption_version") == "fernet-v1"
+        and decoded.get("payload_hash")
+    ):
+        # Fernet uses a fresh IV for every encryption. The exact signed relay
+        # batch remains bound by payload_hash and the source-envelope hash, so
+        # the randomized ciphertext is delivery metadata, not a replay conflict.
+        stable_payload.pop("raw_data", None)
     return _sha256(
         json.dumps(
             stable_payload,

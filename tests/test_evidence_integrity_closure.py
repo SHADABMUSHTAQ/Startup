@@ -234,6 +234,11 @@ async def test_retry_ignores_only_server_generated_dispatch_metadata(db):
         "message": "connection allowed",
         "payload_hash": "a" * 64,
         "agent_signature": "b" * 128,
+        "source_type": "network_device",
+        "source_assurance": "relay_attested",
+        "raw_data_encryption_version": "fernet-v1",
+        "raw_data": "first-randomized-ciphertext",
+        "cloud_receipt_time": "2026-08-31T19:00:00+00:00",
         "signature_verified_at": "2026-08-31T19:00:00+00:00",
         "source_envelope_uid": "nonce-one:siem",
         "source_envelope_collection": "source_envelopes_siem",
@@ -241,11 +246,17 @@ async def test_retry_ignores_only_server_generated_dispatch_metadata(db):
     }
     second_payload = {
         **first_payload,
+        "raw_data": "second-randomized-ciphertext",
+        "cloud_receipt_time": "2026-08-31T19:01:00+00:00",
         "signature_verified_at": "2026-08-31T19:01:00+00:00",
         "source_envelope_uid": "nonce-two:siem",
     }
     assert _dispatch_evidence_hash(json.dumps(first_payload)) == _dispatch_evidence_hash(
         json.dumps(second_payload)
+    )
+    changed_evidence = {**second_payload, "payload_hash": "c" * 64}
+    assert _dispatch_evidence_hash(json.dumps(first_payload)) != _dispatch_evidence_hash(
+        json.dumps(changed_evidence)
     )
 
     common = {

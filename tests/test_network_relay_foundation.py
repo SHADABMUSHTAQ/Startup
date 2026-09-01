@@ -1076,6 +1076,19 @@ async def test_relay_route_commits_encrypted_source_before_redis_dispatch(
         )
         assert response.status_code == 202, response.text
         assert response.json()["dispatch_published"] == 1
+
+        duplicate = await async_client.post(
+            "/api/v1/network-relay/ingest",
+            content=raw_body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-WarSOC-Signature": signature,
+                "Content-Type": "application/json",
+            },
+        )
+        assert duplicate.status_code == 202, duplicate.text
+        assert duplicate.json()["status"] == "duplicate_acknowledged"
+        assert duplicate.json()["queued"] == 0
         assert await db.source_envelopes_siem.count_documents(
             {"source_principal_id": relay_id, "state": "COMMITTED"}
         ) == 1
