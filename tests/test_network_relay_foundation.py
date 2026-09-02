@@ -1126,6 +1126,43 @@ def test_fortinet_traffic_and_vpn_are_normalized_without_packet_payload():
     assert vpn.normalized["src_ip"] == "203.0.113.7"
 
 
+@pytest.mark.asyncio
+async def test_relay_destination_aliases_drive_native_port_scan_rules(redis_client):
+    engine = CorrelationEngine(redis_client, SIEM_RULES)
+    tenant_id = f"WARSOC_RELAY_SCAN_{uuid.uuid4().hex[:8]}"
+    alerts = []
+
+    for offset in range(10):
+        log_entry = {
+            "event_uid": f"relay-scan-{uuid.uuid4().hex}",
+            "event_id": "NET-CONNECTION-BLOCK",
+            "event_type": "network_connection_blocked",
+            "source_ip": "198.51.100.25",
+            "processed_data": {
+                "event_type": "network_connection_blocked",
+                "src_ip": "198.51.100.25",
+                "dst_ip": f"192.0.2.{offset + 20}",
+                "dst_port": 4000 + offset,
+                "action": "block",
+            },
+        }
+        alerts.extend(
+            await engine.run_dynamic_rules(
+                tenant_id,
+                "198.51.100.25",
+                "NETWORK_DEVICE",
+                "NET-CONNECTION-BLOCK",
+                event_type="network_connection_blocked",
+                timestamp_iso=datetime.now(timezone.utc).isoformat(),
+                log_entry=log_entry,
+            )
+        )
+
+    dynamic_rules = {alert.get("dynamic_rule") for alert in alerts}
+    assert "vertical_port_scan" in dynamic_rules
+    assert "horizontal_port_scan" in dynamic_rules
+
+
 def test_cisco_asa_and_mikrotik_preserve_conservative_outcomes():
     cisco = parse_cisco_asa(
         '<166>Jul 27 10:02:00 asa1 %ASA-4-106023: Deny tcp src inside:'
