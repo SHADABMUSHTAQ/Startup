@@ -1340,7 +1340,7 @@
       "method": "GET",
       "route": "/api/v1/data/search",
       "source_file": "app/routes/data.py",
-      "source_line": 343,
+      "source_line": 428,
       "handler": "global_search",
       "router_module": "data",
       "feature_condition": null,
@@ -1381,6 +1381,7 @@
       "allowed_roles": [
         "admin",
         "analyst",
+        "auditor",
         "manager"
       ],
       "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",

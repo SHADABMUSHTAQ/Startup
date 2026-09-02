@@ -105,6 +105,16 @@ class TestUserWorkflows:
                 },
             }
         )
+        await db["agent_coverage_observations"].insert_one(
+            {
+                "tenant_id": tenant_id,
+                "agent_id": agent_id,
+                "protocol_version": "heartbeat-v2",
+                "server_received_time": datetime.now(timezone.utc),
+                "clock_offset_ms": 125,
+                "clock_state": "TRUSTED",
+            }
+        )
         await redis_client.set(f"status:{tenant_id}:{agent_id}", now, ex=600)
         await redis_client.set(
             f"warsoc:agent_sensor:{agent_id}",
@@ -144,6 +154,11 @@ class TestUserWorkflows:
         assert legacy_body["agents_signing_ready"] == 0
         assert legacy_body["data"][0]["endpoint_name"] == "LEGACY-POS"
         assert legacy_body["data"][0]["event_signing"]["status"] == "unsigned_legacy"
+        assert legacy_body["data"][0]["time_trust"]["status"] == "TRUSTED"
+        assert legacy_body["data"][0]["time_trust"]["clock_offset_ms"] == 125
+        assert legacy_body["data"][0]["audit_coverage"]["status"] == "READY"
+        assert legacy_body["data"][0]["pos_coverage"]["status"] == "NOT_CONFIGURED"
+        assert legacy_body["data"][0]["spool_health"]["status"] == "HEALTHY"
         legacy_coverage = await client.get(
             "/api/v1/compliance/coverage",
             headers=authenticated_user,

@@ -51,6 +51,7 @@
     ]
   },
   "sensitive_role_requirements": {
+    "GET /api/v1/data/status": ["admin", "analyst", "auditor", "manager"],
     "GET /api/v1/network-relay/setup-package": ["admin"],
     "GET /api/v1/archive-retrievals/": ["admin", "auditor", "manager"],
     "POST /api/v1/archive-retrievals/": ["admin", "auditor", "manager"],

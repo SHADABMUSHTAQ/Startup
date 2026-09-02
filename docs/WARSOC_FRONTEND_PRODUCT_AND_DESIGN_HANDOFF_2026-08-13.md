@@ -1,6 +1,6 @@
 # WarSOC Frontend Designer Handoff
 
-**Updated:** 2026-08-13  
+**Updated:** 2026-09-03 (local contract corrections; not a deployment claim)
 **Frontend source:** GitHub `main` branch  
 **Use:** What to design, who can use it, and where it connects to the backend.
 
@@ -26,7 +26,7 @@ as WarSOC detections.
 |---|---:|---:|---:|---:|
 | Dashboard and endpoint activity | Yes | Yes | Yes | No |
 | Incidents | Manage | Manage | Read | No |
-| Endpoints | Manage/setup | Read | Read | No |
+| Endpoints | Manage/setup | Read | Read | Read-only fleet/trust |
 | Observed Activity Map | Manage blocks | Manage blocks | Read | No |
 | Compliance evidence/reports | Yes | No | No | Assigned packs only |
 | Team and Access | Yes | No | No | No |
@@ -221,7 +221,9 @@ Show:
 - Clear degradation reason
 
 The same response supplies purchased seat limit, registered/online/degraded/
-offline counts, endpoint details, event-signing state and sensor status.
+offline counts, endpoint details, event-signing state, clock trust, audit
+coverage, POS coverage, and spool health. Do not call a separate
+`/endpoint-trust` route.
 
 ## 8. Observed Activity Map
 
@@ -273,6 +275,20 @@ Connections:
 - `GET /logs/{record_id}/evidence`
 - `GET /export/csv`
 - `GET /export/audit-report`
+
+Evidence governance connections:
+
+- `GET|POST /compliance/cases`
+- `GET /compliance/cases/{case_id}`
+- `POST /compliance/cases/{case_id}/close` with `action=VERIFY` and a reason
+- Case `/exports` subroutes, hidden while `VITE_EVIDENCE_EXPORT_ENABLED=false`
+- `GET|POST /compliance/holds`
+- `POST /compliance/holds/{hold_id}/release`
+- `GET /compliance/retention/status`
+
+Case details must retain all four backend response sections: `case`, `items`,
+`custody`, and `custody_events`. Legal holds are applied by creating a scoped
+hold; there is no apply action on an existing hold.
 
 Call the PDF an Evidence Summary. Do not claim guaranteed compliance, court
 admissibility or guaranteed prevention of fines. The current PDF presentation
@@ -360,7 +376,9 @@ claim production support before each real-device test passes.
 
 ## 13. Archive Requests - Design, Keep Hidden
 
-Hide while `ARCHIVE_RETRIEVAL_ENABLED=false`.
+Hide while either `VITE_ARCHIVE_RETRIEVAL_ENABLED=false` in the frontend or
+`ARCHIVE_RETRIEVAL_ENABLED=false` in the backend. Archive retrieval is scoped
+by allowed collections and date range, not by evidence case ID.
 
 User selects allowed source, date range and reason. Show estimated size and:
 

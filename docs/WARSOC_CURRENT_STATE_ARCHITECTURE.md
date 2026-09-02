@@ -2,6 +2,10 @@
 
 **Document status:** Authoritative as-built map
 **Snapshot date:** 2026-08-31
+**Source-contract correction:** 2026-09-03. The application identities below belong
+to the prior deployment snapshot, not to these uncommitted local corrections.
+See `WARSOC_FRONTEND_CONTRACT_FIX_REPORT_2026-09-03.md` for the current changes,
+verification evidence and remaining deployment gates.
 **Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the controlled pfSense network-relay path, and the controlled Wazuh shadow-detector path.
 
 **Current OCI application identity:** `976be27`
@@ -93,7 +97,7 @@ not claim their source breadth, scale, or product maturity:
 | Detection and correlation | `siem_worker.py`, `siem_logic.py`, `siem_catalog.py` | Rules run only when their required trusted telemetry family and fields exist. |
 | Evidence projection | `siem_cold_vault`, `fbr_pos_logs`, `peca_forensic_logs` | Evidence remains event-granular and separate by purpose. |
 | Operator incidents | `security_incidents` and occurrence ledger | Repeated detections are grouped for operations without deleting evidence. |
-| Console and reporting | API, WebSocket, dashboard, CSV/PDF exports | Tenant and role boundaries apply to every read/export path. |
+| Console and reporting | API, WebSocket, dashboard, CSV/PDF exports | Tenant and role boundaries apply to every read/export path. Historical exact-field matches are not filtered a second time by message text in the browser. |
 | Hot/cold storage | Seven-day Mongo hot tier and immutable Azure archive | Archive retrieval remains feature-gated until its production acceptance is complete. |
 
 The capacity contract has two independent limits:
@@ -1383,7 +1387,7 @@ The immutable source blob is never modified or deleted by retrieval.
 
 `ARCHIVE_RETRIEVAL_ENABLED=false` is the default. Do not enable it until the private staging container, lifecycle cleanup, service-principal/managed-identity RBAC, user-delegation permission, exact-duration retention containers, and an end-to-end rehydration proof exist. The worker is behind the Compose `archive-retrieval` profile, so a normal deployment does not start it accidentally.
 
-The frontend request/status/download interface is a separate integration task. Until that interface is deployed, authorized operations may call the backend retrieval endpoints, but the standard dashboard exposes only hot data and archive metadata counts.
+The frontend request/status/download interface is implemented against the plural `/api/v1/archive-retrievals` contract but remains hidden by `VITE_ARCHIVE_RETRIEVAL_ENABLED=false`. Backend execution independently remains disabled until the Azure staging gate above passes. Archive retrieval is collection/date scoped and is not embedded as a case-scoped operation.
 
 For the selected clean production launch, legacy pilot archives are not attached to the new tenant database or retrieval ledger. A locked legacy pilot container remains isolated until its policy expires; it cannot be destroyed early merely because the pilot data is no longer commercially required.
 
@@ -1400,10 +1404,14 @@ For the selected clean production launch, legacy pilot archives are not attached
 | Incident assignees | `GET /api/v1/incidents/assignees` | Active tenant admin/manager/analyst candidates available only to incident-managing roles. |
 | Historical charts | Dashboard history/search endpoints | Tenant-scoped aggregates for selected time window. |
 | Agent health badge | `GET /api/v1/data/status` | Active, degraded, or offline/not-configured telemetry state. |
+| Endpoint trust | `GET /api/v1/data/status` | One shared response supplies signing, clock, audit, POS and spool trust states; the browser does not make a competing endpoint-trust request. |
 | Compliance catalog | `GET /api/v1/compliance/packs` and `GET /api/v1/auth/my-packs` | Available and entitled packs. |
 | Compliance coverage | `GET /api/v1/compliance/coverage` | Sensor/control coverage status. |
 | PECA/FBR evidence | `GET /api/v1/compliance/evidence/{pack_id}` | Authorized hot evidence plus archive-ledger availability metadata. Historical bytes require an archive retrieval request. |
 | Retention status | `GET /api/v1/compliance/retention/status` | Admin/auditor tenant entitlement, hot window, FBR/PECA tenant-retention model, active-hold count, and observed archive-ledger availability. It exposes no Azure object paths or credentials. |
+| Evidence cases and custody | `GET|POST /api/v1/compliance/cases` and case subroutes | Admin/auditor case records, evidence references and custody verification. Case closure requires an Admin `VERIFY` action with a recorded reason. |
+| Legal holds | `GET|POST /api/v1/compliance/holds` and `POST /holds/{hold_id}/release` | Admin applies/releases tenant, collection or event holds; Auditor receives read-only access. |
+| Evidence package exports | Case `/exports` subroutes | Implemented but hidden by default until both frontend and backend export flags and the isolated worker/storage configuration are accepted. |
 
 The Agent Feed and Live Inspection must not use the same dataset. Normal endpoint evidence belongs in the feed; actionable detections belong in incidents. Historical search rows are explicitly typed and cannot expose acknowledgement, closure, or block actions.
 

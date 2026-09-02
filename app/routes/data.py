@@ -171,7 +171,7 @@ async def agent_status(
     request: Request,
     db=Depends(get_db),
     current_user=Depends(get_current_user),
-    _role: str = Depends(RoleChecker(["admin", "manager", "analyst"])),
+    _role: str = Depends(RoleChecker(["admin", "manager", "analyst", "auditor"])),
 ):
     """Return last-seen heartbeat status for all agents in the current tenant."""
     tenant_id = current_user.get("tenant_id")
@@ -216,6 +216,37 @@ async def agent_status(
         live_status_by_agent = {}
         sensor_status_by_agent = {}
         event_signature_by_agent = {}
+        latest_coverage_by_agent = {}
+        agent_ids = [agent_id for _, agent_id in registered_agents]
+        if agent_ids:
+            # One indexed, newest-only lookup per enrolled agent; never load
+            # the complete heartbeat history into a dashboard request.
+            coverage_cursor = db["agents"].aggregate([
+                {"$match": {"tenant_id": tenant_id, "agent_id": {"$in": agent_ids}}},
+                {"$lookup": {
+                    "from": "agent_coverage_observations",
+                    "let": {"agent": "$agent_id", "tenant": "$tenant_id"},
+                    "pipeline": [
+                        {"$match": {"$expr": {"$and": [
+                            {"$eq": ["$tenant_id", "$$tenant"]},
+                            {"$eq": ["$agent_id", "$$agent"]},
+                        ]}}},
+                        {"$sort": {"server_received_time": -1}},
+                        {"$limit": 1},
+                        {"$project": {
+                            "_id": 0, "agent_id": 1, "protocol_version": 1,
+                            "server_received_time": 1, "clock_offset_ms": 1, "clock_state": 1,
+                        }},
+                    ],
+                    "as": "observation",
+                }},
+                {"$unwind": "$observation"},
+                {"$replaceRoot": {"newRoot": "$observation"}},
+            ])
+            async for observation in coverage_cursor:
+                observed_agent_id = str(observation.get("agent_id") or "")
+                if observed_agent_id and observed_agent_id not in latest_coverage_by_agent:
+                    latest_coverage_by_agent[observed_agent_id] = observation
         if redis_client is not None and registered_agents:
             status_keys = [
                 f"status:{tenant_id}:{agent_id}"
@@ -255,14 +286,17 @@ async def agent_status(
             sensor_status = agent.get("sensor_status") if isinstance(agent.get("sensor_status"), dict) else {}
             if sensor_raw:
                 try:
-                    sensor_status = json.loads(sensor_raw)
-                except Exception:
-                    pass
+                    decoded_sensor = json.loads(sensor_raw)
+                    if isinstance(decoded_sensor, dict):
+                        sensor_status = decoded_sensor
+                except (TypeError, ValueError):
+                    sensor_status = agent.get("sensor_status") if isinstance(agent.get("sensor_status"), dict) else {}
 
             channels = sensor_status.get("channels") if isinstance(sensor_status, dict) else {}
             channels = channels if isinstance(channels, dict) else {}
             required_channels_ok = all(
-                str((channels.get(channel) or {}).get("status") or "").lower() == "ok"
+                isinstance(channels.get(channel), dict)
+                and str(channels[channel].get("status") or "").lower() == "ok"
                 for channel in ("Security", "System")
             )
             audit_configured = str(sensor_status.get("audit_policy_status") or "").lower() == "configured"
@@ -271,6 +305,27 @@ async def agent_status(
             spool_status = spool_status if isinstance(spool_status, dict) else {}
             spool_blocked = bool(spool_status.get("blocked", False))
             signature_ready = bool(signature_status["ready"])
+            observation = latest_coverage_by_agent.get(agent_id) or {}
+            observation_time = _coerce_dt(observation.get("server_received_time"))
+            observation_is_current = _is_fresh_agent_timestamp(observation_time)
+            protocol_version = str(observation.get("protocol_version") or "").lower()
+            if observation_is_current and protocol_version == "heartbeat-v2":
+                time_trust_status = str(observation.get("clock_state") or "UNKNOWN").upper()
+            elif observation_is_current:
+                time_trust_status = "LEGACY"
+            elif observation_time:
+                time_trust_status = "STALE"
+            else:
+                time_trust_status = "UNKNOWN"
+            pos_audit = sensor_status.get("pos_audit_log") if isinstance(sensor_status, dict) else {}
+            pos_audit = pos_audit if isinstance(pos_audit, dict) else {}
+            try:
+                pos_sacl_path_count = max(0, int(sensor_status.get("pos_sacl_path_count") or 0))
+            except (TypeError, ValueError):
+                pos_sacl_path_count = 0
+            pos_ready = pos_sacl_path_count > 0 or (
+                bool(pos_audit.get("configured")) and bool(pos_audit.get("present"))
+            )
             health = "offline"
             if online:
                 health = (
@@ -286,7 +341,7 @@ async def agent_status(
 
             last_seen = live_last_seen if online else agent.get("last_seen")
             if isinstance(last_seen, datetime):
-                last_seen = last_seen.astimezone(timezone.utc).isoformat()
+                last_seen = _coerce_dt(last_seen).isoformat()
             data.append(
                 {
                     "agent_id": agent_id,
@@ -302,6 +357,36 @@ async def agent_status(
                         "ready": signature_ready,
                         "last_event_at": signature_status["last_event_at"],
                         "last_signed_event_at": signature_status["last_signed_event_at"],
+                    },
+                    "time_trust": {
+                        "status": time_trust_status,
+                        "clock_offset_ms": observation.get("clock_offset_ms"),
+                        "observed_at": observation_time.isoformat() if observation_time else None,
+                    },
+                    "audit_coverage": {
+                        "status": (
+                            "UNKNOWN" if not sensor_status else "STALE" if not online else
+                            "READY" if audit_configured and required_channels_ok else "DEGRADED"
+                        ),
+                    },
+                    "pos_coverage": {
+                        "status": (
+                            "UNKNOWN" if not sensor_status else "STALE" if not online else
+                            "READY" if pos_ready else "NOT_CONFIGURED"
+                        ),
+                        "sacl_path_count": pos_sacl_path_count,
+                        "audit_log_configured": bool(pos_audit.get("configured")),
+                        "audit_log_present": bool(pos_audit.get("present")),
+                    },
+                    "spool_health": {
+                        "status": (
+                            "UNKNOWN" if "blocked" not in spool_status else "STALE" if not online else
+                            "BLOCKED" if spool_blocked else "HEALTHY"
+                        ),
+                        "blocked": spool_blocked,
+                        "reason": spool_status.get("reason"),
+                        "usage_bytes": spool_status.get("usage_bytes"),
+                        "max_bytes": spool_status.get("max_bytes"),
                     },
                 }
             )
