@@ -58,6 +58,7 @@ def test_production_compose_is_private_fail_fast_and_sized_for_pilot():
     assert 'profiles: ["evidence-export"]' not in compose
     assert "command: python -m app.workers.evidence_export_worker" in compose
     assert "command: python -m app.workers.evidence_hold_worker" in compose
+    assert "/tmp:size=128m,uid=1000,gid=1000,mode=0700" in compose
 
 
 def test_oci_release_starts_evidence_governance_workers():

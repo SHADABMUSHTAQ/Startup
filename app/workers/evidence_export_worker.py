@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import logging
 import os
 import shutil
 import socket
@@ -25,6 +26,13 @@ from pymongo import ReturnDocument
 from app.config.config import get_settings
 from app.utils.evidence_custody import append_custody_event, verify_custody_chain
 from app.utils.evidence_package import build_evidence_package
+
+
+logger = logging.getLogger("evidence_export_worker")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
 
 
 def _enabled() -> bool:
@@ -357,6 +365,10 @@ async def run_worker() -> None:
                         signing_key_fingerprint=signing_material[4],
                     )
                 except Exception as exc:
+                    logger.exception(
+                        "Evidence export processing failed for %s",
+                        request_doc.get("export_id"),
+                    )
                     now = datetime.now(timezone.utc)
                     await db.evidence_exports.update_one(
                         {
