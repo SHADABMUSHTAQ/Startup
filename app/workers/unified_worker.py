@@ -14,6 +14,8 @@ from app.workers.peca_worker import peca_worker
 from app.workers.email_daemon import run_email_daemon
 from app.workers.stream_retention import stream_retention_worker
 from app.utils.source_evidence import source_outbox_worker
+from app.config.config import get_settings
+from app.workers.security_story_worker import security_story_worker
 
 load_dotenv()
 
@@ -46,15 +48,21 @@ async def unified_worker_main():
     logger.info(" STARTING WARSOC UNIFIED WORKER (4-CONTAINER MONOLITH MODE) ")
     logger.info("===============================================================")
 
-    # Run all stream loops simultaneously with isolation wrappers
+    workers = [
+        (siem_worker, "SIEM Engine"),
+        (fbr_worker, "FBR Archiver"),
+        (peca_worker, "PECA Forensic"),
+        (run_email_daemon, "Email Daemon"),
+        (stream_retention_worker, "Redis Stream Retention"),
+        (source_outbox_worker, "Source Evidence Outbox"),
+    ]
+    if get_settings().security_stories_enabled:
+        workers.append((security_story_worker, "Security Story Projection"))
+
+    # Run all stream loops simultaneously with isolation wrappers.
     results = await asyncio.gather(
-        safe_worker_runner(siem_worker, "SIEM Engine"),
-        safe_worker_runner(fbr_worker, "FBR Archiver"),
-        safe_worker_runner(peca_worker, "PECA Forensic"),
-        safe_worker_runner(run_email_daemon, "Email Daemon"),
-        safe_worker_runner(stream_retention_worker, "Redis Stream Retention"),
-        safe_worker_runner(source_outbox_worker, "Source Evidence Outbox"),
-        return_exceptions=True
+        *(safe_worker_runner(worker, name) for worker, name in workers),
+        return_exceptions=True,
     )
 
     for result in results:

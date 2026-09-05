@@ -60,6 +60,8 @@ async def metrics(request: Request):
         "peca_worker": None,
         "stream_retention_worker": None,
     }
+    if settings.security_stories_enabled:
+        worker_ages["security_story_worker"] = None
 
     dlq_ejections_total = 0
     redis_counters = {
@@ -84,6 +86,7 @@ async def metrics(request: Request):
         "warsoc_network_relay_control_records_total": 0,
         "warsoc_network_relay_reported_drops_total": 0,
         "warsoc_network_relay_reported_dropped_bytes_total": 0,
+        "warsoc_security_story_invalid_source_total": 0,
     }
     email_queue_depth = 0
     email_processing_depth = 0
@@ -239,6 +242,9 @@ async def metrics(request: Request):
             "# HELP warsoc_network_relay_reported_dropped_bytes_total LAN syslog bytes the relay reports dropping or quarantining.",
             "# TYPE warsoc_network_relay_reported_dropped_bytes_total counter",
             f"warsoc_network_relay_reported_dropped_bytes_total {redis_counters['warsoc_network_relay_reported_dropped_bytes_total']}",
+            "# HELP warsoc_security_story_invalid_source_total Story inputs rejected as malformed before projection.",
+            "# TYPE warsoc_security_story_invalid_source_total counter",
+            f"warsoc_security_story_invalid_source_total {redis_counters['warsoc_security_story_invalid_source_total']}",
             "# HELP warsoc_email_queue_depth Email jobs waiting for a delivery attempt.",
             "# TYPE warsoc_email_queue_depth gauge",
             f"warsoc_email_queue_depth {email_queue_depth}",
@@ -305,6 +311,15 @@ async def metrics(request: Request):
             "# HELP warsoc_stream_retention_worker_up Safe stream-retention heartbeat is present and no older than 120 seconds.",
             "# TYPE warsoc_stream_retention_worker_up gauge",
             f"warsoc_stream_retention_worker_up {worker_up['stream_retention_worker']}",
+            "# HELP warsoc_security_story_worker_required Security Story worker is required by the active feature profile.",
+            "# TYPE warsoc_security_story_worker_required gauge",
+            f"warsoc_security_story_worker_required {1 if settings.security_stories_enabled else 0}",
+            "# HELP warsoc_security_story_worker_age_seconds Age in seconds since the Security Story worker heartbeat.",
+            "# TYPE warsoc_security_story_worker_age_seconds gauge",
+            f"warsoc_security_story_worker_age_seconds {worker_ages.get('security_story_worker') or 0}",
+            "# HELP warsoc_security_story_worker_up Required Security Story worker has a recent heartbeat; one when disabled.",
+            "# TYPE warsoc_security_story_worker_up gauge",
+            f"warsoc_security_story_worker_up {worker_up.get('security_story_worker', 1)}",
             "",
         ]
     )

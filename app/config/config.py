@@ -167,6 +167,18 @@ class Settings(BaseSettings):
     wazuh_primary_approved: bool = os.getenv(
         "WAZUH_PRIMARY_APPROVED", "false"
     ).strip().lower() in {"1", "true", "yes"}
+    security_stories_enabled: bool = os.getenv(
+        "SECURITY_STORIES_ENABLED", "false"
+    ).strip().lower() in {"1", "true", "yes"}
+    security_story_signal_retention_days: int = int(
+        os.getenv("SECURITY_STORY_SIGNAL_RETENTION_DAYS", "30")
+    )
+    security_story_max_attempts: int = int(
+        os.getenv("SECURITY_STORY_MAX_ATTEMPTS", "8")
+    )
+    security_story_max_references: int = int(
+        os.getenv("SECURITY_STORY_MAX_REFERENCES", "100")
+    )
 
     # --- TRANSACTIONAL EMAIL (Zoho Mail) ---
     zoho_smtp_host: str = os.getenv("ZOHO_SMTP_HOST", "smtp.zoho.com")
@@ -322,6 +334,21 @@ def _validate_network_relay_package_settings(s: "Settings") -> None:
         )
 
 
+def _validate_security_story_settings(s: "Settings") -> None:
+    if not 8 <= s.security_story_signal_retention_days <= 90:
+        raise RuntimeError(
+            "FATAL: SECURITY_STORY_SIGNAL_RETENTION_DAYS must be between 8 and 90."
+        )
+    if not 3 <= s.security_story_max_attempts <= 20:
+        raise RuntimeError(
+            "FATAL: SECURITY_STORY_MAX_ATTEMPTS must be between 3 and 20."
+        )
+    if not 20 <= s.security_story_max_references <= 500:
+        raise RuntimeError(
+            "FATAL: SECURITY_STORY_MAX_REFERENCES must be between 20 and 500."
+        )
+
+
 @lru_cache()
 def get_settings():
     ensure_keys_exist()
@@ -333,6 +360,7 @@ def get_settings():
     _validate_network_relay_version_gate(s)
     _validate_network_relay_watchdog_settings(s)
     _validate_network_relay_package_settings(s)
+    _validate_security_story_settings(s)
     if s.environment.lower() == "production":
         required_values = {
             "JWT_SECRET_KEY": s.jwt_secret_key,

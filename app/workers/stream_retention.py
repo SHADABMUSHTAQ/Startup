@@ -81,12 +81,15 @@ async def stream_retention_worker() -> None:
     settings = get_settings()
     redis_client = create_redis_client(settings.redis_url)
     interval_seconds = max(30, int(os.getenv("STREAM_TRIM_INTERVAL_SECONDS", "60")))
+    raw_required_groups = set(RAW_REQUIRED_GROUPS)
+    if settings.security_stories_enabled:
+        raw_required_groups.add("security_story_group")
 
     try:
         while True:
             try:
                 raw_trimmed = await trim_acknowledged_stream(
-                    redis_client, RAW_LOGS_QUEUE, RAW_REQUIRED_GROUPS
+                    redis_client, RAW_LOGS_QUEUE, raw_required_groups
                 )
                 hot_trimmed = await trim_acknowledged_stream(
                     redis_client, SIEM_HOT_QUEUE, HOT_REQUIRED_GROUPS

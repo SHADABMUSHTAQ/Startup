@@ -30,6 +30,115 @@ $AuditControls = @(
     @{ Name = "Audit Policy Change"; Id = "{0CCE922F-69AE-11D9-BED3-505054503030}"; Success = $true; Failure = $true }
 )
 
+$IsWindowsServer = $false
+try {
+    $IsWindowsServer = ([int](Get-CimInstance Win32_OperatingSystem).ProductType -ne 1)
+} catch {
+    throw "Unable to determine whether this host is Windows Server; refusing to configure auditing."
+}
+$GeneralServerExcludedAuditIds = @(
+    "{0CCE921D-69AE-11D9-BED3-505054503030}", # File System
+    "{0CCE921E-69AE-11D9-BED3-505054503030}"  # Registry
+)
+
+Add-Type -TypeDefinition @"
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public static class WarSocAuditPolicy {
+    private const uint TOKEN_ADJUST_PRIVILEGES = 0x0020;
+    private const uint TOKEN_QUERY = 0x0008;
+    private const uint SE_PRIVILEGE_ENABLED = 0x0002;
+    private const int ERROR_NOT_ALL_ASSIGNED = 1300;
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LUID {
+        public uint LowPart;
+        public int HighPart;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LUID_AND_ATTRIBUTES {
+        public LUID Luid;
+        public uint Attributes;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TOKEN_PRIVILEGES {
+        public uint PrivilegeCount;
+        public LUID_AND_ATTRIBUTES Privileges;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct AUDIT_POLICY_INFORMATION {
+        public Guid AuditSubCategoryGuid;
+        public uint AuditingInformation;
+        public Guid AuditCategoryGuid;
+    }
+    [DllImport("advapi32.dll", SetLastError=true)]
+    private static extern bool AuditQuerySystemPolicy(
+        [In] Guid[] pSubCategoryGuids, uint dwPolicyCount, out IntPtr ppAuditPolicy);
+    [DllImport("advapi32.dll")]
+    private static extern void AuditFree(IntPtr buffer);
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll")]
+    private static extern void SetLastError(uint errorCode);
+    [DllImport("advapi32.dll", SetLastError=true)]
+    private static extern bool OpenProcessToken(
+        IntPtr process, uint desiredAccess, out IntPtr token);
+    [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    private static extern bool LookupPrivilegeValue(
+        string systemName, string name, out LUID luid);
+    [DllImport("advapi32.dll", SetLastError=true)]
+    private static extern bool AdjustTokenPrivileges(
+        IntPtr token, bool disableAll, ref TOKEN_PRIVILEGES newState,
+        uint bufferLength, out TOKEN_PRIVILEGES previousState, out uint returnLength);
+    [DllImport("advapi32.dll", EntryPoint="AdjustTokenPrivileges", SetLastError=true)]
+    private static extern bool RestoreTokenPrivileges(
+        IntPtr token, bool disableAll, ref TOKEN_PRIVILEGES newState,
+        uint bufferLength, IntPtr previousState, IntPtr returnLength);
+    public static uint Query(string subcategory) {
+        IntPtr token;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, out token))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        try {
+            LUID luid;
+            if (!LookupPrivilegeValue(null, "SeSecurityPrivilege", out luid))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            TOKEN_PRIVILEGES desired = new TOKEN_PRIVILEGES {
+                PrivilegeCount = 1,
+                Privileges = new LUID_AND_ATTRIBUTES {
+                    Luid = luid, Attributes = SE_PRIVILEGE_ENABLED
+                }
+            };
+            TOKEN_PRIVILEGES previous;
+            uint returned;
+            SetLastError(0);
+            if (!AdjustTokenPrivileges(token, false, ref desired,
+                    (uint)Marshal.SizeOf(typeof(TOKEN_PRIVILEGES)), out previous, out returned))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            int privilegeError = Marshal.GetLastWin32Error();
+            if (privilegeError == ERROR_NOT_ALL_ASSIGNED)
+                throw new Win32Exception(privilegeError);
+            try {
+                IntPtr buffer;
+                if (!AuditQuerySystemPolicy(new [] { new Guid(subcategory) }, 1, out buffer))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                try {
+                    return ((AUDIT_POLICY_INFORMATION)Marshal.PtrToStructure(
+                        buffer, typeof(AUDIT_POLICY_INFORMATION))).AuditingInformation;
+                } finally {
+                    AuditFree(buffer);
+                }
+            } finally {
+                RestoreTokenPrivileges(token, false, ref previous, 0, IntPtr.Zero, IntPtr.Zero);
+            }
+        } finally {
+            CloseHandle(token);
+        }
+    }
+}
+"@
+
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]::new($identity)
@@ -57,17 +166,14 @@ function Get-AuditControlState {
         [Parameter(Mandatory = $true)][string]$Id
     )
 
-    $output = (& auditpol.exe /get "/subcategory:$Id" 2>&1 | Out-String)
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to read audit policy '$Name': $output"
-    }
+    $flags = [WarSocAuditPolicy]::Query($Id)
 
     return [ordered]@{
         name = $Name
         id = $Id
-        success = [bool]($output -match "(?i)Success")
-        failure = [bool]($output -match "(?i)Failure")
-        raw = $output.Trim()
+        success = [bool]($flags -band 1)
+        failure = [bool]($flags -band 2)
+        raw = ("0x{0:X8}" -f $flags)
     }
 }
 
@@ -233,6 +339,9 @@ function Write-Evidence {
 
 function Install-NativeTelemetry {
     Ensure-StateDirectory
+    if ($IsWindowsServer -and -not [string]::IsNullOrWhiteSpace($PosPaths)) {
+        throw "POS paths require the separately qualified POS/database-host profile and cannot be enabled on General Server V1."
+    }
     $paths = Get-NormalizedPosPaths -RawPaths $PosPaths
 
     $existingState = $null
@@ -246,6 +355,14 @@ function Install-NativeTelemetry {
         }
     }
     $script:InstallHadExistingState = ($null -ne $existingState)
+    # Preserve an existing installation exactly. Fresh server installations do
+    # not enable File System/Registry categories that belong to later profiles.
+    $auditControlsForInstall = @($AuditControls)
+    if ($IsWindowsServer -and $null -eq $existingState) {
+        $auditControlsForInstall = @(
+            $AuditControls | Where-Object { $GeneralServerExcludedAuditIds -notcontains [string]$_.Id }
+        )
+    }
 
     $previousRegistry = Get-ItemProperty -Path $AuditRegistryPath -Name $AuditRegistryName -ErrorAction SilentlyContinue
     $runAuditStates = @()
@@ -278,7 +395,7 @@ function Install-NativeTelemetry {
         pos_paths = @()
     }
 
-    foreach ($control in $AuditControls) {
+    foreach ($control in $auditControlsForInstall) {
         $currentControl = Get-AuditControlState -Name $control.Name -Id $control.Id
         $runAuditStates += $currentControl
         $savedControl = $null

@@ -473,6 +473,21 @@ async def close_evidence_case(
     case = await _case_or_404(db, tenant_id, case_id)
     if case.get("status") != "OPEN":
         raise HTTPException(status_code=409, detail="Evidence case is already closed")
+    await _recover_pending_items(db, tenant_id, case_id)
+    committed_item_count = await db.evidence_case_items.count_documents(
+        {"tenant_id": tenant_id, "case_id": case_id, "state": "COMMITTED"}
+    )
+    if committed_item_count < 1:
+        raise HTTPException(status_code=409, detail="Attach at least one evidence item before closing the case")
+    custody_events = await db.evidence_custody_events.find(
+        {"tenant_id": tenant_id, "case_id": case_id, "state": "COMMITTED"}
+    ).sort("sequence", 1).to_list(10000)
+    verification = verify_custody_chain(custody_events)
+    if (
+        not verification.get("verified")
+        or verification.get("head_hash") != case.get("custody_head_hash")
+    ):
+        raise HTTPException(status_code=409, detail="Evidence custody chain verification failed")
     operation_id = str(getattr(request.state, "request_id", "") or uuid.uuid4().hex)
     started_at = datetime.now(timezone.utc)
     acquired = await db.evidence_cases.find_one_and_update(
@@ -500,7 +515,12 @@ async def close_evidence_case(
             actor=current_user,
             reason=body.reason,
             request_id=operation_id,
-            metadata={"operation_id": operation_id},
+            metadata={
+                "operation_id": operation_id,
+                "verified_previous_head_hash": verification["head_hash"],
+                "verified_event_count": verification["event_count"],
+                "committed_item_count": committed_item_count,
+            },
         )
     except Exception as exc:
         event = await _operation_event(db, tenant_id, case_id, operation_id, "CASE_CLOSED")
@@ -511,7 +531,7 @@ async def close_evidence_case(
             )
             raise HTTPException(status_code=503, detail="Evidence case closure could not be completed") from exc
     now = event.get("occurred_at") or datetime.now(timezone.utc)
-    await db.evidence_cases.update_one(
+    result = await db.evidence_cases.update_one(
         {
             "_id": case["_id"],
             "status": "OPEN",
@@ -528,6 +548,8 @@ async def close_evidence_case(
             "$unset": {"close_operation": ""},
         },
     )
+    if result.modified_count != 1:
+        raise HTTPException(status_code=409, detail="Evidence case state changed; reload the case")
     return {"status": "CLOSED", "custody_event": _public(event)}
 
 
@@ -607,19 +629,45 @@ async def get_evidence_export(
 
 
 async def _evidence_export_sas(document: dict, expires_minutes: int) -> tuple[str, datetime]:
+    connection_parts = {}
+    for segment in os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").split(";"):
+        if "=" in segment:
+            key, value = segment.split("=", 1)
+            connection_parts[key.strip()] = value.strip()
+    account_name = connection_parts.get("AccountName", "")
+    account_key = connection_parts.get("AccountKey", "")
     account_url = os.getenv("AZURE_STORAGE_ACCOUNT_URL", "").strip().rstrip("/")
+    if not account_url:
+        account_url = connection_parts.get("BlobEndpoint", "").strip().rstrip("/")
+    if not account_url and account_name:
+        endpoint_suffix = connection_parts.get("EndpointSuffix", "core.windows.net")
+        account_url = f"https://{account_name}.blob.{endpoint_suffix}"
     if not account_url.startswith("https://"):
         raise RuntimeError("Azure evidence-export account URL is unavailable")
     container_name = str(document.get("container_name") or "")
     blob_name = str(document.get("blob_name") or "")
     if not container_name or not blob_name:
         raise RuntimeError("Evidence-export storage reference is incomplete")
-    from azure.identity.aio import DefaultAzureCredential
     from azure.storage.blob import BlobSasPermissions, generate_blob_sas
-    from azure.storage.blob.aio import BlobServiceClient
 
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=expires_minutes)
+    if account_name and account_key:
+        sas = generate_blob_sas(
+            account_name=account_name,
+            account_key=account_key,
+            container_name=container_name,
+            blob_name=blob_name,
+            permission=BlobSasPermissions(read=True),
+            start=now - timedelta(minutes=5),
+            expiry=expires_at,
+            protocol="https",
+        )
+        return f"{account_url}/{container_name}/{blob_name}?{sas}", expires_at
+
+    from azure.identity.aio import DefaultAzureCredential
+    from azure.storage.blob.aio import BlobServiceClient
+
     credential = DefaultAzureCredential()
     client = BlobServiceClient(account_url=account_url, credential=credential)
     try:

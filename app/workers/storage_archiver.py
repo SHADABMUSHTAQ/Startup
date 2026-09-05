@@ -18,6 +18,7 @@ from app.utils.compliance_catalog import COMPLIANCE_CATALOG
 from app.utils.fbr_retention import FBR_ACTIVE_RETENTION_MODEL
 from app.utils.peca_retention import PECA_ACTIVE_RETENTION_MODEL
 from app.utils.evidence_locks import acquire_retention_fence, release_retention_fence
+from app.utils.archive_legal_holds import protect_archive_for_hold
 
 load_dotenv()
 
@@ -396,7 +397,7 @@ def _bounded_archive_documents(documents: list[dict], max_encoded_bytes: int) ->
     return selected
 
 
-async def _active_hold_ids_for_batch(db, tenant_id: str, collection_name: str, docs: list[dict]) -> list[str]:
+async def _active_holds_for_batch(db, tenant_id: str, collection_name: str, docs: list[dict]) -> list[dict]:
     event_uids = [str(doc.get("event_uid")) for doc in docs if doc.get("event_uid")]
     scope_queries: list[dict] = [
         {"scope_type": "TENANT"},
@@ -410,17 +411,15 @@ async def _active_hold_ids_for_batch(db, tenant_id: str, collection_name: str, d
                 "event_uid": {"$in": event_uids},
             }
         )
-    hold = await db["legal_holds"].find_one(
+    holds = await db["legal_holds"].find(
         {
             "tenant_id": tenant_id,
             "status": {"$in": ["ACTIVE", "PENDING_RELEASE"]},
             "$or": scope_queries,
         },
-        {"_id": 1, "hold_id": 1},
-    )
-    if not hold:
-        return []
-    return [str(hold.get("hold_id") or hold.get("_id"))]
+        {"_id": 1, "hold_id": 1, "tenant_id": 1, "scope_type": 1, "collection": 1, "event_uid": 1},
+    ).limit(500).to_list(500)
+    return holds
 
 
 async def _archive_batch(
@@ -608,13 +607,46 @@ async def _archive_batch(
         logger.warning("Archive delete fence is busy for tenant %s; preserving hot records.", tenant_id)
         return 0
     try:
-        active_hold_ids = await _active_hold_ids_for_batch(
+        active_holds = await _active_holds_for_batch(
             db,
             tenant_id,
             collection_name,
             docs,
         )
-        if active_hold_ids:
+        if active_holds:
+            archive_record = await db["storage_archives"].find_one(
+                {
+                    "tenant_id": tenant_id,
+                    "collection": collection_name,
+                    "archive_key": archive_key,
+                }
+            )
+            if not archive_record:
+                raise RuntimeError("Archive ledger disappeared before legal-hold protection")
+            try:
+                for hold in active_holds:
+                    await protect_archive_for_hold(
+                        db,
+                        None,
+                        hold,
+                        archive_record,
+                        container_client=container_client,
+                    )
+            except Exception as exc:
+                await db["storage_archives"].update_one(
+                    {"_id": archive_record["_id"]},
+                    {
+                        "$set": {
+                            "status": "archive_hold_protection_failed",
+                            "legal_hold_error": type(exc).__name__,
+                            "hot_delete_blocked_at": datetime.now(timezone.utc),
+                        }
+                    },
+                )
+                raise
+            active_hold_ids = sorted(
+                str(hold.get("hold_id") or hold.get("_id")) for hold in active_holds
+            )
             await db["storage_archives"].update_one(
                 {
                     "tenant_id": tenant_id,

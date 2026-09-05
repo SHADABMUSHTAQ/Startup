@@ -70,6 +70,17 @@ validate_secret_file() {
             fail "Required variable ${required_name} is absent or empty in the production environment file."
         fi
     done
+    if grep -Eqi '^EVIDENCE_EXPORT_ENABLED=(true|1|yes|on)$' "${env_file}"; then
+        local export_name
+        for export_name in \
+            EVIDENCE_EXPORT_CONTAINER \
+            EVIDENCE_PACKAGE_PRIVATE_KEY_B64 \
+            EVIDENCE_PACKAGE_SIGNING_KEY_ID \
+            EVIDENCE_PACKAGE_SIGNING_KEY_VERSION; do
+            grep -Eq "^${export_name}=.+" "${env_file}" || \
+                fail "Evidence export is enabled but ${export_name} is absent or empty."
+        done
+    fi
 }
 
 normalize_container_entrypoint() {
@@ -136,7 +147,7 @@ prepare_release() {
     compose pull mongodb redis nginx
 
     log "Building the exact WarSOC ${RELEASE_ID} application image on ARM64."
-    compose build warsoc-api unified-worker compliance-cron storage-archiver
+    compose build warsoc-api unified-worker compliance-cron storage-archiver evidence-hold-worker evidence-export-worker
 
     log "Starting private persistence services."
     compose up -d mongodb redis
@@ -160,7 +171,7 @@ prepare_release() {
     printf '\n'
 
     log "Starting the core workers."
-    compose up -d unified-worker compliance-cron storage-archiver
+    compose up -d unified-worker compliance-cron storage-archiver evidence-hold-worker evidence-export-worker
     compose ps
 
     log "Prepare stage passed. Change ${API_HOST} A record to ${PUBLIC_IP}, then run:"

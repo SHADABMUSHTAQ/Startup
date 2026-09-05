@@ -26,7 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # ==========================================
 from app.database import init_db, get_db, db_manager
 from app.config.config import get_settings
-from app.routes import auth, ingest_pulse, threat_intel, upload, compliance, evidence_cases, logs, alerts, incidents, admin, account, sales, export, pos, network_relay, archive_retrieval
+from app.routes import auth, ingest_pulse, threat_intel, upload, compliance, evidence_cases, logs, alerts, incidents, security_stories, admin, account, sales, export, pos, network_relay, archive_retrieval
 from app.routes import metrics
 from app.db.init_db import init_compliance_db
 from app.api.ws_manager import manager 
@@ -584,6 +584,11 @@ app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compli
 app.include_router(evidence_cases.router, prefix="/api/v1/compliance", tags=["Evidence Custody"])
 app.include_router(alerts.router, prefix="/api/v1/alerts", tags=["Alert Management"])
 app.include_router(incidents.router, prefix="/api/v1/incidents", tags=["Incident Management"])
+app.include_router(
+    security_stories.router,
+    prefix="/api/v1/security-stories",
+    tags=["Security Stories"],
+)
 app.include_router(logs.router, prefix="/api/v1/logs", tags=["Dashboard Logs"])
 
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin Control Plane"])

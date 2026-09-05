@@ -757,7 +757,7 @@ def test_native_spool_failure_cannot_advance_watermark(monkeypatch, tmp_path):
 
     previous_watermark = 99
 
-    def fail_enqueue(_payload):
+    def fail_enqueue(_payload, **_kwargs):
         raise agent.SpoolWriteError("disk full")
 
     monkeypatch.setattr(agent, "enqueue_payload", fail_enqueue)

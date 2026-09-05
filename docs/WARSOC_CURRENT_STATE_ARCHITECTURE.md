@@ -2,6 +2,8 @@
 
 **Document status:** Authoritative as-built map
 **Snapshot date:** 2026-08-31
+**Windows Server engineering delta:** 2026-09-03. General Server V1 is a local
+source candidate, not a deployed or customer-supported capability.
 **Source-contract correction:** 2026-09-03. The application identities below belong
 to the prior deployment snapshot, not to these uncommitted local corrections.
 See `WARSOC_FRONTEND_CONTRACT_FIX_REPORT_2026-09-03.md` for the current changes,
@@ -17,7 +19,7 @@ This document describes what the current source code does. It is not a sales cla
 
 ## 1. Current Verdict
 
-WarSOC currently has a coherent end-to-end architecture. The application enforces both a maximum of 50 Windows agents per tenant and a default hard ceiling of 50 active agents across the current shared deployment. The second limit protects the 8 GiB single host and prevents several tenants from each consuming 50 seats:
+WarSOC currently has a coherent end-to-end architecture. The application enforces both a maximum of 50 Windows agents per tenant and a default hard ceiling of 50 active agents across the current shared deployment. The second limit protects the 24 GiB OCI host and prevents several tenants from each consuming 50 seats:
 
 1. A tenant admin generates a one-time activation code.
 2. The Windows installer validates that code, configures native Windows auditing, and installs the agent as an NSSM service.
@@ -51,6 +53,26 @@ candidate installer is 18,859,406 bytes with SHA-256
 Existing signed collection-v2 and collection-v3 agents remain accepted. The
 candidate becomes the public release only after immutable artifact upload,
 exact-hash verification, installation, and runtime acceptance proof.
+
+Agent `4.2.13-Native-Signed-Server-V1` is now the local engineering candidate.
+It preserves the 4.2.12 workstation pipeline and adds a backend-owned,
+revisioned and hash-bound `general_server` monitoring profile for Windows Server
+2022 Standard Desktop Experience AMD64. Profile delivery is nonce-bound to the
+signed heartbeat, server response is permanently monitor-only, and collected
+events carry the exact profile provenance before endpoint signing and durable
+spooling. Effective audit state is read through the native Windows API and drift
+degrades health without runtime GPO or firewall remediation. The feature flag is
+off by default. This is not a public/deployed agent or a Windows Server support
+claim until clean-server event, failure/recovery and soak qualification passes.
+The local installer is 18,879,454 bytes with SHA-256
+`6D1800F253EA74F3953BEED1F80B9A90DACD0EFCB90413503B543FE12FC41648`;
+it is not Authenticode-signed.
+The detailed contract is `docs/WARSOC_WINDOWS_SERVER_MONITORING_V1.md`.
+The completed local verification campaign closed with 109 focused tests and the
+full maintained suite at 607 passed, one explicitly skipped and zero assertion
+failures. Packaging, manifest verification, dependency auditing and the
+high-severity static security gate also passed. Real Windows Server functional,
+failure/recovery and soak qualification remains open.
 
 The 2026-07-21 `4.2.6-Native-Signed` run remains a historical complete
 exact-machine workflow baseline: enrollment, fresh heartbeats, SIEM alerting,
@@ -537,6 +559,32 @@ remove SIEM/PECA events from the acceptance run.
 This is source and integration-test evidence only until the exact candidate is
 committed, deployed and accepted against the production environment.
 
+### 1.16 September 4 Security Stories V1 engineering candidate
+
+Security Stories V1 is implemented locally behind
+`SECURITY_STORIES_ENABLED=false`. It is a bounded, tenant-scoped operational
+projection over canonical endpoint/relay events and WarSOC incident occurrences;
+it is not evidence, a replacement incident engine or a second detection owner.
+The independent `security_story_group` starts at new traffic on first enablement,
+persists idempotent work in `story_signal_ledger`, and writes mutable projections
+to `security_stories`. Projection failure cannot roll back SIEM, PECA, FBR,
+incidents, custody or archival.
+
+The five V1 families cover possible server account compromise, compromise
+followed by persistence, anti-forensics after suspicious server activity,
+workstation-to-server movement using a fresh unambiguous private-IP binding, and
+permitted public egress after a server-compromise story. The last family accepts
+only authenticated network-relay evidence; Windows 5156/5157 and blocked traffic
+cannot establish firewall egress. Medium-confidence chains remain
+`CANDIDATE`; high-confidence chains become `OPEN`. Wazuh shadow observations do
+not enter stories unless WarSOC first admits them and creates a canonical WarSOC
+incident.
+
+Focused verification currently reports 27 passing tests. The complete backend
+and security gate is still pending, so this is not deployed, enabled or a
+customer capability claim. The detailed contract is
+`docs/WARSOC_SECURITY_STORIES_V1.md`.
+
 ## 2. Product Boundary
 
 ### 2.1 What WarSOC currently provides
@@ -906,6 +954,7 @@ live backend redirect, clean-machine lifecycle or deployed backend revision.
 | SIEM priority | `siem_hot_group` | `siem_hot_queue` |
 | FBR | `fbr_group` | `raw_logs_queue` |
 | PECA | `eto_group` | `raw_logs_queue` |
+| Security Stories, only when enabled | `security_story_group` | `raw_logs_queue` |
 
 `eto_group` is a legacy internal group name. It currently owns PECA consumption and must not be renamed casually because stream retention requires it.
 
@@ -948,6 +997,11 @@ event UIDs and downstream unique indexes are the duplicate-suppression boundary.
 The production unified worker supervises the source-evidence outbox, SIEM, FBR,
 PECA, email, and stream-retention loops concurrently. A crashed loop is restarted
 after a delay without terminating the other loops.
+
+Security Story projection is added to this supervisor only when
+`SECURITY_STORIES_ENABLED=true`. Its Redis group is correspondingly added to the
+safe-trimming requirement only while enabled. This preserves the existing
+pipeline and avoids a disabled optional consumer pinning Redis retention.
 
 ## 11. SIEM Detection Architecture
 
@@ -1733,8 +1787,9 @@ Status meanings:
 | Independent Mongo backup | Operational disaster recovery separate from evidence archive | CANDIDATE-PROVEN | Drill `20260721T200605Z-7541a279` verified SHA-256, decrypted a production-format archive, and restored 156,671 documents across 18 collections with zero failures into a network-disabled disposable MongoDB. The restore drill is now tracked and uses a temporary disk-backed Docker volume instead of a 2 GiB RAM-backed filesystem; the volume is deleted after the drill. Repeat with the final Azure-hosted production backup during cutover. |
 | Endpoint event authenticity | Per-event Ed25519 signature tied to the enrolled agent key before Redis admission | REQUIRED / DEPLOYED | Agent/API tests and exact-machine flow pass with 7,191 verified and zero rejected signatures. Accepted-event signature readiness is exposed per endpoint and gates health/coverage. The deployment operator set `AGENT_EVENT_SIGNATURE_MODE=required`; fresh signed-agent metrics remain the runtime watch. |
 | Physical retention classes | Match actual Azure lock duration to tenant and general retention terms | CODE COMPLETE / CLOUD PENDING | Routing and readback support duration-aware SIEM/general containers. New FBR and PECA evidence use the general tenant-duration route. Existing blobs and legacy FBR/PECA records remain under their original model. |
-| Evidence cases and custody | Reference original evidence and record hash-linked custody transitions | CODE COMPLETE / DEPLOYMENT PENDING | Tenant-scoped case references, recovery-safe custody events, explicit holds, closure and offline-verifiable packages are implemented. Cold evidence requires the isolated retrieval flow first. |
-| Evidence package export | Build signed packages outside the API and deliver directly from Azure | CODE COMPLETE / DISABLED | Isolated bounded worker, RSA-PSS package signature, short-lived user-delegation SAS and expiry are implemented. Azure container/RBAC and live browser proof remain open. |
+| Evidence cases and custody | Reference original evidence and record hash-linked custody transitions | SOURCE-PROVEN / DEPLOYMENT PENDING | UI and API support tenant-scoped hot-evidence attachment and VIEW/VERIFY/TRANSFER actions. Empty or tampered cases cannot close; closure records the verified chain head. Cold evidence requires the isolated retrieval flow first. |
+| Legal holds | Prevent eligible hot and archived evidence from deletion | SOURCE-PROVEN / DEPLOYMENT PENDING | Event targets are validated. `ACTIVE` and `PENDING_RELEASE` block Mongo deletion. The dedicated worker applies/verifies Azure holds on JSON/SHA objects and preserves pre-existing or concurrent holds. Release is final only after archive reconciliation and audit commit. |
+| Evidence package export | Build signed packages outside the API and deliver directly from Azure | LIVE-AZURE PROVEN / DEPLOYMENT PENDING | A synthetic acceptance proved private upload, SHA readback, scoped SAS download, offline RSA-PSS verification, expiry, and blob deletion in `warsoc-evidence-exports`. The bounded leased worker and UI request/poll/download flow are implemented. Deployed authenticated browser proof remains open. |
 | Daily external evidence root | Anchor daily evidence-chain commitments outside Mongo | CODE COMPLETE / DISABLED | Deterministic hash-only Azure anchor and WORM verification are implemented. Private locked container and live outage/retry proof remain open. |
 | FBR multi-source reconciliation | Compare POS, DB and external observations without inventing success | CONTRACT/LAB ONLY / DISABLED | Deterministic raw hashes, semantic fingerprints and non-green missing/replay outcomes are implemented. Real DB and licensed-integrator connectors remain unbuilt. |
 | Installer code signing | Publisher reputation and Defender trust | PARTIAL | Exact hash allowlisting supports the pilot while Defender stays enabled; the binary remains unsigned. |
@@ -1777,6 +1832,8 @@ Status meanings:
 - Open-incident count, occurrence-ledger growth, projection errors, and incident API latency.
 - Disk, Mongo volume, and Redis memory usage.
 - Latest successful Azure archive ledger timestamp.
+- Evidence-hold worker failures, pending releases, and unprotected active holds.
+- Evidence-export queue age, expired leases, failures, and READY objects past expiry.
 - Email queue failures.
 - Dashboard live-read latency/failures and new Nginx HTTP 499 responses.
 - Mongo CPU plus execution plans if live-read p95 exceeds two seconds.
@@ -1801,6 +1858,8 @@ Status meanings:
 - Incident grouping/detail plus acknowledge/close and mitigation check.
 - CSV and PDF hot-tier scope check, plus separate Azure archive-integrity evidence.
 - Azure archive/restore integrity check.
+- One case attachment, custody verification and case closure refusal/acceptance check.
+- One harmless Azure hold apply/release check and one signed package offline verification.
 - SMTP delivery check.
 - Installer SHA-256 manifest regeneration and artifact/CDN match.
 
@@ -1858,15 +1917,18 @@ Do not declare the current release fully accepted until all of the following are
 | Active tenant-entitlement FBR retention and isolated legacy interpreters | `app/utils/fbr_retention.py` |
 | FBR retention product decision and historical compatibility boundary | `docs/WARSOC_FBR_RETENTION_PRODUCT_DECISION_2026-08-24.md` |
 | Explicit legal/proceeding holds and archive fences | `app/utils/evidence_holds.py` and `app/utils/evidence_locks.py` |
+| Azure archive legal-hold reconciliation | `app/utils/archive_legal_holds.py` and `app/workers/evidence_hold_worker.py` |
 | Evidence-state and claim-state evaluation | `app/utils/evidence_claims.py` |
 | SIEM sensitive-field privacy | `app/utils/siem_privacy.py` |
 | Evidence cases and hash-linked custody | `app/utils/evidence_custody.py` and `app/routes/evidence_cases.py` |
 | Signed evidence packages and offline verifier | `app/utils/evidence_package.py` and `scripts/verify_evidence_package.py` |
-| Isolated evidence-package export | `app/workers/evidence_export_worker.py` |
+| Isolated evidence-package export and setup | `app/workers/evidence_export_worker.py` and `scripts/configure_evidence_exports.py` |
 | External daily evidence commitment | `app/utils/evidence_anchor.py` and `app/workers/compliance_cron.py` |
 | FBR reconciliation contract/lab engine | `app/utils/fbr_reconciliation.py` |
 | Redis ingest memory admission | `app/utils/ingest_capacity.py` |
 | Windows event signing and protected key storage | `agent/windows_agent.py` |
+| Windows Server General Server V1 candidate and qualification contract | `docs/WARSOC_WINDOWS_SERVER_MONITORING_V1.md`, `agent/server_monitoring.py`, and `app/utils/collection_profiles.py` |
+| Security Stories V1 candidate, correlation, worker and API contract | `docs/WARSOC_SECURITY_STORIES_V1.md`, `app/utils/security_stories.py`, `app/workers/security_story_worker.py`, and `app/routes/security_stories.py` |
 | Network-relay API and admission | `app/routes/network_relay.py` |
 | Network-relay parsing, spooling, signing and runtime | `app/network_relay/` and `scripts/warsoc_relay_service.py` |
 | Network-relay as-built candidate contract | `docs/NETWORK_RELAY_BACKEND_FOUNDATION.md` |

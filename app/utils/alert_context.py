@@ -132,6 +132,16 @@ def build_alert_context(alert: Mapping[str, Any], source_event: Mapping[str, Any
         "actor_domain": _first(layers, "subject_domain_name", "SubjectDomainName"),
         "target_user": target_user,
         "target_sid": _first(layers, "target_user_sid", "TargetUserSid", "target_sid"),
+        "logon_type": _first(layers, "logon_type", "LogonType"),
+        "target_logon_id": _first(layers, "target_logon_id", "TargetLogonId"),
+        "subject_logon_id": _first(layers, "subject_logon_id", "SubjectLogonId"),
+        "workstation": _first(layers, "workstation", "workstation_name", "WorkstationName"),
+        "authentication_package": _first(
+            layers,
+            "authentication_package",
+            "authentication_package_name",
+            "AuthenticationPackageName",
+        ),
         # Backward-compatible list-view field. New UI should prefer actor and
         # target_user so successful logons do not conflate both identities.
         "user": actor or target_user,

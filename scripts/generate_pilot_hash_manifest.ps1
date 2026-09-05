@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = "4.2.12",
+    [string]$Version = "4.2.13",
     [string]$AgentPath = "",
     [string]$InstallerPath = "",
     [string]$NssmPath = "",

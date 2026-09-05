@@ -89,13 +89,20 @@ def _write_deterministic_zip(package_dir: Path, zip_path: Path) -> tuple[str, in
 
 async def _claim_export(db, worker_id: str) -> dict | None:
     now = datetime.now(timezone.utc)
+    lease_seconds = max(60, min(3600, int(os.getenv("EVIDENCE_EXPORT_LEASE_SECONDS", "600"))))
     return await db.evidence_exports.find_one_and_update(
-        {"status": "REQUESTED"},
+        {
+            "$or": [
+                {"status": "REQUESTED"},
+                {"status": "PROCESSING", "worker_lease_until": {"$lte": now}},
+            ]
+        },
         {
             "$set": {
                 "status": "PROCESSING",
                 "worker_id": worker_id,
                 "worker_claimed_at": now,
+                "worker_lease_until": now + timedelta(seconds=lease_seconds),
                 "updated_at": now,
             },
             "$inc": {"worker_attempts": 1},
@@ -163,7 +170,11 @@ async def process_evidence_export(
     if loaded[3] == "REQUIRES_ARCHIVE_RETRIEVAL":
         now = datetime.now(timezone.utc)
         await db.evidence_exports.update_one(
-            {"_id": request_doc["_id"], "status": "PROCESSING"},
+            {
+                "_id": request_doc["_id"],
+                "status": "PROCESSING",
+                "worker_id": request_doc.get("worker_id"),
+            },
             {
                 "$set": {
                     "status": "REQUIRES_ARCHIVE_RETRIEVAL",
@@ -229,26 +240,40 @@ async def process_evidence_export(
         "email": request_doc.get("requested_by"),
         "role": "system-export-worker",
     }
-    custody_event = await append_custody_event(
-        db,
-        tenant_id=request_doc["tenant_id"],
-        case_id=request_doc["case_id"],
-        action="EXPORT",
-        actor=actor,
-        reason=request_doc["reason"],
-        request_id=request_doc.get("request_id") or export_id,
-        metadata={
-            "operation_id": export_id,
-            "export_id": export_id,
-            "package_sha256": package_sha256,
-            "signing_key_id": signing_key_id,
-            "signing_key_version": signing_key_version,
-        },
+    custody_event = await db.evidence_custody_events.find_one(
+        {
+            "tenant_id": request_doc["tenant_id"],
+            "case_id": request_doc["case_id"],
+            "action": "EXPORT",
+            "state": "COMMITTED",
+            "metadata.export_id": export_id,
+        }
     )
+    if not custody_event:
+        custody_event = await append_custody_event(
+            db,
+            tenant_id=request_doc["tenant_id"],
+            case_id=request_doc["case_id"],
+            action="EXPORT",
+            actor=actor,
+            reason=request_doc["reason"],
+            request_id=request_doc.get("request_id") or export_id,
+            metadata={
+                "operation_id": export_id,
+                "export_id": export_id,
+                "package_sha256": package_sha256,
+                "signing_key_id": signing_key_id,
+                "signing_key_version": signing_key_version,
+            },
+        )
     now = datetime.now(timezone.utc)
     expires_hours = max(1, min(72, int(os.getenv("EVIDENCE_EXPORT_READY_HOURS", "48"))))
     result = await db.evidence_exports.find_one_and_update(
-        {"_id": request_doc["_id"], "status": "PROCESSING"},
+        {
+            "_id": request_doc["_id"],
+            "status": "PROCESSING",
+            "worker_id": request_doc.get("worker_id"),
+        },
         {
             "$set": {
                 "status": "READY",
@@ -264,11 +289,13 @@ async def process_evidence_export(
                 "expires_at": now + timedelta(hours=expires_hours),
                 "updated_at": now,
             },
-            "$unset": {"failure_code": ""},
+            "$unset": {"failure_code": "", "worker_lease_until": ""},
         },
         return_document=ReturnDocument.AFTER,
     )
-    return result or {"status": "READY"}
+    if not result:
+        raise RuntimeError("Evidence export worker lease was lost before commit")
+    return result
 
 
 async def expire_ready_exports(db, blob_service, *, limit: int = 50) -> int:
@@ -332,14 +359,19 @@ async def run_worker() -> None:
                 except Exception as exc:
                     now = datetime.now(timezone.utc)
                     await db.evidence_exports.update_one(
-                        {"_id": request_doc["_id"], "status": "PROCESSING"},
+                        {
+                            "_id": request_doc["_id"],
+                            "status": "PROCESSING",
+                            "worker_id": worker_id,
+                        },
                         {
                             "$set": {
                                 "status": "FAILED",
                                 "failure_code": type(exc).__name__,
                                 "failed_at": now,
                                 "updated_at": now,
-                            }
+                            },
+                            "$unset": {"worker_lease_until": ""},
                         },
                     )
             await expire_ready_exports(db, blob_service)

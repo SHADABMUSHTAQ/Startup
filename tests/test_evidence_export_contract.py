@@ -2,19 +2,71 @@ from __future__ import annotations
 
 import io
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
+from app.routes.evidence_cases import _evidence_export_sas
 from app.utils.evidence_package import verify_evidence_package
-from app.workers.evidence_export_worker import expire_ready_exports, process_evidence_export
+from app.workers.evidence_export_worker import _claim_export, expire_ready_exports, process_evidence_export
 
 
 class _BlobProperties:
     def __init__(self, metadata):
         self.metadata = metadata
+
+
+@pytest.mark.asyncio
+async def test_export_download_uses_scoped_shared_key_sas_without_exposing_account_key(
+    monkeypatch,
+):
+    account_key = "dGVzdC1hY2NvdW50LWtleQ=="
+    monkeypatch.setenv(
+        "AZURE_STORAGE_CONNECTION_STRING",
+        f"DefaultEndpointsProtocol=https;AccountName=warsocvault;AccountKey={account_key};EndpointSuffix=core.windows.net",
+    )
+    monkeypatch.delenv("AZURE_STORAGE_ACCOUNT_URL", raising=False)
+    url, expires_at = await _evidence_export_sas(
+        {
+            "container_name": "warsoc-evidence-exports",
+            "blob_name": "packages/tenant/export.zip",
+        },
+        15,
+    )
+    assert url.startswith(
+        "https://warsocvault.blob.core.windows.net/warsoc-evidence-exports/packages/tenant/export.zip?"
+    )
+    assert "sp=r" in url
+    assert account_key not in url
+    assert expires_at > datetime.now(timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_export_worker_reclaims_only_an_expired_processing_lease(db):
+    now = datetime.now(timezone.utc)
+    await db.evidence_exports.insert_many(
+        [
+            {
+                "export_id": "EXPORT-LIVE-LEASE",
+                "status": "PROCESSING",
+                "worker_lease_until": now + timedelta(minutes=5),
+                "created_at": now - timedelta(minutes=2),
+            },
+            {
+                "export_id": "EXPORT-EXPIRED-LEASE",
+                "status": "PROCESSING",
+                "worker_lease_until": now - timedelta(minutes=1),
+                "created_at": now - timedelta(minutes=1),
+            },
+        ]
+    )
+    claimed = await _claim_export(db, "worker-b")
+    assert claimed["export_id"] == "EXPORT-EXPIRED-LEASE"
+    assert claimed["worker_id"] == "worker-b"
+    live = await db.evidence_exports.find_one({"export_id": "EXPORT-LIVE-LEASE"})
+    assert live.get("worker_id") is None
 
 
 class _Blob:

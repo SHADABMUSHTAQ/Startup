@@ -10,6 +10,17 @@ from app.utils.fbr_retention import FBR_ACTIVE_RETENTION_MODEL, FBR_RETENTION_ST
 ACTIVE_HOLD_STATES = {"ACTIVE", "PENDING_RELEASE"}
 
 
+def archive_query_for_hold(hold: dict) -> dict:
+    """Build the tenant-scoped archive-ledger query for one hold."""
+    query = {"tenant_id": str(hold.get("tenant_id") or "")}
+    scope_type = str(hold.get("scope_type") or "").upper()
+    if scope_type in {"COLLECTION", "EVENT"}:
+        query["collection"] = str(hold.get("collection") or "")
+    if scope_type == "EVENT":
+        query["event_uids"] = str(hold.get("event_uid") or "")
+    return query
+
+
 def hold_applies_to_document(hold: dict, collection_name: str, document: dict) -> bool:
     if str(hold.get("status") or "").upper() not in ACTIVE_HOLD_STATES:
         return False

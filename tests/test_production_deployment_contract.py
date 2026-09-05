@@ -53,7 +53,27 @@ def test_production_compose_is_private_fail_fast_and_sized_for_pilot():
     assert "container_name: warsoc-wazuh-dispatch-prod" in compose
     assert "container_name: warsoc-wazuh-candidate-api-prod" in compose
     assert '${WAZUH_CANDIDATE_BIND_IP:-127.0.0.1}:${WAZUH_CANDIDATE_PORT:-8443}:8010' in compose
-    assert 'container_name: warsoc-evidence-export-worker-prod\n    profiles: ["evidence-export"]' in compose
+    assert "container_name: warsoc-evidence-export-worker-prod" in compose
+    assert "container_name: warsoc-evidence-hold-worker-prod" in compose
+    assert 'profiles: ["evidence-export"]' not in compose
+    assert "command: python -m app.workers.evidence_export_worker" in compose
+    assert "command: python -m app.workers.evidence_hold_worker" in compose
+
+
+def test_oci_release_starts_evidence_governance_workers():
+    deploy = _read("deploy/oci/deploy_warsoc_release.sh")
+    assert "EVIDENCE_EXPORT_ENABLED=(true|1|yes|on)" in deploy
+    for required_name in (
+        "EVIDENCE_EXPORT_CONTAINER",
+        "EVIDENCE_PACKAGE_PRIVATE_KEY_B64",
+        "EVIDENCE_PACKAGE_SIGNING_KEY_ID",
+        "EVIDENCE_PACKAGE_SIGNING_KEY_VERSION",
+    ):
+        assert required_name in deploy
+    assert (
+        "compose up -d unified-worker compliance-cron storage-archiver "
+        "evidence-hold-worker evidence-export-worker"
+    ) in deploy
 
 
 def test_backend_contains_only_the_cdn_agent_download_route():
@@ -132,7 +152,7 @@ def test_normal_exports_are_explicitly_hot_tier_only():
 
 def test_pilot_manifest_covers_complete_executable_installation_chain():
     manifest_script = _read("scripts/generate_pilot_hash_manifest.ps1")
-    assert '[string]$Version = "4.2.12"' in manifest_script
+    assert '[string]$Version = "4.2.13"' in manifest_script
     assert '"Output\\warsoc_installer-$Version.exe"' in manifest_script
     assert '"Output\\pilot_hash_manifest-$Version.json"' in manifest_script
     assert "warsoc_agent.exe" in manifest_script
@@ -142,6 +162,17 @@ def test_pilot_manifest_covers_complete_executable_installation_chain():
     assert "windows-service-manager" in manifest_script
     assert "native-telemetry-configuration" in manifest_script
     assert "tenant-monitoring-policy" in manifest_script
+
+
+def test_server_audit_readback_enables_and_restores_required_privilege():
+    agent_runtime = _read("agent/server_monitoring.py")
+    installer = _read("agent/deploy_warsoc_telemetry.ps1")
+    for source in (agent_runtime, installer):
+        assert "SeSecurityPrivilege" in source
+        assert "AdjustTokenPrivileges" in source
+        assert "AuditQuerySystemPolicy" in source
+    assert "RestoreTokenPrivileges" in installer
+    assert "kernel.CloseHandle(token)" in agent_runtime
 
 
 def test_production_requires_signed_endpoint_events_by_default():

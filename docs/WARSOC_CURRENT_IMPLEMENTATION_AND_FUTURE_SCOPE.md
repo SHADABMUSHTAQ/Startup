@@ -2,6 +2,8 @@
 
 **Document role:** Consolidated source-of-truth index
 **Snapshot date:** 2026-08-13
+**Windows Server engineering delta:** 2026-09-03
+**Evidence governance delta:** 2026-09-06
 **Audience:** WarSOC engineering, operations, security review, and product leadership
 **Applies to:** The backend working tree, the published Windows agent boundary, the disabled network-relay candidate, and the disabled Wazuh detection candidate
 
@@ -208,6 +210,33 @@ POS schemas or safely read arbitrary production databases.
 | Historical retrieval | `IMPLEMENTED-DISABLED` | Async ledger/worker design avoids proxying GiB archives through the API. Browser UI and Azure staging/RBAC acceptance are incomplete. | Staging lifecycle, user-delegation SAS, rehydration, limits, and UI acceptance. |
 | Backup/restore | `SOURCE-PROVEN` drill | Mongo backup is separate from evidence archive. Final replacement-host recovery remains unproved. | Final-host encrypted backup and blank-host RPO/RTO drill. |
 
+#### 5.9.1 Evidence cases, custody, holds, and packages
+
+| Component | Current state | Boundary / limitation | Next gate |
+|---|---|---|---|
+| Evidence cases | `SOURCE-PROVEN` | Admin/auditor can create a tenant-scoped case and attach exact hot evidence by event UID or document ID. Archived evidence is never silently substituted. | Deploy and run one authenticated case lifecycle. |
+| Custody and closure | `SOURCE-PROVEN` | Hash-linked, recovery-safe VIEW/VERIFY/TRANSFER/EXPORT transitions are verified before closure. Empty cases or broken chains cannot close; only admin can close. | Preserve the deployed custody verification artifact. |
+| Legal holds | `SOURCE-PROVEN` | Admin-only tenant/collection/event holds block hot deletion. Event targets must exist. Azure JSON/SHA objects are held by a dedicated worker; release remains fail-closed until reconciliation and audit commit. | Live harmless Azure apply/release proof on the deployed worker. |
+| Evidence packages | `SOURCE-PROVEN`; live Azure lifecycle passed | A synthetic acceptance proved private upload, SHA readback, scoped SAS download, offline RSA-PSS verification, expiry and object deletion. Cold items still return `REQUIRES_ARCHIVE_RETRIEVAL`. | Deploy worker and prove the authenticated production browser lifecycle. |
+
+Direct deletion through `scripts/vault_pruner.py --confirm` is disabled. Retained
+evidence must leave Mongo only through the archive-before-delete transaction.
+
+### 5.10 Security Stories V1
+
+| Component | Current state | Boundary / limitation | Next gate |
+|---|---|---|---|
+| Correlation projection | `IMPLEMENTED-DISABLED` engineering candidate | Five bounded server/hybrid stories reference canonical evidence and incidents without modifying them. Medium confidence remains `CANDIDATE`; high confidence opens a story. | Complete the full backend/security gate and isolated runtime acceptance. |
+| Durable processing | `SOURCE-PROVEN` by focused tests | Independent Redis group, Mongo signal ledger, leases, retry, pending-incident recovery, idempotency and bounded references are implemented. First enable starts at new traffic rather than replaying historical backlog. | Redis outage/recovery, expired-lease and stream-trim runtime proof on the frozen candidate. |
+| Tenant and operator API | `SOURCE-PROVEN` by focused tests | Reads are admin/manager/analyst; workflow writes are admin/manager; every record is tenant-scoped and versioned. No frontend is included in this candidate. | Frozen-release API role matrix and later separately approved frontend work. |
+| Wazuh/firewall relationship | `IMPLEMENTED-DISABLED` | Shadow Wazuh data is never actionable. Allowed external activity requires authenticated relay evidence; Windows 5156/5157 and blocked traffic do not qualify. | Entitled relay runtime proof after both optional features pass their independent gates. |
+
+The feature flag remains `SECURITY_STORIES_ENABLED=false`. Focused evidence is
+27 passing tests; the complete regression/security gate has not yet been
+recorded. Security Stories are therefore not deployed, active or customer-safe
+claims. See `docs/WARSOC_SECURITY_STORIES_V1.md` for the rule and failure
+contract.
+
 ## 6. Implemented but Disabled: Network Firewall Relay
 
 ### 6.1 Intended flow
@@ -352,7 +381,18 @@ capability-driven collector rather than a blind second agent installation.
 - strict POS JSONL ingestion;
 - health, audit-policy, channel, spool, and signature state.
 
-### 9.2 Future endpoint modules
+### 9.2 General Server V1 engineering candidate
+
+Agent `4.2.13-Native-Signed-Server-V1` adds a fixed, backend-owned and
+monitor-only profile for Windows Server 2022 Standard Desktop Experience AMD64.
+Source, API and packaging work is implemented locally, but the feature flag is
+off and the candidate is neither deployed nor customer-supported. It reuses the
+signed ingestion, spool, SIEM, PECA, incident and storage paths while excluding
+IIS, domain controllers, shares, POS/database paths, broad FIM and automatic
+response. Clean-server functional, outage/recovery and soak evidence remain the
+release gate. See `docs/WARSOC_WINDOWS_SERVER_MONITORING_V1.md`.
+
+### 9.3 Future endpoint modules
 
 | Module | Future purpose | Hard boundary |
 |---|---|---|
@@ -559,6 +599,8 @@ A capability is not `ACTIVE` merely because code exists. It is done only when:
 |---|---|
 | Approved build, validation, pentest, and release sequence | `docs/WARSOC_BUILD_VALIDATE_FREEZE_EXECUTION_PLAN.md` |
 | Current as-built system | `docs/WARSOC_CURRENT_STATE_ARCHITECTURE.md` |
+| Windows Server General Server V1 candidate | `docs/WARSOC_WINDOWS_SERVER_MONITORING_V1.md` |
+| Security Stories V1 candidate | `docs/WARSOC_SECURITY_STORIES_V1.md` |
 | Current operator/customer flow | `docs/WARSOC_END_TO_END_PRODUCT_AND_OPERATOR_GUIDE.md` |
 | Current architecture questions and proof gaps | `docs/WARSOC_COMPLETE_ARCHITECTURE_QUESTION_REGISTER.md` |
 | Current-scope 15-question closure register | `docs/WARSOC_CURRENT_SCOPE_15_ARCHITECTURE_QUESTIONS.md` |

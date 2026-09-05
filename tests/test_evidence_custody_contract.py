@@ -127,6 +127,110 @@ async def test_custody_verifier_detects_tampering(async_client, auth_headers, db
 
 
 @pytest.mark.asyncio
+async def test_case_cannot_close_without_committed_evidence(async_client, auth_headers):
+    created = await async_client.post(
+        "/api/v1/compliance/cases",
+        headers=auth_headers,
+        json={
+            "title": "Empty closure test",
+            "description": "Prevent an evidence case from closing without evidence.",
+        },
+    )
+    case_id = created.json()["case"]["case_id"]
+    closed = await async_client.post(
+        f"/api/v1/compliance/cases/{case_id}/close",
+        headers=auth_headers,
+        json={"action": "VERIFY", "reason": "Try to close an empty evidence case."},
+    )
+    assert closed.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_case_cannot_close_with_tampered_custody(async_client, auth_headers, db):
+    created = await async_client.post(
+        "/api/v1/compliance/cases",
+        headers=auth_headers,
+        json={
+            "title": "Tampered closure test",
+            "description": "Prevent closure when the custody chain no longer verifies.",
+        },
+    )
+    case = created.json()["case"]
+    source = await db.siem_cold_vault.insert_one(
+        {
+            "tenant_id": case["tenant_id"],
+            "event_uid": "EVENT-TAMPER-CLOSE",
+            "timestamp": datetime.now(timezone.utc),
+        }
+    )
+    attached = await async_client.post(
+        f"/api/v1/compliance/cases/{case['case_id']}/items",
+        headers=auth_headers,
+        json={
+            "collection": "siem_cold_vault",
+            "document_id": str(source.inserted_id),
+            "reason": "Attach evidence before exercising closure verification.",
+        },
+    )
+    assert attached.status_code == 201, attached.text
+    await db.evidence_custody_events.update_one(
+        {"tenant_id": case["tenant_id"], "case_id": case["case_id"], "sequence": 1},
+        {"$set": {"reason": "tampered"}},
+    )
+    closed = await async_client.post(
+        f"/api/v1/compliance/cases/{case['case_id']}/close",
+        headers=auth_headers,
+        json={"action": "VERIFY", "reason": "Attempt closure after custody tampering."},
+    )
+    assert closed.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_case_closure_records_verified_chain_and_item_count(async_client, auth_headers, db):
+    created = await async_client.post(
+        "/api/v1/compliance/cases",
+        headers=auth_headers,
+        json={
+            "title": "Verified closure test",
+            "description": "Close only after evidence and custody verification succeed.",
+        },
+    )
+    case = created.json()["case"]
+    await db.security_alerts.insert_one(
+        {
+            "tenant_id": case["tenant_id"],
+            "event_uid": "EVENT-VERIFIED-CLOSE",
+            "timestamp": datetime.now(timezone.utc),
+        }
+    )
+    attached = await async_client.post(
+        f"/api/v1/compliance/cases/{case['case_id']}/items",
+        headers=auth_headers,
+        json={
+            "collection": "security_alerts",
+            "event_uid": "EVENT-VERIFIED-CLOSE",
+            "reason": "Attach the alert required for verified case closure.",
+        },
+    )
+    assert attached.status_code == 201, attached.text
+    closed = await async_client.post(
+        f"/api/v1/compliance/cases/{case['case_id']}/close",
+        headers=auth_headers,
+        json={"action": "VERIFY", "reason": "Custody and source evidence were reviewed."},
+    )
+    assert closed.status_code == 200, closed.text
+    metadata = closed.json()["custody_event"]["metadata"]
+    assert metadata["committed_item_count"] == 1
+    assert metadata["verified_event_count"] == 2
+    detail = await async_client.get(
+        f"/api/v1/compliance/cases/{case['case_id']}",
+        headers=auth_headers,
+    )
+    assert detail.json()["case"]["status"] == "CLOSED"
+    assert detail.json()["custody"]["status"] == "VERIFIED"
+
+
+@pytest.mark.asyncio
 async def test_case_read_recovers_committed_head_left_pending(async_client, auth_headers, db):
     created = await async_client.post(
         "/api/v1/compliance/cases",

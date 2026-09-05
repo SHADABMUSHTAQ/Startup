@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,13 @@ from typing import Any, Iterable, Mapping
 from pymongo.errors import DuplicateKeyError
 
 from app.utils.alert_context import build_alert_context, operator_alert_document
+from app.utils.security_stories import (
+    enqueue_incident_story_signal,
+    security_stories_enabled,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 OPEN_INCIDENT_STATUSES = ("NEW", "ACKNOWLEDGED")
@@ -356,6 +364,8 @@ async def project_security_incident(
         "projected_at": now,
         "expires_at": now + timedelta(days=INCIDENT_OCCURRENCE_TTL_DAYS),
     }
+    if security_stories_enabled():
+        occurrence["story_signal_status"] = "PENDING"
     occurrence = {key: value for key, value in occurrence.items() if value is not None}
 
     try:
@@ -381,6 +391,7 @@ async def project_security_incident(
             "incident": existing,
             "created": False,
             "duplicate": True,
+            "occurrence_uid": occurrence_uid,
         } if existing else None
 
     severity, severity_rank = normalize_incident_severity(source.get("severity"))
@@ -482,6 +493,7 @@ async def project_security_incident(
         "incident": incident,
         "created": result.upserted_id is not None,
         "duplicate": False,
+        "occurrence_uid": occurrence_uid,
     }
 
 
@@ -508,6 +520,36 @@ async def project_and_publish_incident(
     operator["incident_id"] = incident.get("incident_id")
     operator["incident_key"] = incident.get("incident_key")
     operator["occurrences"] = incident.get("occurrences", 1)
+    if security_stories_enabled():
+        try:
+            story_source = dict(alert)
+            story_source["context"] = build_alert_context(story_source, source_event)
+            enqueued = await enqueue_incident_story_signal(
+                db,
+                incident,
+                story_source,
+                occurrence_uid=str(projection.get("occurrence_uid") or ""),
+            )
+            if enqueued or projection.get("duplicate"):
+                await db.security_incident_occurrences.update_one(
+                    {
+                        "tenant_id": incident.get("tenant_id"),
+                        "occurrence_uid": projection.get("occurrence_uid"),
+                    },
+                    {
+                        "$set": {
+                            "story_signal_status": "ENQUEUED",
+                            "story_signal_enqueued_at": datetime.now(timezone.utc),
+                        }
+                    },
+                )
+        except Exception:
+            # The occurrence retains a PENDING marker for the independent story
+            # worker. Incident creation must never wait on this projection.
+            logger.exception(
+                "Security Story incident handoff failed for %s",
+                incident.get("incident_id"),
+            )
     if redis_client is not None and (
         publish_duplicates or not projection.get("duplicate")
     ):

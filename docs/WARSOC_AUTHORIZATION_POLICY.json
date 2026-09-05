@@ -1,5 +1,5 @@
 {
-  "policy_version": "2026-08-30.relay-setup-v1",
+  "policy_version": "2026-09-04.security-stories-v1",
   "default_policy": "DENY_UNLESS_EXPLICITLY_AUTHENTICATED",
   "public_routes": [
     "GET /api/v1/network-relay/contract",
@@ -51,6 +51,12 @@
     ]
   },
   "sensitive_role_requirements": {
+    "GET /api/v1/security-stories/": ["admin", "analyst", "manager"],
+    "GET /api/v1/security-stories/status": ["admin", "analyst", "manager"],
+    "GET /api/v1/security-stories/summary": ["admin", "analyst", "manager"],
+    "GET /api/v1/security-stories/{story_id}": ["admin", "analyst", "manager"],
+    "PATCH /api/v1/security-stories/{story_id}/status": ["admin", "manager"],
+    "PUT /api/v1/agent/{agent_id}/server-profile": ["admin"],
     "GET /api/v1/data/status": ["admin", "analyst", "auditor", "manager"],
     "GET /api/v1/network-relay/setup-package": ["admin"],
     "GET /api/v1/archive-retrievals/": ["admin", "auditor", "manager"],

@@ -316,6 +316,81 @@ async def init_compliance_db(db):
             name="ttl_security_incident_occurrences",
         )
         await _aggressive_create_index(
+            db.security_incident_occurrences,
+            [("story_signal_status", 1), ("projected_at", 1)],
+            name="idx_incident_occurrence_story_handoff",
+        )
+        await _aggressive_create_index(
+            db.security_stories,
+            [("tenant_id", 1), ("story_id", 1)],
+            unique=True,
+            name="uq_security_story_tenant_id",
+        )
+        await _aggressive_create_index(
+            db.security_stories,
+            [("tenant_id", 1), ("status", 1), ("last_seen", -1), ("_id", -1)],
+            name="idx_security_story_work_queue",
+        )
+        await _aggressive_create_index(
+            db.security_stories,
+            [("tenant_id", 1), ("affected_asset_ids", 1), ("last_seen", -1)],
+            name="idx_security_story_affected_asset",
+        )
+        await _aggressive_create_index(
+            db.story_signal_ledger,
+            [("tenant_id", 1), ("source_type", 1), ("source_uid", 1)],
+            unique=True,
+            name="uq_story_signal_source",
+        )
+        await _aggressive_create_index(
+            db.story_signal_ledger,
+            [("status", 1), ("next_attempt_at", 1), ("_id", 1)],
+            name="idx_story_signal_ready_queue",
+        )
+        await _aggressive_create_index(
+            db.story_signal_ledger,
+            [("status", 1), ("lease_until", 1), ("_id", 1)],
+            name="idx_story_signal_expired_lease",
+        )
+        await _aggressive_create_index(
+            db.story_signal_ledger,
+            [
+                ("tenant_id", 1),
+                ("signal.signal_type", 1),
+                ("signal.asset.asset_id", 1),
+                ("signal.event_time", 1),
+            ],
+            name="idx_story_signal_tenant_type_asset_time",
+        )
+        await _aggressive_create_index(
+            db.story_signal_ledger,
+            [("tenant_id", 1), ("signal.event_uid", 1)],
+            name="idx_story_signal_tenant_event",
+        )
+        await _aggressive_create_index(
+            db.story_signal_ledger,
+            [("expires_at", 1)],
+            expireAfterSeconds=0,
+            name="ttl_story_signal_ledger",
+        )
+        await _aggressive_create_index(
+            db.asset_ip_bindings,
+            [("tenant_id", 1), ("asset_id", 1), ("ip_address", 1)],
+            unique=True,
+            name="uq_asset_ip_binding",
+        )
+        await _aggressive_create_index(
+            db.asset_ip_bindings,
+            [("tenant_id", 1), ("ip_address", 1), ("last_seen", -1)],
+            name="idx_asset_ip_resolution",
+        )
+        await _aggressive_create_index(
+            db.asset_ip_bindings,
+            [("expires_at", 1)],
+            expireAfterSeconds=0,
+            name="ttl_asset_ip_bindings",
+        )
+        await _aggressive_create_index(
             db.incident_audit_log,
             [("tenant_id", 1), ("incident_id", 1), ("timestamp", -1)],
             name="idx_incident_audit_tenant_incident",
@@ -563,6 +638,10 @@ async def init_compliance_db(db):
         await _drop_ttl_indexes(db.system_audit, "system_audit")
         await db.management_audit.create_index([("timestamp", -1)], name="management_audit_timestamp_desc")
         await db.management_audit.create_index([("operator", 1), ("timestamp", -1)])
+        await db.management_audit.create_index(
+            [("tenant_id", 1), ("operation_id", 1)],
+            name="idx_management_audit_operation",
+        )
         await db.system_audit.create_index([("tenant_id", 1), ("timestamp", -1)])
 
         # 6. TIERED RETENTION PREP: seed tenant retention defaults (ready for premium overrides).
@@ -758,6 +837,22 @@ async def init_compliance_db(db):
             name="idx_evidence_hold_audit_lifecycle",
         )
         await _aggressive_create_index(
+            db.legal_holds,
+            [("status", 1), ("archive_protection_status", 1), ("archive_retry_at", 1)],
+            name="idx_legal_holds_archive_reconciliation",
+        )
+        await _aggressive_create_index(
+            db.evidence_archive_hold_bindings,
+            [("tenant_id", 1), ("hold_id", 1), ("archive_key", 1)],
+            unique=True,
+            name="uq_evidence_archive_hold_binding",
+        )
+        await _aggressive_create_index(
+            db.evidence_archive_hold_bindings,
+            [("archive_key", 1), ("status", 1), ("hold_id", 1)],
+            name="idx_evidence_archive_hold_release",
+        )
+        await _aggressive_create_index(
             db.evidence_retention_fences,
             [("lock_id", 1)],
             unique=True,
@@ -830,7 +925,7 @@ async def init_compliance_db(db):
         )
         await _aggressive_create_index(
             db.evidence_exports,
-            [("status", 1), ("created_at", 1)],
+            [("status", 1), ("worker_lease_until", 1), ("created_at", 1)],
             name="idx_evidence_exports_worker_queue",
         )
         await _aggressive_create_index(

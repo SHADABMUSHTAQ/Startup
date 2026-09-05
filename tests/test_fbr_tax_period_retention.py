@@ -102,6 +102,14 @@ def test_legacy_hold_metadata_remains_compatible():
 
 @pytest.mark.asyncio
 async def test_hold_lifecycle_is_tenant_scoped_and_audited(async_client, auth_headers, db):
+    tenant = await db.tenants.find_one({}, {"tenant_id": 1})
+    await db.fbr_pos_logs.insert_one(
+        {
+            "tenant_id": tenant["tenant_id"],
+            "event_uid": "invoice-event-api-1",
+            "timestamp": datetime.now(timezone.utc),
+        }
+    )
     applied = await async_client.post(
         "/api/v1/compliance/holds",
         headers=auth_headers,
@@ -140,6 +148,67 @@ async def test_hold_lifecycle_is_tenant_scoped_and_audited(async_client, auth_he
         {"hold_id": hold["hold_id"], "status": "COMMITTED"}
     ).sort("created_at", 1).to_list(10)
     assert [item["action"] for item in audit] == ["APPLY", "RELEASE"]
+
+
+@pytest.mark.asyncio
+async def test_event_hold_rejects_unknown_tenant_evidence(async_client, auth_headers):
+    response = await async_client.post(
+        "/api/v1/compliance/holds",
+        headers=auth_headers,
+        json={
+            "scope_type": "EVENT",
+            "collection": "security_alerts",
+            "event_uid": "missing-event",
+            "reason": "Attempt to preserve a reference that is not tenant evidence.",
+            "authority": "WarSOC tenant administrator",
+        },
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_archived_hold_release_stays_pending_until_worker_commits(
+    async_client,
+    auth_headers,
+    db,
+):
+    tenant = await db.tenants.find_one({}, {"tenant_id": 1})
+    await db.storage_archives.insert_one(
+        {
+            "tenant_id": tenant["tenant_id"],
+            "collection": "security_alerts",
+            "event_uids": ["archived-hold-event"],
+            "archive_key": "archived-hold-batch",
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
+    applied = await async_client.post(
+        "/api/v1/compliance/holds",
+        headers=auth_headers,
+        json={
+            "scope_type": "EVENT",
+            "collection": "security_alerts",
+            "event_uid": "archived-hold-event",
+            "reason": "Preserve one archived alert for an authorized investigation.",
+            "authority": "WarSOC tenant administrator",
+        },
+    )
+    assert applied.status_code == 201, applied.text
+    hold_id = applied.json()["hold"]["hold_id"]
+    released = await async_client.post(
+        f"/api/v1/compliance/holds/{hold_id}/release",
+        headers=auth_headers,
+        json={
+            "reason": "Release after the investigation reached final disposition.",
+            "authority": "WarSOC tenant administrator",
+        },
+    )
+    assert released.status_code == 200, released.text
+    assert released.json()["hold"]["status"] == "PENDING_RELEASE"
+    audit = await db.evidence_hold_audit.find_one(
+        {"hold_id": hold_id, "action": "RELEASE"}
+    )
+    assert audit["status"] == "PENDING"
 
 
 @pytest.mark.asyncio

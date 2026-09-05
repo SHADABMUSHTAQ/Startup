@@ -1,7 +1,7 @@
 # WarSOC Backend Evidence Program Implementation Ledger
 
-**Date:** 2026-08-24 (updated from the 2026-08-20 implementation close)
-**State:** SOURCE ACCEPTED / LOCAL BACKEND AND SECURITY GATES ACCEPTED / NOT DEPLOYED
+**Date:** 2026-09-06 (updated from the 2026-08-20 implementation close)
+**State:** EVIDENCE GOVERNANCE SOURCE ACCEPTED / AZURE EXPORT STORAGE PREPARED / DEPLOYMENT PENDING
 **Scope:** Current backend evidence trust, retention, custody, privacy, export,
 authorization, and synthetic FBR reconciliation contracts. This document does
 not approve production deployment, live Azure configuration, Wazuh promotion,
@@ -60,7 +60,14 @@ migrated.
 ## 4. Holds and Archive Fences
 
 Tenant-scoped hold records are explicit and audited. No hold is invented during
-ingestion. Hold application and release update the effective retention result.
+ingestion. Event-scoped holds must identify existing tenant evidence in Mongo or
+the archive ledger. `ACTIVE` and `PENDING_RELEASE` both block hot deletion.
+
+The dedicated hold worker applies and verifies Azure legal holds on both the
+archive JSON object and its SHA companion. A release first becomes
+`PENDING_RELEASE`; it becomes `RELEASED` only after all matching archive
+bindings are reconciled and the release audit is committed. Pre-existing Azure
+holds and protection required by another active WarSOC hold are never cleared.
 
 The archiver:
 
@@ -89,6 +96,10 @@ The state machine includes recovery for:
 - a case item interrupted between reference creation and custody commit;
 - a case closure interrupted after custody commit.
 
+The operator UI supports case creation, hot-evidence attachment, case/item
+custody actions, verified closure, package requests, status polling, and
+short-lived downloads. A case cannot close empty or with a broken custody chain.
+
 Archived evidence must first use the existing isolated archive-retrieval flow.
 It is not silently omitted from a package.
 
@@ -116,13 +127,18 @@ Private and symmetric keys are never packaged.
 returns `VERIFIED`, `ALTERED`, `MISSING`, `SIGNATURE_INVALID`, or
 `MANIFEST_INVALID`.
 
-Package generation and Azure upload run in an isolated bounded worker. The API
-creates jobs and issues short-lived user-delegation SAS links; it does not proxy
-archive/package bytes through the API container or local host disk.
+Package generation and Azure upload run in an isolated bounded worker with
+retry-safe leases. The API creates jobs and issues short-lived read-only HTTPS
+SAS links; it does not proxy archive/package bytes through the API container or
+local host disk. OCI deployments can use the existing Azure storage account key
+to sign a scoped SAS without exposing that key in the URL. User-delegation SAS
+remains supported for Azure-managed identities.
 
-```text
-EVIDENCE_EXPORT_ENABLED=false
-```
+The repository default remains `EVIDENCE_EXPORT_ENABLED=false`. The selected
+production environment was prepared on 2026-09-06 with a separate private
+`warsoc-evidence-exports` container, a distinct RSA-3072 package-signing key,
+and `EVIDENCE_EXPORT_ENABLED=true`. Deployment and authenticated browser proof
+are still required before this becomes a deployed claim.
 
 The existing archive-retrieval workflow remains asynchronous and separate.
 Cold evidence returns `REQUIRES_ARCHIVE_RETRIEVAL` before packaging.
@@ -162,16 +178,17 @@ feature gates. `scripts/generate_api_security_inventory.py` derives the actual
 FastAPI implementation inventory.
 
 The two artifacts are tested against each other. The current generated
-inventory contains 122 routes and zero manual-review classifications. This is a
+inventory contains 132 routes and zero manual-review classifications. This is a
 source-level policy proof, not a substitute for production BOLA/IDOR testing.
 
 ## 10. Configuration Defaults
 
-All newly operationally sensitive capabilities remain fail-safe or disabled:
+Repository defaults remain fail-safe. The selected production environment may
+enable an accepted capability only when its required configuration is present:
 
 ```text
 EVIDENCE_DAILY_ANCHOR_ENABLED=false
-EVIDENCE_EXPORT_ENABLED=false
+EVIDENCE_EXPORT_ENABLED=false  # repository default; selected production config is true
 FBR_RECONCILIATION_ENABLED=false
 NETWORK_RELAY_ENABLED=false
 WAZUH_DETECTION_MODE=disabled
@@ -191,20 +208,23 @@ before any disabled capability is enabled.
 - bounded archive cohorting and WORM verification contracts;
 - SIEM sensitive-field protection and authorized readback;
 - case/custody crash recovery;
+- empty/tampered-case closure refusal;
+- Azure legal-hold application, retry, release, and concurrent/pre-existing hold preservation;
 - signed package verification and tamper detection;
-- isolated export worker behavior;
+- isolated export lease/recovery behavior and scoped shared-key SAS generation;
 - deterministic daily anchor behavior;
 - synthetic FBR reconciliation outcomes;
 - route inventory and authorization-policy agreement.
 
 ### Still requires external or production proof
 
-- live Azure WORM/anchor/export/retrieval validation;
+- live Azure WORM/anchor/retrieval validation;
+- deployed export worker plus authenticated request/download/invalidation proof;
 - production deployment and revision identity;
 - 4.2.9 Authenticode/CDN/installation acceptance (local build and manifest are complete);
 - historical SIEM privacy migration decision;
 - real POS DB and licensed-integrator connectors;
-- frontend support for cases, holds, exports, and retrieval states;
+- frontend support for historical retrieval states;
 - network relay or Wazuh production enablement;
 - destructive backup/restore and failover acceptance on the final host.
 
@@ -233,3 +253,21 @@ ORJSON and test-only `datetime.utcnow()` deprecations, not failed assertions.
 This result accepts the source regression boundary. It does not grant
 `BACKEND_ACCEPTED` for production because live Azure, deployment identity,
 destructive external acceptance, and the disabled-capability gates remain open.
+
+### 2026-09-06 evidence-governance delta
+
+```text
+Focused custody/hold/export/archive/deployment tests: 66 passed
+Production Compose validation: pass
+Private Azure export container: created and public access disabled
+Package signing key: generated separately; private material not logged
+Live Azure package lifecycle: upload, SHA readback, scoped SAS download,
+offline signature verification, expiry, and blob deletion passed with synthetic test data
+Frontend evidence contracts: 13 passed
+Frontend ESLint and production build: pass
+Complete maintained backend suite: 644 passed, 1 skipped, 28 warnings
+Generated API inventory: 132 routes, 0 manual-review routes
+Bandit high-severity findings: 0
+pip-audit: no known vulnerabilities
+pip check and git diff --check: pass
+```

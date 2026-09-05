@@ -10,6 +10,7 @@ from app.utils.endpoint_health import (
     event_signature_mode,
 )
 from app.utils.security_policy import effective_agent_limit
+from app.utils.collection_profiles import sanitize_profile_report, server_profile_health
 
 router = APIRouter()
 RAW_RETENTION_ANCHOR_FIELD = "_retention_ts"
@@ -204,6 +205,15 @@ async def agent_status(
                 "version": 1,
                 "status": 1,
                 "sensor_status": 1,
+                "asset_class": 1,
+                "server_role": 1,
+                "environment": 1,
+                "criticality": 1,
+                "response_mode": 1,
+                "server_monitoring_required": 1,
+                "host_facts": 1,
+                "host_identity_status": 1,
+                "monitoring_assignment": 1,
             },
         ).to_list(length=1000)
 
@@ -300,6 +310,11 @@ async def agent_status(
                 for channel in ("Security", "System")
             )
             audit_configured = str(sensor_status.get("audit_policy_status") or "").lower() == "configured"
+            server_required = bool(agent.get("server_monitoring_required") or agent.get("asset_class") == "server")
+            server_report = sanitize_profile_report(sensor_status.get("server_monitoring"))
+            server_health = server_profile_health(agent, server_report) if server_required else None
+            if server_required:
+                audit_configured = server_report["audit"]["state"] == "AUDIT_OK"
             online = _is_fresh_agent_timestamp(live_last_seen)
             spool_status = sensor_status.get("spool") if isinstance(sensor_status, dict) else {}
             spool_status = spool_status if isinstance(spool_status, dict) else {}
@@ -335,6 +350,7 @@ async def agent_status(
                         and audit_configured
                         and not spool_blocked
                         and (signature_mode != "required" or signature_ready)
+                        and (not server_required or server_health == "READY")
                     )
                     else "degraded"
                 )
@@ -348,6 +364,11 @@ async def agent_status(
                     "endpoint_name": signature_status["endpoint_name"] or agent_id,
                     "last_seen": last_seen,
                     "version": signature_status["agent_version"] or agent.get("version"),
+                    "asset_class": agent.get("asset_class") or "unclassified",
+                    "server_role": agent.get("server_role"),
+                    "environment": agent.get("environment"),
+                    "criticality": agent.get("criticality"),
+                    "response_mode": agent.get("response_mode") or "LEGACY_ENDPOINT",
                     "online": online,
                     "health": health,
                     "sensor_status": sensor_status,
@@ -366,7 +387,11 @@ async def agent_status(
                     "audit_coverage": {
                         "status": (
                             "UNKNOWN" if not sensor_status else "STALE" if not online else
-                            "READY" if audit_configured and required_channels_ok else "DEGRADED"
+                            "READY" if (
+                                audit_configured
+                                and required_channels_ok
+                                and (not server_required or server_health == "READY")
+                            ) else "DEGRADED"
                         ),
                     },
                     "pos_coverage": {
@@ -387,6 +412,17 @@ async def agent_status(
                         "reason": spool_status.get("reason"),
                         "usage_bytes": spool_status.get("usage_bytes"),
                         "max_bytes": spool_status.get("max_bytes"),
+                    },
+                    "server_monitoring": {
+                        "required": server_required,
+                        "health": server_health or "NOT_APPLICABLE",
+                        "desired": agent.get("monitoring_assignment"),
+                        "reported": server_report if server_required else None,
+                        "host": {
+                            key: value for key, value in (agent.get("host_facts") or {}).items()
+                            if key != "machine_fingerprint"
+                        },
+                        "host_identity_status": agent.get("host_identity_status"),
                     },
                 }
             )

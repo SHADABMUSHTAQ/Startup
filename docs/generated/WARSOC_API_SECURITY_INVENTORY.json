@@ -7,7 +7,7 @@
     "Runtime middleware and nested dependency behavior require test evidence in addition to this artifact."
   ],
   "summary": {
-    "route_count": 125,
+    "route_count": 132,
     "manual_review_required": 0,
     "feature_gated_routes": 32
   },
@@ -105,7 +105,7 @@
       "method": "POST",
       "route": "/api/v1/agent/deregister",
       "source_file": "app/routes/agent_orchestration.py",
-      "source_line": 713,
+      "source_line": 918,
       "handler": "deregister_agent",
       "router_module": "agent_orchestration",
       "feature_condition": null,
@@ -128,7 +128,7 @@
       "method": "GET",
       "route": "/api/v1/agent/download",
       "source_file": "app/routes/agent_orchestration.py",
-      "source_line": 692,
+      "source_line": 897,
       "handler": "download_agent",
       "router_module": "agent_orchestration",
       "feature_condition": null,
@@ -150,7 +150,7 @@
       "method": "POST",
       "route": "/api/v1/agent/generate-activation",
       "source_file": "app/routes/agent_orchestration.py",
-      "source_line": 235,
+      "source_line": 254,
       "handler": "generate_activation",
       "router_module": "agent_orchestration",
       "feature_condition": null,
@@ -175,7 +175,7 @@
       "method": "POST",
       "route": "/api/v1/agent/heartbeat",
       "source_file": "app/routes/agent_orchestration.py",
-      "source_line": 501,
+      "source_line": 529,
       "handler": "agent_heartbeat",
       "router_module": "agent_orchestration",
       "feature_condition": null,
@@ -215,7 +215,7 @@
       "method": "POST",
       "route": "/api/v1/agent/register",
       "source_file": "app/routes/agent_orchestration.py",
-      "source_line": 330,
+      "source_line": 349,
       "handler": "register_agent",
       "router_module": "agent_orchestration",
       "feature_condition": null,
@@ -235,10 +235,35 @@
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
+      "method": "GET",
+      "route": "/api/v1/agent/server-profiles",
+      "source_file": "app/routes/agent_orchestration.py",
+      "source_line": 785,
+      "handler": "list_server_profiles",
+      "router_module": "agent_orchestration",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "auditor",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
       "method": "POST",
       "route": "/api/v1/agent/validate-activation",
       "source_file": "app/routes/agent_orchestration.py",
-      "source_line": 295,
+      "source_line": 314,
       "handler": "validate_activation",
       "router_module": "agent_orchestration",
       "feature_condition": null,
@@ -255,6 +280,31 @@
       "rate_size_boundary_evidence": [
         "rate_limit:120/minute"
       ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "PUT",
+      "route": "/api/v1/agent/{agent_id}/server-profile",
+      "source_file": "app/routes/agent_orchestration.py",
+      "source_line": 805,
+      "handler": "assign_general_server_profile",
+      "router_module": "agent_orchestration",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "GeneralServerProfileRequest"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
@@ -959,7 +1009,7 @@
       "method": "GET",
       "route": "/api/v1/compliance/cases/{case_id}/exports",
       "source_file": "app/routes/evidence_cases.py",
-      "source_line": 576,
+      "source_line": 598,
       "handler": "list_evidence_exports",
       "router_module": "evidence_cases",
       "feature_condition": null,
@@ -985,7 +1035,7 @@
       "method": "POST",
       "route": "/api/v1/compliance/cases/{case_id}/exports",
       "source_file": "app/routes/evidence_cases.py",
-      "source_line": 536,
+      "source_line": 558,
       "handler": "request_evidence_export",
       "router_module": "evidence_cases",
       "feature_condition": null,
@@ -1013,7 +1063,7 @@
       "method": "GET",
       "route": "/api/v1/compliance/cases/{case_id}/exports/{export_id}",
       "source_file": "app/routes/evidence_cases.py",
-      "source_line": 592,
+      "source_line": 614,
       "handler": "get_evidence_export",
       "router_module": "evidence_cases",
       "feature_condition": null,
@@ -1037,7 +1087,7 @@
       "method": "POST",
       "route": "/api/v1/compliance/cases/{case_id}/exports/{export_id}/download-link",
       "source_file": "app/routes/evidence_cases.py",
-      "source_line": 649,
+      "source_line": 697,
       "handler": "issue_evidence_export_download_link",
       "router_module": "evidence_cases",
       "feature_condition": null,
@@ -1091,7 +1141,7 @@
       "method": "GET",
       "route": "/api/v1/compliance/coverage",
       "source_file": "app/routes/compliance.py",
-      "source_line": 802,
+      "source_line": 883,
       "handler": "get_compliance_coverage",
       "router_module": "compliance",
       "feature_condition": null,
@@ -1116,7 +1166,7 @@
       "method": "GET",
       "route": "/api/v1/compliance/evidence",
       "source_file": "app/routes/compliance.py",
-      "source_line": 1005,
+      "source_line": 1086,
       "handler": "get_compliance_evidence",
       "router_module": "compliance",
       "feature_condition": null,
@@ -1143,7 +1193,7 @@
       "method": "GET",
       "route": "/api/v1/compliance/evidence/{pack_id}",
       "source_file": "app/routes/compliance.py",
-      "source_line": 1198,
+      "source_line": 1279,
       "handler": "get_compliance_evidence_by_pack",
       "router_module": "compliance",
       "feature_condition": null,
@@ -1170,7 +1220,7 @@
       "method": "GET",
       "route": "/api/v1/compliance/export",
       "source_file": "app/routes/compliance.py",
-      "source_line": 1297,
+      "source_line": 1378,
       "handler": "export_compliance_evidence",
       "router_module": "compliance",
       "feature_condition": null,
@@ -1196,7 +1246,7 @@
       "method": "GET",
       "route": "/api/v1/compliance/holds",
       "source_file": "app/routes/compliance.py",
-      "source_line": 248,
+      "source_line": 317,
       "handler": "list_evidence_holds",
       "router_module": "compliance",
       "feature_condition": null,
@@ -1224,7 +1274,7 @@
       "method": "POST",
       "route": "/api/v1/compliance/holds",
       "source_file": "app/routes/compliance.py",
-      "source_line": 187,
+      "source_line": 248,
       "handler": "apply_evidence_hold",
       "router_module": "compliance",
       "feature_condition": null,
@@ -1251,7 +1301,7 @@
       "method": "POST",
       "route": "/api/v1/compliance/holds/{hold_id}/release",
       "source_file": "app/routes/compliance.py",
-      "source_line": 264,
+      "source_line": 333,
       "handler": "release_evidence_hold",
       "router_module": "compliance",
       "feature_condition": null,
@@ -1278,7 +1328,7 @@
       "method": "GET",
       "route": "/api/v1/compliance/packs",
       "source_file": "app/routes/compliance.py",
-      "source_line": 720,
+      "source_line": 801,
       "handler": "list_compliance_packs",
       "router_module": "compliance",
       "feature_condition": null,
@@ -1297,7 +1347,7 @@
       "method": "GET",
       "route": "/api/v1/compliance/packs/{pack_id}",
       "source_file": "app/routes/compliance.py",
-      "source_line": 981,
+      "source_line": 1062,
       "handler": "get_pack_details",
       "router_module": "compliance",
       "feature_condition": null,
@@ -1316,7 +1366,7 @@
       "method": "GET",
       "route": "/api/v1/compliance/retention/status",
       "source_file": "app/routes/compliance.py",
-      "source_line": 738,
+      "source_line": 819,
       "handler": "get_retention_status",
       "router_module": "compliance",
       "feature_condition": null,
@@ -1340,7 +1390,7 @@
       "method": "GET",
       "route": "/api/v1/data/search",
       "source_file": "app/routes/data.py",
-      "source_line": 428,
+      "source_line": 464,
       "handler": "global_search",
       "router_module": "data",
       "feature_condition": null,
@@ -1368,7 +1418,7 @@
       "method": "GET",
       "route": "/api/v1/data/status",
       "source_file": "app/routes/data.py",
-      "source_line": 170,
+      "source_line": 171,
       "handler": "agent_status",
       "router_module": "data",
       "feature_condition": null,
@@ -2193,6 +2243,144 @@
       "review_state": "STATICALLY_CLASSIFIED"
     },
     {
+      "method": "GET",
+      "route": "/api/v1/security-stories/",
+      "source_file": "app/routes/security_stories.py",
+      "source_line": 157,
+      "handler": "list_security_stories",
+      "router_module": "security_stories",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Query(ge=1, le=250)",
+        "Query(min_length=3, max_length=128)",
+        "Query(min_length=3, max_length=80)",
+        "rate_limit:60/minute"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/security-stories/status",
+      "source_file": "app/routes/security_stories.py",
+      "source_line": 61,
+      "handler": "get_security_story_status",
+      "router_module": "security_stories",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "rate_limit:60/minute"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/security-stories/summary",
+      "source_file": "app/routes/security_stories.py",
+      "source_line": 82,
+      "handler": "get_security_story_summary",
+      "router_module": "security_stories",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "rate_limit:60/minute"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/security-stories/{story_id}",
+      "source_file": "app/routes/security_stories.py",
+      "source_line": 221,
+      "handler": "get_security_story",
+      "router_module": "security_stories",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "rate_limit:60/minute"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "PATCH",
+      "route": "/api/v1/security-stories/{story_id}/status",
+      "source_file": "app/routes/security_stories.py",
+      "source_line": 240,
+      "handler": "update_security_story_status",
+      "router_module": "security_stories",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [
+        "SecurityStoryUpdate"
+      ],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "rate_limit:30/minute"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
       "method": "POST",
       "route": "/api/v1/session/fresh-start",
       "source_file": "app/routes/threat_intel.py",
@@ -2357,7 +2545,7 @@
       "method": "POST",
       "route": "/api/v1/ws/ticket",
       "source_file": "app/main.py",
-      "source_line": 644,
+      "source_line": 649,
       "handler": "create_ws_ticket",
       "router_module": "main",
       "feature_condition": null,
@@ -2761,7 +2949,7 @@
       "method": "GET",
       "route": "/health",
       "source_file": "app/main.py",
-      "source_line": 618,
+      "source_line": 623,
       "handler": "health_check",
       "router_module": "main",
       "feature_condition": null,
@@ -2917,7 +3105,7 @@
       "method": "WEBSOCKET",
       "route": "/ws/alerts",
       "source_file": "app/main.py",
-      "source_line": 671,
+      "source_line": 676,
       "handler": "websocket_endpoint",
       "router_module": "main",
       "feature_condition": null,

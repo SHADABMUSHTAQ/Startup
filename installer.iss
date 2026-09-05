@@ -1,9 +1,9 @@
 [Setup]
 AppName=WarSOC Agent
-AppVersion=4.2.12
+AppVersion=4.2.13
 DefaultDirName={commonpf}\WarSOC
 DefaultGroupName=WarSOC
-OutputBaseFilename=warsoc_installer-4.2.12
+OutputBaseFilename=warsoc_installer-4.2.13
 Compression=lzma
 SolidCompression=yes
 PrivilegesRequired=admin

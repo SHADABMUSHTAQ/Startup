@@ -23,6 +23,9 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from datetime import datetime, timezone # ADDED TIMEZONE
 
+from agent.server_monitoring import ServerMonitoringRuntime, read_audit_health
+from app.utils.collection_profiles import assignment_allows_event, assignment_context
+
 # ENV COMPLIANCE
 from dotenv import load_dotenv, find_dotenv
 
@@ -54,7 +57,7 @@ if not env_loaded:
     print(f"[WARN] .env not found in any standard location. Using system environment variables.")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-AGENT_VERSION = "4.2.12-Native-Signed-Compact"
+AGENT_VERSION = "4.2.13-Native-Signed-Server-V1"
 EVENT_SIGNATURE_VERSION = "ed25519-v2"
 COLLECTION_PROTOCOL_VERSION = "warsoc-agent-collection-v4"
 WINDOWS_EVENT_XML_ENCODING = "zlib-base64-v1"
@@ -145,6 +148,7 @@ SENSOR_COUNTERS = {
     "spool_write_failures": 0,
     "spool_limit_hits": 0,
 }
+SERVER_MONITORING = ServerMonitoringRuntime(PROGRAM_DATA_DIR)
 POS_AUDIT_REQUIRED_FIELDS = {
     "event_id",
     "event_uid",
@@ -486,7 +490,8 @@ def register_agent(signing_key):
         f"{BACKEND_URL}/api/v1/agent/register",
         json={
             "activation_code": activation_code,
-            "public_key": public_key
+            "public_key": public_key,
+            "host_facts": SERVER_MONITORING.facts,
         },
         timeout=10,
     )
@@ -1026,9 +1031,12 @@ def parse_windows_event_xml(xml_text):
         processed.update({
             "target_user": fields.get("TargetUserName") or fields.get("TargetUserSid"),
             "target_domain": fields.get("TargetDomainName"),
+            "target_logon_id": fields.get("TargetLogonId"),
             "source_network_address": fields.get("IpAddress"),
             "source_port": fields.get("IpPort"),
             "logon_type": fields.get("LogonType"),
+            "workstation": fields.get("WorkstationName"),
+            "authentication_package": fields.get("AuthenticationPackageName"),
             "status": fields.get("Status"),
             "sub_status": fields.get("SubStatus"),
         })
@@ -1040,6 +1048,7 @@ def parse_windows_event_xml(xml_text):
             "parent_process_name": fields.get("ParentProcessName"),
             "command_line": fields.get("CommandLine"),
             "token_elevation_type": fields.get("TokenElevationType"),
+            "subject_logon_id": fields.get("SubjectLogonId"),
         })
     elif event_id in {"1102", "4672"}:
         processed.update({
@@ -1125,6 +1134,7 @@ def parse_windows_event_xml(xml_text):
     elif event_id in {"4697", "7045"}:
         processed.update({
             "user": fields.get("SubjectUserName") or fields.get("SubjectUserSid"),
+            "subject_logon_id": fields.get("SubjectLogonId"),
             "service_name": fields.get("ServiceName"),
             "image_path": fields.get("ImagePath") or fields.get("ServiceFileName"),
             "service_type": fields.get("ServiceType"),
@@ -1134,12 +1144,14 @@ def parse_windows_event_xml(xml_text):
     elif event_id == "4698":
         processed.update({
             "user": fields.get("SubjectUserName") or fields.get("SubjectUserSid"),
+            "subject_logon_id": fields.get("SubjectLogonId"),
             "task_name": fields.get("TaskName"),
             "task_content": fields.get("TaskContentNew") or fields.get("TaskContent"),
         })
     elif event_id == "4719":
         processed.update({
             "user": fields.get("SubjectUserName") or fields.get("SubjectUserSid"),
+            "subject_logon_id": fields.get("SubjectLogonId"),
             "category_id": fields.get("CategoryId"),
             "subcategory_id": fields.get("SubcategoryId"),
             "audit_policy_changes": fields.get("AuditPolicyChanges"),
@@ -1390,7 +1402,10 @@ def quarantine_pos_audit_line(line, reason, file_path):
         print(f"[WARN] Could not quarantine POS audit line: {exc}")
         raise SpoolWriteError(f"POS quarantine write failed: {exc}") from exc
 
-def enqueue_payload(payload):
+_CURRENT_PROFILE_CONTEXT = object()
+
+
+def enqueue_payload(payload, *, collection_context=_CURRENT_PROFILE_CONTEXT):
     """Make an outbound event durable before its source cursor can advance."""
     durable_payload = dict(payload)
     durable_payload.setdefault("event_uid", uuid.uuid4().hex)
@@ -1400,6 +1415,16 @@ def enqueue_payload(payload):
     durable_payload.setdefault("source_channel", durable_payload.get("event_type") or "agent_generic")
     durable_payload.setdefault("source_channel_epoch", AGENT_RUNTIME_EPOCH)
     durable_payload.setdefault("source_sequence", _next_source_sequence())
+    processed = dict(durable_payload.get("processed_data") or {})
+    # Profile provenance is agent-owned metadata. Never trust a value copied
+    # from an event source, including a POS or text log payload.
+    processed.pop("collection_profile", None)
+    if collection_context is _CURRENT_PROFILE_CONTEXT:
+        collection_context = SERVER_MONITORING.collection_context(AGENT_ID)
+    if collection_context:
+        processed["collection_profile"] = collection_context
+    if processed:
+        durable_payload["processed_data"] = processed
     return SPOOLER.append(durable_payload)
 
 def _estimate_payload_bytes(batch):
@@ -1660,6 +1685,13 @@ def heartbeat_thread():
             if signing_key is None:
                 signing_key = _load_or_create_signing_key()
 
+            SERVER_MONITORING.refresh_facts()
+            audit_health = (
+                read_audit_health(SERVER_MONITORING.facts)
+                if SERVER_MONITORING.is_server_boundary()
+                else {"state": "AUDIT_UNKNOWN"}
+            )
+
             with CHANNEL_STATUS_LOCK:
                 channel_status = copy.deepcopy(CHANNEL_STATUS)
                 sensor_counters = dict(SENSOR_COUNTERS)
@@ -1698,13 +1730,25 @@ def heartbeat_thread():
                             for path in WEB_LOG_PATHS
                         ),
                     },
+                    "host_facts": SERVER_MONITORING.facts,
+                    "server_monitoring": SERVER_MONITORING.report(
+                        AGENT_ID,
+                        audit=audit_health,
+                    ),
                 },
             }
             resp = _signed_agent_post("/api/v1/agent/heartbeat", payload, signing_key, timeout=10)
             if resp and resp.status_code == 200:
                 data = resp.json()
-                for bad_ip in data.get("enforce_bans", []):
-                    enforce_block(bad_ip)
+                assignment = data.get("monitoring_assignment")
+                if assignment is not None:
+                    if data.get("control_nonce") != payload["nonce"]:
+                        SERVER_MONITORING.error_code = "PROFILE_RESPONSE_BINDING"
+                    else:
+                        SERVER_MONITORING.apply(assignment, agent_id=AGENT_ID)
+                if SERVER_MONITORING.allows_response():
+                    for bad_ip in data.get("enforce_bans", []):
+                        enforce_block(bad_ip)
             elif resp is not None:
                 print(f"[WARN] Heartbeat rejected with HTTP {resp.status_code}; retrying later.")
                 retry_delay = min(30, HEARTBEAT_INTERVAL)
@@ -1715,10 +1759,16 @@ def heartbeat_thread():
 
 # NEW: WEB LOG HUNTER (Monitors text files live)
 def web_hunter_thread():
+    if SERVER_MONITORING.is_server_boundary():
+        print("[*] Optional web/POS file collection is disabled on General Server V1.")
+        return
     print(f"[*] Web Hunter Online. Monitoring paths: {WEB_LOG_PATHS}")
     file_positions = {}
 
     while True:
+        if SERVER_MONITORING.is_server_boundary():
+            print("[*] Optional file collection stopped after the host entered the server safety boundary.")
+            return
         log_files = resolve_web_log_files()
 
         for file_path in log_files:
@@ -1875,9 +1925,9 @@ def _native_event_uid(channel, channel_epoch, record_id):
     return f"{normalized_channel}:{normalized_epoch}:{normalized_record_id}"
 
 
-def _durably_enqueue_native_event(payload, record_id, current_watermark):
+def _durably_enqueue_native_event(payload, record_id, current_watermark, *, collection_context=None):
     """Advance a source cursor only after the event is durable in the spool."""
-    enqueue_payload(payload)
+    enqueue_payload(payload, collection_context=collection_context)
     return max(current_watermark, record_id)
 
 
@@ -1974,6 +2024,11 @@ def native_log_hunter_thread():
 
     while True:
         for channel in WINDOWS_CHANNELS:
+            if SERVER_MONITORING.is_server_boundary():
+                assignment = SERVER_MONITORING.snapshot(AGENT_ID)
+                if not assignment or not assignment["profile"]["enabled"]:
+                    time.sleep(POLL_INTERVAL)
+                    continue
             query_handle = None
             event_handles = []
             try:
@@ -2012,12 +2067,25 @@ def native_log_hunter_thread():
                             event_id = str(parsed.get("event_id") or "").strip()
                             record_id = int(parsed["raw_event_data"]["system"].get("event_record_id") or 0)
 
-                            include_event = CAPTURE_ALL_WINDOWS_CHANNELS
-                            if not include_event:
-                                if channel.lower() == "security" and CAPTURE_ALL_SECURITY_EVENTS:
-                                    include_event = True
-                                elif event_id in TARGET_EVENT_IDS:
-                                    include_event = True
+                            server_boundary = SERVER_MONITORING.is_server_boundary()
+                            server_assignment = (
+                                SERVER_MONITORING.snapshot(AGENT_ID) if server_boundary else None
+                            )
+                            if server_boundary:
+                                include_event = assignment_allows_event(
+                                    server_assignment, channel, event_id,
+                                )
+                                server_collection_context = (
+                                    assignment_context(server_assignment) if include_event else None
+                                )
+                            else:
+                                server_collection_context = None
+                                include_event = CAPTURE_ALL_WINDOWS_CHANNELS
+                                if not include_event:
+                                    if channel.lower() == "security" and CAPTURE_ALL_SECURITY_EVENTS:
+                                        include_event = True
+                                    elif event_id in TARGET_EVENT_IDS:
+                                        include_event = True
                             if not include_event or event_id == "0":
                                 current_batch_highest = max(current_batch_highest, record_id)
                                 continue
@@ -2045,6 +2113,7 @@ def native_log_hunter_thread():
                                 payload,
                                 record_id,
                                 current_batch_highest,
+                                collection_context=server_collection_context,
                             )
                             set_channel_status(
                                 channel,

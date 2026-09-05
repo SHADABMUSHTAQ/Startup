@@ -22,6 +22,7 @@ from app.utils.endpoint_health import (
     event_signature_mode,
 )
 from app.utils.evidence_locks import acquire_retention_fence, release_retention_fence
+from app.utils.evidence_holds import archive_query_for_hold
 from app.utils.fbr_retention import (
     FBR_ACTIVE_RETENTION_MODEL,
     normalize_tenant_retention_days,
@@ -182,6 +183,66 @@ async def _record_hold_operation(
     )
 
 
+async def _event_evidence_exists(db, tenant_id: str, collection: str, event_uid: str) -> bool:
+    hot = await db[collection].find_one(
+        {"tenant_id": tenant_id, "event_uid": event_uid},
+        {"_id": 1},
+    )
+    if hot:
+        return True
+    archived = await db.storage_archives.find_one(
+        {
+            "tenant_id": tenant_id,
+            "collection": collection,
+            "event_uids": event_uid,
+        },
+        {"_id": 1},
+    )
+    return bool(archived)
+
+
+async def _finalize_hold_release_without_archives(
+    db,
+    *,
+    hold: dict,
+    actor: dict,
+) -> dict:
+    """Commit a release synchronously when no Azure archive can match the hold."""
+    operation_id = str(hold["release_operation_id"])
+    tenant_id = str(hold["tenant_id"])
+    hold_id = str(hold["hold_id"])
+    await _record_hold_operation(
+        db,
+        operation_id=operation_id,
+        hold_id=hold_id,
+        tenant_id=tenant_id,
+        action="RELEASE",
+        actor=actor,
+        reason=str(hold["release_reason"]),
+        authority=str(hold["release_authority"]),
+        status="COMMITTED",
+    )
+    released_at = datetime.now(timezone.utc)
+    result = await db.legal_holds.update_one(
+        {
+            "_id": hold["_id"],
+            "status": "PENDING_RELEASE",
+            "release_operation_id": operation_id,
+        },
+        {
+            "$set": {
+                "status": "RELEASED",
+                "archive_protection_status": "RELEASED",
+                "released_at": released_at,
+                "updated_at": released_at,
+            }
+        },
+    )
+    if result.modified_count != 1:
+        raise HTTPException(status_code=409, detail="Evidence hold state changed; retry the request")
+    return await db.legal_holds.find_one({"_id": hold["_id"]})
+
+
 @router.post("/holds", status_code=201)
 @limiter.limit("10/minute")
 async def apply_evidence_hold(
@@ -204,6 +265,7 @@ async def apply_evidence_hold(
         "hold_id": hold_id,
         "tenant_id": tenant_id,
         "status": "ACTIVE",
+        "archive_protection_status": "PENDING",
         "scope_type": body.scope_type,
         "collection": body.collection,
         "event_uid": body.event_uid,
@@ -216,6 +278,13 @@ async def apply_evidence_hold(
         "updated_at": now,
     }
     try:
+        if body.scope_type == "EVENT" and not await _event_evidence_exists(
+            db,
+            tenant_id,
+            str(body.collection),
+            str(body.event_uid),
+        ):
+            raise HTTPException(status_code=404, detail="Tenant-scoped evidence event was not found")
         await _record_hold_operation(
             db,
             operation_id=operation_id,
@@ -270,16 +339,27 @@ async def release_evidence_hold(
     db=Depends(get_db),
 ):
     tenant_id = str(current_user.get("tenant_id") or "")
-    hold = await db.legal_holds.find_one(
-        {"tenant_id": tenant_id, "hold_id": hold_id, "status": "ACTIVE"}
-    )
-    if not hold:
-        raise HTTPException(status_code=404, detail="Active evidence hold was not found")
     operation_id = uuid.uuid4().hex
     fence_owner = f"hold-release:{operation_id}"
     if not await acquire_retention_fence(db, tenant_id, fence_owner):
         raise HTTPException(status_code=409, detail="Evidence retention state is changing; retry the request")
     try:
+        hold = await db.legal_holds.find_one(
+            {
+                "tenant_id": tenant_id,
+                "hold_id": hold_id,
+                "status": {"$in": ["ACTIVE", "PENDING_RELEASE"]},
+            }
+        )
+        if not hold:
+            raise HTTPException(status_code=404, detail="Active evidence hold was not found")
+        if hold.get("status") == "PENDING_RELEASE":
+            if (
+                hold.get("release_reason") != body.reason
+                or hold.get("release_authority") != body.authority
+            ):
+                raise HTTPException(status_code=409, detail="A different release is already in progress")
+            return {"hold": _public_hold(hold)}
         await _record_hold_operation(
             db,
             operation_id=operation_id,
@@ -291,38 +371,39 @@ async def release_evidence_hold(
             authority=body.authority,
             status="PENDING",
         )
-        released_at = datetime.now(timezone.utc)
+        release_requested_at = datetime.now(timezone.utc)
         result = await db.legal_holds.update_one(
             {"_id": hold["_id"], "status": "ACTIVE"},
             {
                 "$set": {
-                    "status": "RELEASED",
+                    "status": "PENDING_RELEASE",
+                    "archive_protection_status": "RELEASE_PENDING",
+                    "release_operation_id": operation_id,
                     "release_reason": body.reason,
                     "release_authority": body.authority,
                     "released_by_user_id": str(current_user.get("_id") or ""),
                     "released_by": str(current_user.get("email") or current_user.get("username") or ""),
-                    "released_at": released_at,
-                    "updated_at": released_at,
+                    "release_requested_at": release_requested_at,
+                    "updated_at": release_requested_at,
                 }
             },
         )
         if result.modified_count != 1:
             raise HTTPException(status_code=409, detail="Evidence hold state changed; retry the request")
-        await _record_hold_operation(
-            db,
-            operation_id=operation_id,
-            hold_id=hold_id,
-            tenant_id=tenant_id,
-            action="RELEASE",
-            actor=current_user,
-            reason=body.reason,
-            authority=body.authority,
-            status="COMMITTED",
+        hold = await db.legal_holds.find_one({"_id": hold["_id"]})
+        archive_exists = await db.storage_archives.find_one(
+            archive_query_for_hold(hold),
+            {"_id": 1},
         )
+        if not archive_exists:
+            hold = await _finalize_hold_release_without_archives(
+                db,
+                hold=hold,
+                actor=current_user,
+            )
     finally:
         await release_retention_fence(db, tenant_id, fence_owner)
-    updated = await db.legal_holds.find_one({"_id": hold["_id"]})
-    return {"hold": _public_hold(updated)}
+    return {"hold": _public_hold(hold)}
 
 def _load_runtime_config() -> dict:
     config_path = Path(__file__).resolve().parent.parent / "config" / "config.json"

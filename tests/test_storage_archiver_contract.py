@@ -473,6 +473,7 @@ async def test_container_scope_archives_then_deletes_hot_records(monkeypatch):
         "release_retention_fence",
         AsyncMock(return_value=None),
     )
+    monkeypatch.setattr(storage_archiver, "_active_holds_for_batch", AsyncMock(return_value=[]))
 
     class FakeBlob:
         async def upload_blob(self, *_args, **_kwargs):
@@ -538,6 +539,15 @@ async def test_archive_rechecks_hold_and_preserves_hot_records(monkeypatch, coll
         "release_retention_fence",
         AsyncMock(return_value=None),
     )
+    hold = {
+        "hold_id": "HOLD-1",
+        "tenant_id": "TENANT-A",
+        "status": "ACTIVE",
+        "scope_type": "TENANT",
+    }
+    monkeypatch.setattr(storage_archiver, "_active_holds_for_batch", AsyncMock(return_value=[hold]))
+    protect = AsyncMock(return_value=None)
+    monkeypatch.setattr(storage_archiver, "protect_archive_for_hold", protect)
 
     class FakeBlob:
         async def upload_blob(self, *_args, **_kwargs):
@@ -554,9 +564,18 @@ async def test_archive_rechecks_hold_and_preserves_hot_records(monkeypatch, coll
             self.find_one = AsyncMock(return_value=hold)
 
     collections = {
-        "storage_archives": FakeCollection(),
+        "storage_archives": FakeCollection(
+            {
+                "_id": "archive-ledger-1",
+                "tenant_id": "TENANT-A",
+                "archive_key": "archive-key-1",
+                "container_name": "general-90-vault",
+                "blob_name": "batch.json",
+                "hash_blob_name": "batch.sha256",
+            }
+        ),
         collection_name: FakeCollection(),
-        "legal_holds": FakeCollection({"hold_id": "HOLD-1", "status": "ACTIVE"}),
+        "legal_holds": FakeCollection(hold),
     }
 
     class FakeDb:
@@ -584,6 +603,7 @@ async def test_archive_rechecks_hold_and_preserves_hot_records(monkeypatch, coll
     assert deleted == 0
     collections[collection_name].delete_many.assert_not_awaited()
     assert collections["storage_archives"].update_one.await_count == 2
+    protect.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -598,6 +618,7 @@ async def test_archive_retry_reuses_the_same_verified_blobs(monkeypatch):
         "release_retention_fence",
         AsyncMock(return_value=None),
     )
+    monkeypatch.setattr(storage_archiver, "_active_holds_for_batch", AsyncMock(return_value=[]))
 
     class FakeDownloader:
         def __init__(self, payload):
@@ -724,10 +745,12 @@ def test_archive_managed_collections_have_no_independent_ttl_deletion():
         "ttl_detection_dispatch_outbox",
         "ttl_detection_dispatch_dlq",
         "ttl_detection_engine_observations",
-            "ttl_detection_candidate_quarantine",
-            "ttl_source_outbox_published",
-            "ttl_evidence_retention_fence",
-        }
+        "ttl_detection_candidate_quarantine",
+        "ttl_source_outbox_published",
+        "ttl_evidence_retention_fence",
+        "ttl_story_signal_ledger",
+        "ttl_asset_ip_bindings",
+    }
     # TTL is limited to short-lived workflow/transport ledgers. Canonical
     # evidence remains archive-before-delete and never receives an independent
     # MongoDB expiry path.

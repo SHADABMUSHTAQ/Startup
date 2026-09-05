@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Request, HTTPException, Header
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 import base64
 import hashlib
 import json
@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 from cryptography.exceptions import InvalidSignature
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from urllib.parse import urlparse
 from fastapi.responses import RedirectResponse
 
@@ -28,6 +28,13 @@ from app.utils.agent_lifecycle import (
     normalize_agent_lifecycle_status,
 )
 from app.utils.agent_crypto import parse_utc_timestamp, public_key_id
+from app.utils.collection_profiles import (
+    general_server_compatible,
+    make_assignment,
+    sanitize_host_facts,
+    sanitize_profile_report,
+    server_response_blocked,
+)
 
 
 router = APIRouter()
@@ -84,6 +91,7 @@ class ActivationValidateRequest(BaseModel):
 class AgentRegisterRequest(BaseModel):
     activation_code: str
     public_key: str = Field(min_length=80, max_length=1000)  # PEM encoded Ed25519 public key
+    host_facts: dict[str, Any] | None = None
 
 class HeartbeatRequest(BaseModel):
     agent_id: str
@@ -93,6 +101,15 @@ class HeartbeatRequest(BaseModel):
     nonce: str | None = Field(default=None, min_length=16, max_length=128)
     agent_collection_time: str | None = Field(default=None, max_length=64)
     sensor_status: dict[str, Any] | None = None
+
+
+class GeneralServerProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=0, le=2147483646)
+    enabled: bool = True
+    environment: Literal["production", "staging", "development", "unknown"] = "unknown"
+    criticality: Literal["low", "medium", "high", "critical"] = "medium"
 
 
 def _heartbeat_clock_state(offset_seconds: float) -> str:
@@ -182,6 +199,8 @@ def _sanitize_sensor_status(raw_status: dict[str, Any] | None) -> dict[str, Any]
             "configured": bool(pos_audit.get("configured", False)),
             "present": bool(pos_audit.get("present", False)),
         },
+        "host_facts": sanitize_host_facts(raw_status.get("host_facts")),
+        "server_monitoring": sanitize_profile_report(raw_status.get("server_monitoring")),
     }
 
 
@@ -428,6 +447,8 @@ async def register_agent(
     
     agent_id = f"WARSOC_AGENT_{uuid.uuid4().hex}"
     now = datetime.now(timezone.utc)
+    registration_host_facts = sanitize_host_facts(body.host_facts)
+    server_boundary = body.host_facts is not None and registration_host_facts["product_type"] != 1
     
     agent_doc = {
         "agent_id": agent_id,
@@ -438,7 +459,14 @@ async def register_agent(
         "created_at": now,
         "last_seen": now,
         "last_ip": request.client.host,
-        "features": payload.get("features", "SIEM")
+        "features": payload.get("features", "SIEM"),
+        # Registration is not signed yet. These facts may only reduce privileges;
+        # a signed heartbeat establishes the authoritative observation.
+        "registration_host_facts": registration_host_facts,
+        "server_monitoring_required": server_boundary,
+        "asset_class": "unclassified",
+        "response_mode": "MONITOR_ONLY" if server_boundary else "LEGACY_ENDPOINT",
+        "host_identity_status": "pending",
     }
     
     try:
@@ -607,8 +635,61 @@ async def agent_heartbeat(
         )
         raise HTTPException(status_code=401, detail="Cryptographic verification failed") from exc
         
+    authoritative_agent = await db["agents"].find_one(
+        {"agent_id": body.agent_id, "tenant_id": tenant_id},
+        {
+            "agent_id": 1, "tenant_id": 1, "host_facts": 1,
+            "host_identity_fingerprint": 1, "host_identity_status": 1,
+            "server_monitoring_required": 1,
+            "asset_class": 1, "monitoring_assignment": 1,
+        },
+    )
+    if not authoritative_agent:
+        raise HTTPException(status_code=401, detail="Agent identity is no longer active")
+
+    raw_host_facts = (
+        body.sensor_status.get("host_facts")
+        if isinstance(body.sensor_status, dict) and isinstance(body.sensor_status.get("host_facts"), dict)
+        else None
+    )
+    host_facts = sanitize_host_facts(raw_host_facts)
+    prior_facts = sanitize_host_facts(authoritative_agent.get("host_facts"))
+    established_fingerprint = str(
+        authoritative_agent.get("host_identity_fingerprint")
+        or prior_facts["machine_fingerprint"]
+        or ""
+    )
+    if (
+        raw_host_facts is not None
+        and established_fingerprint
+        and host_facts["machine_fingerprint"]
+        and host_facts["machine_fingerprint"] != established_fingerprint
+    ):
+        await db["agents"].update_one(
+            {"_id": authoritative_agent["_id"]},
+            {"$set": {"host_identity_status": "conflict", "host_identity_conflict_at": datetime.now(timezone.utc)}},
+        )
+        raise HTTPException(status_code=409, detail="Host identity changed; re-enrollment is required")
+
+    server_required = bool(authoritative_agent.get("server_monitoring_required"))
+    if raw_host_facts is not None:
+        server_required = server_required or host_facts["product_type"] != 1
+        host_set = {
+            "host_facts": host_facts,
+            "host_identity_status": (
+                "verified" if established_fingerprint or host_facts["machine_fingerprint"] else "pending"
+            ),
+            "server_monitoring_required": server_required,
+        }
+        if established_fingerprint or host_facts["machine_fingerprint"]:
+            host_set["host_identity_fingerprint"] = (
+                established_fingerprint or host_facts["machine_fingerprint"]
+            )
+        await db["agents"].update_one({"_id": authoritative_agent["_id"]}, {"$set": host_set})
+        authoritative_agent.update(host_set)
+
+    sensor_status = _sanitize_sensor_status(body.sensor_status)
     if tenant_id:
-        sensor_status = _sanitize_sensor_status(body.sensor_status)
         received_at = datetime.now(timezone.utc)
         protocol_version = str(body.protocol_version or "heartbeat-v1").strip().lower()
         clock_offset_seconds = received_at.timestamp() - body.timestamp
@@ -655,7 +736,12 @@ async def agent_heartbeat(
             ex=600,
         )
 
-    enforce_bans = await _get_tenant_enforce_bans(redis_client, tenant_id) if tenant_id else []
+    enforce_bans = []
+    if tenant_id and not server_response_blocked(
+        authoritative_agent,
+        host_facts if raw_host_facts is not None else None,
+    ):
+        enforce_bans = await _get_tenant_enforce_bans(redis_client, tenant_id)
 
     # Rate limit DB updates to once every 60 seconds using Redis
     last_db_update = await redis_client.get(f"warsoc:agent_cache:db_update:{body.agent_id}")
@@ -667,7 +753,7 @@ async def agent_heartbeat(
                     "last_seen": datetime.now(timezone.utc),
                     "version": body.current_version,
                     "last_ip": request.client.host,
-                    "sensor_status": _sanitize_sensor_status(body.sensor_status),
+                    "sensor_status": sensor_status,
                     "status": "active",
                     "connectivity_status": "online",
                 }
@@ -685,7 +771,126 @@ async def agent_heartbeat(
     return {
         "status": "ok",
         "update_available": False,
-        "enforce_bans": enforce_bans
+        "enforce_bans": enforce_bans,
+        # Bound to this accepted heartbeat so a cached response cannot apply a
+        # stale profile. Monotonic revision checking is the second boundary.
+        "control_nonce": body.nonce if protocol_version == "heartbeat-v2" else None,
+        "monitoring_assignment": (
+            authoritative_agent.get("monitoring_assignment") if server_required else None
+        ),
+    }
+
+
+@router.get("/server-profiles")
+async def list_server_profiles(
+    current_user: dict = Depends(get_current_user),
+    _: str = Depends(RoleChecker(["admin", "manager", "analyst", "auditor"])),
+):
+    """Expose the bounded engineering catalog without claiming broad support."""
+    return {
+        "engineering_enabled": os.getenv("WINDOWS_SERVER_MONITORING_ENABLED", "false").lower() == "true",
+        "profiles": [
+            {
+                "profile_id": "general_server",
+                "profile_version": 1,
+                "qualification_target": "Windows Server 2022 Standard Desktop Experience (AMD64)",
+                "customer_supported": False,
+                "response_mode": "MONITOR_ONLY",
+            }
+        ],
+    }
+
+
+@router.put("/{agent_id}/server-profile")
+async def assign_general_server_profile(
+    agent_id: str,
+    body: GeneralServerProfileRequest,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    _: str = Depends(RoleChecker(["admin"])),
+    db = Depends(get_db),
+):
+    if os.getenv("WINDOWS_SERVER_MONITORING_ENABLED", "false").lower() != "true":
+        raise HTTPException(status_code=503, detail="Windows Server engineering is disabled")
+    tenant_id = str(current_user.get("tenant_id") or "")
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="Not bound to a tenant")
+    agent = await db["agents"].find_one(
+        {"agent_id": agent_id, "tenant_id": tenant_id, **ACTIVE_AGENT_QUERY},
+        {"agent_id": 1, "tenant_id": 1, "host_facts": 1, "monitoring_assignment": 1},
+    )
+    if not agent:
+        raise HTTPException(status_code=404, detail="Active agent not found")
+    current_revision = int((agent.get("monitoring_assignment") or {}).get("revision") or 0)
+    if current_revision != body.expected_revision:
+        raise HTTPException(status_code=409, detail="Monitoring profile revision changed; refresh and retry")
+    if body.enabled and not general_server_compatible(agent.get("host_facts")):
+        raise HTTPException(status_code=409, detail="Agent has not proven the General Server V1 qualification target")
+    if not body.enabled and not agent.get("monitoring_assignment"):
+        raise HTTPException(status_code=409, detail="No server monitoring profile is assigned")
+
+    assignment = make_assignment(agent_id, tenant_id, current_revision + 1, enabled=body.enabled)
+    operation_id = str(getattr(request.state, "request_id", "") or uuid.uuid4().hex)
+    audit_query = {"operation_id": operation_id, "tenant_id": tenant_id}
+    audit_document = {
+        **audit_query,
+        "action": "server_monitoring_profile_change",
+        "status": "REQUESTED",
+        "actor_id": str(
+            current_user.get("user_id")
+            or current_user.get("sub")
+            or current_user.get("username")
+            or "unknown"
+        )[:128],
+        "target_agent_id": agent_id,
+        "requested_revision": assignment["revision"],
+        "profile_id": "general_server",
+        "profile_version": 1,
+        "enabled": body.enabled,
+        "requested_at": datetime.now(timezone.utc),
+    }
+    try:
+        await db["management_audit"].insert_one(audit_document)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Monitoring profile change could not be audited") from exc
+
+    revision_filter = (
+        {"monitoring_assignment.revision": current_revision}
+        if current_revision
+        else {"monitoring_assignment": {"$exists": False}}
+    )
+    result = await db["agents"].update_one(
+        {"agent_id": agent_id, "tenant_id": tenant_id, **ACTIVE_AGENT_QUERY, **revision_filter},
+        {"$set": {
+            "asset_class": "server",
+            "server_role": "general_server",
+            "environment": body.environment,
+            "criticality": body.criticality,
+            "response_mode": "MONITOR_ONLY",
+            "server_monitoring_required": True,
+            "monitoring_assignment": assignment,
+            "monitoring_profile_operation_id": operation_id,
+            "monitoring_profile_updated_at": datetime.now(timezone.utc),
+        }},
+    )
+    if result.modified_count != 1:
+        await db["management_audit"].update_one(audit_query, {"$set": {"status": "CONFLICT"}})
+        raise HTTPException(status_code=409, detail="Monitoring profile revision changed; refresh and retry")
+    try:
+        await db["management_audit"].update_one(
+            audit_query,
+            {"$set": {"status": "APPLIED", "completed_at": datetime.now(timezone.utc)}},
+        )
+    except Exception:
+        logger.exception("Server profile applied but audit completion update failed: operation_id=%s", operation_id)
+    return {
+        "status": "assigned",
+        "agent_id": agent_id,
+        "asset_class": "server",
+        "server_role": "general_server",
+        "response_mode": "MONITOR_ONLY",
+        "monitoring_assignment": assignment,
+        "operation_id": operation_id,
     }
 
 @router.get("/download")
