@@ -22,9 +22,16 @@ function Hero() {
             <span className="badge-text">Stay secure. Stay compliant.</span>
           </div> */}
 
+          <div className="hero-announcement">
+            <span className="hero-announcement-label">LIVE</span>
+            <span>WarSOC Cloud SIEM is monitoring your frontier</span>
+            <ArrowRight size={14} aria-hidden="true" />
+          </div>
+
           <h1>
-            Unlocking The Secret <br /> 
-            of <span className="gradient-text">Digital Safety</span>
+            See the threat.
+            <br />
+            Secure what <span className="gradient-text">matters.</span>
           </h1>
           
           <p>
@@ -37,9 +44,9 @@ function Hero() {
               Get Started <ArrowRight size={18} />
             </button>
             
-            {/* <button className="btn-secondary" onClick={() => navigate("/#features")}>
-              <PlayCircle size={18} /> Live Demo
-            </button> */}
+            <button className="btn-secondary" onClick={() => navigate("/#features")}>
+              <PlayCircle size={18} /> Explore capabilities
+            </button>
           </div>
 
           <div className="hero-stats">
