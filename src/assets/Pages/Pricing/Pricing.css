@@ -196,6 +196,83 @@
 .input-group select:focus {
   border-color: #3b82f6;
 }
+
+.archive-select {
+  position: relative;
+  width: 100%;
+}
+
+.archive-select-trigger {
+  width: 100%;
+  min-height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: #1e2536 !important;
+  color: #fff !important;
+  font-size: 1rem;
+  font-weight: 500;
+  text-align: left;
+  box-shadow: none !important;
+  cursor: none !important;
+}
+
+.archive-select-trigger:hover,
+.archive-select.is-open .archive-select-trigger {
+  border-color: #47a5ef;
+  background: #263653 !important;
+  transform: none !important;
+}
+
+.archive-select-trigger svg {
+  flex: 0 0 auto;
+  transition: transform 0.2s ease;
+}
+
+.archive-select.is-open .archive-select-trigger svg {
+  transform: rotate(180deg);
+}
+
+.archive-select-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: grid;
+  gap: 3px;
+  padding: 6px;
+  border: 1px solid rgba(71, 165, 239, 0.45);
+  border-radius: 10px;
+  background: #101a2c;
+  box-shadow: 0 18px 35px rgba(2, 7, 13, 0.35);
+}
+
+.archive-select-menu button {
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent !important;
+  color: #dbeafe !important;
+  font-size: 0.95rem;
+  font-weight: 500;
+  text-align: left;
+  box-shadow: none !important;
+  cursor: none !important;
+}
+
+.archive-select-menu button:hover,
+.archive-select-menu button.is-selected {
+  background: #1d6fd1 !important;
+  color: #ffffff !important;
+  transform: none !important;
+}
 .input-group small {
   color: #8b9bb4;
   font-size: 0.8rem;
@@ -513,6 +590,35 @@
   color: #111827;
   background: #ffffff;
   border-color: #a9b8cc;
+}
+
+[data-theme="light"] .archive-select-trigger {
+  color: #111827 !important;
+  background: #ffffff !important;
+  border-color: #a9b8cc;
+}
+
+[data-theme="light"] .archive-select-trigger:hover,
+[data-theme="light"] .archive-select.is-open .archive-select-trigger {
+  background: #f8fbff !important;
+  border-color: #0b74e5;
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .archive-select-menu {
+  border-color: #b8d0f2;
+  background: #ffffff;
+  box-shadow: 0 18px 35px rgba(15, 23, 42, 0.18);
+}
+
+[data-theme="light"] .archive-select-menu button {
+  color: #1e293b !important;
+}
+
+[data-theme="light"] .archive-select-menu button:hover,
+[data-theme="light"] .archive-select-menu button.is-selected {
+  background: #0f62fe !important;
+  color: #ffffff !important;
 }
 
 [data-theme="light"] .input-group input:focus,

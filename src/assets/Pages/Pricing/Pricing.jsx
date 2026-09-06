@@ -1,10 +1,15 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Zap, Monitor, Archive, ShieldCheck, PackagePlus, ArrowRight, ArrowLeft } from "lucide-react";
+import { Zap, Monitor, Archive, ShieldCheck, PackagePlus, ArrowRight, ArrowLeft, ChevronDown } from "lucide-react";
 import apiClient from "../../../api/apiClient";
 import { formatApiError } from "../../../utils/apiError";
 import { calculatePricingEstimate, formatPkr } from "../../../utils/pricing";
 import "./Pricing.css";
+
+const archiveOptions = [3, 6, 9, 12].map((months) => ({
+  value: months,
+  label: `${months} Months General Archive`,
+}));
 
 export default function Pricing({ standalone = false }) {
   const [billingCycle, setBillingCycle] = useState("monthly"); 
@@ -16,8 +21,23 @@ export default function Pricing({ standalone = false }) {
   const [endpoints, setEndpoints] = useState(15);
   const [addons, setAddons] = useState({ fbr: false, peca: false });
   const [retentionMonths, setRetentionMonths] = useState(3);
+  const [isArchiveOpen, setIsArchiveOpen] = useState(false);
+  const archiveSelectRef = useRef(null);
   
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!isArchiveOpen) return undefined;
+
+    const closeArchiveMenu = (event) => {
+      if (archiveSelectRef.current && !archiveSelectRef.current.contains(event.target)) {
+        setIsArchiveOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", closeArchiveMenu);
+    return () => document.removeEventListener("mousedown", closeArchiveMenu);
+  }, [isArchiveOpen]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -110,12 +130,37 @@ export default function Pricing({ standalone = false }) {
 
                         <div className="input-group archive-group">
                             <label><Archive size={18} color="#8b5cf6" /> Long-term Cold Archive</label>
-                            <select value={retentionMonths} onChange={(e) => setRetentionMonths(parseInt(e.target.value))}>
-                      <option value="3">3 Months General Archive</option>
-                      <option value="6">6 Months General Archive</option>
-                      <option value="9">9 Months General Archive</option>
-                      <option value="12">12 Months General Archive</option>
-                            </select>
+                            <div className={`archive-select ${isArchiveOpen ? "is-open" : ""}`} ref={archiveSelectRef}>
+                              <button
+                                type="button"
+                                className="archive-select-trigger"
+                                onClick={() => setIsArchiveOpen((open) => !open)}
+                                aria-haspopup="listbox"
+                                aria-expanded={isArchiveOpen}
+                              >
+                                <span>{archiveOptions.find((option) => option.value === retentionMonths)?.label}</span>
+                                <ChevronDown size={16} aria-hidden="true" />
+                              </button>
+                              {isArchiveOpen && (
+                                <div className="archive-select-menu" role="listbox" aria-label="Archive retention period">
+                                  {archiveOptions.map((option) => (
+                                    <button
+                                      type="button"
+                                      role="option"
+                                      aria-selected={retentionMonths === option.value}
+                                      className={retentionMonths === option.value ? "is-selected" : ""}
+                                      key={option.value}
+                                      onClick={() => {
+                                        setRetentionMonths(option.value);
+                                        setIsArchiveOpen(false);
+                                      }}
+                                    >
+                                      {option.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                             <small>Security, PECA, and FBR evidence follow the selected archive entitlement. Authorized legal holds may extend preservation.</small>
                         </div>
                     </div>
