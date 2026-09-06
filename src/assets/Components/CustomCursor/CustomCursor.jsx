@@ -30,8 +30,6 @@ export default function CustomCursor() {
 
       frameRef.current = window.requestAnimationFrame(() => {
         const { x, y } = positionRef.current;
-        document.documentElement.style.setProperty("--cursor-x", `${x}px`);
-        document.documentElement.style.setProperty("--cursor-y", `${y}px`);
         if (cursorRef.current) cursorRef.current.style.transform = `translate3d(${x}px, ${y}px, 0)`;
         if (ringRef.current) ringRef.current.style.transform = `translate3d(${x}px, ${y}px, 0)`;
         frameRef.current = null;
