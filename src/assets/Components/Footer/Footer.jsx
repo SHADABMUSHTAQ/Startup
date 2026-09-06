@@ -7,6 +7,11 @@ import "./Footer.css";
 const Footer = () => {
   return (
     <footer className="footer">
+      <div className="footer-ambient" aria-hidden="true">
+        <span className="footer-orbit footer-orbit-one" />
+        <span className="footer-orbit footer-orbit-two" />
+        <span className="footer-scanline" />
+      </div>
       <div className="footer-container">
         
         {/* Top Section: Brand & Navigation */}
