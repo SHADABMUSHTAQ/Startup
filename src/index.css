@@ -1,0 +1,668 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+
+/* 🌍 Global Styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: var(--font-ui);
+  color: var(--text-primary);
+}
+
+:root {
+  --font-ui: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-code: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  /* Color tokens (preserve existing palette) */
+  --primary-500: #007bff;
+  --primary-700: #0056b3;
+  --primary-600: #0c68ae;
+  --primary-900: #003d80;
+  --bg-dark: #10152a;
+  --section-bg: #1c2237;
+  --card-bg: #2a3150;
+  --muted: #9aa3bd;
+  --text-primary: #ffffff;
+  --accent-lime: rgba(183, 234, 72, 0.95);
+  --glass: rgba(255, 255, 255, 0.03);
+  --radius: 12px;
+  --container-padding: 5rem;
+  --transition-fast: 180ms;
+  --transition: 300ms;
+}
+
+html {
+  width: 100%;
+  scroll-behavior: smooth;
+  /* Yahan overflow-x nahi lagayenge taake Navbar ka scroll track ho sake */
+}
+
+body {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden; /* Sirf body par hidden rakhna safe hai */
+  position: relative;
+  box-sizing: border-box;
+  background: #000000;
+  font-family: var(--font-ui);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+::selection {
+  background-color: rgba(183, 234, 72, 0.18); /* WarSOC Lime Green subtle */
+  color: var(--text-primary);
+}
+
+#root {
+  width: 100%;
+  overflow-x: hidden;
+  position: relative;
+}
+
+button {
+  background: linear-gradient(135deg, var(--primary-500), var(--primary-700));
+  color: var(--text-primary);
+  padding: 10px 22px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  box-shadow: 0 8px 24px rgba(7, 59, 112, 0.18);
+  transition:
+    transform var(--transition-fast) ease,
+    box-shadow var(--transition-fast) ease;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Hover */
+button:hover {
+  background: linear-gradient(135deg, var(--primary-600), var(--primary-900));
+  transform: translateY(-3px);
+  box-shadow: 0 14px 40px rgba(7, 59, 112, 0.22);
+}
+
+/* Active/Click effect */
+button:active {
+  transform: scale(0.97);
+  box-shadow: 0 2px 8px rgba(0, 123, 255, 0.5);
+}
+
+/* Fancy glow border effect */
+button::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  border-radius: 12px;
+  background: linear-gradient(
+    45deg,
+    var(--primary-500),
+    #00c6ff,
+    var(--primary-500)
+  );
+  z-index: -1;
+  filter: blur(6px);
+  opacity: 0;
+  transition:
+    opacity 0.25s ease-in-out,
+    filter 0.25s ease-in-out;
+}
+
+button:hover::after {
+  opacity: 0.6;
+}
+
+/* CTA-specific tone down */
+.cta-btn.primary {
+  box-shadow: 0 8px 22px rgba(7, 59, 112, 0.12);
+}
+
+.cta-btn.primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(7, 59, 112, 0.14);
+}
+
+/* 🔝 Navbar */
+.navbar {
+  width: 100%;
+  padding: 1rem 5%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: transparent;
+  backdrop-filter: blur(6px);
+}
+
+.navbar ul {
+  display: flex;
+  list-style: none;
+  gap: 2rem;
+}
+
+.navbar a {
+  text-decoration: none;
+  color: var(--text-primary);
+  font-weight: 600;
+  transition:
+    color var(--transition) ease-in-out,
+    transform var(--transition) ease-in-out;
+}
+.navbar a:hover {
+  color: var(--accent-lime);
+  transform: translateY(-2px);
+}
+
+/* 🦸 Hero Section */
+.hero-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--container-padding) 7rem;
+  background-color: #000000;
+  min-height: 100vh;
+  gap: 3rem;
+}
+
+.h-left img {
+  max-width: 100%;
+  height: auto;
+}
+
+.h-right {
+  max-width: 500px;
+}
+
+.h-right span {
+  color: var(--primary-600);
+  font-weight: 700;
+}
+
+.h-right h1 {
+  line-height: 1.2;
+  margin-bottom: 20px;
+}
+
+.h-right p {
+  line-height: 1.6;
+  font-weight: 300;
+  color: var(--muted);
+  margin-bottom: 30px;
+}
+
+/* Subtle entrance animations */
+.fade-up {
+  animation: fadeUp 0.6s both cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+.fade-in {
+  animation: fadeIn 0.5s both ease;
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ⭐ Features Section */
+.features {
+  padding: 4rem 7rem;
+  background-color: var(--section-bg);
+  text-align: center;
+}
+
+.features h2 {
+  margin-bottom: 2rem;
+  font-size: 2rem;
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 2rem;
+}
+
+.feature-card {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.02),
+    var(--card-bg)
+  );
+  padding: 2rem;
+  border-radius: var(--radius);
+  transition:
+    transform var(--transition) ease,
+    box-shadow var(--transition) ease;
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.6);
+}
+
+.feature-card:hover {
+  transform: translateY(-8px) scale(1.01);
+  box-shadow: 0 20px 48px rgba(2, 6, 23, 0.65);
+}
+
+/* 📩 Footer */
+.footer {
+  padding: 2.5rem 7rem;
+  text-align: center;
+  background-color: #000000;
+  color: var(--muted);
+}
+
+/* 📱 Responsive Breakpoints */
+@media (max-width: 1024px) {
+  .hero-wrapper {
+    flex-direction: column;
+    padding: 3rem 2rem;
+    text-align: center;
+    margin-top: 6rem;
+  }
+
+  .h-right {
+    max-width: 100%;
+  }
+
+  .navbar ul {
+    gap: 1rem;
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .navbar ul {
+    display: none;
+  }
+
+  .hero-wrapper {
+    padding: 2rem;
+  }
+
+  .features {
+    padding: 2rem;
+  }
+}
+
+@media (max-width: 480px) {
+  h1 {
+    font-size: 1.8rem;
+  }
+
+  .features h2 {
+    font-size: 1.5rem;
+  }
+
+  button {
+    padding: 8px 16px;
+    font-size: 14px;
+  }
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+  .navbar {
+    padding: 1rem 2rem;
+  }
+
+  .nav-list {
+    display: none;
+    position: absolute;
+    top: 5rem;
+    right: 0;
+    width: 100%;
+    background-color: #2a3150;
+    flex-direction: column;
+    align-items: center;
+    padding: 1rem 0;
+  }
+
+  .nav-list.active {
+    display: flex;
+  }
+
+  .nav-list > ul {
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  img.logo {
+    height: 100px;
+    width: auto;
+  }
+
+  .nav-list > ul > li > a {
+    font-size: 1.2rem;
+  }
+
+  .hamburger {
+    display: block;
+    cursor: pointer;
+    font-size: 1.8rem;
+    color: white;
+  }
+
+  .login-btn {
+    display: none; /* Mobile pe hide karna ho to */
+  }
+}
+
+/* Desktop hamburger hidden */
+.hamburger {
+  display: none;
+}
+
+/* App-wide button system: shared geometry and interaction tokens. */
+:root {
+  --button-radius: 9px;
+  --button-primary-bg: var(--primary-500);
+  --button-primary-hover: var(--primary-600);
+  --button-primary-active: var(--primary-700);
+  --button-outline-border: var(--muted);
+  --button-outline-hover: color-mix(in srgb, var(--primary-500) 10%, transparent);
+  --button-danger: #dc2626;
+}
+
+button {
+  min-height: 40px;
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--button-radius);
+  font-weight: 700;
+  transition: all 0.2s ease;
+}
+
+button:hover:not(:disabled) {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--primary-500) 25%, transparent);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(0) !important;
+  box-shadow: 0 3px 8px color-mix(in srgb, var(--primary-500) 18%, transparent);
+}
+
+button::after { display: none !important; }
+
+/* Shared secondary/outline treatment. */
+.ops-secondary,
+.btn-secondary,
+.btn-cancel,
+.refresh-btn,
+.navbar-btn-cancel,
+.tabs-nav button,
+.evidence-detail-button,
+.pack-card button,
+.ops-notice button,
+.toast-notification button,
+.modal-close-button,
+.relay-modal-close,
+.activation-copy-btn,
+.invite-modal button[type="button"]:not(.btn-primary) {
+  background: transparent !important;
+  border: 1px solid var(--button-outline-border) !important;
+  color: var(--dash-text, var(--text-primary)) !important;
+  box-shadow: none !important;
+}
+
+.ops-secondary:hover:not(:disabled),
+.btn-secondary:hover:not(:disabled),
+.btn-cancel:hover:not(:disabled),
+.refresh-btn:hover:not(:disabled),
+.navbar-btn-cancel:hover:not(:disabled),
+.tabs-nav button:hover:not(:disabled),
+.evidence-detail-button:hover:not(:disabled),
+.pack-card button:hover:not(:disabled),
+.ops-notice button:hover:not(:disabled),
+.toast-notification button:hover:not(:disabled),
+.modal-close-button:hover:not(:disabled),
+.relay-modal-close:hover:not(:disabled),
+.activation-copy-btn:hover:not(:disabled),
+.invite-modal button[type="button"]:not(.btn-primary):hover:not(:disabled) {
+  background: var(--button-outline-hover) !important;
+  border-color: var(--primary-500) !important;
+  color: var(--dash-text, var(--text-primary)) !important;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--primary-500) 18%, transparent) !important;
+}
+
+/* Quiet destructive pattern: neutral at rest, red only on intent to click. */
+.btn-danger,
+.btn-primary.danger,
+.navbar-btn-danger,
+.relay-card-actions button:first-child,
+.act-btn.block-btn,
+.act-btn.unblock-btn,
+.logout-modal-actions .btn-danger {
+  background: transparent !important;
+  border: 1px solid var(--button-outline-border) !important;
+  color: var(--dash-text, var(--text-primary)) !important;
+  box-shadow: none !important;
+}
+
+.btn-danger:hover:not(:disabled),
+.btn-primary.danger:hover:not(:disabled),
+.navbar-btn-danger:hover:not(:disabled),
+.relay-card-actions button:first-child:hover:not(:disabled),
+.act-btn.block-btn:hover:not(:disabled),
+.act-btn.unblock-btn:hover:not(:disabled),
+.logout-modal-actions .btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--button-danger) 10%, transparent) !important;
+  border-color: var(--button-danger) !important;
+  color: var(--button-danger) !important;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--button-danger) 18%, transparent) !important;
+}
+
+/* Primary actions share one filled treatment across dashboard and operations pages. */
+.btn-primary,
+.search-wrapper > .btn-primary,
+.export-btn,
+.btn-submit,
+.offline-primary-actions button,
+.nav-links .nav-download-agent,
+.ops-actions button:not(.ops-secondary),
+.relay-workspace .ops-actions > button:not(.ops-secondary),
+.archive-form button,
+.team-container .btn-primary {
+  background: var(--button-primary-bg) !important;
+  border: 1px solid var(--button-primary-bg) !important;
+  color: var(--text-primary) !important;
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--primary-500) 22%, transparent) !important;
+}
+
+.btn-primary:hover:not(:disabled),
+.search-wrapper > .btn-primary:hover:not(:disabled),
+.export-btn:hover:not(:disabled),
+.btn-submit:hover:not(:disabled),
+.offline-primary-actions button:hover:not(:disabled),
+.nav-links .nav-download-agent:hover:not(:disabled),
+.ops-actions button:not(.ops-secondary):hover:not(:disabled),
+.archive-form button:hover:not(:disabled),
+.team-container .btn-primary:hover:not(:disabled) {
+  background: var(--button-primary-hover) !important;
+  border-color: var(--button-primary-hover) !important;
+  color: var(--text-primary) !important;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--primary-500) 25%, transparent) !important;
+}
+
+.btn-primary:active:not(:disabled),
+.search-wrapper > .btn-primary:active:not(:disabled),
+.export-btn:active:not(:disabled),
+.btn-submit:active:not(:disabled),
+.offline-primary-actions button:active:not(:disabled),
+.nav-links .nav-download-agent:active:not(:disabled),
+.ops-actions button:not(.ops-secondary):active:not(:disabled),
+.archive-form button:active:not(:disabled),
+.team-container .btn-primary:active:not(:disabled) {
+  background: var(--button-primary-active) !important;
+  border-color: var(--button-primary-active) !important;
+  box-shadow: 0 3px 8px color-mix(in srgb, var(--primary-500) 18%, transparent) !important;
+}
+
+/* Page-specific names mapped into the same semantic system. */
+.auth-btn,
+.submit-btn,
+.save-profile-btn,
+.security-action-btn:not(.danger),
+.security-action-btn:not(.danger):hover:not(:disabled) {
+  background: var(--button-primary-bg) !important;
+  border: 1px solid var(--button-primary-bg) !important;
+  color: var(--text-primary) !important;
+}
+
+.auth-btn:hover:not(:disabled),
+.submit-btn:hover:not(:disabled),
+.save-profile-btn:hover:not(:disabled),
+.security-action-btn:not(.danger):hover:not(:disabled) {
+  background: var(--button-primary-hover) !important;
+  border-color: var(--button-primary-hover) !important;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--primary-500) 25%, transparent) !important;
+}
+
+.profile-back-btn,
+.quote-back-btn,
+.catalog-back-btn,
+.mobile-profile-btn,
+.fullscreen-btn,
+.return-live-btn {
+  background: transparent !important;
+  border: 1px solid var(--button-outline-border) !important;
+  color: var(--dash-text, var(--text-primary)) !important;
+  box-shadow: none !important;
+}
+
+.profile-back-btn:hover:not(:disabled),
+.quote-back-btn:hover:not(:disabled),
+.catalog-back-btn:hover:not(:disabled),
+.mobile-profile-btn:hover:not(:disabled),
+.fullscreen-btn:hover:not(:disabled),
+.return-live-btn:hover:not(:disabled) {
+  background: var(--button-outline-hover) !important;
+  border-color: var(--primary-500) !important;
+  color: var(--dash-text, var(--text-primary)) !important;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--primary-500) 18%, transparent) !important;
+}
+
+.security-action-btn.danger,
+.mobile-logout-btn {
+  background: transparent !important;
+  border: 1px solid var(--button-outline-border) !important;
+  color: var(--dash-text, var(--text-primary)) !important;
+  box-shadow: none !important;
+}
+
+.security-action-btn.danger:hover:not(:disabled),
+.mobile-logout-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--button-danger) 10%, transparent) !important;
+  border-color: var(--button-danger) !important;
+  color: var(--button-danger) !important;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--button-danger) 18%, transparent) !important;
+}
+
+/* Final contrast pass: filled blue hover surfaces keep labels readable in light mode. */
+.ops-secondary:hover:not(:disabled),
+.btn-secondary:hover:not(:disabled),
+.btn-cancel:hover:not(:disabled),
+.refresh-btn:hover:not(:disabled),
+.navbar-btn-cancel:hover:not(:disabled),
+.tabs-nav button:hover:not(:disabled),
+.evidence-detail-button:hover:not(:disabled),
+.pack-card button:hover:not(:disabled),
+.ops-notice button:hover:not(:disabled),
+.toast-notification button:hover:not(:disabled),
+.modal-close-button:hover:not(:disabled),
+.relay-modal-close:hover:not(:disabled),
+.activation-copy-btn:hover:not(:disabled),
+.invite-modal button[type="button"]:not(.btn-primary):hover:not(:disabled),
+.catalog-back-btn:hover:not(:disabled) {
+  background: var(--button-primary-bg, var(--primary-500)) !important;
+  border-color: var(--button-primary-bg, var(--primary-500)) !important;
+  color: #ffffff !important;
+  font-weight: 800;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--primary-500) 25%, transparent) !important;
+}
+
+.tabs-nav button.active,
+.tabs-nav button.active:hover:not(:disabled) {
+  background: var(--button-primary-bg, var(--primary-500)) !important;
+  border-color: var(--button-primary-bg, var(--primary-500)) !important;
+  color: #ffffff !important;
+}
+
+/* Sign-out is the explicit destructive exception: red surface and white label. */
+.navbar-btn-danger,
+.logout-modal-actions .btn-danger {
+  background: var(--button-danger) !important;
+  border-color: var(--button-danger) !important;
+  color: #ffffff !important;
+}
+
+.navbar-btn-danger:hover:not(:disabled),
+.logout-modal-actions .btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--button-danger) 82%, #000) !important;
+  border-color: color-mix(in srgb, var(--button-danger) 82%, #000) !important;
+  color: #ffffff !important;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--button-danger) 25%, transparent) !important;
+}
+
+/* Light theme: secondary controls use a solid neutral surface, not a blue outline. */
+[data-theme="light"] .ops-secondary,
+[data-theme="light"] .btn-secondary,
+[data-theme="light"] .btn-cancel,
+[data-theme="light"] .refresh-btn,
+[data-theme="light"] .navbar-btn-cancel,
+[data-theme="light"] .tabs-nav button,
+[data-theme="light"] .evidence-detail-button,
+[data-theme="light"] .pack-card button,
+[data-theme="light"] .ops-notice button,
+[data-theme="light"] .toast-notification button,
+[data-theme="light"] .modal-close-button,
+[data-theme="light"] .relay-modal-close,
+[data-theme="light"] .activation-copy-btn,
+[data-theme="light"] .catalog-back-btn {
+  background: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .navbar-btn-danger,
+[data-theme="light"] .logout-modal-actions .btn-danger {
+  background: #dc2626 !important;
+  border-color: #dc2626 !important;
+  color: #ffffff !important;
+}
+
+/* Profile back navigation: keep the arrow readable over the light-theme hover fill. */
+[data-theme="light"] .profile-back-btn:hover:not(:disabled) {
+  background: var(--primary-500) !important;
+  border-color: var(--primary-500) !important;
+  color: #ffffff !important;
+  box-shadow: 0 8px 20px rgba(0,123,255,.24) !important;
+}
+[data-theme="light"] .profile-back-btn:hover:not(:disabled) svg {
+  color: #ffffff !important;
+  stroke: #ffffff !important;
+}

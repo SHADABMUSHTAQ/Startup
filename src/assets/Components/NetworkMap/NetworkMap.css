@@ -1,0 +1,364 @@
+/* =========================================
+   🌍 NETWORK MAP (WARSOC ENTERPRISE THEME)
+   ========================================= */
+
+.network-map-container {
+  display: flex;
+  flex-wrap: nowrap; /* 🚀 FIX 1: Blocks layout breaking */
+  gap: 20px;
+  height: 550px;
+  width: 100%;
+  border-radius: 12px;
+  animation: fadeInMap 0.6s ease-out forwards;
+}
+
+@keyframes fadeInMap {
+  from { opacity: 0; transform: translateY(15px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* --- THE CANVAS WRAPPER --- */
+.cy-wrapper {
+  flex: 1;
+  min-width: 0; /* 🚀 FIX 2: Prevents chart from overflowing */
+  background: var(--bg-dark); /* Deep Navy */
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  position: relative;
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.4); /* Inner depth */
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  overflow: hidden;
+}
+
+/* Subtle Lime/Blue glow on hover */
+.cy-wrapper:hover {
+  border-color: rgba(71, 165, 239, 0.4);
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.4), 0 0 20px rgba(71, 165, 239, 0.1);
+}
+
+.cy-canvas {
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+.cy-canvas:active {
+  cursor: grabbing;
+}
+
+.cy-overlay-text {
+  position: absolute;
+  top: 20px;
+  left: 24px;
+  color: var(--success); /* 🚀 LIME GREEN TEXT */
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  pointer-events: none;
+  font-family: var(--font-code);
+  background: rgba(183, 234, 72, 0.1);
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(183, 234, 72, 0.2);
+}
+
+/* =========================================
+   🚀 SIDE INFO PANEL
+   ========================================= */
+.node-details-panel {
+  width: 320px;
+  min-width: 320px;   /* 🚀 FIX 3: Fixed width */
+  max-width: 320px;
+  flex-shrink: 0;     /* 🚀 FIX 4: Stop shrinking */
+  background: var(--bg-card); /* Lighter Navy Card */
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  box-shadow: var(--shadow-sm);
+  overflow-y: auto;
+  
+  /* Slide in from right animation */
+  animation: slideInRight 0.5s cubic-bezier(0.25, 0.8, 0.25, 1) forwards;
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(30px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.nd-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.nd-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(71, 165, 239, 0.1);
+  color: var(--primary);
+  border: 1px solid rgba(71, 165, 239, 0.2);
+  flex-shrink: 0;
+}
+
+/* 🚀 Premium Status Icon Colors */
+.nd-icon.red { 
+  background: rgba(239, 68, 68, 0.15); 
+  color: var(--danger); 
+  border-color: rgba(239, 68, 68, 0.3);
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.2);
+}
+.nd-icon.green { 
+  background: rgba(183, 234, 72, 0.1); 
+  color: var(--success); /* LIME GREEN */
+  border-color: rgba(183, 234, 72, 0.25);
+  box-shadow: 0 0 15px rgba(183, 234, 72, 0.15);
+}
+
+.nd-title h3 {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0;
+  letter-spacing: 0.5px;
+}
+.nd-title p {
+  font-size: 12px;
+  color: var(--text-sub);
+  margin: 4px 0 0 0;
+  font-family: var(--font-code);
+}
+
+.nd-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+/* 🚀 Interactive Stat Rows */
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--bg-dark); /* Deep navy inner boxes */
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-sub);
+  transition: all 0.2s ease;
+}
+
+.stat-row:hover {
+  background: rgba(71, 165, 239, 0.05); /* Blue tint on hover */
+  border-color: rgba(71, 165, 239, 0.2);
+  color: var(--text-main);
+}
+
+.stat-val { 
+  font-weight: 700; 
+  color: var(--text-main);
+  font-family: var(--font-code);
+}
+
+/* =========================================
+   🚀 EMPTY STATE (ACTIVE RADAR ANIMATION)
+   ========================================= */
+.empty-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-sub);
+  text-align: center;
+  gap: 15px;
+}
+
+.empty-panel .radar-icon-wrapper {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+  background: rgba(71, 165, 239, 0.05);
+  border-radius: 50%;
+}
+
+/* Radar Pulse Rings */
+.empty-panel .radar-icon-wrapper::before,
+.empty-panel .radar-icon-wrapper::after {
+  content: '';
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 1px solid var(--primary);
+  opacity: 0;
+  animation: radarPulse 2s linear infinite;
+}
+
+.empty-panel .radar-icon-wrapper::after {
+  animation-delay: 1s;
+}
+
+@keyframes radarPulse {
+  0% { transform: scale(1); opacity: 0.5; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+.empty-panel p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  max-width: 80%;
+}
+
+.threat-timeline-container {
+  margin-top: 20px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.timeline-title {
+  margin-bottom: 12px;
+  color: var(--text-sub);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.timeline-scroll {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 5px;
+}
+
+.timeline-event {
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  border-left: 3px solid #3b82f6;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.timeline-event.critical {
+  border-left-color: #ef4444;
+}
+
+.timeline-event.high {
+  border-left-color: #f59e0b;
+}
+
+.timeline-event-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.timeline-event-meta span {
+  color: #38bdf8;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.timeline-event-meta time {
+  color: #94a3b8;
+  font-family: var(--font-code);
+  font-size: 10px;
+}
+
+.timeline-event-message {
+  color: var(--text-main);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+[data-theme="light"] .cy-wrapper {
+  background: #f8fafc;
+  box-shadow: inset 0 0 28px rgba(15, 23, 42, 0.08);
+}
+
+[data-theme="light"] .cy-wrapper:hover {
+  border-color: rgba(37, 99, 235, 0.32);
+  box-shadow: inset 0 0 28px rgba(15, 23, 42, 0.08), 0 16px 36px -34px rgba(37, 99, 235, 0.35);
+}
+
+[data-theme="light"] .cy-overlay-text {
+  color: #047857;
+  background: #ecfdf5;
+  border-color: rgba(5, 150, 105, 0.22);
+}
+
+[data-theme="light"] .node-details-panel {
+  background: #ffffff;
+}
+
+[data-theme="light"] .nd-header {
+  border-bottom-color: rgba(15, 23, 42, 0.1);
+}
+
+[data-theme="light"] .stat-row {
+  background: #f8fafc;
+  border-color: rgba(15, 23, 42, 0.08);
+  color: #536176;
+}
+
+[data-theme="light"] .stat-row:hover {
+  background: #eef5ff;
+  border-color: rgba(37, 99, 235, 0.2);
+  color: #172033;
+}
+
+[data-theme="light"] .timeline-event {
+  background: #f8fafc;
+  border-color: rgba(15, 23, 42, 0.1);
+}
+
+[data-theme="light"] .timeline-event-message {
+  color: #172033;
+}
+
+[data-theme="light"] .timeline-event-meta time {
+  color: #64748b;
+}
+
+/* Mobile Responsiveness for Topology */
+@media (max-width: 992px) {
+  .network-map-container {
+    flex-direction: column;
+    height: auto;
+  }
+  .cy-wrapper {
+    height: 400px;
+  }
+  .node-details-panel {
+    width: 100%;
+    min-width: 100%;
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+/* Full-width topology: the details panel is intentionally stacked below it. */
+.network-map-container { flex-direction: column; height: auto; }
+.cy-wrapper { flex: none; width: 100%; height: 550px; }
+.node-details-panel { width: 100%; min-width: 0; max-width: none; flex-shrink: 1; animation: mapDetailBelow .35s ease-out forwards; }
+@keyframes mapDetailBelow { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }

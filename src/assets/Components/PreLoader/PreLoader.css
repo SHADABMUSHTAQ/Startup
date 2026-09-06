@@ -1,0 +1,75 @@
+.warsoc-preloader {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 99999;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(71, 165, 239, 0.1), transparent 24rem),
+    #020711;
+  font-family: var(--font-ui);
+  transition:
+    opacity 420ms ease,
+    visibility 420ms ease;
+}
+
+.warsoc-preloader.is-closing {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.preloader-shell {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  width: min(220px, 72vw);
+}
+
+.preloader-spinner {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 3px solid white;
+  border-top-color: white;
+  border-right-color: black;
+  animation: preloaderSpin 850ms linear infinite;
+}
+
+.preloader-shell p {
+  min-height: 20px;
+  margin: 0;
+  color: rgba(248, 250, 252, 0.82);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.preloader-progress {
+  position: relative;
+  width: 100%;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.11);
+}
+
+.preloader-progress span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  border-radius: inherit;
+  background: white;
+  transition: width 480ms ease;
+}
+
+@keyframes preloaderSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preloader-spinner {
+    animation: none;
+  }
+}

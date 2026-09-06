@@ -1,0 +1,250 @@
+/* --- WARSOC BRAND VARIABLES --- */
+:root {
+  --footer-border: rgba(71, 165, 239, 0.15); /* Subtle Blue Border */
+  --text-primary: #ffffff;
+  --text-secondary: #94a3b8;
+  
+  /* Logo Exact Colors */
+  --accent-blue: #47A5EF;
+  --accent-lime: #B7EA48;
+}
+
+/* --- FOOTER BASE --- */
+.footer {
+  /* 🚀 Background transparent kar diya taake index.css wala chale */
+  position: relative;
+  overflow: hidden;
+  background: #02070d;
+  color: var(--text-secondary);
+  padding: 5rem 2rem 2rem;
+  font-size: 0.9rem;
+  border-top: 1px solid rgba(71, 165, 239, 0.18);
+}
+
+.footer::before {
+  display: none;
+}
+
+[data-theme="light"] .footer {
+  background: #eef3f8;
+  border-top-color: #d7e0ea;
+  color: #334155;
+}
+
+.footer-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
+/* --- TOP SECTION --- */
+.footer-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4rem;
+  margin-bottom: 4rem;
+}
+
+/* Brand Column */
+.footer-brand-section {
+  flex: 1;
+  min-width: 280px;
+  max-width: 400px;
+}
+.fot-logo{
+  width: auto;
+  height: 112px;
+  object-fit: contain;
+  display: block;
+}
+.brand-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 1rem;
+  color: var(--text-primary);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.brand-logo h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.brand-desc {
+  line-height: 1.6;
+  margin-bottom: 1.5rem;
+  text-align: left;
+  color: var(--text-secondary);
+}
+
+/* Social Icons */
+.social-links {
+  display: flex;
+  gap: 1rem;
+}
+
+.social-links a {
+  color: var(--text-secondary);
+  transition: all 0.3s ease;
+  width: 40px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+}
+
+/* 🚀 Hover updated to Brand Blue */
+.social-links a:hover {
+  color: #ffffff;
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  transform: translateY(-3px);
+  box-shadow: 0 5px 15px rgba(71, 165, 239, 0.3);
+}
+
+[data-theme="light"] .footer .brand-desc,
+[data-theme="light"] .footer-bottom p,
+[data-theme="light"] .footer .link-column ul li a,
+[data-theme="light"] .footer .legal-links a {
+  color: #334155;
+}
+
+[data-theme="light"] .footer .link-column h4 {
+  color: #0f172a;
+}
+
+[data-theme="light"] .footer .social-links a {
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.68);
+  border-color: #cbd9ea;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+}
+
+[data-theme="light"] .footer .social-links a svg,
+[data-theme="light"] .footer .social-links a svg :where(path, line, polyline, rect, circle) {
+  color: #0f172a;
+  stroke: #0f172a;
+  opacity: 1;
+}
+
+[data-theme="light"] .footer .social-links a:hover {
+  color: #ffffff;
+  background: #0f62fe;
+  border-color: #0f62fe;
+  box-shadow: 0 12px 24px rgba(15, 98, 254, 0.22);
+}
+
+[data-theme="light"] .footer .social-links a:hover svg,
+[data-theme="light"] .footer .social-links a:hover svg :where(path, line, polyline, rect, circle) {
+  color: #ffffff;
+  stroke: #ffffff;
+}
+
+[data-theme="light"] .footer .link-column ul li a:hover,
+[data-theme="light"] .footer .legal-links a:hover {
+  color: #0f62fe;
+}
+
+[data-theme="light"] .footer-bottom {
+  border-top-color: #d7e0ea;
+}
+
+/* --- LINKS GRID --- */
+.footer-links-grid {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end; 
+  flex-wrap: wrap;
+  gap: 6rem; 
+}
+
+.link-column h4 {
+  color: var(--text-primary);
+  font-size: 1.1rem;
+  margin-bottom: 1.2rem;
+  font-weight: 600;
+}
+
+.link-column ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.link-column ul li {
+  margin-bottom: 0.8rem;
+}
+
+.link-column ul li a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+/* 🚀 Link Hover updated to Brand Lime */
+.link-column ul li a:hover {
+  color: var(--accent-lime);
+}
+
+/* --- BOTTOM SECTION --- */
+.footer-bottom {
+  /* 🚀 Border updated to Brand Blue */
+  border-top: 1px solid rgba(71, 165, 239, 0.1);
+  padding-top: 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.legal-links {
+  display: flex;
+  gap: 2rem;
+}
+
+.legal-links a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.85rem;
+  transition: color 0.2s;
+}
+
+/* 🚀 Legal Link Hover updated to Brand Lime */
+.legal-links a:hover {
+  color: var(--accent-lime);
+}
+
+/* --- RESPONSIVE --- */
+@media (max-width: 768px) {
+  .footer-top {
+    flex-direction: column;
+    gap: 3rem;
+  }
+  
+  .footer-links-grid {
+    justify-content: flex-start;
+    gap: 3rem;
+  }
+  
+  .footer-bottom {
+    flex-direction: column;
+    text-align: center;
+  }
+  
+  .legal-links {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 1.5rem;
+  }
+}

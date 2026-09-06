@@ -1,0 +1,582 @@
+/* --- BASE PRICING STYLES --- */
+.pricing-section {
+  position: relative;
+  padding: 6rem 2rem;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 16% 12%, rgba(71, 165, 239, 0.16), transparent 30rem),
+    radial-gradient(ellipse at 84% 20%, rgba(183, 234, 72, 0.1), transparent 32rem),
+    radial-gradient(ellipse at 48% 78%, rgba(20, 159, 139, 0.08), transparent 30rem),
+    linear-gradient(180deg, #02060d 0%, #07111d 100%);
+  color: #fff;
+  font-family: var(--font-ui);
+}
+
+.pricing-section::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.32;
+  background:
+    radial-gradient(ellipse at 16% 22%, rgba(71, 165, 239, 0.18), transparent 20rem),
+    radial-gradient(ellipse at 78% 48%, rgba(183, 234, 72, 0.11), transparent 24rem),
+    linear-gradient(126deg, transparent 0 38%, rgba(71, 165, 239, 0.11) 39%, transparent 42%),
+    linear-gradient(28deg, transparent 0 62%, rgba(20, 159, 139, 0.09) 63%, transparent 66%);
+  background-size: auto, auto, 760px 760px, 720px 720px;
+  mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.9), transparent 82%);
+}
+
+.pricing-section.pricing-standalone {
+  min-height: 100vh;
+  padding-top: 2rem;
+  background:
+    radial-gradient(ellipse at 78% 15%, rgba(71, 165, 239, 0.14), transparent 34rem),
+    radial-gradient(ellipse at 18% 28%, rgba(183, 234, 72, 0.09), transparent 32rem),
+    linear-gradient(180deg, #02070d 0%, #07111f 100%);
+}
+
+.pricing-container {
+  max-width: 1100px; /* Thoda tight kiya taake professional lage */
+  margin: 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
+.pricing-back-link {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 2rem;
+  color: #cbd5e1;
+  text-decoration: none;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.65);
+  padding: 0.52rem 0.78rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.pricing-back-link:hover {
+  color: #b7ea48;
+  border-color: rgba(183, 234, 72, 0.35);
+}
+
+/* --- HEADER & TOGGLE --- */
+.pricing-header {
+  text-align: center;
+  margin-bottom: 4rem;
+}
+.section-title {
+  font-size: 2.8rem;
+  font-weight: 800;
+  margin-bottom: 1rem;
+}
+.section-subtitle {
+  color: #8b9bb4;
+  font-size: 1.1rem;
+  max-width: 600px;
+  margin: 0 auto 2rem;
+}
+
+.billing-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+}
+.billing-toggle span {
+  font-weight: 600;
+  color: #8b9bb4;
+  transition: color 0.3s;
+}
+.billing-toggle span.active {
+  color: #fff;
+}
+.discount-badge {
+  background: rgba(46, 204, 113, 0.2);
+  color: #2ecc71;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  margin-left: 8px;
+}
+
+.toggle-switch {
+  width: 60px;
+  height: 32px;
+  background: #334155;
+  border-radius: 30px;
+  position: relative;
+  cursor: pointer;
+  transition: 0.3s;
+}
+.toggle-switch.toggled {
+  background: #3b82f6;
+}
+.switch-handle {
+  width: 24px;
+  height: 24px;
+  background: #fff;
+  border-radius: 50%;
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  transition: 0.3s;
+}
+.toggle-switch.toggled .switch-handle {
+  transform: translateX(28px);
+}
+
+/* --- BUILDER GRID (THE SPLIT LAYOUT) --- */
+.pricing-builder-grid {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr; /* Left side thodi badi, Right side standard */
+  gap: 40px;
+  align-items: start; /* Zaroori hai taake dono columns upar se align hon */
+}
+
+/* --- LEFT PANEL (CONTROLS) --- */
+.builder-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem; /* Panel aur Addons ke darmiyan gap */
+}
+
+.customization-panel {
+  background: #151b2b;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 12px;
+  padding: 2rem;
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.3rem;
+  margin-bottom: 1.5rem;
+}
+
+.customization-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.input-group label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  font-size: 0.95rem;
+}
+.input-group input,
+.input-group select {
+  width: 100%;
+  padding: 14px;
+  background: #1e2536;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 1rem;
+  outline: none;
+  box-sizing: border-box;
+}
+.input-group input:focus,
+.input-group select:focus {
+  border-color: #3b82f6;
+}
+.input-group small {
+  color: #8b9bb4;
+  font-size: 0.8rem;
+}
+
+.archive-group {
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  background: rgba(139, 92, 246, 0.05);
+  padding: 15px;
+  border-radius: 8px;
+}
+
+/* --- ADDONS --- */
+.addons-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.3rem;
+  margin-bottom: 1.5rem;
+}
+.addons-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+.addon-card {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 20px;
+  background: #151b2b;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: 0.3s;
+}
+.addon-card input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+.addon-card.active-blue {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+}
+.addon-card.active-teal {
+  border-color: #10b981;
+  background: rgba(16, 185, 129, 0.1);
+}
+.addon-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.addon-info strong {
+  font-size: 1.1rem;
+  margin-bottom: 4px;
+}
+.addon-info span {
+  font-size: 0.85rem;
+  color: #8b9bb4;
+}
+.addon-price {
+  font-weight: 700;
+  color: white;
+  font-size: 1.1rem;
+}
+.teal-price {
+  color: white;
+}
+
+/* --- RIGHT PANEL (SUMMARY CARD) --- */
+.builder-summary {
+  position: sticky;
+  top: 40px; /* Scroll karne par right card apni jagah lock rahega */
+}
+
+.summary-card {
+  background: linear-gradient(180deg, #151b2b 0%, #0d131f 100%);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 16px;
+  padding: 2.5rem 2rem;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+}
+
+.summary-header h3 {
+  font-size: 1.5rem;
+  margin-bottom: 5px;
+}
+.summary-header p {
+  color: #8b9bb4;
+  font-size: 0.9rem;
+  margin-bottom: 20px;
+}
+
+.summary-price-box {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  margin-bottom: 30px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 20px;
+}
+.summary-price-box .currency {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #8b9bb4;
+  margin-right: 5px;
+}
+.summary-price-box .amount {
+  font-size: 3.5rem;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1;
+}
+.summary-price-box .duration {
+  color: #8b9bb4;
+  font-weight: 500;
+  margin-left: 5px;
+}
+
+.summary-breakdown {
+  margin-bottom: 30px;
+}
+.breakdown-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #fff;
+  font-weight: 600;
+  margin-bottom: 15px;
+}
+.summary-breakdown ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.summary-breakdown li {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.95rem;
+  color: #cbd5e1;
+}
+.free-text {
+  color: #10b981;
+  font-weight: 600;
+}
+.highlight-purple span:first-child {
+  color: #c4b5fd;
+}
+.highlight-blue span:first-child {
+  color: #93c5fd;
+}
+.highlight-teal span:first-child {
+  color: #6ee7b7;
+}
+
+.setup-fee {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  font-size: 0.85rem;
+  color: #10b981;
+  text-align: center;
+  font-weight: 600;
+}
+
+.cta-btn {
+  width: 100%;
+  padding: 18px;
+  border: none;
+  border-radius: 8px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.cta-btn.primary {
+  background: linear-gradient(90deg, #3b82f6 0%, #2ecc71 100%);
+  color: #fff;
+}
+.cta-btn.primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(46, 204, 113, 0.4);
+}
+.cta-btn:disabled {
+  background: #334155;
+  color: #8b9bb4;
+  cursor: not-allowed;
+}
+
+/* --- LIGHT THEME CONTRAST --- */
+[data-theme="light"] .pricing-section {
+  color: #101827;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(71, 165, 239, 0.14), transparent 26rem),
+    radial-gradient(circle at 78% 22%, rgba(183, 234, 72, 0.14), transparent 28rem),
+    linear-gradient(180deg, #f8fbff 0%, #ffffff 48%, #f3f8ff 100%);
+}
+
+[data-theme="light"] .pricing-section::before {
+  opacity: 0.34;
+  background:
+    radial-gradient(ellipse at 16% 22%, rgba(15, 98, 254, 0.16), transparent 20rem),
+    radial-gradient(ellipse at 78% 48%, rgba(118, 169, 0, 0.12), transparent 24rem),
+    linear-gradient(126deg, transparent 0 38%, rgba(15, 98, 254, 0.09) 39%, transparent 42%),
+    linear-gradient(28deg, transparent 0 62%, rgba(20, 159, 139, 0.08) 63%, transparent 66%);
+  background-size: auto, auto, 760px 760px, 720px 720px;
+}
+
+[data-theme="light"] .pricing-section.pricing-standalone {
+  background:
+    radial-gradient(circle at 14% 15%, rgba(71, 165, 239, 0.15), transparent 28rem),
+    radial-gradient(circle at 82% 28%, rgba(183, 234, 72, 0.16), transparent 30rem),
+    linear-gradient(180deg, #f8fbff 0%, #ffffff 54%, #eef6ff 100%);
+}
+
+[data-theme="light"] .pricing-back-link {
+  color: #111827;
+  border-color: #c7d8f5;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+}
+
+[data-theme="light"] .pricing-back-link svg,
+[data-theme="light"] .panel-title svg,
+[data-theme="light"] .addons-title svg,
+[data-theme="light"] .input-group label svg,
+[data-theme="light"] .breakdown-title svg {
+  color: #0b74e5;
+  stroke: #0b74e5;
+}
+
+[data-theme="light"] .pricing-back-link:hover {
+  color: #0b74e5;
+  border-color: #7cb7ff;
+}
+
+[data-theme="light"] .section-title,
+[data-theme="light"] .panel-title,
+[data-theme="light"] .addons-title,
+[data-theme="light"] .summary-header h3,
+[data-theme="light"] .addon-info strong,
+[data-theme="light"] .breakdown-title {
+  color: #0f172a;
+}
+
+[data-theme="light"] .section-subtitle,
+[data-theme="light"] .summary-header p,
+[data-theme="light"] .input-group small,
+[data-theme="light"] .addon-info span,
+[data-theme="light"] .summary-price-box .duration,
+[data-theme="light"] .summary-breakdown li {
+  color: #334155;
+}
+
+[data-theme="light"] .billing-toggle span {
+  color: #526176;
+}
+
+[data-theme="light"] .billing-toggle span.active {
+  color: #0f172a;
+}
+
+[data-theme="light"] .toggle-switch {
+  background: #d7e7fb;
+  border: 1px solid #9fc7f6;
+}
+
+[data-theme="light"] .toggle-switch.toggled {
+  background: #2f80ed;
+}
+
+[data-theme="light"] .customization-panel,
+[data-theme="light"] .summary-card,
+[data-theme="light"] .addon-card {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: #cfddf0;
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.09);
+}
+
+[data-theme="light"] .archive-group {
+  background: #f8fbff;
+  border-color: #b8d0ff;
+}
+
+[data-theme="light"] .input-group label {
+  color: #111827;
+}
+
+[data-theme="light"] .input-group input,
+[data-theme="light"] .input-group select {
+  color: #111827;
+  background: #ffffff;
+  border-color: #a9b8cc;
+}
+
+[data-theme="light"] .input-group input:focus,
+[data-theme="light"] .input-group select:focus {
+  border-color: #0b74e5;
+  box-shadow: 0 0 0 3px rgba(11, 116, 229, 0.12);
+}
+
+[data-theme="light"] .addon-card:hover {
+  border-color: #7cb7ff;
+  transform: translateY(-1px);
+}
+
+[data-theme="light"] .addon-card.active-blue {
+  border-color: #0b74e5;
+  background: #eef6ff;
+}
+
+[data-theme="light"] .addon-card.active-teal {
+  border-color: #0f9f75;
+  background: #ecfdf6;
+}
+
+[data-theme="light"] .addon-price,
+[data-theme="light"] .teal-price,
+[data-theme="light"] .summary-price-box .amount,
+[data-theme="light"] .summary-price-box .currency,
+[data-theme="light"] .summary-breakdown li span:last-child {
+  color: #0f172a;
+}
+
+[data-theme="light"] .summary-price-box,
+[data-theme="light"] .setup-fee {
+  border-color: #d6e1ee;
+}
+
+[data-theme="light"] .free-text,
+[data-theme="light"] .setup-fee {
+  color: #047857;
+}
+
+[data-theme="light"] .cta-btn.primary {
+  background: linear-gradient(90deg, #136ff2 0%, #0f9f75 100%);
+  color: #ffffff;
+  box-shadow: 0 14px 26px rgba(37, 99, 235, 0.22);
+}
+
+/* Match the shared WarSOC primary action treatment in both themes. */
+.pricing-section .cta-btn.primary {
+  background: var(--button-primary-bg, var(--primary-500)) !important;
+  color: #fff !important;
+  border: 1px solid var(--button-primary-bg, var(--primary-500)) !important;
+  transition: all 0.2s ease;
+}
+.pricing-section .cta-btn.primary:hover:not(:disabled) {
+  background: var(--button-primary-hover, var(--primary-600)) !important;
+  color: #fff !important;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--primary-500) 25%, transparent);
+}
+.pricing-section .cta-btn.primary:active:not(:disabled) {
+  background: var(--button-primary-active, var(--primary-700)) !important;
+  color: #fff !important;
+  transform: translateY(0);
+  box-shadow: 0 3px 8px color-mix(in srgb, var(--primary-500) 18%, transparent);
+}
+
+[data-theme="light"] .cta-btn:disabled {
+  background: #d8e2ef;
+  color: #526176;
+}
+
+/* --- MOBILE RESPONSIVENESS --- */
+@media (max-width: 992px) {
+  .pricing-builder-grid {
+    grid-template-columns: 1fr; /* Mobile par upar neeche ho jayega */
+  }
+  .builder-summary {
+    position: relative;
+    top: 0;
+  }
+}
