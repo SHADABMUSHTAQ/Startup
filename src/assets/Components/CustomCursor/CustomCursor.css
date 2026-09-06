@@ -1,0 +1,93 @@
+.custom-cursor-dot,
+.custom-cursor-ring {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 30000;
+  display: block;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate3d(-100px, -100px, 0);
+  will-change: transform, width, height, opacity;
+}
+
+.custom-cursor-dot {
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: #b7ea48;
+  box-shadow: 0 0 0 4px rgba(183, 234, 72, 0.16), 0 0 16px rgba(71, 165, 239, 0.7);
+  transition: transform 0.08s linear, background 0.2s ease, opacity 0.2s ease;
+}
+
+.custom-cursor-ring {
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+  border: 1px solid rgba(106, 213, 255, 0.75);
+  border-radius: 50%;
+  background: rgba(71, 165, 239, 0.04);
+  box-shadow: inset 0 0 12px rgba(71, 165, 239, 0.08), 0 0 18px rgba(71, 165, 239, 0.2);
+  transition: width 0.22s ease, height 0.22s ease, margin 0.22s ease, opacity 0.22s ease, background 0.22s ease, border-color 0.22s ease;
+}
+
+.has-custom-cursor,
+.has-custom-cursor * {
+  cursor: none !important;
+}
+
+.has-custom-cursor .custom-cursor-dot,
+.has-custom-cursor .custom-cursor-ring {
+  opacity: 1;
+}
+
+.custom-cursor-hovering .custom-cursor-dot {
+  background: #47a5ef;
+  transform: translate3d(var(--cursor-x, -100px), var(--cursor-y, -100px), 0) scale(0.65);
+}
+
+.custom-cursor-hovering .custom-cursor-ring {
+  width: 48px;
+  height: 48px;
+  margin: -24px 0 0 -24px;
+  border-color: #47a5ef;
+  background: rgba(71, 165, 239, 0.14);
+  box-shadow: 0 0 24px rgba(71, 165, 239, 0.28);
+}
+
+.custom-cursor-clicked .custom-cursor-ring {
+  animation: custom-cursor-click-pulse 0.42s ease-out;
+}
+
+@keyframes custom-cursor-click-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(183, 234, 72, 0.55); }
+  100% { box-shadow: 0 0 0 16px rgba(183, 234, 72, 0); }
+}
+
+[data-theme="light"] .custom-cursor-dot {
+  background: #0f62fe;
+  box-shadow: 0 0 0 4px rgba(15, 98, 254, 0.14), 0 0 16px rgba(15, 98, 254, 0.34);
+}
+
+[data-theme="light"] .custom-cursor-ring {
+  border-color: rgba(15, 98, 254, 0.65);
+  background: rgba(15, 98, 254, 0.04);
+  box-shadow: inset 0 0 12px rgba(15, 98, 254, 0.06), 0 0 18px rgba(15, 98, 254, 0.16);
+}
+
+[data-theme="light"] .custom-cursor-hovering .custom-cursor-dot {
+  background: #64b800;
+}
+
+[data-theme="light"] .custom-cursor-hovering .custom-cursor-ring {
+  border-color: #0f62fe;
+  background: rgba(15, 98, 254, 0.12);
+}
+
+@media (pointer: coarse), (prefers-reduced-motion: reduce) {
+  .custom-cursor-dot,
+  .custom-cursor-ring {
+    display: none;
+  }
+}

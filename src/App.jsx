@@ -5,6 +5,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
 import ErrorBoundary from './components/ErrorBoundary';
 import SessionLoading from './components/SessionLoading';
+import CustomCursor from './assets/Components/CustomCursor/CustomCursor';
 
 const Home = lazy(() => import('./assets/Pages/Home/Home'));
 const Login = lazy(() => import('./assets/Pages/Login/Login'));
@@ -25,6 +26,7 @@ function App() {
 
     return (
         <ErrorBoundary>
+            <CustomCursor />
             <Router>
                 <Suspense fallback={<SessionLoading />}>
                     <Routes>
