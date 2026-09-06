@@ -112,7 +112,6 @@ const Navbar = () => {
     setIsOpen(false);
     setOpenNavMenu(null);
   };
-  const toggleNavMenu = (menu) => setOpenNavMenu((current) => (current === menu ? null : menu));
   const toggleTheme = () => setTheme((prev) => (prev === "dark" ? "light" : "dark"));
 
   const navigateFromMenu = (path) => {
@@ -228,11 +227,15 @@ const Navbar = () => {
                   Home
                 </HashLink>
               </li>
-              <li>
+              <li
+                className="navbar-menu-item navbar-menu-item-dropdown"
+                onMouseEnter={() => setOpenNavMenu("solutions")}
+                onMouseLeave={() => setOpenNavMenu(null)}
+              >
                 <button
                   type="button"
                   className={`navbar-menu-trigger ${openNavMenu === "solutions" ? "is-open" : ""}`}
-                  onClick={() => toggleNavMenu("solutions")}
+                  onClick={() => setOpenNavMenu(null)}
                   aria-expanded={openNavMenu === "solutions"}
                   aria-haspopup="true"
                 >
@@ -270,11 +273,15 @@ const Navbar = () => {
                   Pricing
                 </HashLink>
               </li>
-              <li>
+              <li
+                className="navbar-menu-item navbar-menu-item-dropdown"
+                onMouseEnter={() => setOpenNavMenu("resources")}
+                onMouseLeave={() => setOpenNavMenu(null)}
+              >
                 <button
                   type="button"
                   className={`navbar-menu-trigger ${openNavMenu === "resources" ? "is-open" : ""}`}
-                  onClick={() => toggleNavMenu("resources")}
+                  onClick={() => setOpenNavMenu(null)}
                   aria-expanded={openNavMenu === "resources"}
                   aria-haspopup="true"
                 >

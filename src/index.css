@@ -61,6 +61,11 @@ html {
   color: var(--text-primary);
 }
 
+[data-theme="light"] ::selection {
+  background-color: #b7ea48;
+  color: #0f172a;
+}
+
 #root {
   width: 100%;
   overflow-x: hidden;
