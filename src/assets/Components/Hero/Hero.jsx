@@ -1,6 +1,6 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { ShieldCheck, ArrowRight, PlayCircle } from "lucide-react";
+import { ShieldCheck, ArrowRight } from "lucide-react";
 import SocDashboard from "./SocDashboard";
 import "./Hero.css";
 
@@ -22,12 +22,6 @@ function Hero() {
             <span className="badge-text">Stay secure. Stay compliant.</span>
           </div> */}
 
-          <div className="hero-announcement">
-            <span className="hero-announcement-label">LIVE</span>
-            <span>WarSOC Cloud SIEM is monitoring your frontier</span>
-            <ArrowRight size={14} aria-hidden="true" />
-          </div>
-
           <h1>
             See the threat.
             <br />
@@ -42,10 +36,6 @@ function Hero() {
           <div className="hero-buttons">
             <button className="btn-primary" onClick={() => navigate("/login")}>
               Get Started <ArrowRight size={18} />
-            </button>
-            
-            <button className="btn-secondary" onClick={() => navigate("/#features")}>
-              <PlayCircle size={18} /> Explore capabilities
             </button>
           </div>
 
