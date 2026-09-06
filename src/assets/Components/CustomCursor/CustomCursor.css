@@ -43,6 +43,11 @@
   opacity: 1;
 }
 
+.custom-cursor-outside .custom-cursor-dot,
+.custom-cursor-outside .custom-cursor-ring {
+  opacity: 0 !important;
+}
+
 .custom-cursor-hovering .custom-cursor-dot {
   background: #47a5ef;
 }

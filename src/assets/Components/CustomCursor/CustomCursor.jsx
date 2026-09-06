@@ -41,6 +41,10 @@ export default function CustomCursor() {
       document.documentElement.classList.toggle("custom-cursor-hovering", Boolean(target));
     };
 
+    const updateViewportState = (event) => {
+      document.documentElement.classList.toggle("custom-cursor-outside", !event.relatedTarget);
+    };
+
     const pulse = () => {
       document.documentElement.classList.remove("custom-cursor-clicked");
       window.requestAnimationFrame(() => document.documentElement.classList.add("custom-cursor-clicked"));
@@ -51,6 +55,8 @@ export default function CustomCursor() {
     window.addEventListener("pointermove", moveCursor, { passive: true });
     window.addEventListener("pointerover", updateHoverState, { passive: true });
     window.addEventListener("pointerout", updateHoverState, { passive: true });
+    window.addEventListener("pointerover", updateViewportState, { passive: true });
+    window.addEventListener("pointerout", updateViewportState, { passive: true });
     window.addEventListener("pointerdown", pulse, { passive: true });
     window.addEventListener("animationend", clearPulse);
     finePointer.addEventListener("change", updateAvailability);
@@ -60,11 +66,13 @@ export default function CustomCursor() {
       window.removeEventListener("pointermove", moveCursor);
       window.removeEventListener("pointerover", updateHoverState);
       window.removeEventListener("pointerout", updateHoverState);
+      window.removeEventListener("pointerover", updateViewportState);
+      window.removeEventListener("pointerout", updateViewportState);
       window.removeEventListener("pointerdown", pulse);
       window.removeEventListener("animationend", clearPulse);
       finePointer.removeEventListener("change", updateAvailability);
       reducedMotion.removeEventListener("change", updateAvailability);
-      document.documentElement.classList.remove("has-custom-cursor", "custom-cursor-hovering", "custom-cursor-clicked");
+      document.documentElement.classList.remove("has-custom-cursor", "custom-cursor-hovering", "custom-cursor-clicked", "custom-cursor-outside");
       if (frameRef.current) window.cancelAnimationFrame(frameRef.current);
     };
   }, []);
