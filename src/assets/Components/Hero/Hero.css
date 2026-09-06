@@ -619,14 +619,15 @@
 /* --- FULL-BLEED COMMAND CENTER HERO --- */
 .hero-wrapper {
   min-height: 850px;
-  padding: 10.5rem clamp(1.5rem, 7vw, 7rem) 5rem;
+  padding: 10.5rem clamp(1.25rem, 3vw, 4rem) 5rem;
   overflow: hidden;
 }
 
 .hero-container {
   position: relative;
   display: block;
-  max-width: 1360px;
+  width: 100%;
+  max-width: none;
   min-height: 600px;
   margin: 0 auto;
 }
@@ -634,13 +635,13 @@
 .hero-text {
   position: relative;
   z-index: 4;
-  width: min(100%, 920px);
-  max-width: 920px;
+  width: min(100%, 1080px);
+  max-width: 1080px;
 }
 
 .hero-text h1 {
-  max-width: 920px;
-  font-size: clamp(3.5rem, 7.1vw, 7rem);
+  max-width: 1080px;
+  font-size: clamp(3.5rem, 7.5vw, 8rem);
   line-height: 0.94;
   letter-spacing: -0.065em;
   text-wrap: balance;
@@ -662,11 +663,11 @@
   position: absolute;
   z-index: 1;
   top: 50%;
-  right: -8%;
-  width: min(68vw, 790px);
+  right: -3%;
+  width: min(66vw, 850px);
   min-width: 0;
   margin: 0;
-  opacity: 0.94;
+  opacity: 1;
   pointer-events: none;
   transform: translateY(-50%);
   animation: hero-background-reveal 1s 0.15s ease-out both;
@@ -684,18 +685,16 @@
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(90deg, #07111f 0%, rgba(7, 17, 31, 0.9) 13%, rgba(7, 17, 31, 0.42) 34%, transparent 61%),
-    linear-gradient(180deg, transparent 58%, #07111f 100%);
+    linear-gradient(90deg, #07111f 0%, rgba(7, 17, 31, 0.82) 12%, rgba(7, 17, 31, 0.25) 28%, transparent 43%);
 }
 
 [data-theme="light"] .hero-visual::after {
   background:
-    linear-gradient(90deg, #f8fbff 0%, rgba(248, 251, 255, 0.9) 13%, rgba(248, 251, 255, 0.38) 34%, transparent 61%),
-    linear-gradient(180deg, transparent 58%, #f8fbff 100%);
+    linear-gradient(90deg, #f8fbff 0%, rgba(248, 251, 255, 0.78) 12%, rgba(248, 251, 255, 0.2) 28%, transparent 43%);
 }
 
 [data-theme="light"] .hero-visual {
-  opacity: 0.98;
+  opacity: 1;
 }
 
 @keyframes hero-background-reveal {
