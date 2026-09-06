@@ -208,11 +208,14 @@ Exit gate:
 
 ### Phase D - Days 15-35: custody and legal hold
 
-**Implementation delta (2026-09-06):** Source exit gates are implemented and
-focused tests pass. Legal holds now protect Mongo and matching Azure JSON/SHA
-objects, release is fail-closed, custody tampering blocks closure, and the
-dangerous direct vault-pruner delete path is disabled. Production worker and
-harmless Azure lifecycle evidence remain the deployment gate.
+**Implementation delta (2026-09-06):** The source and production exit gates for
+cases, custody, legal holds, and signed exports are complete. Legal holds protect
+Mongo and matching Azure JSON/SHA objects, release is fail-closed, custody
+tampering blocks closure, and the dangerous direct vault-pruner delete path is
+disabled. Production run `EVIDENCE-ACCEPTANCE-20260906T043509Z-c9b91a9d`
+proved the authenticated lifecycle on OCI with isolated synthetic data and
+removed its test artifacts. Historical archive retrieval remains a separate
+disabled capability.
 
 Target collections:
 

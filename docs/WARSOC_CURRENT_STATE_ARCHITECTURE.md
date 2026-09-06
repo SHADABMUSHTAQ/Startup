@@ -395,9 +395,11 @@ historical evidence.
    heartbeat. It preserves the bounded spool, XML parser guard and POS source
    contract. The local installer and manifest are built, but the installer is
    unsigned and not yet on the public Azure artifact path.
-5. **Production:** the pre-candidate backend `d92fb65` reports healthy Mongo and
-   Redis dependencies and the expected containers. Optional network relay,
-   Wazuh, evidence export, daily anchor and FBR reconciliation remain disabled.
+5. **Production at that checkpoint:** the pre-candidate backend `d92fb65`
+   reported healthy Mongo and Redis dependencies and the expected containers.
+   Optional network relay, Wazuh, evidence export, daily anchor and FBR
+   reconciliation were disabled. Section 1.17 records the later evidence-export
+   production acceptance.
 6. **Azure:** the deployed private evidence account uses a historical fallback
    container declared at 2,190 immutable days. Candidate code selects the
    duration-aware general-retention route for new FBR and PECA evidence from
@@ -585,6 +587,29 @@ and security gate is still pending, so this is not deployed, enabled or a
 customer capability claim. The detailed contract is
 `docs/WARSOC_SECURITY_STORIES_V1.md`.
 
+### 1.17 September 6 evidence-governance production acceptance
+
+Evidence Cases, hash-linked custody, Legal Holds, and signed evidence-package
+exports are production accepted for executable backend revision `9974df6` on
+OCI. The matching frontend revision is `e7c5aa0` on `origin/main`. Production
+run `EVIDENCE-ACCEPTANCE-20260906T043509Z-c9b91a9d` used isolated synthetic
+tenants and evidence to prove role enforcement, tenant isolation, case and
+custody lifecycle, fail-closed legal-hold reconciliation, and the asynchronous
+Azure export/download/offline-verification path.
+
+Acceptance found and corrected one deployment defect: the non-root export
+worker could not use a root-owned `/tmp` tmpfs. The production Compose contract
+now assigns the bounded tmpfs to UID/GID 1000, and worker exceptions are logged.
+After redeployment, the API, unified worker, archiver, evidence-export worker,
+and evidence-hold worker all reported running, zero restarts, exact revision
+identity, healthy dependencies, and no critical errors in the final observation
+window. Synthetic MongoDB and Azure acceptance artifacts were removed.
+
+This is a scoped acceptance, not whole-platform `BACKEND_ACCEPTED`. Historical
+archive retrieval remains disabled, cold evidence is not silently attached to a
+case, and daily anchoring, backup recovery, Security Stories, broad Wazuh
+promotion, and future FBR connectors keep their independent gates.
+
 ## 2. Product Boundary
 
 ### 2.1 What WarSOC currently provides
@@ -601,6 +626,8 @@ customer capability claim. The detailed contract is
 - Tenant isolation and role-based access.
 - Seven-day Mongo hot storage for operational SIEM, FBR, and PECA data.
 - Immutable Azure archive storage with hashes and an archive ledger.
+- Tenant-scoped evidence cases, hash-linked custody, legal holds, and signed
+  evidence-package exports through an isolated worker and private Azure storage.
 - Hot compliance/search/export paths plus archive availability metadata; historical blob retrieval is implemented but disabled pending Azure and UI acceptance.
 - Email queue processing for configured operational messages and high/critical alert notifications.
 - Manual B2B sales, manual payment/invoicing, and administrative tenant provisioning.
@@ -1465,7 +1492,7 @@ For the selected clean production launch, legacy pilot archives are not attached
 | Retention status | `GET /api/v1/compliance/retention/status` | Admin/auditor tenant entitlement, hot window, FBR/PECA tenant-retention model, active-hold count, and observed archive-ledger availability. It exposes no Azure object paths or credentials. |
 | Evidence cases and custody | `GET|POST /api/v1/compliance/cases` and case subroutes | Admin/auditor case records, evidence references and custody verification. Case closure requires an Admin `VERIFY` action with a recorded reason. |
 | Legal holds | `GET|POST /api/v1/compliance/holds` and `POST /holds/{hold_id}/release` | Admin applies/releases tenant, collection or event holds; Auditor receives read-only access. |
-| Evidence package exports | Case `/exports` subroutes | Implemented but hidden by default until both frontend and backend export flags and the isolated worker/storage configuration are accepted. |
+| Evidence package exports | Case `/exports` subroutes | Enabled for accepted case exports through the isolated worker and private Azure container. Historical cold evidence still requires the separate disabled retrieval workflow. |
 
 The Agent Feed and Live Inspection must not use the same dataset. Normal endpoint evidence belongs in the feed; actionable detections belong in incidents. Historical search rows are explicitly typed and cannot expose acknowledgement, closure, or block actions.
 
@@ -1750,10 +1777,10 @@ Status meanings:
 
 | Component | Responsibility and data path | Status | Current production truth |
 |---|---|---|---|
-| DNS and TLS | `warsoc.tech` to Vercel; `api.warsoc.tech` to DigitalOcean/Nginx | PROVEN | DNS separation, HTTPS certificates, HSTS and certificate validity passed preflight `83aa506f9e`. |
-| Vercel frontend | Browser UI, auth hydration, dashboard, endpoint fleet, compliance and team workflows | PUSHED CANDIDATE / DEPLOYMENT ACCEPTANCE PENDING | Frontend `6ffc9e0` is pushed to `origin/main` and passes lint/build/local rendering. Its successful-only historical mode and route splitting require Vercel deployment-identity plus authenticated 24-hour/seven-day browser acceptance. The last recorded production-accepted frontend is `6f0cc5a`. |
+| DNS and TLS | `warsoc.tech` to Vercel; `api.warsoc.tech` to OCI/Nginx | PROVEN | DNS separation, HTTPS certificates, HSTS and certificate validity passed OCI production acceptance. |
+| Vercel frontend | Browser UI, auth hydration, dashboard, endpoint fleet, compliance and team workflows | PROVEN for evidence-governance bundle | Frontend `e7c5aa0` from `origin/main` is live. Its production bundle points to `https://api.warsoc.tech/api/v1` and contains Evidence Cases, Legal Holds, Firewall Relays, and evidence-export support. |
 | Nginx gateway | TLS termination, security headers and reverse proxy | PROVEN with observation | Public headers/CORS/private-port checks pass. Real ingest returns 200. Some request bodies are buffered to temporary files; disk impact needs pilot measurement. |
-| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | PUSHED CANDIDATE / DEPLOYMENT ACCEPTANCE PENDING | Backend `d92fb65` is pushed to `origin/backend`; its indexed hot-search correction and focused active-scope contracts pass. The last recorded production-accepted backend is `7e81a9d`. Recreate from `d92fb65`, verify health/worker identity, then repeat authenticated hot-search latency before promotion. |
+| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | PROVEN for revision `9974df6` | OCI runs `/opt/warsoc/releases/9974df6`; public health is green and the relevant API/workers report the exact revision with zero restarts. Evidence governance has a named authenticated production acceptance; unrelated routes keep their own gates. |
 | Authentication/session | Login, HttpOnly access cookie, CSRF double-submit and `/auth/me` | PROVEN | Existing tenant login, auth context and profile returned 200. Public signup returned 403. |
 | Manual sales flow | Quote/contact to operator follow-up; no automatic payment | PROVEN | Quote and contact requests returned 200; legacy payment webhook returned 404. No Safepay dependency is required. |
 | Tenant provisioning | Super-admin creates tenant, admin, packs and seat limit | PROVEN | Disposable production tenant provisioning and login passed in run `b87116c8af`. |
@@ -1787,9 +1814,9 @@ Status meanings:
 | Independent Mongo backup | Operational disaster recovery separate from evidence archive | CANDIDATE-PROVEN | Drill `20260721T200605Z-7541a279` verified SHA-256, decrypted a production-format archive, and restored 156,671 documents across 18 collections with zero failures into a network-disabled disposable MongoDB. The restore drill is now tracked and uses a temporary disk-backed Docker volume instead of a 2 GiB RAM-backed filesystem; the volume is deleted after the drill. Repeat with the final Azure-hosted production backup during cutover. |
 | Endpoint event authenticity | Per-event Ed25519 signature tied to the enrolled agent key before Redis admission | REQUIRED / DEPLOYED | Agent/API tests and exact-machine flow pass with 7,191 verified and zero rejected signatures. Accepted-event signature readiness is exposed per endpoint and gates health/coverage. The deployment operator set `AGENT_EVENT_SIGNATURE_MODE=required`; fresh signed-agent metrics remain the runtime watch. |
 | Physical retention classes | Match actual Azure lock duration to tenant and general retention terms | CODE COMPLETE / CLOUD PENDING | Routing and readback support duration-aware SIEM/general containers. New FBR and PECA evidence use the general tenant-duration route. Existing blobs and legacy FBR/PECA records remain under their original model. |
-| Evidence cases and custody | Reference original evidence and record hash-linked custody transitions | SOURCE-PROVEN / DEPLOYMENT PENDING | UI and API support tenant-scoped hot-evidence attachment and VIEW/VERIFY/TRANSFER actions. Empty or tampered cases cannot close; closure records the verified chain head. Cold evidence requires the isolated retrieval flow first. |
-| Legal holds | Prevent eligible hot and archived evidence from deletion | SOURCE-PROVEN / DEPLOYMENT PENDING | Event targets are validated. `ACTIVE` and `PENDING_RELEASE` block Mongo deletion. The dedicated worker applies/verifies Azure holds on JSON/SHA objects and preserves pre-existing or concurrent holds. Release is final only after archive reconciliation and audit commit. |
-| Evidence package export | Build signed packages outside the API and deliver directly from Azure | LIVE-AZURE PROVEN / DEPLOYMENT PENDING | A synthetic acceptance proved private upload, SHA readback, scoped SAS download, offline RSA-PSS verification, expiry, and blob deletion in `warsoc-evidence-exports`. The bounded leased worker and UI request/poll/download flow are implemented. Deployed authenticated browser proof remains open. |
+| Evidence cases and custody | Reference original evidence and record hash-linked custody transitions | PROVEN | Production run `EVIDENCE-ACCEPTANCE-20260906T043509Z-c9b91a9d` proved tenant-scoped hot-evidence attachment, cross-tenant denial, custody verification, closure RBAC, and tamper-safe chain requirements. Cold evidence requires the isolated retrieval flow first. |
+| Legal holds | Prevent eligible hot and archived evidence from deletion | PROVEN | The same production run proved admin/auditor RBAC, apply/reconcile/release, hot-deletion blocking, and audited fail-closed release through the deployed hold worker. |
+| Evidence package export | Build signed packages outside the API and deliver directly from Azure | PROVEN | The deployed non-root worker produced a private Azure package, verified SHA-256, issued a short-lived read-only SAS, and passed offline RSA-PSS verification. The acceptance package was removed after validation. |
 | Daily external evidence root | Anchor daily evidence-chain commitments outside Mongo | CODE COMPLETE / DISABLED | Deterministic hash-only Azure anchor and WORM verification are implemented. Private locked container and live outage/retry proof remain open. |
 | FBR multi-source reconciliation | Compare POS, DB and external observations without inventing success | CONTRACT/LAB ONLY / DISABLED | Deterministic raw hashes, semantic fingerprints and non-green missing/replay outcomes are implemented. Real DB and licensed-integrator connectors remain unbuilt. |
 | Installer code signing | Publisher reputation and Defender trust | PARTIAL | Exact hash allowlisting supports the pilot while Defender stays enabled; the binary remains unsigned. |

@@ -1,11 +1,13 @@
 # WarSOC Backend Evidence Program Implementation Ledger
 
 **Date:** 2026-09-06 (updated from the 2026-08-20 implementation close)
-**State:** EVIDENCE GOVERNANCE SOURCE ACCEPTED / AZURE EXPORT STORAGE PREPARED / DEPLOYMENT PENDING
+**State:** EVIDENCE CASES / LEGAL HOLDS / SIGNED EXPORTS PRODUCTION ACCEPTED
 **Scope:** Current backend evidence trust, retention, custody, privacy, export,
-authorization, and synthetic FBR reconciliation contracts. This document does
-not approve production deployment, live Azure configuration, Wazuh promotion,
-network-relay launch, a frontend release, or a customer compliance claim.
+authorization, and synthetic FBR reconciliation contracts. The production
+acceptance in this document is limited to evidence cases, custody, legal holds,
+and signed evidence-package exports. It does not approve historical archive
+retrieval, daily anchoring, FBR reconciliation, Wazuh promotion, network-relay
+scope, or a customer compliance claim.
 
 ## 1. Governing Boundary
 
@@ -216,16 +218,13 @@ before any disabled capability is enabled.
 - synthetic FBR reconciliation outcomes;
 - route inventory and authorization-policy agreement.
 
-### Still requires external or production proof
+### Still requires separate proof
 
-- live Azure WORM/anchor/retrieval validation;
-- deployed export worker plus authenticated request/download/invalidation proof;
-- production deployment and revision identity;
+- live Azure daily-anchor and historical-retrieval validation;
 - 4.2.9 Authenticode/CDN/installation acceptance (local build and manifest are complete);
 - historical SIEM privacy migration decision;
 - real POS DB and licensed-integrator connectors;
 - frontend support for historical retrieval states;
-- network relay or Wazuh production enablement;
 - destructive backup/restore and failover acceptance on the final host.
 
 ## 12. Final Local Validation
@@ -250,9 +249,9 @@ The skipped test is the explicitly opt-in destructive grand E2E boundary in
 `tests/test_grand_master_e2e.py`; it requires `E2E=1`. Warnings are FastAPI
 ORJSON and test-only `datetime.utcnow()` deprecations, not failed assertions.
 
-This result accepts the source regression boundary. It does not grant
-`BACKEND_ACCEPTED` for production because live Azure, deployment identity,
-destructive external acceptance, and the disabled-capability gates remain open.
+This result accepted the source regression boundary only. The scoped production
+acceptance below does not grant whole-platform `BACKEND_ACCEPTED`; destructive
+backup/recovery, disabled capabilities, and unrelated external gates remain open.
 
 ### 2026-09-06 evidence-governance delta
 
@@ -271,3 +270,33 @@ Bandit high-severity findings: 0
 pip-audit: no known vulnerabilities
 pip check and git diff --check: pass
 ```
+
+### 2026-09-06 production acceptance
+
+Executable backend revision `9974df6` is active on OCI at
+`/opt/warsoc/releases/9974df6`. The API, unified worker, archiver,
+evidence-export worker, and evidence-hold worker all reported `running`, zero
+restarts, and the exact revision label. Public health reported healthy MongoDB
+and Redis dependencies; the API, export worker, and hold worker had no matching
+critical errors in the final observation window.
+
+Production acceptance run
+`EVIDENCE-ACCEPTANCE-20260906T043509Z-c9b91a9d` passed with isolated synthetic
+data. It proved authenticated admin/auditor behavior, second-tenant isolation,
+case creation and attachment, custody-chain verification, closure RBAC, legal
+hold apply/reconcile/release, hot-evidence retention blocking, asynchronous
+export, private Azure upload, SHA-256 readback, short-lived read-only SAS
+download, and offline RSA-PSS package verification. The run removed its MongoDB
+and Azure test artifacts; the final residual synthetic-user count was zero.
+
+The production defect found during acceptance was a non-root export worker that
+could not write to a root-owned `/tmp` tmpfs. Revision `9974df6` assigns that
+bounded tmpfs to UID/GID 1000 and adds worker exception logging. The focused
+deployment contract passed after the correction, and a direct runtime write
+probe plus the complete production workflow both passed.
+
+The frontend `e7c5aa0` is live from `origin/main`; its production build points to
+`https://api.warsoc.tech/api/v1`, exposes Evidence Cases and Legal Holds, and
+enables evidence export. The production workflow was exercised through the
+public authenticated API. A human browser click-through is useful UX evidence,
+but it is not an open backend correctness gate.

@@ -1,11 +1,11 @@
 # WarSOC Current Implementation and Future Scope Register
 
 **Document role:** Consolidated source-of-truth index
-**Snapshot date:** 2026-08-13
+**Snapshot date:** 2026-09-06
 **Windows Server engineering delta:** 2026-09-03
 **Evidence governance delta:** 2026-09-06
 **Audience:** WarSOC engineering, operations, security review, and product leadership
-**Applies to:** The backend working tree, the published Windows agent boundary, the disabled network-relay candidate, and the disabled Wazuh detection candidate
+**Applies to:** The backend and frontend release state, the published Windows agent boundary, the entitled network relay, and the controlled Wazuh shadow boundary
 
 This register answers two questions:
 
@@ -20,6 +20,7 @@ implementation contracts remain in the documents listed in Section 16.
 | Status | Meaning |
 |---|---|
 | `ACTIVE` | Part of the current customer data path when the corresponding entitlement is enabled. |
+| `PRODUCTION-ACCEPTED` | The exact deployed revision and a named production workflow acceptance artifact have passed for the stated scope. |
 | `SOURCE-PROVEN` | Implemented and covered by maintained local tests, but the exact current release has not been accepted in production. |
 | `HISTORICALLY-PROVEN` | Previously exercised in production or on a real endpoint; a later source change still needs release-parity proof. |
 | `IMPLEMENTED-DISABLED` | Code, configuration, and tests exist, but a feature flag/profile keeps the capability outside the customer product. |
@@ -32,17 +33,19 @@ implementation contracts remain in the documents listed in Section 16.
 
 At this snapshot:
 
-- The authoritative backend branch is `backend` at pushed commit `7e81a9d`.
-- The authoritative frontend branch is `main` at pushed commit `6f0cc5a`.
-- The deployment operator pulled the backend commit, synchronized the required
-  non-secret production flags, rebuilt the API/worker/cron/archiver services,
-  and reported healthy containers with no matching error logs.
-- The deployed frontend bundle contains the bounded compliance summary and
-  explicit evidence-detail workflow from `6f0cc5a`.
+- The deployed executable backend revision is `9974df6` from authoritative
+  branch `backend`; later documentation-only commits do not change that runtime identity.
+- The authoritative frontend branch is `main` at deployed commit `e7c5aa0`.
+- OCI runs the exact backend release from `/opt/warsoc/releases/9974df6`.
+  The API, unified worker, archiver, evidence-export worker, and evidence-hold
+  worker are running with zero restarts and matching image revision labels.
+- The deployed frontend bundle contains Evidence Cases, Legal Holds, Firewall
+  Relays, and the evidence-export workflow and points to the production API.
 - Production preflight `83aa506f9e` passed DNS, TLS, frontend assets and API
   binding, backend dependency health, CORS, security headers, blocked public
   docs/private ports, and the exact public Azure installer hash.
-- Wazuh and firewall-relay production profiles remain deliberately disabled.
+- The pfSense relay backend is enabled behind fail-closed tenant entitlement.
+  Wazuh remains an internal controlled shadow; WarSOC stays authoritative.
 
 Release identity is recorded for this deployment. Docker image digests,
 sanitized configuration fingerprint, database/index migration state, and
@@ -214,10 +217,10 @@ POS schemas or safely read arbitrary production databases.
 
 | Component | Current state | Boundary / limitation | Next gate |
 |---|---|---|---|
-| Evidence cases | `SOURCE-PROVEN` | Admin/auditor can create a tenant-scoped case and attach exact hot evidence by event UID or document ID. Archived evidence is never silently substituted. | Deploy and run one authenticated case lifecycle. |
-| Custody and closure | `SOURCE-PROVEN` | Hash-linked, recovery-safe VIEW/VERIFY/TRANSFER/EXPORT transitions are verified before closure. Empty cases or broken chains cannot close; only admin can close. | Preserve the deployed custody verification artifact. |
-| Legal holds | `SOURCE-PROVEN` | Admin-only tenant/collection/event holds block hot deletion. Event targets must exist. Azure JSON/SHA objects are held by a dedicated worker; release remains fail-closed until reconciliation and audit commit. | Live harmless Azure apply/release proof on the deployed worker. |
-| Evidence packages | `SOURCE-PROVEN`; live Azure lifecycle passed | A synthetic acceptance proved private upload, SHA readback, scoped SAS download, offline RSA-PSS verification, expiry and object deletion. Cold items still return `REQUIRES_ARCHIVE_RETRIEVAL`. | Deploy worker and prove the authenticated production browser lifecycle. |
+| Evidence cases | `PRODUCTION-ACCEPTED` | Admin/auditor can create a tenant-scoped case and attach exact hot evidence by event UID or document ID. Archived evidence is never silently substituted. | Preserve run `EVIDENCE-ACCEPTANCE-20260906T043509Z-c9b91a9d` with the release record. |
+| Custody and closure | `PRODUCTION-ACCEPTED` | Hash-linked, recovery-safe VIEW/VERIFY/TRANSFER/EXPORT transitions are verified before closure. Empty cases or broken chains cannot close; only admin can close. | Human browser click-through remains UX evidence, not a backend gate. |
+| Legal holds | `PRODUCTION-ACCEPTED` | Admin-only tenant/collection/event holds block hot deletion. Event targets must exist. The dedicated worker reconciles Azure JSON/SHA holds; release remains fail-closed until reconciliation and audit commit. | Continue monitoring worker restarts and failed reconciliations. |
+| Evidence packages | `PRODUCTION-ACCEPTED` | The deployed isolated worker produced a private Azure package, SHA readback, scoped read-only SAS download, and offline RSA-PSS verification. Cold items still return `REQUIRES_ARCHIVE_RETRIEVAL`. | Historical cold-item retrieval remains a separate disabled workflow. |
 
 Direct deletion through `scripts/vault_pruner.py --confirm` is disabled. Retained
 evidence must leave Mongo only through the archive-before-delete transaction.
