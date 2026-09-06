@@ -396,6 +396,27 @@
   z-index: 3;
 }
 
+/* Keep the password control independent from shared dashboard form/button rules. */
+.split-login-container .input-group:has(.password-visibility-btn) {
+  position: relative !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  width: 100% !important;
+  min-height: 54px !important;
+  margin: 0 !important;
+}
+
+.split-login-container .password-visibility-btn {
+  top: 50% !important;
+  right: 12px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  min-width: 34px !important;
+  min-height: 34px !important;
+  transform: translateY(-50%) !important;
+}
+
 .password-visibility-btn::after {
   display: none;
 }

@@ -1854,7 +1854,12 @@ select.global-search option {
 .network-tab-wrapper,
 .compliance-tab-wrapper,
 .team-tab-wrapper {
-  animation: fadeUp 0.35s ease-out;
+  animation: fadeInMain 0.35s ease-out;
+}
+
+/* A transform on an ancestor traps fixed dialogs inside the content panel. */
+.team-tab-wrapper {
+  transform: none !important;
 }
 
 .modal-overlay {
