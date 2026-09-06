@@ -65,7 +65,7 @@
 /* --- SCROLLED STATE (The Floating Pill) --- */
 .navbar-custom.scrolled {
   top: 20px; 
-  max-width: 1000px; 
+  max-width: 1180px; 
   height: 70px;
   border-radius: 50px; 
   background-color: var(--nav-bg-glass);
@@ -77,7 +77,7 @@
 
 /* Scrolled Container Padding */
 .navbar-custom.scrolled .navbar-container {
-  padding: 0 40px; 
+  padding: 0 48px; 
 }
 
 /* --- LOGO SIZING --- */
@@ -171,6 +171,18 @@
 
 .navbar-custom.scrolled .navbar-wordmark {
   font-size: 25px;
+}
+
+.navbar-custom.scrolled .navbar-right-content {
+  gap: 48px;
+}
+
+.navbar-custom.scrolled .navbar-menu-links {
+  gap: 36px;
+}
+
+.navbar-custom.scrolled .navbar-desktop-auth {
+  gap: 22px;
 }
 
 /* --- RIGHT SIDE WRAPPER --- */
@@ -280,6 +292,8 @@
 }
 
 .navbar-menu-trigger svg {
+  color: currentColor !important;
+  stroke: currentColor !important;
   transition: transform 0.25s ease;
 }
 
@@ -416,6 +430,67 @@
 .navbar-resources-dropdown a {
   min-height: 38px;
   font-size: 0.78rem;
+}
+
+/* The home page has broad light-theme typography rules. Keep the navigation
+   surface and its dropdown content intentionally scoped and readable. */
+[data-theme="light"] .home-page .navbar-menu-trigger {
+  color: #475569 !important;
+}
+
+[data-theme="light"] .home-page .navbar-menu-trigger:hover,
+[data-theme="light"] .home-page .navbar-menu-trigger.is-open {
+  color: #0f62fe !important;
+}
+
+[data-theme="light"] .home-page .navbar-menu-trigger svg,
+[data-theme="light"] .home-page .navbar-menu-trigger:hover svg,
+[data-theme="light"] .home-page .navbar-menu-trigger.is-open svg {
+  color: currentColor !important;
+  stroke: currentColor !important;
+}
+
+[data-theme="light"] .home-page .navbar-nav-dropdown {
+  border-color: #cbdcf2;
+  background: #ffffff;
+  box-shadow: 0 24px 55px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(15, 98, 254, 0.05);
+}
+
+[data-theme="light"] .home-page .navbar-dropdown-feature {
+  background: linear-gradient(145deg, #eef7ff, #f4fbe9);
+}
+
+[data-theme="light"] .home-page .navbar-dropdown-feature .navbar-dropdown-kicker {
+  color: #4d8f00 !important;
+}
+
+[data-theme="light"] .home-page .navbar-dropdown-feature strong {
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .home-page .navbar-dropdown-feature p,
+[data-theme="light"] .home-page .navbar-dropdown-links small {
+  color: #475569 !important;
+}
+
+[data-theme="light"] .home-page .navbar-dropdown-links a,
+[data-theme="light"] .home-page .navbar-resources-dropdown a {
+  color: #334155 !important;
+}
+
+[data-theme="light"] .home-page .navbar-dropdown-links a:hover,
+[data-theme="light"] .home-page .navbar-resources-dropdown a:hover {
+  color: #0f62fe !important;
+  background: #eef6ff;
+}
+
+[data-theme="light"] .home-page .navbar-dropdown-links strong {
+  color: inherit !important;
+}
+
+[data-theme="light"] .home-page .navbar-dropdown-links a > svg {
+  color: #0b74e5 !important;
+  stroke: currentColor !important;
 }
 
 /* --- DESKTOP LOGIN BUTTON --- */
@@ -881,6 +956,16 @@
   .navbar-custom.scrolled {
     max-width: 95%; 
     border-radius: 20px;
+  }
+
+  .navbar-custom.scrolled .navbar-container {
+    padding: 0 2rem;
+  }
+
+  .navbar-custom.scrolled .navbar-right-content,
+  .navbar-custom.scrolled .navbar-menu-links,
+  .navbar-custom.scrolled .navbar-desktop-auth {
+    gap: 30px;
   }
 
   .navbar-mobile-overlay {
