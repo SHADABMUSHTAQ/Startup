@@ -46,6 +46,7 @@
 
 .pricing-back-link {
   width: fit-content;
+  min-height: 34px;
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
@@ -55,7 +56,7 @@
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 7px;
   background: rgba(15, 23, 42, 0.65);
-  padding: 0.52rem 0.78rem;
+  padding: 0.45rem 0.7rem;
   font-size: 0.85rem;
   font-weight: 700;
 }
@@ -421,9 +422,9 @@
 }
 
 [data-theme="light"] .pricing-back-link {
-  color: #111827;
-  border-color: #c7d8f5;
-  background: rgba(255, 255, 255, 0.92);
+  color: #0f172a !important;
+  border-color: #9db8dc !important;
+  background: rgba(255, 255, 255, 0.96) !important;
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
 }
 
@@ -437,8 +438,22 @@
 }
 
 [data-theme="light"] .pricing-back-link:hover {
-  color: #0b74e5;
-  border-color: #7cb7ff;
+  color: #ffffff !important;
+  border-color: #0b74e5 !important;
+  background: #0b74e5 !important;
+  box-shadow: 0 10px 22px rgba(11, 116, 229, 0.24) !important;
+  transform: translateY(-1px);
+}
+
+[data-theme="light"] .pricing-back-link:hover svg,
+[data-theme="light"] .pricing-back-link:focus-visible svg {
+  color: currentColor !important;
+  stroke: currentColor !important;
+}
+
+[data-theme="light"] .pricing-back-link:focus-visible {
+  outline: 3px solid rgba(11, 116, 229, 0.24);
+  outline-offset: 2px;
 }
 
 [data-theme="light"] .section-title,
