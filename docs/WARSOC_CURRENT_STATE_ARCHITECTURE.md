@@ -1964,6 +1964,7 @@ Do not declare the current release fully accepted until all of the following are
 | FBR/PECA Phase 0 legal, evidence, claim and API truth map | `docs/WARSOC_FBR_PECA_PHASE_0_TRUTH_MAP.md` |
 | P0 source isolation, canonical evidence, outbox and FBR-retention closure | `docs/WARSOC_P0_EVIDENCE_INTEGRITY_CLOSURE_2026-08-20.md` |
 | Current backend evidence-program implementation and open gates | `docs/WARSOC_BACKEND_EVIDENCE_PROGRAM_IMPLEMENTATION_2026-08-20.md` |
+| Production proof for gated, disabled and genuinely unfinished capabilities | `docs/WARSOC_GATED_AND_DISABLED_CAPABILITY_PROOF_2026-09-06.md` |
 | Current release audit, production-proof boundary and closure order | `docs/WARSOC_RELEASE_AUDIT_2026-08-21.md` |
 | Current release condition, completed verification and promotion blockers | `docs/WARSOC_RELEASE_CONDITION_REPORT_2026-08-24.md` |
 | FBR and PECA current detection, evidence, retention and acceptance guide | `docs/WARSOC_FBR_PECA_END_TO_END_OPERATING_GUIDE_2026-08-24.md` |

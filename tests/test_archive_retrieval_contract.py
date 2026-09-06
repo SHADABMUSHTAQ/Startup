@@ -118,6 +118,29 @@ async def test_monthly_included_allowance_reservation_is_atomic():
 
 
 @pytest.mark.asyncio
+async def test_authenticated_retrieval_request_fails_closed_when_disabled(
+    async_client,
+    monkeypatch,
+):
+    await provision_and_login_admin(async_client, "archive_disabled")
+    monkeypatch.delenv("ARCHIVE_RETRIEVAL_ENABLED", raising=False)
+    now = datetime.now(timezone.utc)
+
+    response = await async_client.post(
+        "/api/v1/archive-retrievals",
+        json={
+            "collections": ["siem_cold_vault"],
+            "start_at": (now - timedelta(days=31)).isoformat(),
+            "end_at": (now - timedelta(days=28)).isoformat(),
+            "reason": "Disabled capability regression proof",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "The service is temporarily unavailable."
+
+
+@pytest.mark.asyncio
 async def test_authenticated_tenant_can_create_bounded_retrieval_request(
     async_client,
     db,
