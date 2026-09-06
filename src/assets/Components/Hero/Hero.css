@@ -634,13 +634,13 @@
 .hero-text {
   position: relative;
   z-index: 4;
-  width: min(100%, 920px);
-  max-width: 920px;
+  width: 68%;
+  max-width: 930px;
 }
 
 .hero-text h1 {
-  max-width: 920px;
-  font-size: clamp(3.5rem, 7.1vw, 7rem);
+  max-width: 930px;
+  font-size: clamp(3.4rem, 5.3vw, 6.5rem);
   line-height: 0.94;
   letter-spacing: -0.065em;
   text-wrap: balance;
@@ -662,8 +662,8 @@
   position: absolute;
   z-index: 1;
   top: 50%;
-  right: -8%;
-  width: min(68vw, 790px);
+  right: 0;
+  width: 32%;
   min-width: 0;
   margin: 0;
   opacity: 0.94;
@@ -674,7 +674,7 @@
 
 .hero-visual .soc-visual-wrapper {
   width: 100%;
-  min-height: 520px;
+  min-height: 460px;
 }
 
 .hero-visual::after {

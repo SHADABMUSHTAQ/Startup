@@ -172,7 +172,7 @@
 }
 
 .login-brand-row img {
-  width: 118px;
+  width: 148px;
   height: auto;
   display: block;
   filter:
@@ -392,6 +392,7 @@
   border-radius: 8px;
   box-shadow: none;
   transform: translateY(-50%);
+  transition: color 0.18s ease, background 0.18s ease, transform 0.18s ease;
   z-index: 3;
 }
 

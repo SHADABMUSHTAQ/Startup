@@ -422,3 +422,30 @@
     color: #334155 !important;
     border-color: rgba(15, 23, 42, 0.16) !important;
 }
+
+/* Center the access dialog in the viewport and keep the whole backdrop blurred. */
+.team-container .modal-overlay {
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 24px !important;
+    background: rgba(7, 17, 31, 0.58) !important;
+    backdrop-filter: blur(14px) saturate(115%) !important;
+    -webkit-backdrop-filter: blur(14px) saturate(115%) !important;
+}
+
+.team-container .invite-modal {
+    width: min(100%, 540px) !important;
+    max-height: min(720px, calc(100vh - 48px)) !important;
+    display: flex !important;
+    flex-direction: column !important;
+}
+
+.team-container .invite-modal > form {
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+[data-theme="light"] .team-container .modal-overlay {
+    background: rgba(15, 23, 42, 0.42) !important;
+}
