@@ -292,12 +292,14 @@
 }
 
 .navbar-menu-trigger svg {
-  color: currentColor !important;
-  stroke: currentColor !important;
+  color: var(--nav-text-muted) !important;
+  stroke: var(--nav-text-muted) !important;
   transition: transform 0.25s ease;
 }
 
 .navbar-menu-trigger.is-open svg {
+  color: var(--nav-blue) !important;
+  stroke: var(--nav-blue) !important;
   transform: rotate(180deg);
 }
 
@@ -443,11 +445,15 @@
   color: #0f62fe !important;
 }
 
-[data-theme="light"] .home-page .navbar-menu-trigger svg,
+[data-theme="light"] .home-page .navbar-menu-trigger svg {
+  color: #64748b !important;
+  stroke: #64748b !important;
+}
+
 [data-theme="light"] .home-page .navbar-menu-trigger:hover svg,
 [data-theme="light"] .home-page .navbar-menu-trigger.is-open svg {
-  color: currentColor !important;
-  stroke: currentColor !important;
+  color: #0f62fe !important;
+  stroke: #0f62fe !important;
 }
 
 [data-theme="light"] .home-page .navbar-nav-dropdown {
