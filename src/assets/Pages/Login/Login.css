@@ -409,12 +409,12 @@
 .password-visibility-btn:hover {
   color: var(--login-blue) !important;
   background: rgba(15, 98, 254, 0.08);
-  transform: translateY(-50%);
+  transform: translateY(-50%) !important;
   box-shadow: none;
 }
 
 .password-visibility-btn:active {
-  transform: translateY(-50%) scale(0.94);
+  transform: translateY(-50%) scale(0.94) !important;
 }
 
 .split-login-container.login-dark .password-visibility-btn {
