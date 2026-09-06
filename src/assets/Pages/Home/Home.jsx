@@ -34,7 +34,7 @@ const Home = () => {
         <Pricing />
       </section>
 
-      <section id="Contact">
+      <section id="contact">
         <Contact/>
       </section>
 

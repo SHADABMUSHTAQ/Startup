@@ -16,8 +16,10 @@ const Navbar = () => {
   // 🚀 REFACTOR: Bind to Zustand Store
   const { user, logout } = useAuthStore();
   const [showDropdown, setShowDropdown] = useState(false);
+  const [openNavMenu, setOpenNavMenu] = useState(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const profileMenuRef = useRef(null);
+  const navMenuRef = useRef(null);
 
   const isDashboardPage = location.pathname.startsWith("/dashboard");
   const isLoginPage = location.pathname === "/login";
@@ -82,10 +84,35 @@ const Navbar = () => {
     };
   }, [showDropdown]);
 
+  useEffect(() => {
+    if (!openNavMenu) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (navMenuRef.current && !navMenuRef.current.contains(event.target)) {
+        setOpenNavMenu(null);
+      }
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setOpenNavMenu(null);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openNavMenu]);
+
   // Redundant API fetch removed to rely strictly on global authStore
 
   const toggle = () => setIsOpen((s) => !s);
-  const close = () => setIsOpen(false);
+  const close = () => {
+    setIsOpen(false);
+    setOpenNavMenu(null);
+  };
+  const toggleNavMenu = (menu) => setOpenNavMenu((current) => (current === menu ? null : menu));
   const toggleTheme = () => setTheme((prev) => (prev === "dark" ? "light" : "dark"));
 
   const navigateFromMenu = (path) => {
@@ -195,16 +222,43 @@ const Navbar = () => {
             )}
           </button>
           <div className={`navbar-right-content ${isOpen ? "active" : ""}`}>
-            <ul className="navbar-menu-links">
+            <ul className="navbar-menu-links" ref={navMenuRef}>
               <li>
                 <HashLink smooth to="/#home" onClick={close}>
                   Home
                 </HashLink>
               </li>
               <li>
-                <HashLink smooth to="/#about" onClick={close}>
-                  About
-                </HashLink>
+                <button
+                  type="button"
+                  className={`navbar-menu-trigger ${openNavMenu === "solutions" ? "is-open" : ""}`}
+                  onClick={() => toggleNavMenu("solutions")}
+                  aria-expanded={openNavMenu === "solutions"}
+                  aria-haspopup="true"
+                >
+                  Solutions <ChevronDown size={15} aria-hidden="true" />
+                </button>
+                <div className={`navbar-nav-dropdown navbar-solutions-dropdown ${openNavMenu === "solutions" ? "show" : ""}`} role="menu">
+                  <div className="navbar-dropdown-feature">
+                    <span className="navbar-dropdown-kicker">WarSOC platform</span>
+                    <strong>Security operations with context, speed, and proof.</strong>
+                    <p>Monitor your environment, respond to threats, and keep evidence ready for audit.</p>
+                  </div>
+                  <div className="navbar-dropdown-links">
+                    <HashLink smooth to="/#features" onClick={close} role="menuitem">
+                      <ShieldCheck size={17} />
+                      <span><strong>Managed SIEM</strong><small>Unified detection and response</small></span>
+                    </HashLink>
+                    <HashLink smooth to="/#about" onClick={close} role="menuitem">
+                      <User size={17} />
+                      <span><strong>Built for your team</strong><small>Practical security, without the noise</small></span>
+                    </HashLink>
+                    <HashLink smooth to="/#pricing" onClick={close} role="menuitem">
+                      <ChevronDown size={17} className="navbar-dropdown-price-icon" />
+                      <span><strong>Deployment plans</strong><small>Flexible endpoint-based pricing</small></span>
+                    </HashLink>
+                  </div>
+                </div>
               </li>
               <li>
                 <HashLink smooth to="/#features" onClick={close}>
@@ -217,10 +271,23 @@ const Navbar = () => {
                 </HashLink>
               </li>
               <li>
-                <HashLink smooth to="/#contact" onClick={close}>
-                  Contact
-                </HashLink>
+                <button
+                  type="button"
+                  className={`navbar-menu-trigger ${openNavMenu === "resources" ? "is-open" : ""}`}
+                  onClick={() => toggleNavMenu("resources")}
+                  aria-expanded={openNavMenu === "resources"}
+                  aria-haspopup="true"
+                >
+                  Resources <ChevronDown size={15} aria-hidden="true" />
+                </button>
+                <div className={`navbar-nav-dropdown navbar-resources-dropdown ${openNavMenu === "resources" ? "show" : ""}`} role="menu">
+                  <HashLink smooth to="/#about" onClick={close} role="menuitem">About WarSOC</HashLink>
+                  <HashLink smooth to="/#contact" onClick={close} role="menuitem">Talk to our team</HashLink>
+                  <Link to="/privacy" onClick={close} role="menuitem">Privacy & security</Link>
+                  <Link to="/terms" onClick={close} role="menuitem">Terms of service</Link>
+                </div>
               </li>
+              <li className="navbar-contact-link"><HashLink smooth to="/#contact" onClick={close}>Contact</HashLink></li>
 
               <li className="navbar-mobile-auth">
                 <button
