@@ -1453,7 +1453,19 @@ function Dashboard() {
           <X size={20} />
         </button>
         <div className="logo-container">
-          <div className="logo-box">
+          <div
+            className="logo-box"
+            role="link"
+            tabIndex={0}
+            aria-label="Go to WarSOC home page"
+            onClick={() => navigate("/")}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                navigate("/");
+              }
+            }}
+          >
             <span className="brand-mark">
               <img src="/Logo.png" alt="WarSOC" />
             </span>
@@ -1566,7 +1578,19 @@ function Dashboard() {
               </span>
             </button>
             {!isMobileMenuOpen && (
-              <div className="topbar-brand" aria-label="WarSOC">
+              <div
+                className="topbar-brand"
+                role="link"
+                tabIndex={0}
+                aria-label="Go to WarSOC home page"
+                onClick={() => navigate("/")}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    navigate("/");
+                  }
+                }}
+              >
                 <img src="/Logo.png" alt="WarSOC" />
               </div>
             )}
