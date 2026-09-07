@@ -87,6 +87,7 @@ async def _start_request_copies(
         collections=request_doc["collections"],
         start_dt=normalize_utc(request_doc["start_at"]),
         end_dt=normalize_utc(request_doc["end_at"]),
+        customer_access_at=utc_now(),
     )
     max_blobs = maximum_retrieval_blobs()
     entries = await db["storage_archives"].find(query).sort("created_at", 1).limit(

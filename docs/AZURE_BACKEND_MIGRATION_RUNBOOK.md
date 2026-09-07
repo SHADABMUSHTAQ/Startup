@@ -25,7 +25,9 @@ This is a clean production launch for application data. The approved backend rel
 - Create and prove the production retention containers before accepting contracted data. The legacy 2,190-day pilot container is not imported into the production evidence account.
 - Treat archived telemetry, backups, uploads, reports and Mongo volumes as potentially containing PII. Do not place them in the public agent-artifact account.
 - Migrate the network-relay API, parsers, workers, installers, tests and configuration, but keep `NETWORK_RELAY_ENABLED=false` until an approved activation.
-- Migrate the archive-retrieval routes, ledger, worker, tests and configuration, but keep `ARCHIVE_RETRIEVAL_ENABLED=false` until staging, RBAC, lifecycle and rehydration acceptance pass.
+- Migrate the archive-retrieval routes, ledger, worker, tests and configuration,
+  but keep `ARCHIVE_RETRIEVAL_ENABLED=false` until staging, RBAC, lifecycle,
+  server-side-copy, hash, SAS and expiry acceptance pass.
 - A false feature flag means the capability is deployed but inactive. It never authorizes omitting its files, dependencies, Compose profile, indexes or configuration from the release.
 - A DigitalOcean snapshot and encrypted final pilot backup remain short-term rollback/disposal evidence. They are not restored into the clean production database.
 - Promotional Azure credit is not a production continuity guarantee. Create a T-7/T-3/T-1 exit plan before the credit expiry date.
@@ -105,30 +107,41 @@ Sections that create and verify encrypted source backups remain mandatory as rol
 
 ### 2.2 Retention gate
 
-Retention must be either fully enabled and proven on DigitalOcean before migration, or left on the current locked 2,190-day fallback. Do not change retention routing during compute cutover.
+Retention routing is a separate change from compute migration and must not be
+altered during a compute cutover. Before accepting new commercial evidence, the
+only approved active-product state is **separated and proven**: both exact
+90-day routes are locked and verified, class-by-class upload/readback passes,
+and the target backend completes one controlled archive cycle.
 
-The project decision is to perform retention separation after the current pilot trial. At cutover planning time, select exactly one state and record it in the cutover record:
+If that state is not ready, keep exact routing fail-closed (or keep the archiver
+disabled) so eligible Mongo records remain visible for operator action. The
+existing locked 2,190-day container is a legacy evidence location, not the
+fallback for new commercial writes. This blocks retention-product acceptance,
+but it does not justify weakening or replacing an existing WORM lock.
 
-- **Separated and proven:** all target containers are locked, routing is enabled, class-by-class upload/readback passed, and production has completed at least one clean archive cycle; or
-- **Fallback unchanged:** every class continues to the existing locked 2,190-day container through the migration, with separation scheduled as a later isolated change.
-
-An in-between state blocks migration.
-
-The intended private Azure containers are:
+The currently approved private Azure evidence containers are:
 
 | Container | Locked policy | Routing |
 |---|---:|---|
-| `warsoc-retention-90` | 90 days | `SIEM_90`, `GENERAL_90` |
-| `warsoc-retention-180` | 180 days | `SIEM_180`, `GENERAL_180` |
-| `warsoc-retention-270` | 270 days | `SIEM_270`, `GENERAL_270` |
-| `warsoc-retention-360` | 360 days | `SIEM_360`, `GENERAL_360` |
-New FBR and PECA evidence use the `GENERAL_<tenant retention days>` route. They
-do not require class-specific statutory-retention containers. Existing FBR and
-PECA blobs in locked containers remain untouched.
+| `warsoc-siem-90` | 90-day version-level WORM | `SIEM_90`, Cold tier |
+| `warsoc-general-90` | 90-day version-level WORM | `GENERAL_90`, Cold tier |
 
-If these routes are enabled, `.env.prod` must contain the corresponding `AZURE_STORAGE_CONTAINER_*`, `AZURE_CONTAINER_IMMUTABILITY_LOCKED_*` and `AZURE_CONTAINER_IMMUTABILITY_DAYS_*` variables documented in `.env.example`. Unsupported tenant durations must continue falling back to the existing locked `AZURE_STORAGE_CONTAINER`.
+New FBR and PECA evidence use `GENERAL_90`. They do not require class-specific
+statutory-retention containers. Existing FBR and PECA blobs in locked
+containers remain untouched. Do not create 180/270/360-day containers until a
+corresponding commercial entitlement is approved.
 
-Before migration, run the archiver on DigitalOcean and confirm that:
+If these routes are enabled, `.env.prod` must contain the corresponding
+`AZURE_STORAGE_CONTAINER_*`, `AZURE_STORAGE_TIER_*`,
+`AZURE_IMMUTABILITY_SCOPE_*`, `AZURE_CONTAINER_IMMUTABILITY_LOCKED_*`, and
+`AZURE_CONTAINER_IMMUTABILITY_DAYS_*` variables documented in `.env.example`.
+Set `AZURE_BLOB_VERSION_ID_REQUIRED=true` and
+`AZURE_EXACT_RETENTION_ROUTE_REQUIRED=true`; an unsupported tenant duration
+then preserves Mongo evidence and fails visibly instead of silently using the
+over-retaining fallback.
+
+After activating the exact routes on the target backend, run one controlled
+archiver cycle and confirm that:
 
 - no archive log contains `Failed to archive`;
 - each enabled route writes to the intended container;
@@ -295,7 +308,7 @@ Do not copy the pilot `.env.prod` into the clean production environment. Use it 
 | Agent event admission | Preserve the approved release policy | `AGENT_EVENT_SIGNATURE_MODE=required`. New production agents must enroll and sign; do not import stale pilot identities. |
 | Network relay | Deploy inactive | Include all relay code/configuration and set `NETWORK_RELAY_ENABLED=false`; retain bounded batch/body/tenant limits from `.env.example`. |
 | Archive retrieval | Deploy inactive | Include routes/ledger/worker/profile and set `ARCHIVE_RETRIEVAL_ENABLED=false`. Set the new storage account URL and staging container, but do not start the profile before acceptance. |
-| Azure archive routing | Replace with new production account values | New private evidence connection/identity, fallback container, FBR/PECA fixed containers, duration-specific SIEM/general containers and matching locked-policy declarations. |
+| Azure archive routing | Replace only after isolated storage acceptance | Preserve the legacy fallback; activate separate `SIEM_90` and `GENERAL_90` Cold/version-WORM routes with matching locked-policy declarations. FBR/PECA fixed statutory containers are not active product requirements. |
 | Ingestion protection | Set explicitly | Keep the 50-agent aggregate operating boundary and the approved tenant/platform daily-byte ceilings from `.env.example`. |
 | Email | Keep non-alert delivery optional | `ENABLE_SECURITY_ALERT_EMAILS=false`. Configure SMTP only if quote/contact/invitation delivery has quota and acceptance proof. |
 | Dangerous compatibility flags | Force off | `ENABLE_SELF_SIGNUP=false`, `ENABLE_LEGACY_ROUTES=false`, and `ENABLE_MANUAL_LOG_INJECTION=false`. |

@@ -1,7 +1,7 @@
 # WarSOC Azure Account and Storage Creation Runbook
 
 **Status:** Authoritative infrastructure preparation guide
-**Updated:** 2026-07-30
+**Updated:** 2026-09-06
 **Scope:** Create and verify the Azure subscriptions, identities, storage accounts, containers, retention controls, and cost safeguards needed by WarSOC. This document does not migrate compute or enable a feature.
 
 The production accounts created by this runbook replace the pilot artifact/evidence routing. The old public pilot artifact may be removed after the new versioned installer and manifest pass preflight. A legacy evidence container with a locked immutability policy cannot be deleted early; stop new writes, remove it from production routing, restrict access and retain it until expiry.
@@ -178,40 +178,122 @@ az storage account create \
 
 `allow-shared-key-access` stays enabled because the current archiver uses `AZURE_STORAGE_CONNECTION_STRING`. Disable it only after the application is migrated and proven with managed identity. Do not claim that the current archiver uses managed identity.
 
-Create the private containers:
+The active product currently needs two evidence routes only. First enable blob
+versioning on the account, which is a prerequisite for version-level WORM:
 
 ```bash
-for container in \
-  warsoc-retention-90 \
-  warsoc-retention-180 \
-  warsoc-retention-270 \
-  warsoc-retention-360 \
-  warsoc-retrieval-staging \
-  warsoc-db-backups
+az storage account blob-service-properties update \
+  --resource-group "$STORAGE_RG" \
+  --account-name "$EVIDENCE_ACCOUNT" \
+  --enable-versioning true \
+  --output none
+```
+
+Create the two private evidence containers with version-level WORM capability:
+
+```bash
+for container in warsoc-siem-90 warsoc-general-90
 do
-  az storage container create \
-    --account-name "$EVIDENCE_ACCOUNT" \
+  az storage container-rm create \
+    --resource-group "$STORAGE_RG" \
+    --storage-account "$EVIDENCE_ACCOUNT" \
     --name "$container" \
+    --enable-vlw true \
     --public-access off \
-    --auth-mode login \
     --output none
+done
+
+for container in warsoc-siem-90 warsoc-general-90
+do
+  az storage container-rm show \
+    --resource-group "$STORAGE_RG" \
+    --storage-account "$EVIDENCE_ACCOUNT" \
+    --name "$container" \
+    --query '{publicAccess:publicAccess,versionWorm:immutableStorageWithVersioning.enabled}' \
+    --output table
 done
 ```
 
 The existing `warsoc-cold-storage` fallback may already be locked for 2,190 days. Do not delete, rename, shorten, or move its governed blobs.
 
+Create `warsoc-retrieval-staging` and `warsoc-db-backups` separately with
+`az storage container create --public-access off --auth-mode login` only when
+their retrieval-lifecycle and backup-retention gates are being executed. Neither
+uses the evidence WORM policy below.
+
 ## 8. Retention Policy Creation and Locking
 
-Retention lock and access tier are separate controls. Do not call a container "Archive tier." WarSOC currently uploads block blobs; lifecycle/tiering is a later storage-policy decision.
+Retention lock and access tier are separate controls. The approved 90-day
+evidence routes use Azure Cold online tier; the archiver sets and reads back the
+tier on every new blob. Cold tier has a 90-day minimum charge window, while
+Archive tier is offline and is not the target for this product window.
+
+### 8.0 Guarded Windows automation
+
+The manual commands below remain the reviewable source contract. On a trusted
+Windows workstation with Azure CLI installed, use the guarded implementation
+instead of copying individual commands. It has a fixed allowlist of
+`warsoc-siem-90` and `warsoc-general-90`; it never mutates
+`warsoc-cold-storage`.
+
+```powershell
+az login
+
+$SubscriptionId = "<storage-subscription-guid>"
+$ResourceGroup = "rg-warsoc-storage-prod"
+$EvidenceAccount = "<private-evidence-storage-account>"
+
+# Read-only inventory. This is the default mode.
+.\scripts\provision_azure_retention.ps1 `
+  -SubscriptionId $SubscriptionId `
+  -ResourceGroup $ResourceGroup `
+  -StorageAccount $EvidenceAccount `
+  -Mode Inspect
+
+# Pre-lock preparation: enable versioning, create only missing approved
+# containers, create unlocked 90-day policies, and hash-readback Cold canaries.
+.\scripts\provision_azure_retention.ps1 `
+  -SubscriptionId $SubscriptionId `
+  -ResourceGroup $ResourceGroup `
+  -StorageAccount $EvidenceAccount `
+  -Mode Prepare `
+  -AcknowledgeValidationBlobRetention
+
+# Read-only acceptance. Review its JSON report before locking.
+.\scripts\provision_azure_retention.ps1 `
+  -SubscriptionId $SubscriptionId `
+  -ResourceGroup $ResourceGroup `
+  -StorageAccount $EvidenceAccount `
+  -Mode Verify
+```
+
+`Prepare` intentionally refuses an existing container that is public, lacks
+version-level WORM, has a different duration, or is already locked. It does not
+use the preview migration command. The operator needs management-plane access
+and a Blob Data role for the Entra-authenticated canary upload/readback.
+
+Lock only after a second person reviews the `PREPARED_UNLOCKED`/`VERIFIED`
+report and the Azure portal values:
+
+```powershell
+.\scripts\provision_azure_retention.ps1 `
+  -SubscriptionId $SubscriptionId `
+  -ResourceGroup $ResourceGroup `
+  -StorageAccount $EvidenceAccount `
+  -Mode Lock `
+  -LockConfirmation "LOCK-WARSOC-90-DAY-RETENTION"
+```
+
+The script writes non-secret evidence under `tmp/azure-retention/`. Do not add
+the route environment variables to production until the locked verification
+report and controlled backend canary both pass.
 
 Create policies **unlocked** first:
 
 ```bash
 declare -A RETENTION_DAYS=(
-  [warsoc-retention-90]=90
-  [warsoc-retention-180]=180
-  [warsoc-retention-270]=270
-  [warsoc-retention-360]=360
+  [warsoc-siem-90]=90
+  [warsoc-general-90]=90
 )
 
 for container in "${!RETENTION_DAYS[@]}"; do
@@ -235,14 +317,25 @@ For every immutable container, upload and read a harmless object. Deletion will 
 printf 'WarSOC immutability validation %s\n' "$(date -u +%FT%TZ)" > /tmp/warsoc-policy-test.txt
 
 for container in "${!RETENTION_DAYS[@]}"; do
+  validation_blob="policy-validation/$(date -u +%Y%m%dT%H%M%SZ).txt"
   az storage blob upload \
     --account-name "$EVIDENCE_ACCOUNT" \
     --container-name "$container" \
-    --name "policy-validation/$(date -u +%Y%m%dT%H%M%SZ).txt" \
+    --name "$validation_blob" \
     --file /tmp/warsoc-policy-test.txt \
+    --tier Cold \
     --auth-mode login \
     --overwrite false \
-    --output none
+    --query '{name:name,versionId:versionId}' \
+    --output table
+
+  az storage blob show \
+    --account-name "$EVIDENCE_ACCOUNT" \
+    --container-name "$container" \
+    --name "$validation_blob" \
+    --auth-mode login \
+    --query '{name:name,versionId:versionId,tier:properties.blobTier,etag:properties.etag}' \
+    --output table
 
   az storage container immutability-policy show \
     --resource-group "$STORAGE_RG" \
@@ -250,10 +343,18 @@ for container in "${!RETENTION_DAYS[@]}"; do
     --container-name "$container" \
     --query '{state:state,days:immutabilityPeriodSinceCreationInDays,etag:etag}' \
     --output table
+
+  az storage container-rm show \
+    --resource-group "$STORAGE_RG" \
+    --storage-account "$EVIDENCE_ACCOUNT" \
+    --name "$container" \
+    --query '{versionWorm:immutableStorageWithVersioning.enabled,migration:immutableStorageWithVersioning.migrationState}' \
+    --output table
 done
 ```
 
-Compare every result with `RETENTION_DAYS`. A mismatch blocks locking.
+Require `versionWorm=true`, `tier=Cold`, a non-empty `versionId`, and exactly 90
+days in the unlocked policy. Any mismatch blocks locking.
 
 ### 8.2 Lock the verified policies
 
@@ -289,12 +390,21 @@ for container in "${!RETENTION_DAYS[@]}"; do
     --container-name "$container" \
     --query '{container:`'"$container"'`,state:state,days:immutabilityPeriodSinceCreationInDays}' \
     --output table
+
+  az storage container-rm show \
+    --resource-group "$STORAGE_RG" \
+    --storage-account "$EVIDENCE_ACCOUNT" \
+    --name "$container" \
+    --query '{publicAccess:publicAccess,versionWorm:immutableStorageWithVersioning.enabled}' \
+    --output table
 done
 ```
 
 ## 9. Retrieval Staging Lifecycle
 
-Archive retrieval remains disabled until this staging control and a real rehydration test pass. Apply a management policy that deletes staged block blobs after three days:
+Archive retrieval remains disabled until this staging control and a real
+Cold-to-staging server-side-copy test pass. Apply a management policy that
+deletes staged block blobs after three days:
 
 ```bash
 cat > /tmp/warsoc-staging-lifecycle.json <<'JSON'
@@ -362,7 +472,9 @@ az role assignment create \
   --scope "$EVIDENCE_SCOPE"
 ```
 
-Do not enable `ARCHIVE_RETRIEVAL_ENABLED=true` merely because roles were assigned. The worker, staging cleanup, user-delegation SAS, SHA-256 validation, tenant isolation, and rehydration lifecycle must all pass first.
+Do not enable `ARCHIVE_RETRIEVAL_ENABLED=true` merely because roles were
+assigned. The worker, staging cleanup, user-delegation SAS, SHA-256 validation,
+tenant isolation, server-side copy, and expiry lifecycle must all pass first.
 
 ## 11. Storage Network Boundary
 
@@ -396,10 +508,10 @@ Prove archive upload and backup upload from the Azure VM immediately after this 
 
 ## 12. Environment Mapping
 
-Do not add duration-specific variables until every referenced policy is locked and verified. Keep the existing six-year fallback unchanged during the compute migration.
-New FBR and PECA evidence use the matching
-`AZURE_STORAGE_CONTAINER_GENERAL_<days>` route; there are no active
-class-specific container variables for those evidence packs.
+Do not add the two exact-route variables until both policies are locked and
+verified. Keep the existing six-year fallback unchanged while preparing the
+new route. New FBR and PECA evidence use `GENERAL_90`; there are no active
+class-specific statutory-retention containers.
 
 ```dotenv
 AZURE_STORAGE_CONTAINER=warsoc-cold-storage
@@ -408,38 +520,26 @@ AZURE_IMMUTABILITY_SCOPE=container
 AZURE_CONTAINER_IMMUTABILITY_LOCKED=true
 AZURE_CONTAINER_IMMUTABILITY_DAYS=2190
 
-AZURE_STORAGE_CONTAINER_SIEM_90=warsoc-retention-90
-AZURE_STORAGE_CONTAINER_GENERAL_90=warsoc-retention-90
+AZURE_STORAGE_CONTAINER_SIEM_90=warsoc-siem-90
+AZURE_STORAGE_CONTAINER_GENERAL_90=warsoc-general-90
+AZURE_STORAGE_TIER_SIEM_90=Cold
+AZURE_STORAGE_TIER_GENERAL_90=Cold
+AZURE_EXACT_RETENTION_ROUTE_REQUIRED=true
+AZURE_BLOB_VERSION_ID_REQUIRED=true
+AZURE_IMMUTABILITY_SCOPE_SIEM_90=blob
+AZURE_IMMUTABILITY_SCOPE_GENERAL_90=blob
 AZURE_CONTAINER_IMMUTABILITY_LOCKED_SIEM_90=true
 AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_90=90
 AZURE_CONTAINER_IMMUTABILITY_LOCKED_GENERAL_90=true
 AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_90=90
 
-AZURE_STORAGE_CONTAINER_SIEM_180=warsoc-retention-180
-AZURE_STORAGE_CONTAINER_GENERAL_180=warsoc-retention-180
-AZURE_CONTAINER_IMMUTABILITY_LOCKED_SIEM_180=true
-AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_180=180
-AZURE_CONTAINER_IMMUTABILITY_LOCKED_GENERAL_180=true
-AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_180=180
-
-AZURE_STORAGE_CONTAINER_SIEM_270=warsoc-retention-270
-AZURE_STORAGE_CONTAINER_GENERAL_270=warsoc-retention-270
-AZURE_CONTAINER_IMMUTABILITY_LOCKED_SIEM_270=true
-AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_270=270
-AZURE_CONTAINER_IMMUTABILITY_LOCKED_GENERAL_270=true
-AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_270=270
-
-AZURE_STORAGE_CONTAINER_SIEM_360=warsoc-retention-360
-AZURE_STORAGE_CONTAINER_GENERAL_360=warsoc-retention-360
-AZURE_CONTAINER_IMMUTABILITY_LOCKED_SIEM_360=true
-AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_360=360
-AZURE_CONTAINER_IMMUTABILITY_LOCKED_GENERAL_360=true
-AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_360=360
-
 ARCHIVE_RETRIEVAL_ENABLED=false
 AZURE_RETRIEVAL_STAGING_CONTAINER=warsoc-retrieval-staging
 AZURE_STORAGE_ACCOUNT_URL=https://<evidence-account>.blob.core.windows.net
 ```
+
+Do not add 180/270/360 route variables until a corresponding commercial
+entitlement is approved and receives its own infrastructure/test decision.
 
 ## 13. Cost and Expiry Safeguards
 
@@ -466,7 +566,8 @@ Serial creation of promotional accounts is not a production architecture and may
 - Correct subscription and region recorded.
 - Artifact account contains only approved versioned public artifacts.
 - Evidence account rejects anonymous access.
-- Five new immutable containers have the exact locked durations.
+- The two approved 90-day evidence containers have version-level WORM enabled,
+  exact locked policies, private access, and verified Cold-tier test versions.
 - Existing six-year fallback remains intact.
 - Staging and backup containers are private and not governed by evidence locks.
 - Staging lifecycle cleanup is installed without deleting unrelated lifecycle rules.

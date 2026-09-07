@@ -429,7 +429,8 @@ async def inject_manual_log(
         **payload,
         "tenant_id": tenant_id,
         "timestamp": payload.get("timestamp", datetime.now(timezone.utc).isoformat()),
-        "injected_by": current_user["username"]
+        "injected_by": current_user["username"],
+        RAW_RETENTION_ANCHOR_FIELD: datetime.now(timezone.utc),
     }
 
     # Insert into logs collection

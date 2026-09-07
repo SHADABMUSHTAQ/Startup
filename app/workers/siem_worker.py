@@ -293,19 +293,10 @@ async def _is_whitelisted_source(redis_client, tenant_id: str, source_ip: str, u
     return user in siem_engine.whitelist_users or source_ip in siem_engine.whitelist_ips
 
 def _build_retention_anchor(value, retention_days: int) -> datetime:
-    """Build a BSON Date anchor for TTL without changing public timestamp fields."""
-    if isinstance(value, datetime):
-        dt = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-    elif isinstance(value, str):
-        try:
-            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-        except Exception:
-            dt = datetime.now(timezone.utc)
-    else:
-        dt = datetime.now(timezone.utc)
-        
+    """Build an absolute hot expiry from a trusted server datetime."""
+    if not isinstance(value, datetime):
+        raise ValueError("SIEM retention anchor must be a server datetime")
+    dt = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc) + timedelta(days=retention_days)
 
 
@@ -695,7 +686,7 @@ async def siem_worker():
                             log_data["event_uid"] = event_uid
                             _normalize_document_timestamps(log_data)
                             log_data[RAW_RETENTION_ANCHOR_FIELD] = _build_retention_anchor(
-                                log_data.get("timestamp") or log_data.get("ingested_at"),
+                                api_now,
                                 SIEM_HOT_RETENTION_DAYS,
                             )
 
@@ -1123,7 +1114,7 @@ async def siem_worker():
                             # Save the raw log for historical auditing
                             _normalize_document_timestamps(log_data)
                             log_data[RAW_RETENTION_ANCHOR_FIELD] = _build_retention_anchor(
-                                    log_data.get("timestamp") or log_data.get("ingested_at"),
+                                    api_now,
                                     SIEM_HOT_RETENTION_DAYS
                             )
                             cold_batch.append(log_data)

@@ -8,7 +8,7 @@ import sys
 import copy
 import traceback
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from motor.motor_asyncio import AsyncIOMotorClient
 from redis import exceptions as redis_exceptions
 from redis.asyncio import Redis
@@ -520,7 +520,7 @@ async def _upsert_fbr_vault_and_alerts(
             "event_uid": event_uid,
             "cold_id": cold_id_by_key.get((tenant_id, event_uid)),
             "status": "NEW",
-            "_retention_ts": now,
+            "_expire_at": now + timedelta(days=7),
         }
         attach_detection_provenance(
             meta,

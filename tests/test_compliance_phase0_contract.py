@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -237,8 +237,20 @@ async def test_retention_status_is_tenant_scoped_and_uses_active_product_model(
                 "archive_key": "archive-a",
                 "status": "archived_hot_deleted",
                 "created_at": now,
+                "oldest_customer_access_until": now + timedelta(days=269),
+                "customer_access_until": now + timedelta(days=270),
+                "collection": "fbr_pos_logs",
                 "container_name": "must-not-be-returned",
                 "blob_name": "must-not-be-returned",
+            },
+            {
+                "tenant_id": tenant_id,
+                "archive_key": "archive-expired",
+                "status": "archived_hot_deleted",
+                "created_at": now - timedelta(days=100),
+                "oldest_customer_access_until": now - timedelta(days=11),
+                "customer_access_until": now - timedelta(days=10),
+                "collection": "peca_forensic_logs",
             },
             {
                 "tenant_id": "OTHER-TENANT",
@@ -265,6 +277,8 @@ async def test_retention_status_is_tenant_scoped_and_uses_active_product_model(
     assert retention["active_hold_count"] == 1
     assert retention["archive_availability"] == "ARCHIVED_EVIDENCE_AVAILABLE"
     assert retention["archived_batch_count"] == 1
+    assert retention["physically_retained_batch_count"] == 2
+    assert retention["expired_or_legacy_batch_count"] == 1
     assert "container_name" not in retention
     assert "blob_name" not in retention
     assert "tax_period" not in retention

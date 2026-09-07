@@ -207,10 +207,10 @@ POS schemas or safely read arbitrary production databases.
 
 | Component | Current state | Boundary / limitation | Next gate |
 |---|---|---|---|
-| Mongo hot tier | `ACTIVE` | SIEM/raw/PECA/FBR operational window is seven days with tenant/time indexes and bounded reads. | Exact-host query/working-set soak. |
+| Mongo hot tier | `ACTIVE` | SIEM/raw/upload/analysis/PECA/FBR operational window is seven days with tenant/time indexes and bounded reads. | Exact-host query/working-set soak. |
 | Azure archiver | `ACTIVE` behavior, deployment parity open | Upload, SHA-256 verify, immutability verify, ledger commit, then exact-ID Mongo deletion. Failure preserves Mongo data. | Re-prove against final Azure account and release. |
-| Physical retention split | `SOURCE-PROVEN`; cloud pending | Code supports duration-aware general/SIEM classes. New FBR and PECA evidence inherit tenant retention and use the matching general class; historical locked evidence is unchanged. | Create/test/lock every private duration container before setting duration-specific env values. |
-| Historical retrieval | `IMPLEMENTED-DISABLED` | Async ledger/worker design avoids proxying GiB archives through the API. Browser UI and Azure staging/RBAC acceptance are incomplete. | Staging lifecycle, user-delegation SAS, rehydration, limits, and UI acceptance. |
+| Physical retention split | `CANDIDATE + REAL-AZURE PROVEN`; OCI routing pending | Private account `warsocevidence90prod` has separate `warsoc-siem-90` and `warsoc-general-90` routes with versioning, exact locked 90-day version-WORM policies and Cold/versioned canaries. The candidate records one trusted server clock, customer-access expiry, Azure tier/version/ETag, SHA readback and physical WORM facts. Isolated application-path SIEM and FBR/general archives passed against the real account; a rejected boundary preserved Mongo. | Deploy the accepted candidate and exact route variables to OCI, then run controlled OCI SIEM/general and Legal Hold canaries before customer activation. |
+| Historical retrieval | `IMPLEMENTED-DISABLED` | Async ledger/worker design avoids proxying GiB archives through the API. Customer queries exclude expired and legacy rows without an explicit access boundary. Browser UI and Azure staging/RBAC acceptance are incomplete. | Staging lifecycle, user-delegation SAS, server-side copy, limits, expiry and UI acceptance. |
 | Backup/restore | `SOURCE-PROVEN` drill | Mongo backup is separate from evidence archive. Final replacement-host recovery remains unproved. | Final-host encrypted backup and blank-host RPO/RTO drill. |
 
 #### 5.9.1 Evidence cases, custody, holds, and packages
@@ -534,11 +534,13 @@ production claim.
 
 **Priority:** P0 before paid retention promises; otherwise P2
 **Outcome:** Retention contracts and capacity are physically enforceable.
-**Current status:** Archive-before-delete and immutable fallback are active;
-duration-specific containers, retrieval staging/UI, and replacement-host scale
-proof remain open.
+**Current status:** Archive-before-delete and the historical immutable fallback
+are active. The two approved 90-day Azure containers are locked, infrastructure
+verified, and proven through the candidate application path. OCI routing and
+OCI Legal Hold canaries, retrieval staging/UI, and replacement-host scale proof
+remain open.
 
-- Finish Azure retention class containers and retrieval staging.
+- Activate only the approved `SIEM_90` and `GENERAL_90` routes on OCI, then run controlled OCI archive/failure/hold canaries; finish retrieval staging separately.
 - Complete asynchronous retrieval and monthly allowance enforcement.
 - Run exact-host multi-tenant soak, Azure-outage survival, and blank-host restore.
 - Raise capacity only from measured evidence.
@@ -615,6 +617,7 @@ A capability is not `ACTIVE` merely because code exists. It is done only when:
 | Wazuh implementation sequence | `docs/WARSOC_WAZUH_EXECUTION_MIND_MAP.md` |
 | Wazuh lab/integration operations | `docs/WARSOC_WAZUH_IMPLEMENTATION_AND_LAB_RUNBOOK.md` |
 | Wazuh readiness requirements | `docs/WARSOC_WAZUH_INTEGRATION_READINESS_REQUIREMENTS.md` |
+| Active 90-day retention contract and Azure activation gate | `docs/WARSOC_90_DAY_RETENTION_CLOSURE.md` |
 | Azure account/storage creation | `docs/AZURE_ACCOUNT_AND_STORAGE_CREATION_RUNBOOK.md` |
 | Backend migration | `docs/AZURE_BACKEND_MIGRATION_RUNBOOK.md` |
 | Production backup and restore | `docs/PRODUCTION_BACKUP_RUNBOOK.md` |

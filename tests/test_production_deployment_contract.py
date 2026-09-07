@@ -63,6 +63,8 @@ def test_production_compose_is_private_fail_fast_and_sized_for_pilot():
 
 def test_oci_release_starts_evidence_governance_workers():
     deploy = _read("deploy/oci/deploy_warsoc_release.sh")
+    assert 'RELEASE_ID="${2:-${WARSOC_RELEASE_ID:-d92fb65}}"' in deploy
+    assert "Prepared release link does not identify requested release" in deploy
     assert "EVIDENCE_EXPORT_ENABLED=(true|1|yes|on)" in deploy
     for required_name in (
         "EVIDENCE_EXPORT_CONTAINER",

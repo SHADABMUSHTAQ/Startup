@@ -17,6 +17,52 @@ from app.routes.compliance import (
 )
 
 
+def _stored_blob_properties(
+    *,
+    version_id="version-1",
+    etag='"etag-1"',
+    tier="Hot",
+    policy_mode=None,
+    policy_expiry=None,
+):
+    return SimpleNamespace(
+        version_id=version_id,
+        etag=etag,
+        creation_time=datetime(2026, 7, 8, tzinfo=timezone.utc),
+        last_modified=datetime(2026, 7, 8, tzinfo=timezone.utc),
+        blob_tier=tier,
+        has_legal_hold=False,
+        immutability_policy=SimpleNamespace(
+            policy_mode=policy_mode,
+            expiry_time=policy_expiry,
+        ),
+    )
+
+
+class _FakeDownloader:
+    def __init__(self, payload, chunk_size=17):
+        self.payload = payload
+        self.chunk_size = chunk_size
+
+    async def chunks(self):
+        for offset in range(0, len(self.payload), self.chunk_size):
+            yield self.payload[offset : offset + self.chunk_size]
+
+
+@pytest.mark.asyncio
+async def test_stream_blob_sha256_hashes_chunks_without_readall():
+    payload = b"WarSOC archive readback" * 10
+
+    class FakeBlob:
+        async def download_blob(self, **kwargs):
+            assert kwargs == {"max_concurrency": 1}
+            return _FakeDownloader(payload)
+
+    assert await storage_archiver._stream_blob_sha256(FakeBlob()) == hashlib.sha256(
+        payload
+    ).hexdigest()
+
+
 def test_compliance_evidence_summary_bounds_large_messages():
     summary, truncated = _summarize_evidence_message("x" * 750)
 
@@ -139,7 +185,9 @@ async def test_archive_ledger_count_does_not_download_blobs():
     assert total == 125
     assert exact is True
     ledger.count_documents.assert_awaited_once()
-    assert ledger.pipeline[0]["$match"]["status"] == "archived"
+    assert ledger.pipeline[0]["$match"]["status"] == {
+        "$in": list(archive_reader.ARCHIVE_READABLE_STATUSES)
+    }
 
 
 @pytest.mark.asyncio
@@ -306,6 +354,99 @@ def test_archive_container_routing_is_opt_in_and_collection_specific(monkeypatch
     assert storage_archiver._container_policy_setting("siem_cold_vault", "DAYS", "0", 180) == "365"
 
 
+def test_archive_tier_follows_only_the_selected_container_route(monkeypatch):
+    monkeypatch.setenv("AZURE_STORAGE_CONTAINER", "legacy-vault")
+    monkeypatch.setenv("AZURE_STORAGE_TIER", "Hot")
+    monkeypatch.setenv("AZURE_STORAGE_TIER_SIEM_90", "Cold")
+
+    # An exact tier cannot silently affect the fallback container.
+    assert storage_archiver._archive_access_tier("siem_cold_vault", 90).value == "Hot"
+
+    monkeypatch.setenv("AZURE_STORAGE_CONTAINER_SIEM_90", "siem-90-vault")
+    assert storage_archiver._archive_access_tier("siem_cold_vault", 90).value == "Cold"
+
+
+def test_immutability_scope_can_differ_between_fallback_and_exact_route(monkeypatch):
+    monkeypatch.setenv("AZURE_STORAGE_CONTAINER", "legacy-vault")
+    monkeypatch.setenv("AZURE_IMMUTABILITY_SCOPE", "container")
+    monkeypatch.setenv("AZURE_IMMUTABILITY_SCOPE_SIEM_90", "blob")
+
+    assert storage_archiver._archive_immutability_scope("siem_cold_vault", 90) == "container"
+
+    monkeypatch.setenv("AZURE_STORAGE_CONTAINER_SIEM_90", "siem-90-vault")
+    assert storage_archiver._archive_immutability_scope("siem_cold_vault", 90) == "blob"
+
+
+def test_exact_retention_route_can_fail_closed(monkeypatch):
+    monkeypatch.setenv("AZURE_STORAGE_CONTAINER", "legacy-vault")
+    monkeypatch.setenv("AZURE_EXACT_RETENTION_ROUTE_REQUIRED", "true")
+    monkeypatch.delenv("AZURE_STORAGE_CONTAINER_SIEM_90", raising=False)
+
+    with pytest.raises(RuntimeError, match="SIEM_90 is not configured"):
+        storage_archiver._archive_container_name("siem_cold_vault", 90)
+
+    monkeypatch.setenv("AZURE_STORAGE_CONTAINER_SIEM_90", "siem-90-vault")
+    assert storage_archiver._archive_container_name("siem_cold_vault", 90) == "siem-90-vault"
+
+    with pytest.raises(RuntimeError, match="archive tier SIEM_90"):
+        storage_archiver._archive_access_tier("siem_cold_vault", 90)
+    with pytest.raises(RuntimeError, match="immutability scope SIEM_90"):
+        storage_archiver._archive_immutability_scope("siem_cold_vault", 90)
+
+
+def test_required_blob_version_identity_fails_closed(monkeypatch):
+    monkeypatch.setenv("AZURE_BLOB_VERSION_ID_REQUIRED", "true")
+
+    with pytest.raises(RuntimeError, match="version identity is required"):
+        storage_archiver._verify_required_blob_version_ids(
+            {"version_id": None},
+            {"version_id": "hash-version"},
+        )
+
+
+def test_blob_worm_requirement_uses_immutable_version_creation_clock():
+    creation_time = datetime(2026, 9, 6, 16, 9, 36, tzinfo=timezone.utc)
+
+    assert storage_archiver._required_blob_worm_until(
+        {"creation_time": creation_time},
+        90,
+    ) == datetime(2026, 12, 5, 16, 9, 36, tzinfo=timezone.utc)
+
+    with pytest.raises(RuntimeError, match="creation time is required"):
+        storage_archiver._required_blob_worm_until({}, 90)
+
+
+@pytest.mark.parametrize(
+    ("collection_name", "trusted_field"),
+    [
+        ("siem_cold_vault", "_expire_at"),
+        ("security_alerts", "_expire_at"),
+        ("fbr_pos_logs", "ingested_at"),
+        ("peca_forensic_logs", "ingested_at"),
+        ("source_envelopes_siem", "received_at"),
+        ("source_envelopes_peca", "received_at"),
+        ("source_envelopes_fbr", "received_at"),
+        ("csv_uploads", "_retention_ts"),
+    ],
+)
+def test_archive_query_uses_only_one_trusted_server_clock(collection_name, trusted_field):
+    now = datetime(2026, 7, 8, tzinfo=timezone.utc)
+    query = storage_archiver._archive_query("TENANT-A", collection_name, now, now)
+
+    assert len(query["$or"]) == 2
+    assert all(trusted_field in clause for clause in query["$or"])
+    assert '"timestamp"' not in json.dumps(query, default=str)
+
+
+def test_archive_batch_rejects_missing_trusted_clock():
+    with pytest.raises(RuntimeError, match="without its trusted ingested_at clock"):
+        storage_archiver._batch_retention_window(
+            [{"_id": "fresh", "timestamp": "2001-01-01T00:00:00Z"}],
+            "fbr_pos_logs",
+            90,
+        )
+
+
 def test_blob_immutability_requires_locked_policy_through_retention():
     required_until = datetime(2032, 7, 10, tzinfo=timezone.utc)
     adequate = SimpleNamespace(
@@ -326,15 +467,25 @@ def test_blob_immutability_requires_locked_policy_through_retention():
     assert storage_archiver._blob_immutability_status(unlocked, required_until)["verified"] is False
 
 
-def test_fbr_archive_uses_one_tenant_retention_cohort():
+def test_archive_cohorts_split_records_by_trusted_retention_day():
     documents = [
-        {"_id": "a", "retention_state": "RESOLVED", "tax_period_id": "PK-ST-2026-07", "effective_retention_until": "2032-07-31"},
-        {"_id": "b", "retention_state": "RESOLVED", "tax_period_id": "PK-ST-2026-08", "effective_retention_until": "2032-08-31"},
-        {"_id": "c", "retention_state": "UNRESOLVED"},
-        {"_id": "d", "retention_state": "RESOLVED", "tax_period_id": "PK-ST-2026-07", "effective_retention_until": "2032-07-31"},
+        {"_id": "a", "ingested_at": datetime(2026, 7, 1, 1, tzinfo=timezone.utc)},
+        {"_id": "b", "ingested_at": datetime(2026, 7, 1, 22, tzinfo=timezone.utc)},
+        {"_id": "c", "ingested_at": datetime(2026, 7, 2, 1, tzinfo=timezone.utc)},
     ]
-    cohorts = storage_archiver._archive_cohorts("fbr_pos_logs", documents)
-    assert cohorts == [documents]
+    cohorts = storage_archiver._archive_cohorts("fbr_pos_logs", documents, 90)
+    assert cohorts == [documents[:2], documents[2:]]
+
+
+def test_archive_cohorts_isolate_missing_trusted_clocks():
+    documents = [
+        {"_id": "missing"},
+        {"_id": "valid", "ingested_at": datetime(2026, 7, 1, tzinfo=timezone.utc)},
+    ]
+
+    cohorts = storage_archiver._archive_cohorts("fbr_pos_logs", documents, 90)
+
+    assert cohorts == [[documents[0]], [documents[1]]]
 
 
 def test_archive_batch_memory_boundary_stops_before_next_document():
@@ -379,6 +530,7 @@ async def test_blob_scope_can_lock_then_verify_when_explicitly_enabled(monkeypat
 @pytest.mark.parametrize("collection_name", ["fbr_pos_logs", "peca_forensic_logs"])
 async def test_archive_never_deletes_hot_records_without_verified_immutability(monkeypatch, collection_name):
     unlocked_properties = SimpleNamespace(
+        creation_time=datetime.now(timezone.utc),
         has_legal_hold=False,
         immutability_policy=SimpleNamespace(
             policy_mode="Unlocked",
@@ -418,7 +570,7 @@ async def test_archive_never_deletes_hot_records_without_verified_immutability(m
             FakeDb(),
             "TENANT-A",
             collection_name,
-            [{"_id": "doc-1", "timestamp": datetime.now(timezone.utc)}],
+            [{"_id": "doc-1", "ingested_at": datetime.now(timezone.utc)}],
             "run-1",
             1,
             90,
@@ -475,9 +627,22 @@ async def test_container_scope_archives_then_deletes_hot_records(monkeypatch):
     )
     monkeypatch.setattr(storage_archiver, "_active_holds_for_batch", AsyncMock(return_value=[]))
 
+    uploads = []
+
     class FakeBlob:
-        async def upload_blob(self, *_args, **_kwargs):
+        def __init__(self):
+            self.payload = b""
+
+        async def upload_blob(self, *_args, **kwargs):
+            uploads.append(kwargs)
+            self.payload = _args[0]
             return None
+
+        async def download_blob(self, **_kwargs):
+            return _FakeDownloader(self.payload)
+
+        async def get_blob_properties(self):
+            return _stored_blob_properties(tier="Cold")
 
     class FakeContainer:
         def get_blob_client(self, _name):
@@ -502,12 +667,14 @@ async def test_container_scope_archives_then_deletes_hot_records(monkeypatch):
     monkeypatch.setenv("AZURE_IMMUTABILITY_REQUIRED", "true")
     monkeypatch.setenv("AZURE_IMMUTABILITY_SCOPE", "container")
     monkeypatch.setenv("AZURE_STORAGE_CONTAINER_GENERAL_90", "general-90-vault")
+    monkeypatch.setenv("AZURE_STORAGE_TIER_GENERAL_90", "Cold")
+    monkeypatch.setenv("AZURE_BLOB_VERSION_ID_REQUIRED", "true")
     deleted = await storage_archiver._archive_batch(
         FakeContainer(),
         FakeDb(),
         "TENANT-A",
         "fbr_pos_logs",
-        [{"_id": "doc-1", "timestamp": datetime(2026, 7, 1, tzinfo=timezone.utc)}],
+        [{"_id": "doc-1", "ingested_at": datetime(2026, 7, 1, tzinfo=timezone.utc)}],
         "run-1",
         1,
         90,
@@ -522,7 +689,16 @@ async def test_container_scope_archives_then_deletes_hot_records(monkeypatch):
     assert deleted == 1
     assert collections["storage_archives"].update_one.await_count == 2
     archive_update = collections["storage_archives"].update_one.await_args_list[0].args[1]
-    assert archive_update["$setOnInsert"]["container_name"] == "general-90-vault"
+    assert archive_update["$set"]["container_name"] == "general-90-vault"
+    assert archive_update["$set"]["retention_clock_basis"] == "SERVER_INGESTED_AT"
+    assert archive_update["$set"]["blob_version_id"] == "version-1"
+    assert archive_update["$set"]["blob_etag"] == '"etag-1"'
+    assert archive_update["$set"]["archive_tier"] == "Cold"
+    assert archive_update["$set"]["customer_access_until"] == datetime(
+        2026, 9, 29, tzinfo=timezone.utc
+    )
+    assert len(uploads) == 2
+    assert all(options["standard_blob_tier"].value == "Cold" for options in uploads)
     collections["fbr_pos_logs"].delete_many.assert_awaited_once()
 
 
@@ -550,8 +726,18 @@ async def test_archive_rechecks_hold_and_preserves_hot_records(monkeypatch, coll
     monkeypatch.setattr(storage_archiver, "protect_archive_for_hold", protect)
 
     class FakeBlob:
+        def __init__(self):
+            self.payload = b""
+
         async def upload_blob(self, *_args, **_kwargs):
+            self.payload = _args[0]
             return None
+
+        async def download_blob(self, **_kwargs):
+            return _FakeDownloader(self.payload)
+
+        async def get_blob_properties(self):
+            return _stored_blob_properties()
 
     class FakeContainer:
         def get_blob_client(self, _name):
@@ -589,7 +775,7 @@ async def test_archive_rechecks_hold_and_preserves_hot_records(monkeypatch, coll
         FakeDb(),
         "TENANT-A",
         collection_name,
-        [{"_id": "doc-1", "event_uid": "event-1", "timestamp": datetime(2026, 7, 1, tzinfo=timezone.utc)}],
+        [{"_id": "doc-1", "event_uid": "event-1", "ingested_at": datetime(2026, 7, 1, tzinfo=timezone.utc)}],
         "run-hold",
         1,
         90,
@@ -627,6 +813,9 @@ async def test_archive_retry_reuses_the_same_verified_blobs(monkeypatch):
         async def readall(self):
             return self.payload
 
+        async def chunks(self):
+            yield self.payload
+
     class FakeBlob:
         def __init__(self, name, payloads):
             self.name = name
@@ -637,8 +826,11 @@ async def test_archive_retry_reuses_the_same_verified_blobs(monkeypatch):
                 raise storage_archiver.ResourceExistsError("already exists")
             self.payloads[self.name] = payload
 
-        async def download_blob(self):
+        async def download_blob(self, **_kwargs):
             return FakeDownloader(self.payloads[self.name])
+
+        async def get_blob_properties(self):
+            return _stored_blob_properties()
 
     class FakeContainer:
         def __init__(self):
@@ -665,7 +857,7 @@ async def test_archive_retry_reuses_the_same_verified_blobs(monkeypatch):
 
     monkeypatch.setenv("AZURE_IMMUTABILITY_REQUIRED", "false")
     container = FakeContainer()
-    docs = [{"_id": "doc-1", "timestamp": "2026-07-01T00:00:00+00:00"}]
+    docs = [{"_id": "doc-1", "_expire_at": "2026-07-08T00:00:00+00:00"}]
 
     for run_id in ("run-1", "run-2"):
         await storage_archiver._archive_batch(
@@ -685,6 +877,56 @@ async def test_archive_retry_reuses_the_same_verified_blobs(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_archive_readback_mismatch_preserves_hot_records(monkeypatch):
+    class FakeBlob:
+        async def upload_blob(self, *_args, **_kwargs):
+            return None
+
+        async def download_blob(self, **_kwargs):
+            return _FakeDownloader(b"corrupted-after-upload")
+
+        async def get_blob_properties(self):
+            return _stored_blob_properties()
+
+    class FakeContainer:
+        def get_blob_client(self, _name):
+            return FakeBlob()
+
+    class FakeCollection:
+        def __init__(self):
+            self.update_one = AsyncMock()
+            self.delete_many = AsyncMock()
+            self.find_one = AsyncMock(return_value=None)
+
+    collections = {
+        "storage_archives": FakeCollection(),
+        "siem_cold_vault": FakeCollection(),
+        "legal_holds": FakeCollection(),
+    }
+
+    class FakeDb:
+        def __getitem__(self, name):
+            return collections[name]
+
+    monkeypatch.setenv("AZURE_IMMUTABILITY_REQUIRED", "false")
+
+    with pytest.raises(RuntimeError, match="readback failed SHA-256"):
+        await storage_archiver._archive_batch(
+            FakeContainer(),
+            FakeDb(),
+            "TENANT-A",
+            "siem_cold_vault",
+            [{"_id": "doc-1", "_expire_at": "2026-07-08T00:00:00+00:00"}],
+            "run-corrupt",
+            1,
+            90,
+        )
+
+    collections["siem_cold_vault"].delete_many.assert_not_awaited()
+    collections["storage_archives"].update_one.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_archiver_fails_when_azure_configuration_is_missing(monkeypatch):
     monkeypatch.delenv("AZURE_STORAGE_CONNECTION_STRING", raising=False)
     with pytest.raises(RuntimeError, match="AZURE_STORAGE_CONNECTION_STRING"):
@@ -701,7 +943,41 @@ def test_production_archiver_is_scheduled_and_requires_azure_secret():
     assert 'profiles: ["maintenance"]' not in service
     assert "restart: on-failure" in service
     assert "AZURE_STORAGE_CONNECTION_STRING required" in service
+    for variable in (
+        "AZURE_STORAGE_CONTAINER_SIEM_90",
+        "AZURE_STORAGE_CONTAINER_GENERAL_90",
+        "AZURE_STORAGE_TIER_SIEM_90",
+        "AZURE_STORAGE_TIER_GENERAL_90",
+        "AZURE_EXACT_RETENTION_ROUTE_REQUIRED",
+        "AZURE_BLOB_VERSION_ID_REQUIRED",
+        "AZURE_IMMUTABILITY_SCOPE_SIEM_90",
+        "AZURE_IMMUTABILITY_SCOPE_GENERAL_90",
+        "AZURE_CONTAINER_IMMUTABILITY_LOCKED_SIEM_90",
+        "AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_90",
+        "AZURE_CONTAINER_IMMUTABILITY_LOCKED_GENERAL_90",
+        "AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_90",
+    ):
+        assert f"{variable}: ${{{variable}" in service
+    assert "ARCHIVE_BATCH_MAX_BYTES" in service
     assert "ARCHIVE_INTERVAL_SECONDS" in service
+
+
+def test_oci_release_preflight_enforces_exact_90_day_archive_contract():
+    from pathlib import Path
+
+    deploy_text = (
+        Path(__file__).resolve().parents[1]
+        / "deploy"
+        / "oci"
+        / "deploy_warsoc_release.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "AZURE_EXACT_RETENTION_ROUTE_REQUIRED" in deploy_text
+    assert "AZURE_BLOB_VERSION_ID_REQUIRED=true" in deploy_text
+    assert "AZURE_IMMUTABILITY_REQUIRED=true" in deploy_text
+    assert "AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_90=90" in deploy_text
+    assert "AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_90=90" in deploy_text
+    assert "SIEM and general evidence must use separate Azure containers" in deploy_text
 
 
 def test_async_azure_transport_is_packaged_for_archive_runtime():

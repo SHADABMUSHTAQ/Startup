@@ -74,12 +74,14 @@ async def _estimate_selection(
     collections: list[str],
     start_at: datetime,
     end_at: datetime,
+    customer_access_at: datetime,
 ) -> dict:
     query = archive_ledger_query(
         tenant_id=tenant_id,
         collections=collections,
         start_dt=start_at,
         end_dt=end_at,
+        customer_access_at=customer_access_at,
     )
     rows = await db["storage_archives"].aggregate(
         [
@@ -181,12 +183,14 @@ async def create_archive_retrieval(
         body.collections,
     )
 
+    now = utc_now()
     estimate = await _estimate_selection(
         db,
         tenant_id=tenant_id,
         collections=authorized_collections,
         start_at=body.start_at,
         end_at=body.end_at,
+        customer_access_at=now,
     )
     blob_count = int(estimate.get("blob_count") or 0)
     if blob_count == 0:
@@ -210,7 +214,6 @@ async def create_archive_retrieval(
             tenant_id,
             month_key,
         )
-    now = utc_now()
     request_id = f"ARR-{uuid.uuid4().hex.upper()}"
     status = "APPROVED" if within_included_allowance else "PENDING_APPROVAL"
     doc = {

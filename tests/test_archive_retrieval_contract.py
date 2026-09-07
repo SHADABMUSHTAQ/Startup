@@ -7,6 +7,7 @@ from pymongo.errors import DuplicateKeyError
 
 from app.routes import archive_retrieval
 from app.routes import data as data_routes
+from app.utils.archive_reader import ARCHIVE_READABLE_STATUSES, archive_ledger_query
 from app.utils.archive_retrieval import (
     authorized_archive_collections,
     serialize_retrieval,
@@ -22,6 +23,18 @@ def test_hot_search_is_exact_tenant_scoped_and_never_uses_regex():
     assert query["tenant_id"] == "TENANT-A"
     assert {"event_id": {"$in": ["4625", 4625]}} in query["$or"]
     assert "$regex" not in repr(query)
+
+
+def test_retrieval_query_accepts_completed_archives_and_enforces_access_expiry():
+    now = datetime(2026, 9, 6, tzinfo=timezone.utc)
+    query = archive_ledger_query(
+        tenant_id="TENANT-A",
+        collections=["siem_cold_vault"],
+        customer_access_at=now,
+    )
+
+    assert query["status"] == {"$in": list(ARCHIVE_READABLE_STATUSES)}
+    assert {"oldest_customer_access_until": {"$gte": now}} in query["$and"]
 
 
 def test_archive_collection_access_preserves_operational_and_compliance_rbac():
@@ -160,6 +173,8 @@ async def test_authenticated_tenant_can_create_bounded_retrieval_request(
             "newest_at": now - timedelta(days=29),
             "blob_size_bytes": 1024,
             "document_count": 10,
+            "oldest_customer_access_until": now + timedelta(days=59),
+            "customer_access_until": now + timedelta(days=60),
             "created_at": now,
         }
     )
@@ -181,6 +196,47 @@ async def test_authenticated_tenant_can_create_bounded_retrieval_request(
     assert body["tenant_id"] == session["tenant_id"]
     assert body["estimated_bytes"] == 1024
     assert body["estimated_blob_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_expired_archive_is_not_customer_retrievable(
+    async_client,
+    db,
+    monkeypatch,
+):
+    session = await provision_and_login_admin(async_client, "archive_expired")
+    now = datetime.now(timezone.utc)
+    await db["storage_archives"].insert_one(
+        {
+            "tenant_id": session["tenant_id"],
+            "collection": "siem_cold_vault",
+            "status": "archived_hot_deleted",
+            "archive_key": "archive-expired-1",
+            "container_name": "legacy-vault",
+            "blob_name": "tenant/archive.json",
+            "oldest_at": now - timedelta(days=100),
+            "newest_at": now - timedelta(days=99),
+            "oldest_customer_access_until": now - timedelta(days=10),
+            "customer_access_until": now - timedelta(days=9),
+            "blob_size_bytes": 1024,
+            "document_count": 10,
+            "created_at": now - timedelta(days=93),
+        }
+    )
+    monkeypatch.setenv("ARCHIVE_RETRIEVAL_ENABLED", "true")
+
+    response = await async_client.post(
+        "/api/v1/archive-retrievals",
+        json={
+            "collections": ["siem_cold_vault"],
+            "start_at": (now - timedelta(days=101)).isoformat(),
+            "end_at": (now - timedelta(days=98)).isoformat(),
+            "reason": "Expired entitlement negative-case proof",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No archived records match this request."
 
 
 def test_retrieval_serialization_hides_worker_and_staging_details():

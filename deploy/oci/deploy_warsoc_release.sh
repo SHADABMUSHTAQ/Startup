@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly RELEASE_ID="d92fb65"
+readonly RELEASE_ID="${2:-${WARSOC_RELEASE_ID:-d92fb65}}"
 readonly PUBLIC_IP="139.185.60.39"
 readonly API_HOST="api.warsoc.tech"
 readonly MIGRATION_DIR="/home/ubuntu/warsoc-migration"
@@ -34,6 +34,11 @@ compose() {
 
 require_root() {
     [[ "${EUID}" -eq 0 ]] || fail "Run with sudo."
+}
+
+validate_release_id() {
+    [[ "${RELEASE_ID}" =~ ^[A-Za-z0-9._-]{7,64}$ ]] || \
+        fail "Release ID must be 7-64 safe filename characters."
 }
 
 verify_host() {
@@ -81,6 +86,51 @@ validate_secret_file() {
                 fail "Evidence export is enabled but ${export_name} is absent or empty."
         done
     fi
+
+    if grep -Eqi '^AZURE_EXACT_RETENTION_ROUTE_REQUIRED=(true|1|yes|on)$' "${env_file}"; then
+        local archive_name
+        for archive_name in \
+            AZURE_STORAGE_CONTAINER_SIEM_90 \
+            AZURE_STORAGE_CONTAINER_GENERAL_90 \
+            AZURE_STORAGE_TIER_SIEM_90 \
+            AZURE_STORAGE_TIER_GENERAL_90 \
+            AZURE_IMMUTABILITY_SCOPE_SIEM_90 \
+            AZURE_IMMUTABILITY_SCOPE_GENERAL_90 \
+            AZURE_CONTAINER_IMMUTABILITY_LOCKED_SIEM_90 \
+            AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_90 \
+            AZURE_CONTAINER_IMMUTABILITY_LOCKED_GENERAL_90 \
+            AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_90; do
+            grep -Eq "^${archive_name}=.+" "${env_file}" || \
+                fail "Exact Azure retention routing is enabled but ${archive_name} is absent or empty."
+        done
+
+        grep -Eqi '^AZURE_IMMUTABILITY_REQUIRED=(true|1|yes|on)$' "${env_file}" || \
+            fail "Exact Azure retention routing requires AZURE_IMMUTABILITY_REQUIRED=true."
+        grep -Eqi '^AZURE_BLOB_VERSION_ID_REQUIRED=(true|1|yes|on)$' "${env_file}" || \
+            fail "Exact Azure retention routing requires AZURE_BLOB_VERSION_ID_REQUIRED=true."
+        grep -Eqi '^AZURE_STORAGE_TIER_SIEM_90=cold$' "${env_file}" || \
+            fail "The SIEM 90-day route must use the verified Cold tier."
+        grep -Eqi '^AZURE_STORAGE_TIER_GENERAL_90=cold$' "${env_file}" || \
+            fail "The general 90-day route must use the verified Cold tier."
+        grep -Eqi '^AZURE_IMMUTABILITY_SCOPE_SIEM_90=blob$' "${env_file}" || \
+            fail "The SIEM 90-day route must verify version-level blob immutability."
+        grep -Eqi '^AZURE_IMMUTABILITY_SCOPE_GENERAL_90=blob$' "${env_file}" || \
+            fail "The general 90-day route must verify version-level blob immutability."
+        grep -Eqi '^AZURE_CONTAINER_IMMUTABILITY_LOCKED_SIEM_90=(true|1|yes|on)$' "${env_file}" || \
+            fail "The SIEM 90-day route must declare its independently verified locked policy."
+        grep -Eqi '^AZURE_CONTAINER_IMMUTABILITY_LOCKED_GENERAL_90=(true|1|yes|on)$' "${env_file}" || \
+            fail "The general 90-day route must declare its independently verified locked policy."
+        grep -Eq '^AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_90=90$' "${env_file}" || \
+            fail "The SIEM 90-day route must declare exactly 90 immutable days."
+        grep -Eq '^AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_90=90$' "${env_file}" || \
+            fail "The general 90-day route must declare exactly 90 immutable days."
+
+        local siem_container general_container
+        siem_container="$(sed -n 's/^AZURE_STORAGE_CONTAINER_SIEM_90=//p' "${env_file}" | tail -n 1 | tr -d "'\"\r")"
+        general_container="$(sed -n 's/^AZURE_STORAGE_CONTAINER_GENERAL_90=//p' "${env_file}" | tail -n 1 | tr -d "'\"\r")"
+        [[ "${siem_container}" != "${general_container}" ]] || \
+            fail "SIEM and general evidence must use separate Azure containers."
+    fi
 }
 
 normalize_container_entrypoint() {
@@ -102,6 +152,7 @@ normalize_container_entrypoint() {
 
 prepare_release() {
     require_root
+    validate_release_id
     verify_host
 
     [[ -s "${ARCHIVE}" ]] || fail "Missing release archive: ${ARCHIVE}"
@@ -175,13 +226,16 @@ prepare_release() {
     compose ps
 
     log "Prepare stage passed. Change ${API_HOST} A record to ${PUBLIC_IP}, then run:"
-    log "sudo bash ${MIGRATION_DIR}/deploy_warsoc_release.sh activate"
+    log "sudo bash ${MIGRATION_DIR}/deploy_warsoc_release.sh activate ${RELEASE_ID}"
 }
 
 activate_edge() {
     require_root
+    validate_release_id
     verify_host
     [[ -L "${CURRENT_LINK}" ]] || fail "Prepared release link is missing. Run prepare first."
+    [[ "$(readlink -f "${CURRENT_LINK}")" == "${RELEASE_DIR}" ]] || \
+        fail "Prepared release link does not identify requested release ${RELEASE_ID}."
     cd "${CURRENT_LINK}"
     validate_secret_file .env.prod
     compose config --quiet
@@ -242,8 +296,11 @@ activate_edge() {
 
 show_status() {
     require_root
+    validate_release_id
     verify_host
     [[ -L "${CURRENT_LINK}" ]] || fail "Prepared release link is missing."
+    [[ "$(readlink -f "${CURRENT_LINK}")" == "${RELEASE_DIR}" ]] || \
+        fail "Active release does not identify requested release ${RELEASE_ID}."
     cd "${CURRENT_LINK}"
     compose ps
     printf '\nHost listeners:\n'
@@ -265,6 +322,6 @@ case "${1:-}" in
         show_status
         ;;
     *)
-        fail "Usage: sudo bash $0 {prepare|activate|status}"
+        fail "Usage: sudo bash $0 {prepare|activate|status} [release-id]"
         ;;
 esac

@@ -14,7 +14,12 @@ from app.config.config import get_settings
 from app.database import get_db
 from app.routes.auth import get_current_user, require_premium_plan
 from app.utils.rbac import RoleChecker
-from app.utils.archive_reader import count_archived_documents, fetch_archived_documents
+from app.utils.archive_reader import (
+    archive_ledger_query,
+    count_archived_documents,
+    fetch_archived_documents,
+)
+from app.utils.archive_retrieval import ALLOWED_ARCHIVE_COLLECTIONS
 from app.utils.csv_security import sanitize_csv_cell
 from app.utils.endpoint_health import (
     EVENT_SIGNATURE_STATUS_KEY_PREFIX,
@@ -842,13 +847,25 @@ async def get_retention_status(
         "archived_hot_preserved_hold",
         "archived_hot_deleted",
     ]
-    archive_query = {
+    physical_archive_query = {
         "tenant_id": tenant_id,
+        "collection": {"$in": sorted(ALLOWED_ARCHIVE_COLLECTIONS)},
         "status": {"$in": archived_statuses},
     }
-    archived_batch_count = await db["storage_archives"].count_documents(archive_query)
+    physically_retained_batch_count = await db["storage_archives"].count_documents(
+        physical_archive_query
+    )
+    now = datetime.now(timezone.utc)
+    accessible_archive_query = archive_ledger_query(
+        tenant_id=tenant_id,
+        collections=ALLOWED_ARCHIVE_COLLECTIONS,
+        customer_access_at=now,
+    )
+    archived_batch_count = await db["storage_archives"].count_documents(
+        accessible_archive_query
+    )
     latest_archives = await db["storage_archives"].find(
-        archive_query,
+        accessible_archive_query,
         {"_id": 0, "created_at": 1},
     ).sort("created_at", -1).limit(1).to_list(length=1)
     latest_archive_at = latest_archives[0].get("created_at") if latest_archives else None
@@ -870,6 +887,11 @@ async def get_retention_status(
                 else "NO_ARCHIVED_EVIDENCE_OBSERVED"
             ),
             "archived_batch_count": archived_batch_count,
+            "physically_retained_batch_count": physically_retained_batch_count,
+            "expired_or_legacy_batch_count": max(
+                0,
+                physically_retained_batch_count - archived_batch_count,
+            ),
             "latest_archive_at": latest_archive_at,
             "fbr_scope": (
                 "FBR POS and invoice-integrity monitoring evidence; WarSOC is not "

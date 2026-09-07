@@ -481,9 +481,10 @@ yet runtime-accepted on a real isolated Redis/Azure stack:
    superseded on August 29 by the clean 563-test campaign recorded in section
    1.15. The controlled Azure PECA archive success/failure/hold exercise remains
    a separate production-environment gate.
-9. Local production-shaped Azure configuration exposes only the existing
-   fallback route. No `GENERAL_90/180/270/360` route is available for a safe
-   isolated success test. Existing production/locked evidence was not touched.
+9. This August 26 limitation was superseded on September 6. Private
+   `SIEM_90` and `GENERAL_90` routes now exist with locked 90-day version-WORM
+   policies and have passed isolated application-path testing. OCI routing is
+   still unchanged, and existing production/locked evidence was not touched.
 
 This delta does not enable network relay, Wazuh or archive retrieval and does
 not approve production deployment. The exact closure commands and evidence
@@ -1288,7 +1289,7 @@ Sensitive FBR fields, including message, raw event, raw data, raw event data, an
 | Incident workflow (`security_incidents`) | Lightweight operational record; not part of the evidence archiver | Retained while the tenant is active under the current pilot contract. |
 | FBR evidence | 7 days | Tenant retention entitlement, matching general commercial security evidence. |
 | PECA evidence | 7 days | Tenant retention entitlement for new evidence. |
-| Uploads/results | Tenant retention | Tenant retention. |
+| Uploads/results | 7 days | Tenant retention entitlement. |
 
 SIEM, general security evidence, FBR evidence and new PECA evidence follow the
 tenant retention entitlement. All three core live evidence classes use a
@@ -1296,14 +1297,20 @@ seven-day Mongo archival threshold.
 
 The deployed Azure evidence account has used one locked 2,190-day
 container-scoped immutability policy. This over-retains shorter classes but
-remains an immutable historical fact. New FBR and PECA evidence route through
-duration-aware `GENERAL_<days>` containers; SIEM uses `SIEM_<days>`. Every
-ledger row records its physical container. Existing
-blobs and locks remain untouched and cannot be shortened.
+remains an immutable historical fact. A separate private account,
+`warsocevidence90prod`, now contains locked 90-day version-WORM
+`GENERAL_90` and `SIEM_90` containers, but OCI does not yet route application
+writes to them. The candidate application path has archived synthetic SIEM and
+FBR/general evidence to the correct real-Azure destinations with Cold tier,
+version IDs, SHA-256 readback, WORM verification, ledger commit, and exact hot
+deletion proven in order. Every new-format ledger row
+records its physical container, logical customer-access boundary, and observed
+Azure properties. Existing blobs and locks remain untouched and cannot be
+shortened.
 
 The threshold and the physical move time are not identical:
 
-- The archiver runs once every 24 hours, so timestamp-selected FBR, PECA, and general-log records normally move on the first run after they become seven days old, approximately between day 7 and day 8.
+- The archiver runs once every 24 hours, so server-clock-selected FBR, PECA, general-log, upload, and analysis records normally move on the first run after they become seven days old, approximately between day 7 and day 8.
 - SIEM evidence and alerts have `_expire_at` set to day 7. The production one-day archive lead makes them eligible approximately at day 6, and the daily schedule normally moves them between day 6 and day 7.
 - If the archiver or Azure is unavailable, Mongo records remain beyond these windows. This is intentional fail-safe behavior: storage use grows visibly instead of evidence being deleted without a verified archive.
 - Therefore, "seven-day hot" is the operating policy, not a destructive Mongo TTL guarantee. Archiver health and Mongo disk growth must be monitored.
@@ -1316,8 +1323,13 @@ The threshold and the physical move time are not identical:
 - New FBR and PECA records use `retention_model=TENANT_ENTITLEMENT_V1`,
   `retention_state=TENANT_POLICY`, `retention_basis`, and an ingest-time tenant
   retention snapshot. Archive selection uses the tenant's active entitlement.
-- `_retention_ts` is used as a stable date anchor for raw/upload collections.
-- The archiver knows the valid fields for each collection and also applies the fixed seven-day collection threshold.
+- `_retention_ts` is a server admission anchor for raw/upload collections.
+- Every archive-managed collection has exactly one trusted server clock:
+  `_retention_ts`, `_expire_at`, `ingested_at`, `received_at`, or `uploaded_at`
+  according to collection ownership. Source/event `timestamp` remains evidence
+  and never controls automatic archival or deletion.
+- New ledger rows distinguish logical entitlement, customer access, and physical
+  Azure WORM dates. Those values must not be presented as interchangeable.
 - Legacy FBR records are not backfilled or automatically selected by the new
   archive path. A separately approved migration is required for them.
 - Mongo TTL indexes are removed from archive-managed collections.
@@ -1370,19 +1382,20 @@ Before onboarding a tenant, the contract/onboarding record must identify the evi
 
 ### 15.0.1 Post-pilot storage separation checkpoint
 
-Retention segmentation remains a pre-commercial onboarding gate. The existing locked `warsoc-cold-storage` fallback is safe against early deletion but physically over-retains SIEM and PECA evidence for 2,190 days. Before any new commercial retention promise is activated:
+Retention segmentation remains a pre-commercial onboarding gate. The existing locked `warsoc-cold-storage` fallback is safe against early deletion but physically over-retains historical evidence for 2,190 days. Before any new commercial retention promise is activated:
 
 1. Inventory existing containers, policies, ledger rows, tenant retention values and current archive backlog.
-2. Create private `warsoc-retention-90`, `warsoc-retention-180`, `warsoc-retention-270` and `warsoc-retention-360` containers only after their product terms are approved. New FBR and PECA evidence use the matching general-retention container; do not create new class-specific statutory-retention containers.
-3. Validate tenant-retention routing, explicit legal holds, Azure account capability, immutability scope and cost. Keep the existing locked fallback until each duration route is technically accepted.
+2. Create only private `warsoc-siem-90` and `warsoc-general-90` containers for the currently approved entitlement. New FBR and PECA evidence use `warsoc-general-90`; no class-specific statutory-retention container is required. Do not create unused 180/270/360-day placeholders.
+3. Validate tenant-retention routing, Cold tier, blob versioning, version-level WORM, explicit legal holds, Azure account capability and cost. Keep the existing locked fallback until both routes are technically accepted.
 4. Validate every approved policy while unlocked with harmless data, then lock the exact approved duration.
-5. Add the duration-specific environment variables only after all referenced containers exist and are locked.
+5. Add the two 90-day route variables and require blob version IDs only after both referenced containers exist and are locked.
 6. Recreate only `storage-archiver`, archive controlled samples for every class, and verify the recorded container/hash/immutability.
 7. Create a separate private `warsoc-retrieval-staging` container with no immutability lock and an Azure lifecycle rule that deletes staged objects after three days.
 8. Assign the retrieval identity least-privilege Blob Data Contributor access plus permission to generate user-delegation keys, enable the opt-in retrieval worker, and prove one request from `REQUESTED` through `READY`, SAS download, SHA-256 validation, and `EXPIRED`.
 9. Leave existing blobs in the original 2,190-day container. They cannot be shortened or moved as a way to evade the original lock.
 
-Storage separation and compute migration are separate changes. Do not alter archive routing during the DigitalOcean-to-Azure cutover.
+Storage separation and compute migration are separate changes. Do not alter
+archive routing during any compute cutover.
 
 ### 15.1 Production scheduler
 
@@ -1402,11 +1415,14 @@ For each tenant, collection, and batch:
    published and `dispatch_complete=true`.
 2. Serialize the batch as JSON.
 3. Calculate SHA-256 over the exact JSON bytes.
-4. Upload the JSON blob with collection, hash, and vault-retention metadata.
-5. Upload a companion `.sha256` blob.
-6. Read Azure blob properties.
-7. Verify legal hold or a locked immutability policy that lasts through the required retention date.
-8. Insert a `storage_archives` ledger row with tenant, collection, physical container, blob names, hash, count, timestamps, event IDs, retention, and immutability status.
+4. Upload the JSON blob with collection, hash, trusted-clock, customer-access,
+   retention, and selected-tier metadata.
+5. Upload a companion `.sha256` blob to the same selected tier.
+6. Read back Azure tier, version ID, ETag, creation time, legal hold, and WORM properties.
+7. Verify the selected tier, required version identity, and legal hold or a locked immutability policy that lasts through the required physical retention date.
+8. Insert or refresh a `storage_archives` ledger row with tenant, collection,
+   physical container, blob/version identities, hashes, counts, evidence times,
+   trusted retention clock, customer access, physical WORM, and immutability status.
 9. Delete only those exact Mongo `_id` values for the same tenant.
 
 If upload, hash handling, immutability verification, or ledger insertion fails, the Mongo records are not deleted. The visible failure mode is hot-storage growth, not silent evidence loss.
@@ -1416,8 +1432,8 @@ If upload, hash handling, immutability verification, or ledger insertion fails, 
 Archive paths use tenant and collection partitions:
 
 ```text
-{tenant_id}/{collection}/year=YYYY/month=MM/day=DD/archive_{collection}_{run_id}_batch_NNNN.json
-{tenant_id}/{collection}/year=YYYY/month=MM/day=DD/archive_{collection}_{run_id}_batch_NNNN.sha256
+{tenant_id}/{collection}/year=YYYY/month=MM/day=DD/archive_{collection}_{archive_key}.json
+{tenant_id}/{collection}/year=YYYY/month=MM/day=DD/archive_{collection}_{archive_key}.sha256
 ```
 
 The public agent-artifact account/container must remain separate from the private immutable evidence account/container.
@@ -1430,11 +1446,13 @@ The public agent-artifact account/container must remain separate from the privat
 - The archiver verifies Azure container immutability capability and the declared locked period before deleting hot Mongo records.
 - The current deployed single-container policy remains valid for historical
   blobs but over-retains evidence whose commercial entitlement is shorter.
-- Code/config routing supports exact-duration SIEM/general buckets such as
-  `SIEM_90` and `GENERAL_180`. New FBR and PECA evidence use the general
-  duration route. Routing remains inactive until each target container exists,
-  has a locked policy covering that duration, and its environment override is
-  set. Existing blobs remain in the original locked container.
+- The active-product target is `SIEM_90=warsoc-siem-90` and
+  `GENERAL_90=warsoc-general-90`, both private Cold-tier destinations with blob
+  versioning, version-level 90-day WORM, and required version-ID readback. New
+  FBR and PECA evidence use `GENERAL_90`. Infrastructure acceptance passed on
+  2026-09-06; routing remains inactive until the OCI configuration and
+  application archive/failure/hold canaries pass. Existing blobs remain in the
+  original locked container.
 
 ## 16. Cold Archive Retrieval
 
@@ -1457,7 +1475,11 @@ Historical retrieval is an explicit, opt-in workflow:
 3. One exact request of at most 10 GiB may use the included monthly allowance. A unique `(tenant_id, billing_month)` reservation prevents concurrent double use.
 4. Wider, additional, or legacy unknown-size requests enter `PENDING_APPROVAL`.
 5. WarSOC operations approves a paid/manual request using the super-admin control.
-6. An isolated 256 MiB worker performs an Azure server-side copy from immutable Archive storage to a private Cool-tier staging object using Microsoft Entra source authorization. No archive byte passes through the API or local disk.
+6. An isolated 256 MiB worker performs an Azure server-side copy from the
+   immutable source to a private staging object using Microsoft Entra source
+   authorization. The approved 90-day source tier is Cold and remains online;
+   an independently archived legacy source would require rehydration before
+   copy. No archive byte passes through the API or local disk.
 7. The request becomes `READY` only after every copy reports success.
 8. The API creates short-lived, read-only user-delegation SAS URLs for exact staged objects and returns each expected SHA-256.
 9. Staged copies expire after 48 to 72 hours. The worker deletes them; an Azure lifecycle rule is a mandatory independent cleanup backstop.
@@ -1466,7 +1488,7 @@ The immutable source blob is never modified or deleted by retrieval.
 
 ### 16.3 Deployment gate
 
-`ARCHIVE_RETRIEVAL_ENABLED=false` is the default. Do not enable it until the private staging container, lifecycle cleanup, service-principal/managed-identity RBAC, user-delegation permission, exact-duration retention containers, and an end-to-end rehydration proof exist. The worker is behind the Compose `archive-retrieval` profile, so a normal deployment does not start it accidentally.
+`ARCHIVE_RETRIEVAL_ENABLED=false` is the default. Do not enable it until the private staging container, lifecycle cleanup, service-principal/managed-identity RBAC, user-delegation permission, both 90-day retention containers, and an end-to-end server-side-copy/download proof exist. The worker is behind the Compose `archive-retrieval` profile, so a normal deployment does not start it accidentally.
 
 The frontend request/status/download interface is implemented against the plural `/api/v1/archive-retrievals` contract but remains hidden by `VITE_ARCHIVE_RETRIEVAL_ENABLED=false`. Backend execution independently remains disabled until the Azure staging gate above passes. Archive retrieval is collection/date scoped and is not embedded as a case-scoped operation.
 
@@ -1631,7 +1653,7 @@ flowchart LR
 | `warsoc-api` | Required | HTTPS API behind Nginx. |
 | `unified-worker` | Required | SIEM, FBR, PECA, email, stream retention. |
 | `storage-archiver` | Required | Daily immutable Azure archival. |
-| `archive-retrieval-worker` | Disabled optional profile | Asynchronous Azure rehydration; blocked until staging, lifecycle, RBAC, real-copy, and UI acceptance pass. |
+| `archive-retrieval-worker` | Disabled optional profile | Asynchronous Azure server-side copy and direct download; blocked until staging, lifecycle, RBAC, real-copy, and UI acceptance pass. Legacy Archive-tier objects would require a separate rehydration step. |
 | `compliance-cron` | Required | Scheduled compliance/report activity. |
 | `mongodb` | Required/private | Hot operational data and archive ledger. |
 | `redis` | Required/private | Streams, correlation, sessions/tickets, cache, mitigation. |
@@ -1750,7 +1772,7 @@ Additional production-assisted lifecycle proof remains recorded:
 | Customer-style invitation activation | Pending-login denial, token activation, replay rejection and active login are covered. SMTP is no longer required because the authenticated admin receives the link once. | Copy one link in the deployed browser, activate it as the invited role and confirm the intended role view. |
 | Independent backup recovery | The production-format encrypted Mongo drill now verifies SHA-256 and restores into a network-disabled disposable MongoDB container. | Repository proof `20260721T200605Z-7541a279` restored 156,671 documents with zero failures and recorded collection/index counts. Repeat against the final production backup during the Azure cutover. |
 | Physical retention segmentation | One locked 2,190-day container currently governs historical evidence blobs. New FBR evidence now shares the general tenant-duration model. | Route PECA and duration-aware general/SIEM archives to containers whose lock covers the promised class; leave existing locked evidence untouched. |
-| Archive retrieval rollout | A prior synchronous reader proved that existing blobs and hashes were readable, but normal API hot/cold merging has been removed to protect API memory. | Configure private staging/lifecycle/RBAC, enable the isolated worker in a non-production acceptance environment, prove rehydration/SAS/hash/expiry, then build the frontend request/status UI. |
+| Archive retrieval rollout | A prior synchronous reader proved that existing blobs and hashes were readable, but normal API hot/cold merging has been removed to protect API memory. | Configure private staging/lifecycle/RBAC, enable the isolated worker in a non-production acceptance environment, prove server-side copy/SAS/hash/expiry, then build the frontend request/status UI. Rehydrate only if a selected legacy object is actually Archive-tier. |
 | Dashboard post-deploy resources | The deployed frontend uses the intended 30-second alert and 10-second evidence schedule. Before deployment, Mongo used approximately 55.91% CPU and 1.639 GiB of its 2 GiB container limit. In the first post-deploy snapshot it used 1.55% CPU and 939.6 MiB; API, Redis and the unified worker were also low-use and healthy. A brief 502 and two legacy 499 cancellations occurred while the API container restarted at 21:30; no `/logs/live` 499 or 5xx appeared after deployment. | Measure Mongo CPU/memory and Nginx status codes for at least 15 continuous minutes after deployment; require no live-read 499s and p95 below two seconds. |
 | Ingest request buffering | Real agent ingestion is returning HTTP 200, but Nginx reports that some request bodies spill to its temporary request-body files. This is bounded buffering, not evidence loss, but it creates disk I/O. | Record agent batch sizes and temporary-file/disk growth during the 50-agent pilot; tune `client_body_buffer_size` or request batching only from measured data. |
 | Intermittent ingest exception | The deployed API logs `repr` plus traceback. No recurrence appeared during the current real-agent and acceptance windows; surrounding ingestion remained HTTP 200. | If it recurs, preserve the complete traceback and resolve that exact failure before declaring the incident closed. |
@@ -1806,14 +1828,14 @@ Status meanings:
 | MongoDB hot tier | Seven-day operational store and tenant-scoped indexes | PROVEN baseline / CANDIDATE SEARCH FIX | Live-query index use is proven. Backend `d92fb65` removes the unindexed `_id` tie-breaker that caused the seven-day search to examine 471,571 matching records. Repeat the authenticated seven-day request after deployment and require a clear margin below the browser timeout. |
 | Daily storage archiver | Archive-before-delete transaction from Mongo to Azure | PROVEN | Service is running; latest cycle completed without errors. It verifies upload/hash/immutability/ledger before exact Mongo deletion. |
 | Azure immutable evidence | Private blob storage, SHA companion and locked retention | PROVEN | Runtime probe verified ledger, SHA-256, immutability and actual Azure retrieval for SIEM, alerts, FBR and PECA. |
-| Archive retrieval | Asynchronous rehydration and direct Azure download | CODE COMPLETE / DISABLED | Request ledger, one-job/10-GiB monthly allowance, approval path, isolated server-side-copy worker, short-lived user-delegation SAS, and expiry logic are implemented. `ARCHIVE_RETRIEVAL_ENABLED=false`; Azure staging/lifecycle/RBAC, real rehydration, and frontend workflow remain mandatory. |
+| Archive retrieval | Asynchronous server-side copy and direct Azure download | CODE COMPLETE / DISABLED | Request ledger, one-job/10-GiB monthly allowance, approval path, isolated server-side-copy worker, short-lived user-delegation SAS, and expiry logic are implemented. `ARCHIVE_RETRIEVAL_ENABLED=false`; Azure staging/lifecycle/RBAC, real copy/hash/SAS/expiry, and frontend workflow remain mandatory. |
 | CSV export | Bounded detailed export from hot operational data | PROVEN | Current production CSV returned HTTP 200 and 204,350 bytes; validator CSV also passed. Historical export requires the separate retrieval workflow. |
 | PDF report | Human-readable compliance summary | PROVEN | Current PECA PDF returned HTTP 200 and a valid PDF payload. The PDF itself is not cryptographically signed. |
 | Email daemon | Queue, retry, SMTP delivery and DLQ | OPTIONAL/PARTIAL | Security-alert email is disabled. Quote/contact records persist before email queueing. Team invitations return a secure manual handoff link even when SMTP is unavailable. Current SMTP quota/delivery must not be assumed. |
 | Metrics and health | Worker, queue, agent, DLQ, detection and dashboard telemetry | PROVEN | Protected production metrics were read successfully. Dashboard live-read histograms are deployed on the backend. |
 | Independent Mongo backup | Operational disaster recovery separate from evidence archive | CANDIDATE-PROVEN | Drill `20260721T200605Z-7541a279` verified SHA-256, decrypted a production-format archive, and restored 156,671 documents across 18 collections with zero failures into a network-disabled disposable MongoDB. The restore drill is now tracked and uses a temporary disk-backed Docker volume instead of a 2 GiB RAM-backed filesystem; the volume is deleted after the drill. Repeat with the final Azure-hosted production backup during cutover. |
 | Endpoint event authenticity | Per-event Ed25519 signature tied to the enrolled agent key before Redis admission | REQUIRED / DEPLOYED | Agent/API tests and exact-machine flow pass with 7,191 verified and zero rejected signatures. Accepted-event signature readiness is exposed per endpoint and gates health/coverage. The deployment operator set `AGENT_EVENT_SIGNATURE_MODE=required`; fresh signed-agent metrics remain the runtime watch. |
-| Physical retention classes | Match actual Azure lock duration to tenant and general retention terms | CODE COMPLETE / CLOUD PENDING | Routing and readback support duration-aware SIEM/general containers. New FBR and PECA evidence use the general tenant-duration route. Existing blobs and legacy FBR/PECA records remain under their original model. |
+| Physical retention classes | Separate logical entitlement, customer access, and actual Azure WORM facts | CANDIDATE + REAL-AZURE PROVEN / OCI ROUTING PENDING | Runs `20260906T120359Z-e6e1ffc4` and `20260906T120541Z-b8d6d78e` prove private `SIEM_90` and `GENERAL_90` Cold/version-WORM routes with exact locked 90-day policies. Synthetic candidate application archives proved route isolation, version identity, SHA readback, ledger-before-delete, exact deletion, and fail-closed preservation. OCI deployment and SIEM/general/hold canaries remain open. Existing blobs and legacy FBR/PECA records remain untouched. |
 | Evidence cases and custody | Reference original evidence and record hash-linked custody transitions | PROVEN | Production run `EVIDENCE-ACCEPTANCE-20260906T043509Z-c9b91a9d` proved tenant-scoped hot-evidence attachment, cross-tenant denial, custody verification, closure RBAC, and tamper-safe chain requirements. Cold evidence requires the isolated retrieval flow first. |
 | Legal holds | Prevent eligible hot and archived evidence from deletion | PROVEN | The same production run proved admin/auditor RBAC, apply/reconcile/release, hot-deletion blocking, and audited fail-closed release through the deployed hold worker. |
 | Evidence package export | Build signed packages outside the API and deliver directly from Azure | PROVEN | The deployed non-root worker produced a private Azure package, verified SHA-256, issued a short-lived read-only SAS, and passed offline RSA-PSS verification. The acceptance package was removed after validation. |
@@ -1912,11 +1934,11 @@ Do not declare the current release fully accepted until all of the following are
 13. Auditor access allowed for entitled evidence and denied for operations/team/agent/live-feed controls.
 14. Email delivery proof.
 15. PDF and CSV proof.
-16. Azure blob upload, immutability, SHA verification and archive-ledger proof.
-    For FBR, prove the selected general-duration policy covers the tenant
-    entitlement and that an inadequate policy leaves Mongo untouched. If archive retrieval
-    is enabled for the release, require a separate asynchronous rehydration and
-    short-lived SAS download proof.
+16. Azure blob upload, Cold-tier/version identity, immutability, SHA verification
+    and archive-ledger proof. For FBR, prove `GENERAL_90` covers the tenant
+    entitlement and that an inadequate policy leaves Mongo untouched. If archive
+    retrieval is enabled for the release, require a separate asynchronous
+    server-side-copy and short-lived SAS download proof.
 17. Backup restore proof distinct from the compliance archive.
 18. Endpoint-signature metrics proving zero invalid signatures and, before enabling required mode, zero unsigned active agents for the agreed observation window.
 
@@ -1961,6 +1983,7 @@ Do not declare the current release fully accepted until all of the following are
 | Network-relay as-built candidate contract | `docs/NETWORK_RELAY_BACKEND_FOUNDATION.md` |
 | Future generic detection engine and Wazuh integration | `docs/WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md` |
 | Reviewed 90-day backend evidence plan, phase gates, Azure decision points and contradictions | `docs/WARSOC_90_DAY_BACKEND_EVIDENCE_PLAN_REVIEW.md` |
+| Active 90-day retention contract, implementation boundary, and Azure activation gate | `docs/WARSOC_90_DAY_RETENTION_CLOSURE.md` |
 | FBR/PECA Phase 0 legal, evidence, claim and API truth map | `docs/WARSOC_FBR_PECA_PHASE_0_TRUTH_MAP.md` |
 | P0 source isolation, canonical evidence, outbox and FBR-retention closure | `docs/WARSOC_P0_EVIDENCE_INTEGRITY_CLOSURE_2026-08-20.md` |
 | Current backend evidence-program implementation and open gates | `docs/WARSOC_BACKEND_EVIDENCE_PROGRAM_IMPLEMENTATION_2026-08-20.md` |

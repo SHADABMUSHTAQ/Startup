@@ -45,6 +45,8 @@ async def _drop_ttl_indexes(collection, collection_name: str):
                     raise e
 
 async def _backfill_expire_at(collection, retention_days: int):
+    # Legacy evidence without a trustworthy server expiry receives a fresh hot
+    # window. Never derive deletion eligibility from an endpoint timestamp.
     await collection.update_many(
         {"_expire_at": {"$exists": False}},
         [
@@ -55,14 +57,6 @@ async def _backfill_expire_at(collection, retention_days: int):
                             "startDate": {
                                 "$switch": {
                                     "branches": [
-                                        {
-                                            "case": {"$eq": [{"$type": "$_retention_ts"}, "date"]},
-                                            "then": "$_retention_ts",
-                                        },
-                                        {
-                                            "case": {"$eq": [{"$type": "$timestamp"}, "date"]},
-                                            "then": "$timestamp",
-                                        },
                                         {
                                             "case": {"$eq": [{"$type": "$ingested_at"}, "date"]},
                                             "then": "$ingested_at",
@@ -205,7 +199,7 @@ async def init_compliance_db(db):
         )
         await _aggressive_create_index(
             db.peca_forensic_logs,
-            [("tenant_id", 1), ("retention_model", 1), ("timestamp", 1)],
+            [("tenant_id", 1), ("retention_model", 1), ("ingested_at", 1), ("_id", 1)],
             name="idx_peca_tenant_retention_archive",
         )
         #  LEGAL PHYSICS: Hard engine-level block on cross-tenant overwrites
@@ -227,7 +221,7 @@ async def init_compliance_db(db):
         await _aggressive_create_index(db.fbr_pos_logs, [("fbr_invoice_id", 1)])
         await _aggressive_create_index(
             db.fbr_pos_logs,
-            [("tenant_id", 1), ("retention_model", 1), ("timestamp", 1)],
+            [("tenant_id", 1), ("retention_model", 1), ("ingested_at", 1), ("_id", 1)],
             name="idx_fbr_tenant_retention_archive",
         )
         #  LEGAL PHYSICS: Hard engine-level block on cross-tenant overwrites
@@ -247,6 +241,11 @@ async def init_compliance_db(db):
             db.security_alerts,
             [("tenant_id", 1), ("timestamp", -1)],
             name="idx_security_alerts_tenant_timestamp",
+        )
+        await _aggressive_create_index(
+            db.security_alerts,
+            [("tenant_id", 1), ("_expire_at", 1), ("_id", 1)],
+            name="idx_security_alerts_archive_clock",
         )
         await _aggressive_create_index(
             db.security_alerts,
@@ -425,6 +424,11 @@ async def init_compliance_db(db):
             [("ingested_at", 1), ("_id", 1)],
             name="idx_siem_vault_detection_projector_scan",
         )
+        await _aggressive_create_index(
+            db.siem_cold_vault,
+            [("tenant_id", 1), ("_expire_at", 1), ("_id", 1)],
+            name="idx_siem_vault_archive_clock",
+        )
 
         # External detection is an optional post-persistence consumer. These
         # queues and ledgers are isolated from canonical SIEM/FBR/PECA writes.
@@ -581,56 +585,30 @@ async def init_compliance_db(db):
         await _drop_ttl_indexes(db.csv_uploads, "csv_uploads")
         await _drop_ttl_indexes(db.analysis_results, "analysis_results")
 
-        # Backfill date anchors so the archiver can select legacy records that
-        # stored display timestamps as strings.
+        # Give legacy rows a fresh trusted server-side hot window. Source CSV
+        # timestamps are evidence and must not control automatic deletion.
         await db.logs.update_many(
             {RAW_RETENTION_ANCHOR_FIELD: {"$exists": False}},
-            [
-                {
-                    "$set": {
-                        RAW_RETENTION_ANCHOR_FIELD: {
-                            "$cond": [
-                                {"$eq": [{"$type": "$timestamp"}, "date"]},
-                                "$timestamp",
-                                {
-                                    "$dateFromString": {
-                                        "dateString": "$timestamp",
-                                        "onError": "$$NOW",
-                                        "onNull": "$$NOW",
-                                    }
-                                },
-                            ]
-                        }
-                    }
-                }
-            ],
+            [{"$set": {RAW_RETENTION_ANCHOR_FIELD: "$$NOW"}}],
         )
         await db.csv_uploads.update_many(
             {RAW_RETENTION_ANCHOR_FIELD: {"$exists": False}},
-            [
-                {
-                    "$set": {
-                        RAW_RETENTION_ANCHOR_FIELD: {
-                            "$cond": [
-                                {"$eq": [{"$type": "$timestamp"}, "date"]},
-                                "$timestamp",
-                                {
-                                    "$dateFromString": {
-                                        "dateString": "$timestamp",
-                                        "onError": "$$NOW",
-                                        "onNull": "$$NOW",
-                                    }
-                                },
-                            ]
-                        }
-                    }
-                }
-            ],
+            [{"$set": {RAW_RETENTION_ANCHOR_FIELD: "$$NOW"}}],
+        )
+        await _aggressive_create_index(
+            db.logs,
+            [("tenant_id", 1), (RAW_RETENTION_ANCHOR_FIELD, 1), ("_id", 1)],
+            name="idx_logs_tenant_retention_archive",
         )
         await _aggressive_create_index(
             db.csv_uploads,
-            [("tenant_id", 1), (RAW_RETENTION_ANCHOR_FIELD, -1)],
-            name="idx_csv_uploads_tenant_retention",
+            [("tenant_id", 1), (RAW_RETENTION_ANCHOR_FIELD, 1), ("_id", 1)],
+            name="idx_csv_uploads_tenant_retention_archive",
+        )
+        await _aggressive_create_index(
+            db.analysis_results,
+            [("tenant_id", 1), ("uploaded_at", 1), ("_id", 1)],
+            name="idx_analysis_results_archive_clock",
         )
 
         # 5. CTO VETO ENFORCEMENT: Audit trails are excluded from raw TTL policy.
@@ -750,7 +728,7 @@ async def init_compliance_db(db):
             )
             await _aggressive_create_index(
                 source_collection,
-                [("tenant_id", 1), ("dispatch_complete", 1), ("timestamp", 1)],
+                [("tenant_id", 1), ("dispatch_complete", 1), ("received_at", 1), ("_id", 1)],
                 name="idx_source_envelope_archive",
             )
             if source_collection_name == "source_envelopes_fbr":
@@ -760,7 +738,8 @@ async def init_compliance_db(db):
                         ("tenant_id", 1),
                         ("retention_model", 1),
                         ("dispatch_complete", 1),
-                        ("timestamp", 1),
+                        ("received_at", 1),
+                        ("_id", 1),
                     ],
                     name="idx_fbr_source_tenant_retention_archive",
                 )
@@ -771,7 +750,8 @@ async def init_compliance_db(db):
                         ("tenant_id", 1),
                         ("retention_model", 1),
                         ("dispatch_complete", 1),
-                        ("timestamp", 1),
+                        ("received_at", 1),
+                        ("_id", 1),
                     ],
                     name="idx_peca_source_tenant_retention_archive",
                 )

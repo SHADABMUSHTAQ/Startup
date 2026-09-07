@@ -16,7 +16,7 @@ import os
 import socket
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -101,7 +101,7 @@ def _build_alert_payload(
         "user": user,
         "message": message,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "_retention_ts": datetime.now(timezone.utc),
+        "_expire_at": datetime.now(timezone.utc) + timedelta(days=7),
     }
 
 

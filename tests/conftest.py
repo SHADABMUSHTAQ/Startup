@@ -41,6 +41,10 @@ if _test_redis_url == _runtime_redis_url:
     raise RuntimeError("Pytest Redis URL must differ from the runtime Redis URL")
 os.environ["REDIS_URL"] = _test_redis_url
 os.environ["ENABLE_SELF_SIGNUP"] = "true"
+# Mount the feature-gated relay router before importing app.main. Individual
+# tests can still toggle the runtime guard, but router registration is static.
+os.environ["NETWORK_RELAY_ENABLED"] = "true"
+os.environ["NETWORK_RELAY_MINIMUM_VERSION"] = "1.0.0"
 os.environ.setdefault("SUPER_ADMIN_API_KEY", "warsoc-test-super-admin-key-2026")
 os.environ["BACKEND_PUBLIC_URL"] = "https://api.warsoc.test"
 

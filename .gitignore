@@ -100,6 +100,7 @@ scripts/*
 !scripts/release_relay_setup_kit.ps1
 !scripts/publish_relay_pilot_kit.ps1
 !scripts/generate_api_security_inventory.py
+!scripts/provision_azure_retention.ps1
 !build_agent.bat
 trigger_alerts.py
 verify.py

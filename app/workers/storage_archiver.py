@@ -7,7 +7,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from azure.core.exceptions import ResourceExistsError
-from azure.storage.blob import BlobImmutabilityPolicyMode, ImmutabilityPolicy
+from azure.storage.blob import (
+    BlobImmutabilityPolicyMode,
+    ImmutabilityPolicy,
+    StandardBlobTier,
+)
 from azure.storage.blob.aio import BlobServiceClient
 from app.utils.security_incidents import project_security_incident
 from bson import ObjectId
@@ -24,6 +28,9 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("storage_archiver")
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(
+    logging.WARNING
+)
 
 DEFAULT_ARCHIVE_COLLECTIONS = (
     "logs",
@@ -38,20 +45,21 @@ DEFAULT_ARCHIVE_COLLECTIONS = (
     "analysis_results",
 )
 
-COLLECTION_DATE_FIELDS = {
-    "logs": ("_retention_ts", "timestamp"),
-    "siem_cold_vault": ("_expire_at", "timestamp", "ingested_at"),
-    "security_alerts": ("_expire_at", "timestamp", "ingested_at", "_retention_ts"),
-    "fbr_pos_logs": ("_expire_at", "timestamp", "ingested_at", "_retention_ts"),
-    "peca_forensic_logs": ("_expire_at", "timestamp", "ingested_at", "_retention_ts"),
-    "source_envelopes_siem": ("timestamp", "received_at"),
-    "source_envelopes_peca": ("timestamp", "received_at"),
-    "source_envelopes_fbr": ("timestamp", "received_at"),
-    "csv_uploads": ("_retention_ts", "timestamp", "uploaded_at"),
-    "analysis_results": ("uploaded_at", "created_at", "timestamp"),
+# Every automatic archive decision uses exactly one server-controlled clock.
+# Source/event timestamps remain evidence, but can never make a fresh record
+# eligible for archival or hot deletion.
+COLLECTION_ARCHIVE_CLOCKS = {
+    "logs": ("_retention_ts", "anchor", "SERVER_ACCEPTED_AT"),
+    "siem_cold_vault": ("_expire_at", "expiry", "SERVER_HOT_EXPIRY"),
+    "security_alerts": ("_expire_at", "expiry", "SERVER_HOT_EXPIRY"),
+    "fbr_pos_logs": ("ingested_at", "anchor", "SERVER_INGESTED_AT"),
+    "peca_forensic_logs": ("ingested_at", "anchor", "SERVER_INGESTED_AT"),
+    "source_envelopes_siem": ("received_at", "anchor", "SERVER_RECEIVED_AT"),
+    "source_envelopes_peca": ("received_at", "anchor", "SERVER_RECEIVED_AT"),
+    "source_envelopes_fbr": ("received_at", "anchor", "SERVER_RECEIVED_AT"),
+    "csv_uploads": ("_retention_ts", "anchor", "SERVER_ACCEPTED_AT"),
+    "analysis_results": ("uploaded_at", "anchor", "SERVER_UPLOADED_AT"),
 }
-
-EXPLICIT_EXPIRY_FIELDS = {"_expire_at"}
 COMPLIANCE_PACK_BY_COLLECTION = {
     "peca_forensic_logs": "peca_forensic",
     "source_envelopes_peca": "peca_forensic",
@@ -76,6 +84,8 @@ HOT_RETENTION_DAYS_BY_COLLECTION = {
     "siem_cold_vault": DEFAULT_SIEM_HOT_RETENTION_DAYS,
     "security_alerts": DEFAULT_SIEM_HOT_RETENTION_DAYS,
     "logs": DEFAULT_RAW_LOG_HOT_RETENTION_DAYS,
+    "csv_uploads": DEFAULT_RAW_LOG_HOT_RETENTION_DAYS,
+    "analysis_results": DEFAULT_RAW_LOG_HOT_RETENTION_DAYS,
     "source_envelopes_siem": DEFAULT_SIEM_HOT_RETENTION_DAYS,
 }
 
@@ -109,10 +119,97 @@ def _archive_container_name(
     retention_class = _archive_retention_class(collection_name)
     routing_key = _archive_routing_key(collection_name, vault_retention_days)
     exact = os.getenv(f"AZURE_STORAGE_CONTAINER_{routing_key}", "").strip()
+    if (
+        not exact
+        and retention_class in {"SIEM", "GENERAL"}
+        and vault_retention_days
+        and _environment_flag("AZURE_EXACT_RETENTION_ROUTE_REQUIRED", default=False)
+    ):
+        raise RuntimeError(
+            f"Required Azure archive route {routing_key} is not configured; "
+            "hot records were preserved"
+        )
     class_fallback = os.getenv(f"AZURE_STORAGE_CONTAINER_{retention_class}", "").strip()
     return exact or class_fallback or os.getenv(
         "AZURE_STORAGE_CONTAINER", "warsoc-cold-storage"
     ).strip()
+
+
+def _archive_access_tier(
+    collection_name: str,
+    vault_retention_days: int | None = None,
+):
+    """Resolve a tier only from the route that actually selected the container."""
+
+    retention_class = _archive_retention_class(collection_name)
+    routing_key = _archive_routing_key(collection_name, vault_retention_days)
+    exact_container = os.getenv(f"AZURE_STORAGE_CONTAINER_{routing_key}", "").strip()
+    class_container = os.getenv(
+        f"AZURE_STORAGE_CONTAINER_{retention_class}", ""
+    ).strip()
+    if exact_container:
+        raw_tier = os.getenv(f"AZURE_STORAGE_TIER_{routing_key}", "").strip()
+        if (
+            not raw_tier
+            and _environment_flag("AZURE_EXACT_RETENTION_ROUTE_REQUIRED", default=False)
+        ):
+            raise RuntimeError(
+                f"Required Azure archive tier {routing_key} is not configured; "
+                "hot records were preserved"
+            )
+    elif class_container:
+        raw_tier = os.getenv(f"AZURE_STORAGE_TIER_{retention_class}", "").strip()
+    else:
+        raw_tier = os.getenv("AZURE_STORAGE_TIER", "").strip()
+
+    if not raw_tier:
+        return None
+    tiers = {
+        "hot": StandardBlobTier.HOT,
+        "cool": StandardBlobTier.COOL,
+        "cold": StandardBlobTier.COLD,
+        "archive": StandardBlobTier.ARCHIVE,
+    }
+    try:
+        return tiers[raw_tier.lower()]
+    except KeyError as exc:
+        raise RuntimeError(
+            "Azure archive tier must be one of Hot, Cool, Cold, or Archive"
+        ) from exc
+
+
+def _archive_immutability_scope(
+    collection_name: str,
+    vault_retention_days: int | None = None,
+) -> str:
+    """Resolve container/blob verification scope for the selected route."""
+
+    retention_class = _archive_retention_class(collection_name)
+    routing_key = _archive_routing_key(collection_name, vault_retention_days)
+    exact_container = os.getenv(f"AZURE_STORAGE_CONTAINER_{routing_key}", "").strip()
+    class_container = os.getenv(
+        f"AZURE_STORAGE_CONTAINER_{retention_class}", ""
+    ).strip()
+    if exact_container:
+        raw_scope = os.getenv(f"AZURE_IMMUTABILITY_SCOPE_{routing_key}", "").strip()
+        if (
+            not raw_scope
+            and _environment_flag("AZURE_EXACT_RETENTION_ROUTE_REQUIRED", default=False)
+        ):
+            raise RuntimeError(
+                f"Required Azure immutability scope {routing_key} is not configured; "
+                "hot records were preserved"
+            )
+    elif class_container:
+        raw_scope = os.getenv(
+            f"AZURE_IMMUTABILITY_SCOPE_{retention_class}", ""
+        ).strip()
+    else:
+        raw_scope = os.getenv("AZURE_IMMUTABILITY_SCOPE", "blob").strip()
+    scope = (raw_scope or os.getenv("AZURE_IMMUTABILITY_SCOPE", "blob")).lower()
+    if scope not in {"blob", "container"}:
+        raise RuntimeError("AZURE_IMMUTABILITY_SCOPE must be 'blob' or 'container'")
+    return scope
 
 
 def _container_policy_setting(
@@ -145,9 +242,70 @@ def _as_utc(value):
     return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
+def _property_value(properties, name: str):
+    value = getattr(properties, name, None)
+    if value is None and hasattr(properties, "get"):
+        value = properties.get(name)
+    return value
+
+
+def _enum_value(value):
+    if value is None:
+        return None
+    return str(getattr(value, "value", value))
+
+
+def _blob_storage_facts(properties) -> dict:
+    policy = _property_value(properties, "immutability_policy")
+    return {
+        "version_id": _property_value(properties, "version_id"),
+        "etag": _enum_value(_property_value(properties, "etag")),
+        "creation_time": _as_utc(_property_value(properties, "creation_time")),
+        "last_modified": _as_utc(_property_value(properties, "last_modified")),
+        "tier": _enum_value(_property_value(properties, "blob_tier")),
+        "legal_hold": bool(_property_value(properties, "has_legal_hold")),
+        "immutability_policy_mode": _enum_value(
+            getattr(policy, "policy_mode", None)
+        ),
+        "immutability_until": _as_utc(getattr(policy, "expiry_time", None)),
+    }
+
+
+def _required_blob_worm_until(blob_facts: dict, retention_days: int) -> datetime:
+    creation_time = _as_utc(blob_facts.get("creation_time"))
+    if creation_time is None:
+        raise RuntimeError(
+            "Azure blob creation time is required for immutable-retention verification; "
+            "hot records were preserved"
+        )
+    return creation_time + timedelta(days=max(1, int(retention_days)))
+
+
+def _verify_required_blob_version_ids(json_facts: dict, hash_facts: dict) -> None:
+    if not (
+        _environment_flag("AZURE_BLOB_VERSION_ID_REQUIRED", default=False)
+        or _environment_flag("AZURE_EXACT_RETENTION_ROUTE_REQUIRED", default=False)
+    ):
+        return
+    if not json_facts.get("version_id") or not hash_facts.get("version_id"):
+        raise RuntimeError(
+            "Azure blob version identity is required but was not returned; hot "
+            "records were preserved"
+        )
+
+
+async def _stream_blob_sha256(blob_client) -> str:
+    """Hash an Azure blob without buffering the archive in worker memory."""
+    downloader = await blob_client.download_blob(max_concurrency=1)
+    digest = hashlib.sha256()
+    async for chunk in downloader.chunks():
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _blob_immutability_status(properties, required_until: datetime) -> dict:
-    legal_hold = bool(getattr(properties, "has_legal_hold", False))
-    policy = getattr(properties, "immutability_policy", None)
+    legal_hold = bool(_property_value(properties, "has_legal_hold"))
+    policy = _property_value(properties, "immutability_policy")
     raw_policy_mode = getattr(policy, "policy_mode", "") or ""
     policy_mode = str(getattr(raw_policy_mode, "value", raw_policy_mode))
     policy_expiry = _as_utc(getattr(policy, "expiry_time", None))
@@ -289,14 +447,6 @@ def _coerce_archive_datetime(value):
     return None
 
 
-def _date_clauses(field_name: str, retention_cutoff: datetime, expiry_cutoff: datetime) -> list[dict]:
-    cutoff = expiry_cutoff if field_name in EXPLICIT_EXPIRY_FIELDS else retention_cutoff
-    return [
-        {field_name: {"$lte": cutoff}},
-        {field_name: {"$lte": cutoff.isoformat()}},
-    ]
-
-
 def _effective_retention_days(collection_name: str, tenant_retention_days: int) -> int:
     """Return Mongo hot-retention, not the total Azure compliance-retention period."""
     fixed_hot_days = HOT_RETENTION_DAYS_BY_COLLECTION.get(collection_name)
@@ -320,11 +470,20 @@ def _archive_cutoffs(
 
 
 def _archive_query(tenant_id: str, collection_name: str, retention_cutoff: datetime, expiry_cutoff: datetime) -> dict:
-    fields = COLLECTION_DATE_FIELDS.get(collection_name, ("timestamp",))
-    clauses: list[dict] = []
-    for field_name in fields:
-        clauses.extend(_date_clauses(field_name, retention_cutoff, expiry_cutoff))
-    query = {"tenant_id": tenant_id, "$or": clauses}
+    clock = COLLECTION_ARCHIVE_CLOCKS.get(collection_name)
+    if clock is None:
+        raise RuntimeError(
+            f"No trusted archive clock is defined for collection {collection_name!r}"
+        )
+    field_name, clock_kind, _ = clock
+    cutoff = expiry_cutoff if clock_kind == "expiry" else retention_cutoff
+    query = {
+        "tenant_id": tenant_id,
+        "$or": [
+            {field_name: {"$lte": cutoff}},
+            {field_name: {"$lte": cutoff.isoformat()}},
+        ],
+    }
     if collection_name in {"fbr_pos_logs", "source_envelopes_fbr"}:
         # Existing records from the retired tax-period model are deliberately
         # left untouched. Only evidence created under the active tenant model
@@ -340,13 +499,59 @@ def _archive_query(tenant_id: str, collection_name: str, retention_cutoff: datet
     return query
 
 
-def _archive_partition_time(docs: list[dict]) -> datetime:
-    timestamps = [
-        doc.get("timestamp") or doc.get("ingested_at") or doc.get("uploaded_at")
-        for doc in docs
+def _document_retention_anchor(
+    document: dict,
+    collection_name: str,
+    tenant_retention_days: int,
+) -> datetime | None:
+    clock = COLLECTION_ARCHIVE_CLOCKS.get(collection_name)
+    if clock is None:
+        return None
+    field_name, clock_kind, _ = clock
+    value = _coerce_archive_datetime(document.get(field_name))
+    if value is None:
+        return None
+    value = value.astimezone(timezone.utc)
+    if clock_kind == "expiry":
+        return value - timedelta(
+            days=_effective_retention_days(collection_name, tenant_retention_days)
+        )
+    return value
+
+
+def _batch_retention_window(
+    documents: list[dict],
+    collection_name: str,
+    tenant_retention_days: int,
+) -> tuple[datetime, datetime, str]:
+    clock = COLLECTION_ARCHIVE_CLOCKS.get(collection_name)
+    if clock is None:
+        raise RuntimeError(
+            f"No trusted archive clock is defined for collection {collection_name!r}"
+        )
+    anchors = [
+        _document_retention_anchor(document, collection_name, tenant_retention_days)
+        for document in documents
     ]
-    parsed = [timestamp for timestamp in map(_coerce_archive_datetime, timestamps) if timestamp]
-    return min(parsed) if parsed else datetime.now(timezone.utc)
+    if not anchors or any(anchor is None for anchor in anchors):
+        raise RuntimeError(
+            f"Archive batch contains {collection_name} evidence without its trusted "
+            f"{clock[0]} clock. Records were preserved for manual review."
+        )
+    return min(anchors), max(anchors), clock[2]
+
+
+def _archive_partition_time(
+    docs: list[dict],
+    collection_name: str,
+    tenant_retention_days: int,
+) -> datetime:
+    oldest_anchor, _, _ = _batch_retention_window(
+        docs,
+        collection_name,
+        tenant_retention_days,
+    )
+    return oldest_anchor
 
 
 def _blob_base_name(
@@ -377,8 +582,28 @@ def _batch_vault_retention(
     return _effective_vault_retention_days(collection_name, tenant_retention_days), None
 
 
-def _archive_cohorts(collection_name: str, documents: list[dict]) -> list[list[dict]]:
-    return [documents] if documents else []
+def _archive_cohorts(
+    collection_name: str,
+    documents: list[dict],
+    tenant_retention_days: int,
+) -> list[list[dict]]:
+    """Keep each immutable blob within one trusted UTC retention day."""
+    cohorts: dict[str, list[dict]] = {}
+    for index, document in enumerate(documents):
+        anchor = _document_retention_anchor(
+            document,
+            collection_name,
+            tenant_retention_days,
+        )
+        # A missing trusted clock is isolated so _archive_batch fails closed
+        # without preventing otherwise valid documents from being archived.
+        cohort_key = (
+            anchor.astimezone(timezone.utc).date().isoformat()
+            if anchor is not None
+            else f"missing:{index}"
+        )
+        cohorts.setdefault(cohort_key, []).append(document)
+    return list(cohorts.values())
 
 
 def _bounded_archive_documents(documents: list[dict], max_encoded_bytes: int) -> list[dict]:
@@ -450,78 +675,154 @@ async def _archive_batch(
     )
     archive_key = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
 
-    base_name = _blob_base_name(
-        tenant_id,
-        collection_name,
-        archive_key,
-        _archive_partition_time(docs),
-    )
-    json_blob_name = f"{base_name}.json"
-    hash_blob_name = f"{base_name}.sha256"
     vault_retention_days, retention_state = _batch_vault_retention(
         collection_name,
         docs,
         tenant_retention_days,
     )
-    retain_until = (
-        datetime.now(timezone.utc) + timedelta(days=vault_retention_days)
-        if vault_retention_days
-        else None
+    oldest_anchor, newest_anchor, retention_clock_basis = _batch_retention_window(
+        docs,
+        collection_name,
+        tenant_retention_days,
     )
+    # Azure Blob immutability timestamps are exposed at whole-second precision.
+    # Use that same clock for the minimum WORM boundary so sub-second precision
+    # cannot make an exact 90-day policy appear a fraction of a second short.
+    archived_at = datetime.now(timezone.utc).replace(microsecond=0)
+    customer_access_until = newest_anchor + timedelta(days=vault_retention_days)
+    oldest_customer_access_until = oldest_anchor + timedelta(days=vault_retention_days)
+    base_name = _blob_base_name(
+        tenant_id,
+        collection_name,
+        archive_key,
+        oldest_anchor,
+    )
+    json_blob_name = f"{base_name}.json"
+    hash_blob_name = f"{base_name}.sha256"
+    access_tier = _archive_access_tier(collection_name, vault_retention_days)
+    upload_options = {}
+    if access_tier is not None:
+        upload_options["standard_blob_tier"] = access_tier
 
     json_blob = container_client.get_blob_client(json_blob_name)
     try:
         await json_blob.upload_blob(
             json_dump,
             overwrite=False,
+            validate_content=True,
             metadata={
                 "sha256": sha256_hash,
                 "collection": collection_name,
                 "retention_days": str(vault_retention_days or 0),
                 "retention_state": str(retention_state or "configured"),
+                "retention_clock": retention_clock_basis.lower(),
+                "customer_access_until": customer_access_until.isoformat(),
             },
+            **upload_options,
         )
     except ResourceExistsError:
-        existing = await (await json_blob.download_blob()).readall()
-        if hashlib.sha256(existing).hexdigest() != sha256_hash:
-            raise RuntimeError(f"Existing archive blob failed integrity check: {json_blob_name}")
+        pass
 
     hash_blob = container_client.get_blob_client(hash_blob_name)
     hash_payload = sha256_hash.encode("utf-8")
     try:
-        await hash_blob.upload_blob(hash_payload, overwrite=False)
+        await hash_blob.upload_blob(
+            hash_payload,
+            overwrite=False,
+            validate_content=True,
+            **upload_options,
+        )
     except ResourceExistsError:
-        existing_hash = await (await hash_blob.download_blob()).readall()
-        if existing_hash.strip().lower() != hash_payload:
-            raise RuntimeError(f"Existing archive hash blob is invalid: {hash_blob_name}")
+        pass
 
     immutability_required = _environment_flag("AZURE_IMMUTABILITY_REQUIRED", default=False)
     immutability_status = None
+    physical_worm_required_until = archived_at + timedelta(days=vault_retention_days)
     if immutability_required:
-        scope = os.getenv("AZURE_IMMUTABILITY_SCOPE", "blob").strip().lower()
+        scope = _archive_immutability_scope(collection_name, vault_retention_days)
         if scope == "container":
             immutability_status = _verify_container_immutability_for_retention(
                 container_immutability,
                 vault_retention_days,
             )
         elif scope == "blob":
-            json_status = await _ensure_blob_immutability(json_blob, retain_until)
-            hash_status = await _ensure_blob_immutability(hash_blob, retain_until)
+            preliminary_json_facts = _blob_storage_facts(
+                await json_blob.get_blob_properties()
+            )
+            preliminary_hash_facts = _blob_storage_facts(
+                await hash_blob.get_blob_properties()
+            )
+            json_required_until = _required_blob_worm_until(
+                preliminary_json_facts,
+                vault_retention_days,
+            )
+            hash_required_until = _required_blob_worm_until(
+                preliminary_hash_facts,
+                vault_retention_days,
+            )
+            json_status = await _ensure_blob_immutability(
+                json_blob, json_required_until
+            )
+            hash_status = await _ensure_blob_immutability(
+                hash_blob, hash_required_until
+            )
+            physical_worm_required_until = min(
+                json_required_until,
+                hash_required_until,
+            )
             immutability_status = {
                 "verified": True,
                 "scope": "blob",
                 "json": json_status,
                 "sha256": hash_status,
             }
-        else:
-            raise RuntimeError("AZURE_IMMUTABILITY_SCOPE must be 'blob' or 'container'")
+
+    # Compatibility alias retained for existing archive readers and reports.
+    retain_until = physical_worm_required_until
+
+    json_properties = await json_blob.get_blob_properties()
+    hash_properties = await hash_blob.get_blob_properties()
+    json_facts = _blob_storage_facts(json_properties)
+    hash_facts = _blob_storage_facts(hash_properties)
+    expected_tier = _enum_value(access_tier)
+    if expected_tier:
+        observed_tiers = {
+            str(json_facts.get("tier") or "").lower(),
+            str(hash_facts.get("tier") or "").lower(),
+        }
+        if observed_tiers != {expected_tier.lower()}:
+            raise RuntimeError(
+                "Azure archive tier verification failed; hot records were preserved"
+            )
+    _verify_required_blob_version_ids(json_facts, hash_facts)
+
+    downloaded_json_sha256 = await _stream_blob_sha256(json_blob)
+    if downloaded_json_sha256 != sha256_hash:
+        raise RuntimeError(
+            "Azure archive readback failed SHA-256 verification; hot records were preserved"
+        )
+    expected_hash_blob_sha256 = hashlib.sha256(hash_payload).hexdigest()
+    downloaded_hash_blob_sha256 = await _stream_blob_sha256(hash_blob)
+    if downloaded_hash_blob_sha256 != expected_hash_blob_sha256:
+        raise RuntimeError(
+            "Azure archive hash-sidecar readback failed verification; hot records were preserved"
+        )
+
+    worm_expiries = [
+        value
+        for value in (
+            json_facts.get("immutability_until"),
+            hash_facts.get("immutability_until"),
+        )
+        if value is not None
+    ]
+    physical_worm_until = min(worm_expiries) if len(worm_expiries) == 2 else None
 
     timestamps = [doc.get("timestamp") or doc.get("ingested_at") or doc.get("uploaded_at") for doc in docs]
     parsed_timestamps = [timestamp for timestamp in map(_coerce_archive_datetime, timestamps) if timestamp]
     event_ids = sorted({str(doc.get("event_id")) for doc in docs if doc.get("event_id") is not None})
     event_uids = sorted({str(doc.get("event_uid")) for doc in docs if doc.get("event_uid")})
     alert_uids = sorted({str(doc.get("alert_uid")) for doc in docs if doc.get("alert_uid")})
-    archived_at = datetime.now(timezone.utc)
     resolved_container_name = container_name or _archive_container_name(
         collection_name,
         vault_retention_days,
@@ -548,6 +849,29 @@ async def _archive_batch(
         "event_ids": event_ids,
         "event_uids": event_uids,
         "alert_uids": alert_uids,
+        "retention_model": "TENANT_ENTITLEMENT_V1",
+        "retention_clock_basis": retention_clock_basis,
+        "logical_retention_start_at": oldest_anchor,
+        "logical_retention_latest_start_at": newest_anchor,
+        "logical_retention_days": vault_retention_days,
+        "oldest_customer_access_until": oldest_customer_access_until,
+        "customer_access_until": customer_access_until,
+        "archive_created_at": archived_at,
+        "physical_worm_required_until": physical_worm_required_until,
+        "physical_worm_until": physical_worm_until,
+        "physical_worm_verified": bool(
+            immutability_status and immutability_status.get("verified")
+        ),
+        "blob_version_id": json_facts.get("version_id"),
+        "hash_blob_version_id": hash_facts.get("version_id"),
+        "blob_etag": json_facts.get("etag"),
+        "hash_blob_etag": hash_facts.get("etag"),
+        "blob_created_at": json_facts.get("creation_time"),
+        "hash_blob_created_at": hash_facts.get("creation_time"),
+        "archive_tier": json_facts.get("tier"),
+        "hash_archive_tier": hash_facts.get("tier"),
+        "readback_verified": True,
+        "readback_verified_at": datetime.now(timezone.utc),
         "vault_retention_days": vault_retention_days,
         "retain_until": retain_until,
         "retention_state": retention_state,
@@ -556,13 +880,48 @@ async def _archive_batch(
         "created_at": archived_at,
         "status": "archived",
     }
+    refresh_fields = {
+        "container_name",
+        "retention_model",
+        "retention_clock_basis",
+        "logical_retention_start_at",
+        "logical_retention_latest_start_at",
+        "logical_retention_days",
+        "oldest_customer_access_until",
+        "customer_access_until",
+        "archive_created_at",
+        "physical_worm_required_until",
+        "physical_worm_until",
+        "physical_worm_verified",
+        "blob_version_id",
+        "hash_blob_version_id",
+        "blob_etag",
+        "hash_blob_etag",
+        "blob_created_at",
+        "hash_blob_created_at",
+        "archive_tier",
+        "hash_archive_tier",
+        "readback_verified",
+        "readback_verified_at",
+        "vault_retention_days",
+        "retain_until",
+        "retention_state",
+        "automatic_final_expiry_allowed",
+        "immutability",
+    }
+    archive_insert = {
+        key: value for key, value in archive_doc.items() if key not in refresh_fields
+    }
+    archive_refresh = {
+        key: archive_doc[key] for key in refresh_fields
+    }
     ledger_result = await db["storage_archives"].update_one(
         {
             "tenant_id": tenant_id,
             "collection": collection_name,
             "archive_key": archive_key,
         },
-        {"$setOnInsert": archive_doc},
+        {"$setOnInsert": archive_insert, "$set": archive_refresh},
         upsert=True,
     )
     if ledger_result.upserted_id is not None:
@@ -803,7 +1162,11 @@ async def run_archiver():
                             # the original MongoDB documents for a later retry.
                             for alert in docs:
                                 await project_security_incident(db, alert)
-                        for cohort_docs in _archive_cohorts(collection_name, docs):
+                        for cohort_docs in _archive_cohorts(
+                            collection_name,
+                            docs,
+                            retention_days,
+                        ):
                             required_vault_days, _ = _batch_vault_retention(
                                 collection_name,
                                 cohort_docs,

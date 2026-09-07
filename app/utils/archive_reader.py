@@ -1,9 +1,15 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable, Optional
 
 
 logger = logging.getLogger("archive_reader")
+
+ARCHIVE_READABLE_STATUSES = (
+    "archived",
+    "archived_hot_deleted",
+    "archived_hot_preserved_hold",
+)
 
 
 def archive_ledger_query(
@@ -12,6 +18,7 @@ def archive_ledger_query(
     collections: Iterable[str],
     start_dt: Optional[datetime] = None,
     end_dt: Optional[datetime] = None,
+    customer_access_at: Optional[datetime] = None,
 ) -> dict:
     collection_list = sorted({str(name).strip() for name in collections if str(name).strip()})
     if not tenant_id or not collection_list:
@@ -20,7 +27,7 @@ def archive_ledger_query(
     query: dict = {
         "tenant_id": tenant_id,
         "collection": {"$in": collection_list},
-        "status": "archived",
+        "status": {"$in": list(ARCHIVE_READABLE_STATUSES)},
     }
     overlap_filters = []
     if start_dt is not None:
@@ -30,6 +37,13 @@ def archive_ledger_query(
     if end_dt is not None:
         overlap_filters.append(
             {"$or": [{"oldest_at": {"$lte": end_dt}}, {"oldest_at": {"$exists": False}}]}
+        )
+    if customer_access_at is not None:
+        # Retrieval copies an immutable archive blob as one object. Require the
+        # oldest document in that blob to remain entitled so a newer row cannot
+        # extend access to older evidence in the same batch.
+        overlap_filters.append(
+            {"oldest_customer_access_until": {"$gte": customer_access_at}}
         )
     if overlap_filters:
         query["$and"] = overlap_filters
@@ -43,7 +57,11 @@ async def count_archived_documents(
     collections: Iterable[str],
 ) -> tuple[int, bool]:
     """Count archived rows from MongoDB metadata without touching Azure bytes."""
-    query = archive_ledger_query(tenant_id=tenant_id, collections=collections)
+    query = archive_ledger_query(
+        tenant_id=tenant_id,
+        collections=collections,
+        customer_access_at=datetime.now(timezone.utc),
+    )
     try:
         missing_count = await db["storage_archives"].count_documents(
             {**query, "document_count": {"$exists": False}}
@@ -88,6 +106,7 @@ async def fetch_archived_documents(
         collections=collections,
         start_dt=start_dt,
         end_dt=end_dt,
+        customer_access_at=datetime.now(timezone.utc),
     )
     try:
         rows = await db["storage_archives"].aggregate(

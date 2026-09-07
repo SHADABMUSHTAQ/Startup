@@ -50,21 +50,8 @@ _EVENT_ID_MAP = _RUNTIME_CONFIG.get("event_id_map", {})
 RAW_RETENTION_ANCHOR_FIELD = "_retention_ts"
 
 
-def _build_retention_anchor(value: str) -> datetime:
-    """Create a Date anchor used by Mongo TTL indexes."""
-    if isinstance(value, datetime):
-        dt = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
-
-    if isinstance(value, str):
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc)
-        except Exception:
-            return datetime.now(timezone.utc)
-
+def _server_retention_anchor() -> datetime:
+    """Return the trusted server admission time for an uploaded row."""
     return datetime.now(timezone.utc)
 
 
@@ -379,7 +366,7 @@ async def analyze_log_file(request: Request, file: UploadFile = File(...), db=De
                     "user": get_field(row, resolved, "user", "system"),
                     "source": "csv_upload",
                     "analysis_tag": analysis_tag,
-                    RAW_RETENTION_ANCHOR_FIELD: _build_retention_anchor(final_ts),
+                    RAW_RETENTION_ANCHOR_FIELD: _server_retention_anchor(),
                 }
                 if event_id_meaning:
                     log_entry["event_id_meaning"] = event_id_meaning
