@@ -639,6 +639,7 @@ button::after { display: none !important; }
 [data-theme="light"] .btn-cancel,
 [data-theme="light"] .refresh-btn,
 [data-theme="light"] .navbar-btn-cancel,
+[data-theme="light"] .profile-back-btn,
 [data-theme="light"] .tabs-nav button,
 [data-theme="light"] .evidence-detail-button,
 [data-theme="light"] .pack-card button,
