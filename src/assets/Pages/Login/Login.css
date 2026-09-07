@@ -387,12 +387,12 @@
   align-items: center;
   justify-content: center;
   color: #0f172a !important;
-  background: transparent;
+  background: transparent !important;
   border: 0;
   border-radius: 8px;
   box-shadow: none;
   transform: translateY(-50%);
-  transition: color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+  transition: color 0.18s ease, opacity 0.18s ease;
   z-index: 3;
 }
 
@@ -427,24 +427,25 @@
   stroke: currentColor !important;
 }
 
-.password-visibility-btn:hover {
-  color: var(--login-blue) !important;
-  background: rgba(15, 98, 254, 0.08);
+.split-login-container button.password-visibility-btn:hover:not(:disabled) {
+  color: #0f172a !important;
+  background: transparent !important;
   transform: translateY(-50%) !important;
-  box-shadow: none;
+  transition: color 0.18s ease, opacity 0.18s ease !important;
 }
 
-.password-visibility-btn:active {
-  transform: translateY(-50%) scale(0.94) !important;
+.split-login-container button.password-visibility-btn:active:not(:disabled) {
+  transform: translateY(-50%) !important;
 }
 
 .split-login-container.login-dark .password-visibility-btn {
-  color: #e2e8f0 !important;
+  color: #0f172a !important;
+  background: transparent !important;
 }
 
-.split-login-container.login-dark .password-visibility-btn:hover {
-  color: #47a5ef !important;
-  background: rgba(71, 165, 239, 0.12);
+.split-login-container.login-dark button.password-visibility-btn:hover:not(:disabled) {
+  color: #0f172a !important;
+  background: transparent !important;
 }
 
 .auth-btn {

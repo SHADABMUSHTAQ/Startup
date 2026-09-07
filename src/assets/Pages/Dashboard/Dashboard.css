@@ -3458,6 +3458,58 @@ select.global-search option {
   border-color: var(--primary-500) !important;
   box-shadow: 0 8px 20px rgba(0,123,255,.24) !important;
 }
+
+/* React-Toastify dismiss control: keep it circular and red on hover. */
+.Toastify__toast-container .Toastify__close-button {
+  width: 28px !important;
+  min-width: 28px !important;
+  height: 28px !important;
+  min-height: 28px !important;
+  margin: 0 0 0 auto !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border: 1px solid transparent !important;
+  border-radius: 50% !important;
+  background: transparent !important;
+  color: #dc2626 !important;
+  box-shadow: none !important;
+  transform: none !important;
+  transition: color 0.18s ease, background-color 0.18s ease, border-color 0.18s ease, opacity 0.18s ease !important;
+}
+
+.Toastify__toast-container .Toastify__close-button:hover,
+.Toastify__toast-container .Toastify__close-button:focus-visible {
+  border-color: #dc2626 !important;
+  border-radius: 50% !important;
+  background: #dc2626 !important;
+  color: #ffffff !important;
+  box-shadow: 0 5px 14px rgba(220, 38, 38, 0.2) !important;
+  transform: none !important;
+}
+
+.Toastify__toast-container .Toastify__close-button svg {
+  width: 17px !important;
+  height: 17px !important;
+  stroke: currentColor !important;
+}
+
+/* Consistent destructive hover for every dashboard close/dismiss control. */
+.siem-layout :is(.sidebar-close, .modal-close-button, .close-btn, .widget-picker-close, .chart-remove-button, .navbar-modal-close):hover:not(:disabled) {
+  background: #dc2626 !important;
+  border-color: #dc2626 !important;
+  color: #ffffff !important;
+  border-radius: 8px !important;
+  box-shadow: 0 8px 18px rgba(220, 38, 38, 0.24) !important;
+  transform: none !important;
+}
+
+.siem-layout :is(.sidebar-close, .modal-close-button, .close-btn, .widget-picker-close, .chart-remove-button, .navbar-modal-close):hover:not(:disabled) svg,
+.siem-layout :is(.sidebar-close, .modal-close-button, .close-btn, .widget-picker-close, .chart-remove-button, .navbar-modal-close):hover:not(:disabled) svg :where(path, line, polyline, rect, circle) {
+  color: #ffffff !important;
+  stroke: #ffffff !important;
+}
 [data-theme="light"] .siem-layout .logout-modal-actions .btn-cancel:hover:not(:disabled),
 [data-theme="light"] .siem-layout .navbar-btn-cancel:hover:not(:disabled) {
   color: #ffffff !important;

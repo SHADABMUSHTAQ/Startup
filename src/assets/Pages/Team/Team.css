@@ -424,7 +424,7 @@
 }
 
 /* Center the access dialog in the viewport and keep the whole backdrop blurred. */
-.team-container .modal-overlay {
+.invite-modal-overlay {
     align-items: center !important;
     justify-content: center !important;
     padding: 24px !important;
@@ -433,19 +433,33 @@
     -webkit-backdrop-filter: blur(14px) saturate(115%) !important;
 }
 
-.team-container .invite-modal {
+.invite-modal-overlay .invite-modal {
     width: min(100%, 540px) !important;
     max-height: min(720px, calc(100vh - 48px)) !important;
     display: flex !important;
     flex-direction: column !important;
 }
 
-.team-container .invite-modal > form {
+.invite-modal-overlay .invite-modal > form {
     min-height: 0;
     overflow-y: auto;
     scrollbar-gutter: stable;
 }
 
-[data-theme="light"] .team-container .modal-overlay {
+[data-theme="light"] .invite-modal-overlay {
     background: rgba(15, 23, 42, 0.42) !important;
+}
+
+.invite-modal-close:hover:not(:disabled) {
+    background: #dc2626 !important;
+    border-color: #dc2626 !important;
+    color: #ffffff !important;
+    border-radius: 8px !important;
+    box-shadow: 0 8px 18px rgba(220, 38, 38, 0.24) !important;
+    transform: none !important;
+}
+
+.invite-modal-close:hover:not(:disabled) svg {
+    color: #ffffff !important;
+    stroke: #ffffff !important;
 }

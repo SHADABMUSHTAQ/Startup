@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Users, Shield, UserPlus, Trash2, Mail, X, Loader2, Briefcase, Activity, Copy, CheckCircle2 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import apiClient from '../../../api/apiClient';
@@ -200,12 +201,12 @@ export default function TeamManagement() {
       </div>
 
       {/* 🚀 ENTERPRISE INVITATION MODAL */}
-      {isModalOpen && (
-          <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      {isModalOpen && createPortal(
+          <div className="modal-overlay invite-modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <div className="invite-modal" style={{ background: 'var(--bg-card)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '16px', width: '100%', maxWidth: '450px', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)' }}>
                   <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.01)' }}>
                       <h3 style={{ margin: 0, color: '#f8fafc', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}><Shield size={20} color="var(--primary)"/> Provision System Access</h3>
-                      <button type="button" onClick={closeInviteModal} aria-label="Close invitation" style={{ background: 'none', border: 'none', color: '#a6b8c8', cursor: 'pointer' }}><X size={20} /></button>
+                      <button className="invite-modal-close" type="button" onClick={closeInviteModal} aria-label="Close invitation" style={{ background: 'none', border: 'none', color: '#a6b8c8', cursor: 'pointer' }}><X size={20} /></button>
                   </div>
 
                   {inviteResult ? (
@@ -279,8 +280,9 @@ export default function TeamManagement() {
                   </form>
                   )}
               </div>
-          </div>
-      )}
+          </div>,
+          document.body,
+          )}
     </div>
   );
 }

@@ -678,20 +678,11 @@
 }
 
 .hero-visual::after {
-  content: "";
-  position: absolute;
-  z-index: 4;
-  inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(90deg, #07111f 0%, rgba(7, 17, 31, 0.72) 16%, rgba(7, 17, 31, 0.22) 34%, transparent 52%),
-    linear-gradient(180deg, transparent 62%, rgba(7, 17, 31, 0.78) 100%);
+  display: none;
 }
 
 [data-theme="light"] .hero-visual::after {
-  background:
-    linear-gradient(90deg, #f8fbff 0%, rgba(248, 251, 255, 0.72) 16%, rgba(248, 251, 255, 0.2) 34%, transparent 52%),
-    linear-gradient(180deg, transparent 62%, rgba(248, 251, 255, 0.72) 100%);
+  display: none;
 }
 
 [data-theme="light"] .hero-visual {

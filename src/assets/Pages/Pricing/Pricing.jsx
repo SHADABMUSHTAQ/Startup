@@ -92,8 +92,8 @@ export default function Pricing({ standalone = false }) {
     <section className={`pricing-section pricing-${theme} ${standalone ? "pricing-standalone" : ""}`} id="pricing">
       <div className="pricing-container">
         {standalone && (
-          <Link to="/login" className="pricing-back-link">
-            <ArrowLeft size={16} /> Back to Login
+          <Link to="/" className="pricing-back-link">
+            <ArrowLeft size={16} /> Back to Home
           </Link>
         )}
         
