@@ -1,7 +1,7 @@
 # WarSOC 90-Day Retention Closure
 
-**Status:** release candidate and real-Azure application path verified; Azure
-storage routes locked; OCI routing and production deployment remain pending.
+**Status:** production active and accepted on OCI release `5c8e2dc`; both
+90-day Azure routes and the production archive/hold/failure paths are proven.
 
 ## 1. Product Contract
 
@@ -109,10 +109,32 @@ An earlier rejected immutability-boundary attempt preserved its Mongo source,
 providing real-Azure fail-closed evidence. These synthetic blob versions are
 expected to remain locked for their policy lifetime.
 
-OCI is not yet routed to this account, so this does not claim production
-archival. The remaining activation proof is an OCI-controlled SIEM/general
-canary plus a Legal Hold canary after the candidate release and route variables
-are deployed. Customer retrieval remains a separate disabled gate.
+Steps 7-9 completed on OCI on 2026-09-07. Release `5c8e2dc` is deployed at
+`api.warsoc.tech` with exact `SIEM_90` and `GENERAL_90` routing to private
+account `warsocevidence90prod`. Production canary
+`20260907T091930Z-d1187dcd` proved:
+
+- SIEM evidence archived to `warsoc-siem-90` at Cold tier;
+- FBR/general evidence archived to `warsoc-general-90` at Cold tier;
+- JSON and SHA-256 companion objects returned version IDs, passed streamed
+  readback, and reported locked 90-day WORM coverage;
+- the archive ledger committed before exact Mongo deletion;
+- an active Legal Hold protected both Azure objects and preserved the hot
+  record, then an audited release removed only the WarSOC-managed hold and an
+  idempotent archive retry completed hot deletion without weakening WORM;
+- a synthetic 91-day tenant with no exact route produced no archive ledger and
+  retained its Mongo source until controlled canary cleanup;
+- the private evidence-export container passed a small write/read/hash/delete
+  probe without exposing public access.
+
+The post-run check found three finalized `archived_hot_deleted` ledgers, six
+Cold/versioned/locked Azure objects, a `RELEASED` hold and binding, a
+`COMMITTED` release audit, and zero remaining mutable canary tenant or hot-data
+rows. Read-only Azure inspection run `20260907T093110Z-2d241c2c` independently
+reconfirmed private access, account-level versioning, and locked 90-day
+version-WORM on both containers. Existing legacy objects and ledgers were not
+moved or rewritten.
+Customer retrieval remains a separate disabled gate.
 
 If any check fails, keep exact routing fail-closed and preserve eligible records
 in MongoDB while the new route is repaired. Do not silently send new commercial
@@ -133,8 +155,8 @@ history, WarSOC must separately prove the disabled asynchronous retrieval flow:
 - rejection of expired or legacy ledger rows without customer access metadata.
 
 Until that gate passes, the truthful offer is seven-day self-service search plus
-90-day retained evidence infrastructure under implementation, not 90-day
-self-service history.
+90-day retained immutable evidence. Automated customer retrieval for days 8-90
+is not yet available, so WarSOC must not advertise 90-day self-service history.
 
 ## 6. Acceptance Evidence
 
@@ -158,5 +180,7 @@ Azure PowerShell parsing, diff hygiene, high-severity Bandit, `pip-audit`, and
 `pip check` all passed. The four skipped tests remain explicitly optional test
 cases; they are not hidden failures.
 
-No existing Azure object, policy, tenant entitlement, or production environment
-is mutated by the source-code phase of this closure.
+Production activation on 2026-09-07 preserved all existing Azure objects,
+policies and tenant entitlements. The only persistent additions are the
+synthetic 90-day WORM canary objects and their explicitly labelled audit
+ledgers; mutable canary tenant/source rows were removed after acceptance.
