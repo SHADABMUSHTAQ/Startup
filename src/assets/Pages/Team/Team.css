@@ -450,6 +450,37 @@
     background: rgba(15, 23, 42, 0.42) !important;
 }
 
+/* Keep the modal close control visible in both themes. */
+.invite-modal-close {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 !important;
+    color: #0f172a !important;
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+    transform: none !important;
+}
+
+.invite-modal-close svg,
+.invite-modal-close svg :where(path, line, polyline, rect, circle) {
+    color: currentColor !important;
+    stroke: currentColor !important;
+    opacity: 1 !important;
+}
+
+[data-theme="dark"] .invite-modal-close {
+    color: #e2e8f0 !important;
+    background: transparent !important;
+    border-color: rgba(148, 163, 184, 0.45) !important;
+}
+
 .invite-modal-close:hover:not(:disabled) {
     background: #dc2626 !important;
     border-color: #dc2626 !important;

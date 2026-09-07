@@ -206,7 +206,7 @@ export default function TeamManagement() {
               <div className="invite-modal" style={{ background: 'var(--bg-card)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '16px', width: '100%', maxWidth: '450px', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)' }}>
                   <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.01)' }}>
                       <h3 style={{ margin: 0, color: '#f8fafc', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}><Shield size={20} color="var(--primary)"/> Provision System Access</h3>
-                      <button className="invite-modal-close" type="button" onClick={closeInviteModal} aria-label="Close invitation" style={{ background: 'none', border: 'none', color: '#a6b8c8', cursor: 'pointer' }}><X size={20} /></button>
+                      <button className="invite-modal-close" type="button" onClick={closeInviteModal} aria-label="Close invitation" style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} /></button>
                   </div>
 
                   {inviteResult ? (
