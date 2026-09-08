@@ -1,9 +1,9 @@
 # WarSOC Security Stories V1
 
-**Document status:** Source/integration accepted; production runtime activation pending
-**As-of date:** 2026-09-04
-**Feature flag:** `SECURITY_STORIES_ENABLED=false` by default
-**Customer/production status:** Disabled; not a current capability claim
+**Document status:** Source/integration accepted; scoped production runtime accepted
+**As-of date:** 2026-09-08
+**Feature flag:** Off by default in source; `SECURITY_STORIES_ENABLED=true` on the accepted OCI release
+**Customer/production status:** Backend enabled; customer UI and real Windows Server qualification remain separate gates
 
 ## 1. Purpose
 
@@ -174,9 +174,27 @@ issues across `app`, `agent`, and `scripts`; direct production and development
 requirements audits found no known vulnerabilities. The local developer venv
 contains unrelated/stale tool packages and is not production-image evidence.
 
-Production still remains disabled until one new-traffic runtime story, worker
-heartbeat, stream-group participation, rollback-to-disabled behavior and
-synthetic-data cleanup are captured against the deployed release.
+Production runtime acceptance was completed against backend revision `5bdb107`
+on 2026-09-08. Labelled run
+`DETECTION-STORY-20260908T055417Z-8a55d8` admitted 15 correctly signed,
+Windows-shaped synthetic events through the public API and live workers. It
+proved both new native rules, incident creation, benign comparison rejection,
+one high-confidence `SERVER_ACCOUNT_COMPROMISE` projection, tenant isolation,
+admin/analyst/auditor RBAC, optimistic version conflicts, canonical outbox
+completion, PECA independence, and zero cross-tenant projection. All labelled
+tenant/source rows were removed; immutable audit records were retained.
+
+Run `STORY-FLAG-20260908T055848Z-555a78` then disabled the feature, recreated
+only the API and unified worker, proved that status reported disabled and story
+list/summary returned 404 while canonical worker heartbeats remained healthy,
+and re-enabled the feature. After restoration the Story worker heartbeat age was
+2.1 seconds and `security_story_group` had zero pending entries and zero lag.
+
+This runtime evidence exercises one of the five positive story families. The
+other four positive families and their rejection boundaries remain
+source/integration-proven by the maintained test suite; they are not represented
+as real customer-hardware acceptance. No customer-facing Security Stories UI is
+included in this backend release.
 
 ## 9. Source Map
 

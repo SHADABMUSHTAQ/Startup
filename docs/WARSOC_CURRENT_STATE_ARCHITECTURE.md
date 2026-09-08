@@ -1,19 +1,18 @@
 # WarSOC Current-State Architecture and Operational Contract
 
 **Document status:** Authoritative as-built map
-**Snapshot date:** 2026-08-31
+**Snapshot date:** 2026-09-08
 **Windows Server engineering delta:** 2026-09-03. General Server V1 is a local
 source candidate, not a deployed or customer-supported capability.
-**Source-contract correction:** 2026-09-03. The application identities below belong
-to the prior deployment snapshot, not to these uncommitted local corrections.
-See `WARSOC_FRONTEND_CONTRACT_FIX_REPORT_2026-09-03.md` for the current changes,
-verification evidence and remaining deployment gates.
+**Release acceptance delta:** 2026-09-08. Backend `5bdb107` is the current
+production executable; its exact scope and verification are recorded in
+`WARSOC_RELEASE_5BDB107_PRODUCTION_ACCEPTANCE.md`.
 **Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the controlled pfSense network-relay path, and the controlled Wazuh shadow-detector path.
 
-**Current OCI application identity:** `976be27`
+**Current OCI application identity:** `5bdb107`
 **Always-on Wazuh deployment foundation:** `7cd02e0`
 **Repository note:** the manager-only deployment package changes the Wazuh runtime boundary; it does not replace the core application image identity
-**Current Vercel frontend identity:** `67162a3`
+**Current Vercel frontend identity:** `e7c5aa0`
 
 This document describes what the current source code does. It is not a sales claim and it does not treat an implemented path as production-proven unless verification evidence exists.
 
@@ -93,14 +92,12 @@ kit uses an explicit exact-hash pilot policy. The dashboard warns that Windows
 may show Unknown publisher and exposes the approved SHA-256. General commercial
 publisher trust remains open until Authenticode signing is funded.
 
-The complete clean backend campaign closed with 575 passed, one explicitly
-skipped and zero assertion failures on 2026-08-31. The skip is the opt-in
-isolated-stack destructive E2E harness. `pip check`, Python compilation and diff
-hygiene passed; Bandit was not installed in the local project environment and no
-production dependency was added merely to run it. Earlier full-tree
-high-severity Bandit and dependency-audit evidence remains unchanged because this
-candidate changes only the Windows agent identity and package metadata. Backend
-`976be27` is deployed on OCI and healthy; frontend `67162a3` is live on Vercel.
+The latest complete backend campaign closed with 684 passed, 2 expected skips
+and zero assertion failures on 2026-09-08. `pip check`, Python compilation,
+diff hygiene, the 132-route authorization inventory, direct production and
+development requirements audits, and the full-tree high-severity Bandit gate
+passed. Backend `5bdb107` is deployed on OCI and healthy; frontend `e7c5aa0` is
+live on Vercel.
 The public relay contract is live,
 and its authenticated status and setup-package routes are present. Package
 availability remains false until the versioned pilot ZIP is uploaded and its
@@ -190,9 +187,11 @@ acceptance before they become production-proven. Items 1 and 7 require separate
 approval because they change telemetry volume, search behavior, or evidence
 privacy. Items 3 and 4 remain explicitly outside the current patch.
 
-### 1.4 Future firewall onboarding boundary
+### 1.4 Firewall onboarding boundary
 
-Network-device support remains a disabled module. The approved business flow is:
+The network-relay backend is enabled on OCI, but access remains fail-closed and
+tenant entitlement defaults to zero. pfSense is the only validated commercial
+vendor path. The approved customer onboarding flow is:
 
 1. Record the customer's vendor, model, firmware, device count, expected EPS, NTP state, and approved source addresses.
 2. Install a separate WarSOC Relay on an approved Windows Server or back-office host, not silently on a POS terminal.
@@ -203,8 +202,10 @@ Network-device support remains a disabled module. The approved business flow is:
 7. Prove parsing and timestamps on every offered physical vendor, then prove endpoint/network correlations and loss reporting.
 8. Enable `NETWORK_RELAY_ENABLED` only for the accepted tenant after rollback and retention checks pass.
 
-Supported candidate parsers exist for Fortinet, Cisco ASA, MikroTik, and pfSense.
-Parser unit tests and simulated correlations do not equal real-device proof.
+Candidate parsers exist for Fortinet, Cisco ASA, and MikroTik. Parser unit tests
+and simulated correlations do not equal real-device proof, so those vendors are
+not commercially accepted. pfSense has separate lab evidence but still requires
+the exact customer relay/package/device onboarding gate.
 
 ### 1.5 Wazuh detection target boundary
 
@@ -524,9 +525,9 @@ archive or customer UI authorities.
    so it removes laptop availability risk but does not provide host-level HA.
    Certificates still require scheduled rotation and the bounded manager-only
    topology must be monitored under real event volume.
-9. Firewall metadata is not projected to Wazuh. `NETWORK_RELAY_ENABLED=false`
-   remains unchanged and its independent packaged-service, customer-device and
-   pilot gates remain open.
+9. Firewall metadata is not projected to Wazuh. The network relay was enabled
+   later under fail-closed tenant entitlement; its packaged-service and exact
+   customer-device acceptance remain independent from Wazuh.
 
 ### 1.15 August 29 network-relay reliability closure candidate
 
@@ -562,10 +563,10 @@ remove SIEM/PECA events from the acceptance run.
 This is source and integration-test evidence only until the exact candidate is
 committed, deployed and accepted against the production environment.
 
-### 1.16 September 4 Security Stories V1 release candidate
+### 1.16 September 8 Security Stories V1 production acceptance
 
-Security Stories V1 is implemented locally behind
-`SECURITY_STORIES_ENABLED=false`. It is a bounded, tenant-scoped operational
+Security Stories V1 is enabled on OCI release `5bdb107` behind an independently
+reversible feature flag. It is a bounded, tenant-scoped operational
 projection over canonical endpoint/relay events and WarSOC incident occurrences;
 it is not evidence, a replacement incident engine or a second detection owner.
 The independent `security_story_group` starts at new traffic on first enablement,
@@ -587,9 +588,15 @@ The September 8 source/integration gate reports 27 focused story tests inside a
 112-test focused release gate, plus 684 passed and 2 expected skips in the full
 backend suite. Compilation, the 132-route authorization inventory, Bandit high
 severity scan, and direct production/development dependency audits are clean.
-Production activation, one labelled new-traffic story, worker/group health,
-rollback and cleanup remain the final runtime gate. The detailed contract is
-`docs/WARSOC_SECURITY_STORIES_V1.md`.
+Production run `DETECTION-STORY-20260908T055417Z-8a55d8` then proved signed
+new-traffic admission, both new native detections and incidents, benign
+comparison rejection, a high-confidence server-account-compromise story,
+tenant/RBAC boundaries, optimistic workflow updates, PECA independence and
+synthetic-data cleanup. Run `STORY-FLAG-20260908T055848Z-555a78` proved the
+flag-off API/worker state and restored the feature with a fresh worker heartbeat,
+zero pending entries and zero lag. This is one positive story-family runtime
+proof, not real Windows Server hardware qualification or runtime proof of all
+five families. The detailed contract is `docs/WARSOC_SECURITY_STORIES_V1.md`.
 
 ### 1.17 September 6 evidence-governance production acceptance
 
@@ -611,10 +618,11 @@ window. Synthetic MongoDB and Azure acceptance artifacts were removed.
 
 This is a scoped acceptance, not whole-platform `BACKEND_ACCEPTED`. Historical
 archive retrieval remains disabled, cold evidence is not silently attached to a
-case, and daily anchoring, backup recovery, Security Stories, broad Wazuh
-promotion, and future FBR connectors keep their independent gates.
+case, and daily anchoring, backup recovery, Security Stories UI/real-server
+qualification, broad Wazuh promotion, and future FBR connectors keep their
+independent gates.
 
-### 1.18 September 7 commercial retention and detector candidate
+### 1.18 September 8 commercial retention and detector production release
 
 WarSOC now has exact physical Azure routes for every supported commercial
 retention term: 3, 6, 9 and 12 months map to 90, 180, 270 and 365 canonical
@@ -631,12 +639,17 @@ map 12 months to 365 rather than 360. Unsupported durations fail closed instead
 of silently using another physical route. Historical self-service retrieval is
 still disabled and is not implied by physical retention.
 
-The same release candidate removes unsafe private sample indicators from the
+Production release `5bdb107` removes unsafe private sample indicators from the
 active threat-intelligence catalog, suppresses private/non-global/trusted IPs
 unless explicitly approved, and adds structured native detection for Windows
 Event 4616 clock changes of at least five minutes and suspicious Event 4698
 scheduled tasks. These rules use existing signed endpoint fields and preserve
-WarSOC as the only customer-visible detection authority.
+WarSOC as the only customer-visible detection authority. Labelled runtime run
+`DETECTION-STORY-20260908T055417Z-8a55d8` proved both alert and incident paths,
+the `2026.09.07.1` rule version, and non-triggering 4616/4698 comparison events.
+All eight application containers run the same revision-labelled image with zero
+restarts; API, MongoDB and Redis are healthy. Wazuh remains shadow-only and
+cannot promote incidents.
 
 ## 2. Product Boundary
 
@@ -1178,7 +1191,7 @@ The word "coverage" means that WarSOC has an enabled rule with the required inpu
 | Ransomware and destructive file activity | Mass deletion, database deletion correlation, permission tamper, ransomware commands and FBR database-file tamper | Configured Windows SACLs, Events 4663/4660/4670 and Event 4688 | Mass ordinary-write and extension-change rules are disabled because the pilot SACL does not collect reliable write/rename telemetry. |
 | Network behavior | Blocked connection evidence, vertical blocked-port scan, horizontal blocked-host scan | Event 5157 with structured destination fields | C2 beaconing, tunnel duration, rare-port baselines and DNS tunnelling are disabled without complete flow/DNS telemetry. |
 | Web attacks | SQL injection, XSS, command injection, path traversal, XXE, web-shell and WAF-evasion patterns/floods | A reviewed structured HTTP log source classified as `http_request` | Windows messages never enter Web-WAF rules. The Windows agent does not itself provide web-server access logs. |
-| Hybrid endpoint/network candidate | VPN password spray and high-risk host activity followed by a permitted public connection; VPN-to-Windows logon is non-alert context | Verified relay metadata plus native Windows evidence | Candidate only; `NETWORK_RELAY_ENABLED=false` and no production claim exists. |
+| Hybrid endpoint/network candidate | VPN password spray and high-risk host activity followed by a permitted public connection; VPN-to-Windows logon is non-alert context | Verified relay metadata plus native Windows evidence | Candidate only; the relay backend is enabled, but this exact hybrid path has no customer-hardware production proof. |
 
 Explicitly disabled or unavailable categories include trusted-location analytics, byte-counted exfiltration, ordered beaconing, long-connection tunnelling, tenant rare-port baselines, native DNS tunnelling, general Linux detection, packet-payload inspection and device-authenticated legacy UDP attribution.
 
@@ -1823,7 +1836,7 @@ Status meanings:
 | DNS and TLS | `warsoc.tech` to Vercel; `api.warsoc.tech` to OCI/Nginx | PROVEN | DNS separation, HTTPS certificates, HSTS and certificate validity passed OCI production acceptance. |
 | Vercel frontend | Browser UI, auth hydration, dashboard, endpoint fleet, compliance and team workflows | PROVEN for evidence-governance bundle | Frontend `e7c5aa0` from `origin/main` is live. Its production bundle points to `https://api.warsoc.tech/api/v1` and contains Evidence Cases, Legal Holds, Firewall Relays, and evidence-export support. |
 | Nginx gateway | TLS termination, security headers and reverse proxy | PROVEN with observation | Public headers/CORS/private-port checks pass. Real ingest returns 200. Some request bodies are buffered to temporary files; disk impact needs pilot measurement. |
-| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | PROVEN for revision `9974df6` | OCI runs `/opt/warsoc/releases/9974df6`; public health is green and the relevant API/workers report the exact revision with zero restarts. Evidence governance has a named authenticated production acceptance; unrelated routes keep their own gates. |
+| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | PROVEN for revision `5bdb107` | OCI runs `/opt/warsoc/releases/5bdb107`; public health is green and all eight application containers report the exact revision with zero restarts. Evidence governance and the scoped detection/Stories release each have named authenticated production acceptance; unrelated routes keep their own gates. |
 | Authentication/session | Login, HttpOnly access cookie, CSRF double-submit and `/auth/me` | PROVEN | Existing tenant login, auth context and profile returned 200. Public signup returned 403. |
 | Manual sales flow | Quote/contact to operator follow-up; no automatic payment | PROVEN | Quote and contact requests returned 200; legacy payment webhook returned 404. No Safepay dependency is required. |
 | Tenant provisioning | Super-admin creates tenant, admin, packs and seat limit | PROVEN | Disposable production tenant provisioning and login passed in run `b87116c8af`. |
@@ -1845,6 +1858,7 @@ Status meanings:
 | WebSocket incidents | Ticket-bound tenant-scoped incident delivery | CANDIDATE-PROVEN | Ticket security and production alert delivery are proven. The candidate publishes compact incident envelopes and coalesces bursts; production reconciliation proof remains required. |
 | Incident projection | Idempotently derive operator workflow from persisted SIEM/FBR detections | CANDIDATE-PROVEN | Retry dedupe, minute/context grouping, generic/specific suppression, cross-tenant isolation, hot evidence detail, and archive-before-delete projection are covered by the full regression suite. |
 | Incident lifecycle | Acknowledge, assign and close-with-notes while preserving evidence | CANDIDATE-PROVEN | API persistence, tenant isolation, close-note enforcement, audit logging, linked hot-alert mirroring, and reread are proven locally. Production browser click-through remains required. |
+| Security Stories | Bounded tenant-scoped correlation projection over canonical events/incidents | PROVEN FOR SCOPED BACKEND RUNTIME | Production run `DETECTION-STORY-20260908T055417Z-8a55d8` proved one high-confidence server-account-compromise story, RBAC/isolation/versioning and cleanup. Flag rollback/restore passed in `STORY-FLAG-20260908T055848Z-555a78`; the worker has zero pending/lag. Four other families remain integration-proven, and no customer UI or real Windows Server qualification is claimed. |
 | IP mitigation | Block/unblock with active-agent self-lockout prevention | PROVEN | Attacker-IP mitigation returned 200, heartbeat delivered the ban, and active-agent self-lockout returned 409. |
 | MongoDB hot tier | Seven-day operational store and tenant-scoped indexes | PROVEN baseline / CANDIDATE SEARCH FIX | Live-query index use is proven. Backend `d92fb65` removes the unindexed `_id` tie-breaker that caused the seven-day search to examine 471,571 matching records. Repeat the authenticated seven-day request after deployment and require a clear margin below the browser timeout. |
 | Daily storage archiver | Archive-before-delete transaction from Mongo to Azure | PROVEN | Service is running; latest cycle completed without errors. It verifies upload/hash/immutability/ledger before exact Mongo deletion. |
@@ -2005,6 +2019,7 @@ Do not declare the current release fully accepted until all of the following are
 | Future generic detection engine and Wazuh integration | `docs/WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md` |
 | Reviewed 90-day backend evidence plan, phase gates, Azure decision points and contradictions | `docs/WARSOC_90_DAY_BACKEND_EVIDENCE_PLAN_REVIEW.md` |
 | Active commercial retention classes and Azure proof | `docs/WARSOC_COMMERCIAL_RETENTION_CLASSES.md` |
+| Backend release `5bdb107` production acceptance | `docs/WARSOC_RELEASE_5BDB107_PRODUCTION_ACCEPTANCE.md` |
 | Historical 90-day activation evidence | `docs/WARSOC_90_DAY_RETENTION_CLOSURE.md` |
 | FBR/PECA Phase 0 legal, evidence, claim and API truth map | `docs/WARSOC_FBR_PECA_PHASE_0_TRUTH_MAP.md` |
 | P0 source isolation, canonical evidence, outbox and FBR-retention closure | `docs/WARSOC_P0_EVIDENCE_INTEGRITY_CLOSURE_2026-08-20.md` |

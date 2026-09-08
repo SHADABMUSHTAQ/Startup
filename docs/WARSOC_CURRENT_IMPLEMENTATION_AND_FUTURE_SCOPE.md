@@ -1,9 +1,10 @@
 # WarSOC Current Implementation and Future Scope Register
 
 **Document role:** Consolidated source-of-truth index
-**Snapshot date:** 2026-09-06
+**Snapshot date:** 2026-09-08
 **Windows Server engineering delta:** 2026-09-03
 **Evidence governance delta:** 2026-09-06
+**Retention, detector, and Security Stories production delta:** 2026-09-08
 **Audience:** WarSOC engineering, operations, security review, and product leadership
 **Applies to:** The backend and frontend release state, the published Windows agent boundary, the entitled network relay, and the controlled Wazuh shadow boundary
 
@@ -33,12 +34,13 @@ implementation contracts remain in the documents listed in Section 16.
 
 At this snapshot:
 
-- The deployed executable backend revision is `9974df6` from authoritative
+- The deployed executable backend revision is `5bdb107` from authoritative
   branch `backend`; later documentation-only commits do not change that runtime identity.
 - The authoritative frontend branch is `main` at deployed commit `e7c5aa0`.
-- OCI runs the exact backend release from `/opt/warsoc/releases/9974df6`.
-  The API, unified worker, archiver, evidence-export worker, and evidence-hold
-  worker are running with zero restarts and matching image revision labels.
+- OCI runs the exact backend release from `/opt/warsoc/releases/5bdb107`.
+  The API, unified worker, compliance cron, archiver, evidence-export worker,
+  evidence-hold worker, Wazuh dispatcher, and Wazuh candidate API are running
+  with zero restarts and matching image revision labels.
 - The deployed frontend bundle contains Evidence Cases, Legal Holds, Firewall
   Relays, and the evidence-export workflow and points to the production API.
 - Production preflight `83aa506f9e` passed DNS, TLS, frontend assets and API
@@ -229,19 +231,21 @@ evidence must leave Mongo only through the archive-before-delete transaction.
 
 | Component | Current state | Boundary / limitation | Next gate |
 |---|---|---|---|
-| Correlation projection | `SOURCE/INTEGRATION-ACCEPTED; RUNTIME DISABLED` | Five bounded server/hybrid stories reference canonical evidence and incidents without modifying them. Medium confidence remains `CANDIDATE`; high confidence opens a story. | Enable only for a labelled new-traffic runtime canary, prove rollback, then retain the accepted production setting. |
-| Durable processing | `INTEGRATION-PROVEN` | Independent Redis group, Mongo signal ledger, leases, retry, pending-incident recovery, idempotency and bounded references are covered by the complete suite. First enable starts at new traffic rather than replaying historical backlog. | Record production worker heartbeat, group participation, projection and cleanup. |
-| Tenant and operator API | `INTEGRATION-PROVEN` | Reads are admin/manager/analyst; workflow writes are admin/manager; every record is tenant-scoped and versioned. No frontend is included in this backend activation. | Production role smoke and later separately approved frontend work. |
-| Wazuh/firewall relationship | `IMPLEMENTED-DISABLED` | Shadow Wazuh data is never actionable. Allowed external activity requires authenticated relay evidence; Windows 5156/5157 and blocked traffic do not qualify. | Entitled relay runtime proof after both optional features pass their independent gates. |
+| Correlation projection | `PRODUCTION-ACCEPTED` | Five bounded server/hybrid stories reference canonical evidence and incidents without modifying them. One high-confidence server-account-compromise path is runtime-proven; the other four remain source/integration-proven. | Real Windows Server qualification and customer-shaped observation; do not present the remaining four families as hardware-proven. |
+| Durable processing | `PRODUCTION-ACCEPTED` | Independent Redis group, Mongo signal ledger, leases, retry, pending-incident recovery, idempotency and bounded references are covered by the complete suite. Production has a fresh worker heartbeat with zero pending entries and zero lag. | Monitor heartbeat, retries, failed ledger rows and Redis lag under real volume. |
+| Tenant and operator API | `PRODUCTION-ACCEPTED` | Live checks proved authenticated status/detail/summary, cross-tenant denial, analyst read-only access, auditor denial, admin workflow updates and stale-version conflict. No frontend is included in this backend activation. | Separately design and accept the customer UI. |
+| Wazuh/firewall relationship | `RELAY ENABLED; WAZUH SHADOW` | Shadow Wazuh data is never actionable. Allowed external activity requires authenticated relay evidence; Windows 5156/5157 and blocked traffic do not qualify. The external-activity story family was not part of this production canary. | Entitled customer relay acceptance remains separate; Wazuh primary promotion remains prohibited. |
 
 The source/integration gate recorded 112 focused passes and a complete backend
 run of 684 passed with 2 expected skips. High-severity Bandit and direct
-requirements audits are clean. `SECURITY_STORIES_ENABLED=false` remains the
-runtime setting until the labelled production canary and rollback proof are
-captured. See `docs/WARSOC_SECURITY_STORIES_V1.md` for the rule and failure
-contract.
+requirements audits are clean. Production run
+`DETECTION-STORY-20260908T055417Z-8a55d8` proved the first positive family and
+operator boundaries. Run `STORY-FLAG-20260908T055848Z-555a78` proved the
+disabled state and safe restoration. `SECURITY_STORIES_ENABLED=true` is the
+accepted OCI setting. See `docs/WARSOC_SECURITY_STORIES_V1.md` for the exact
+rule, failure, and scope boundaries.
 
-## 6. Implemented but Disabled: Network Firewall Relay
+## 6. Enabled Under Entitlement: Network Firewall Relay
 
 ### 6.1 Intended flow
 
@@ -267,7 +271,8 @@ flowchart LR
 - Separate encrypted bounded evidence and control spools.
 - Retry-safe outbox, loss reporting, revocation, and dead-key recovery.
 - Network-source isolation and selected endpoint/network correlations.
-- Backend feature gate `NETWORK_RELAY_ENABLED=false` by default.
+- Backend feature gate remains off by default in source; OCI currently sets
+  `NETWORK_RELAY_ENABLED=true`. Tenant entitlement still defaults to zero.
 
 ### 6.3 What has been proved
 
@@ -285,10 +290,13 @@ flowchart LR
   not yet measured in a customer-shaped environment.
 - Frontend relay onboarding, device health, and evidence views remain gated.
 
-The firewall relay is therefore `IMPLEMENTED-DISABLED` plus `LAB-PROVEN`, not a
-current customer capability.
+The relay backend and frontend contract are active, but entitlement is
+fail-closed and defaults to zero. pfSense is the only lab-validated commercial
+vendor. A tenant becomes an accepted customer capability only after its exact
+relay package, service lifecycle, firewall source, EPS/loss behavior and
+retention path complete onboarding acceptance.
 
-## 7. Implemented but Disabled: Wazuh Detection Subsystem
+## 7. Active Shadow-Only: Wazuh Detection Subsystem
 
 ### 7.1 Ownership rule
 
@@ -332,22 +340,30 @@ Implemented controls include:
 - candidate quarantine rather than automatic trust;
 - bridge receipts, health/loss events, stage counters, retry bounds, and retention;
 - cursor safety for late Mongo insertions;
-- Wazuh rule `100500` as a lab canary only.
+- A pinned, allowlisted shadow rule registry; no stock rule can cross into
+  WarSOC without dispatch lineage and a registry match.
 
 ### 7.3 Current proof and limitations
 
-- Wazuh 4.14.7 manager/indexer/dashboard were validated in a local lab with host
-  ports bound to loopback.
-- `wazuh-analysisd -t` passed and the canary rule/hash was observed.
-- Active Response was not enabled.
-- Focused WarSOC/Wazuh contract suites passed locally.
-- The WarSOC bridge and the colleague's separate Wazuh laptop have not completed
-  a two-host mTLS shadow canary with end-to-end dispatch and candidate return.
+- Pinned Wazuh 4.14.7 manager and the WarSOC bridge run on the always-on OCI
+  host with no public Wazuh port. Indexer, dashboard, enrollment, Wazuh agents,
+  Active Response and Wazuh email are absent or disabled in production.
+- Private Docker DNS, mTLS and signed requests protect both detector hops.
+- The active registry allows only Events 1102, 4625, 7045 and 4688 through
+  WarSOC-specific shadow rules 100511 through 100514.
+- Controlled Event 4625 canaries completed canonical persistence, durable
+  dispatch, Wazuh matching, signed candidate return, WarSOC lineage validation
+  and shadow persistence with zero incident promotion. One passed after the
+  former laptop detector was stopped, proving that production does not depend
+  on a staff laptop.
+- Focused WarSOC/Wazuh and manager-only deployment contract suites pass.
 - Wazuh TCP handoff does not provide an application acknowledgement for every
   nonmatching event. It cannot be used as the legal evidence/completeness source.
 - No Wazuh rule family is approved for primary incident creation.
 
-The subsystem is `IMPLEMENTED-DISABLED` and partly `LAB-PROVEN`.
+The subsystem is `ACTIVE SHADOW`. It contributes internal candidate observations
+only. `WAZUH_PRIMARY_APPROVED=false` keeps the WarSOC-native detector and
+incident pipeline authoritative.
 
 ## 8. Approved Dual-Detector Future Architecture
 
@@ -618,6 +634,7 @@ A capability is not `ACTIVE` merely because code exists. It is done only when:
 | Wazuh lab/integration operations | `docs/WARSOC_WAZUH_IMPLEMENTATION_AND_LAB_RUNBOOK.md` |
 | Wazuh readiness requirements | `docs/WARSOC_WAZUH_INTEGRATION_READINESS_REQUIREMENTS.md` |
 | Active commercial retention classes and Azure proof | `docs/WARSOC_COMMERCIAL_RETENTION_CLASSES.md` |
+| Backend release `5bdb107` production acceptance | `docs/WARSOC_RELEASE_5BDB107_PRODUCTION_ACCEPTANCE.md` |
 | Historical 90-day activation evidence | `docs/WARSOC_90_DAY_RETENTION_CLOSURE.md` |
 | Azure account/storage creation | `docs/AZURE_ACCOUNT_AND_STORAGE_CREATION_RUNBOOK.md` |
 | Backend migration | `docs/AZURE_BACKEND_MIGRATION_RUNBOOK.md` |

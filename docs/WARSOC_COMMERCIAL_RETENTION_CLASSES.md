@@ -87,6 +87,10 @@ under `tmp/azure-retention/`. OCI runtime canary
 - synthetic mutable tenant/source data was removed after validation;
 - immutable labelled canary blobs and ledgers remain as audit evidence.
 
+Backend revision `5bdb107` carries these exact route contracts and is deployed
+from `/opt/warsoc/releases/5bdb107`. All eight revision-labelled application
+containers passed the final OCI identity/health check with zero restarts.
+
 ## Customer Access Boundary
 
 Physical retention does not mean all historical data is currently searchable.
