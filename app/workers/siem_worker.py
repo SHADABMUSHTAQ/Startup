@@ -791,7 +791,11 @@ async def siem_worker():
                             #  MANDATE 1: THREAT INTEL ENGINE (Immediate Drop/Alert)
                             if not is_basic_plan:
                                 ti_config = config.get("threat_intelligence", {})
-                                if ti_config.get("enabled") and source_ip in siem_engine.blacklisted_ips:
+                                if (
+                                    ti_config.get("enabled")
+                                    and source_ip in siem_engine.blacklisted_ips
+                                    and siem_engine.is_actionable_threat_ip(source_ip)
+                                ):
                                     alert_triggered = True
                                     alert_type = "MALICIOUS_IP_DETECTED"
                                     severity = "CRITICAL"

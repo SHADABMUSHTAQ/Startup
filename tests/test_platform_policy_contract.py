@@ -145,6 +145,34 @@ def test_admin_provisioning_rejects_oversized_daily_ingest_quota():
         )
 
 
+@pytest.mark.parametrize("retention_days", [90, 180, 270, 365])
+def test_admin_provisioning_accepts_only_vault_backed_retention_terms(retention_days):
+    request = ProvisionRequest(
+        company_name="Retention Route OK",
+        plan_type="Customized",
+        max_agents=10,
+        admin_email=f"retention-{retention_days}@example.com",
+        admin_name="Retention Admin",
+        admin_password=STRONG_PASSWORD,
+        retention_days=retention_days,
+    )
+    assert request.retention_days == retention_days
+
+
+@pytest.mark.parametrize("retention_days", [1, 30, 360, 366, 2190])
+def test_admin_provisioning_rejects_retention_without_an_approved_vault(retention_days):
+    with pytest.raises(ValidationError, match="90, 180, 270, or 365"):
+        ProvisionRequest(
+            company_name="Unsupported Retention",
+            plan_type="Customized",
+            max_agents=10,
+            admin_email=f"unsupported-{retention_days}@example.com",
+            admin_name="Retention Admin",
+            admin_password=STRONG_PASSWORD,
+            retention_days=retention_days,
+        )
+
+
 @pytest.mark.asyncio
 async def test_admin_provisioning_api_rejects_oversized_daily_ingest_quota(async_client, db):
     email = "quota-api-too-high@example.com"

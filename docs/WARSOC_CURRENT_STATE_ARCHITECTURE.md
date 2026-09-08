@@ -562,7 +562,7 @@ remove SIEM/PECA events from the acceptance run.
 This is source and integration-test evidence only until the exact candidate is
 committed, deployed and accepted against the production environment.
 
-### 1.16 September 4 Security Stories V1 engineering candidate
+### 1.16 September 4 Security Stories V1 release candidate
 
 Security Stories V1 is implemented locally behind
 `SECURITY_STORIES_ENABLED=false`. It is a bounded, tenant-scoped operational
@@ -583,9 +583,12 @@ cannot establish firewall egress. Medium-confidence chains remain
 not enter stories unless WarSOC first admits them and creates a canonical WarSOC
 incident.
 
-Focused verification currently reports 27 passing tests. The complete backend
-and security gate is still pending, so this is not deployed, enabled or a
-customer capability claim. The detailed contract is
+The September 8 source/integration gate reports 27 focused story tests inside a
+112-test focused release gate, plus 684 passed and 2 expected skips in the full
+backend suite. Compilation, the 132-route authorization inventory, Bandit high
+severity scan, and direct production/development dependency audits are clean.
+Production activation, one labelled new-traffic story, worker/group health,
+rollback and cleanup remain the final runtime gate. The detailed contract is
 `docs/WARSOC_SECURITY_STORIES_V1.md`.
 
 ### 1.17 September 6 evidence-governance production acceptance
@@ -610,6 +613,30 @@ This is a scoped acceptance, not whole-platform `BACKEND_ACCEPTED`. Historical
 archive retrieval remains disabled, cold evidence is not silently attached to a
 case, and daily anchoring, backup recovery, Security Stories, broad Wazuh
 promotion, and future FBR connectors keep their independent gates.
+
+### 1.18 September 7 commercial retention and detector candidate
+
+WarSOC now has exact physical Azure routes for every supported commercial
+retention term: 3, 6, 9 and 12 months map to 90, 180, 270 and 365 canonical
+days. Each duration has separate private SIEM and general-evidence containers
+in `warsocevidence90prod`, using Cold tier, blob versioning and a locked exact
+version-level WORM policy. OCI runtime canary
+`retention_canary_20260907T191203Z_dca3a697` proved all six new 180/270/365
+routes through streamed hash readback, observed WORM/version identity,
+ledger-before-delete and exact hot deletion. The earlier 90-day acceptance
+remains valid. Existing legacy blobs and locks were not changed.
+
+Tenant provisioning accepts only 90, 180, 270 or 365 days, while quote terms
+map 12 months to 365 rather than 360. Unsupported durations fail closed instead
+of silently using another physical route. Historical self-service retrieval is
+still disabled and is not implied by physical retention.
+
+The same release candidate removes unsafe private sample indicators from the
+active threat-intelligence catalog, suppresses private/non-global/trusted IPs
+unless explicitly approved, and adds structured native detection for Windows
+Event 4616 clock changes of at least five minutes and suspicious Event 4698
+scheduled tasks. These rules use existing signed endpoint fields and preserve
+WarSOC as the only customer-visible detection authority.
 
 ## 2. Product Boundary
 
@@ -1145,8 +1172,8 @@ The word "coverage" means that WarSOC has an enabled rule with the required inpu
 | Credential attacks | High-velocity brute force, low-and-slow brute force, five-user password spraying, RDP brute force and concurrent remote sessions | Native failed/successful logon events with source IP, user and logon type | Impossible travel and new-location detection are disabled without trusted GeoIP data. |
 | Account and privilege abuse | Account creation/deletion, privileged-group membership, special-privilege evidence, account storms, dormant-account activation and ghost-admin sequence | Events 4720, 4726, 4732, 4672, 4624 and 1102 | A generic "privilege escalation spike" rule is disabled; precise native-event rules remain active. |
 | Execution and malware behavior | Suspicious PowerShell/command-line execution, obfuscation, reverse-shell patterns, credential-dumping patterns, Defender-evasion commands, LOLBin download behavior, malware patterns and shadow-copy deletion | Structured Event 4688 process path, command line, parent and actor context | These are behavior/signature detections, not a replacement for antivirus, memory inspection or EDR. |
-| Persistence | New service installation, scheduled-task creation and registry persistence | Security/System Events 4697/7045, 4698 and 4657 | Registry alerts require reviewed persistence paths; ordinary registry writes must not be labelled persistence. |
-| Anti-forensics | Audit log clearing, Event Log service shutdown, audit-policy change and log-evasion commands | Events 1102, 1100, 4719 and structured process telemetry | Evidence of shutdown/clearing does not prove who compromised the host without supporting identity context. |
+| Persistence | New service installation, suspicious scheduled-task content and registry persistence | Security/System Events 4697/7045, structured 4698 task XML and 4657 | Event 4698 requires one high-confidence marker or at least two risk markers; ordinary scheduled tasks and registry writes must not be labelled persistence. |
+| Anti-forensics | Audit log clearing, Event Log service shutdown, audit-policy change, large clock changes and log-evasion commands | Events 1102, 1100, 4719, structured 4616 time fields and process telemetry | Event 4616 alerts only at an absolute five-minute change; evidence of clearing/time change does not prove who compromised the host without supporting identity context. |
 | Discovery and lateral movement | Reconnaissance commands, user enumeration, SMB lateral movement, SMB share enumeration and SMB access storms | Events 4798, 4648, 4769 and 5140 plus process telemetry | Full east-west flow analytics are not claimed from endpoint telemetry alone. |
 | Ransomware and destructive file activity | Mass deletion, database deletion correlation, permission tamper, ransomware commands and FBR database-file tamper | Configured Windows SACLs, Events 4663/4660/4670 and Event 4688 | Mass ordinary-write and extension-change rules are disabled because the pilot SACL does not collect reliable write/rename telemetry. |
 | Network behavior | Blocked connection evidence, vertical blocked-port scan, horizontal blocked-host scan | Event 5157 with structured destination fields | C2 beaconing, tunnel duration, rare-port baselines and DNS tunnelling are disabled without complete flow/DNS telemetry. |
@@ -1295,18 +1322,14 @@ SIEM, general security evidence, FBR evidence and new PECA evidence follow the
 tenant retention entitlement. All three core live evidence classes use a
 seven-day Mongo archival threshold.
 
-The deployed Azure evidence account has used one locked 2,190-day
-container-scoped immutability policy. This over-retains shorter classes but
-remains an immutable historical fact. A separate private account,
-`warsocevidence90prod`, now contains locked 90-day version-WORM
-`GENERAL_90` and `SIEM_90` containers, but OCI does not yet route application
-writes to them. The candidate application path has archived synthetic SIEM and
-FBR/general evidence to the correct real-Azure destinations with Cold tier,
-version IDs, SHA-256 readback, WORM verification, ledger commit, and exact hot
-deletion proven in order. Every new-format ledger row
-records its physical container, logical customer-access boundary, and observed
-Azure properties. Existing blobs and locks remain untouched and cannot be
-shortened.
+The original Azure evidence account used one locked 2,190-day container policy.
+That over-retention remains an immutable historical fact. New evidence is now
+routed by tenant entitlement to a separate private account,
+`warsocevidence90prod`, with distinct SIEM/general Cold version-WORM containers
+for 90, 180, 270 and 365 days. Every route is active and runtime-proven on OCI.
+Every new-format ledger row records its physical container, logical
+customer-access boundary and observed Azure properties. Existing blobs and
+locks remain untouched and cannot be shortened.
 
 The threshold and the physical move time are not identical:
 
@@ -1382,17 +1405,15 @@ Before onboarding a tenant, the contract/onboarding record must identify the evi
 
 ### 15.0.1 Post-pilot storage separation checkpoint
 
-Retention segmentation remains a pre-commercial onboarding gate. The existing locked `warsoc-cold-storage` fallback is safe against early deletion but physically over-retains historical evidence for 2,190 days. Before any new commercial retention promise is activated:
+Retention segmentation is active for the only supported commercial values: 90,
+180, 270 and 365 days. Before onboarding a customer:
 
-1. Inventory existing containers, policies, ledger rows, tenant retention values and current archive backlog.
-2. Create only private `warsoc-siem-90` and `warsoc-general-90` containers for the currently approved entitlement. New FBR and PECA evidence use `warsoc-general-90`; no class-specific statutory-retention container is required. Do not create unused 180/270/360-day placeholders.
-3. Validate tenant-retention routing, Cold tier, blob versioning, version-level WORM, explicit legal holds, Azure account capability and cost. Keep the existing locked fallback until both routes are technically accepted.
-4. Validate every approved policy while unlocked with harmless data, then lock the exact approved duration.
-5. Add the two 90-day route variables and require blob version IDs only after both referenced containers exist and are locked.
-6. Recreate only `storage-archiver`, archive controlled samples for every class, and verify the recorded container/hash/immutability.
-7. Create a separate private `warsoc-retrieval-staging` container with no immutability lock and an Azure lifecycle rule that deletes staged objects after three days.
-8. Assign the retrieval identity least-privilege Blob Data Contributor access plus permission to generate user-delegation keys, enable the opt-in retrieval worker, and prove one request from `REQUESTED` through `READY`, SAS download, SHA-256 validation, and `EXPIRED`.
-9. Leave existing blobs in the original 2,190-day container. They cannot be shortened or moved as a way to evade the original lock.
+1. Provision the tenant with one exact supported value; never approximate a duration.
+2. Verify the matching SIEM/general route variables, Cold tier, version IDs and exact locked WORM declarations.
+3. Keep `AZURE_EXACT_RETENTION_ROUTE_REQUIRED=true` so missing or mismatched routes preserve Mongo data.
+4. Monitor archiver success, ledger timestamps and hot-data growth.
+5. Leave existing blobs in the original 2,190-day container; they cannot be shortened or moved to evade the original lock.
+6. Treat historical customer retrieval as a separate gate. Before enabling it, create the private short-lived staging container, assign least privilege, and prove server-side copy, SHA validation, bounded SAS download and expiry.
 
 Storage separation and compute migration are separate changes. Do not alter
 archive routing during any compute cutover.
@@ -1446,15 +1467,13 @@ The public agent-artifact account/container must remain separate from the privat
 - The archiver verifies Azure container immutability capability and the declared locked period before deleting hot Mongo records.
 - The current deployed single-container policy remains valid for historical
   blobs but over-retains evidence whose commercial entitlement is shorter.
-- The active-product routes are `SIEM_90=warsoc-siem-90` and
-  `GENERAL_90=warsoc-general-90`, both private Cold-tier destinations with blob
-  versioning, version-level 90-day WORM, and required version-ID readback. New
-  FBR and PECA evidence use `GENERAL_90`. Infrastructure acceptance passed on
-  2026-09-06. OCI release `5c8e2dc` activated exact routing on 2026-09-07, and
-  production canary `20260907T091930Z-d1187dcd` passed SIEM/general routing,
-  streamed SHA readback, version/WORM checks, ledger-before-delete, missing-route
-  fail-closed preservation, and Legal Hold protect/release/retry. Existing blobs
-  remain in the original locked container.
+- Active routes are `SIEM_<days>` and `GENERAL_<days>` for 90, 180, 270 and
+  365 days. They map to separate private Cold-tier containers with blob
+  versioning, exact version-level WORM, and required version-ID readback. FBR
+  and PECA use the matching general route. The 90-day infrastructure and OCI
+  canary passed on 2026-09-06/07. Runtime canary
+  `retention_canary_20260907T191203Z_dca3a697` subsequently proved all six
+  180/270/365 routes. Existing blobs remain in the original locked container.
 
 ## 16. Cold Archive Retrieval
 
@@ -1773,7 +1792,7 @@ Additional production-assisted lifecycle proof remains recorded:
 |---|---|---|
 | Customer-style invitation activation | Pending-login denial, token activation, replay rejection and active login are covered. SMTP is no longer required because the authenticated admin receives the link once. | Copy one link in the deployed browser, activate it as the invited role and confirm the intended role view. |
 | Independent backup recovery | The production-format encrypted Mongo drill now verifies SHA-256 and restores into a network-disabled disposable MongoDB container. | Repository proof `20260721T200605Z-7541a279` restored 156,671 documents with zero failures and recorded collection/index counts. Repeat against the final production backup during the Azure cutover. |
-| Physical retention segmentation for the approved 90-day entitlement | `SIEM_90` and `GENERAL_90` are active on OCI in private Cold/version-WORM containers. The historical 2,190-day container remains unchanged for existing blobs only. | No current launch gate. Provision another exact route only when a different duration is actually approved and sold; never remap legacy locked blobs. |
+| Physical retention segmentation for supported entitlements | Separate `SIEM_<days>` and `GENERAL_<days>` routes are active on OCI for 90, 180, 270 and 365 days in private Cold/version-WORM containers. The historical 2,190-day container remains unchanged for existing blobs only. | Monitor policy/configuration drift and reject every unsupported duration; never remap legacy locked blobs. |
 | Archive retrieval rollout | A prior synchronous reader proved that existing blobs and hashes were readable, but normal API hot/cold merging has been removed to protect API memory. | Configure private staging/lifecycle/RBAC, enable the isolated worker in a non-production acceptance environment, prove server-side copy/SAS/hash/expiry, then build the frontend request/status UI. Rehydrate only if a selected legacy object is actually Archive-tier. |
 | Dashboard post-deploy resources | The deployed frontend uses the intended 30-second alert and 10-second evidence schedule. Before deployment, Mongo used approximately 55.91% CPU and 1.639 GiB of its 2 GiB container limit. In the first post-deploy snapshot it used 1.55% CPU and 939.6 MiB; API, Redis and the unified worker were also low-use and healthy. A brief 502 and two legacy 499 cancellations occurred while the API container restarted at 21:30; no `/logs/live` 499 or 5xx appeared after deployment. | Measure Mongo CPU/memory and Nginx status codes for at least 15 continuous minutes after deployment; require no live-read 499s and p95 below two seconds. |
 | Ingest request buffering | Real agent ingestion is returning HTTP 200, but Nginx reports that some request bodies spill to its temporary request-body files. This is bounded buffering, not evidence loss, but it creates disk I/O. | Record agent batch sizes and temporary-file/disk growth during the 50-agent pilot; tune `client_body_buffer_size` or request batching only from measured data. |
@@ -1837,7 +1856,7 @@ Status meanings:
 | Metrics and health | Worker, queue, agent, DLQ, detection and dashboard telemetry | PROVEN | Protected production metrics were read successfully. Dashboard live-read histograms are deployed on the backend. |
 | Independent Mongo backup | Operational disaster recovery separate from evidence archive | CANDIDATE-PROVEN | Drill `20260721T200605Z-7541a279` verified SHA-256, decrypted a production-format archive, and restored 156,671 documents across 18 collections with zero failures into a network-disabled disposable MongoDB. The restore drill is now tracked and uses a temporary disk-backed Docker volume instead of a 2 GiB RAM-backed filesystem; the volume is deleted after the drill. Repeat with the final Azure-hosted production backup during cutover. |
 | Endpoint event authenticity | Per-event Ed25519 signature tied to the enrolled agent key before Redis admission | REQUIRED / DEPLOYED | Agent/API tests and exact-machine flow pass with 7,191 verified and zero rejected signatures. Accepted-event signature readiness is exposed per endpoint and gates health/coverage. The deployment operator set `AGENT_EVENT_SIGNATURE_MODE=required`; fresh signed-agent metrics remain the runtime watch. |
-| Physical retention classes | Separate logical entitlement, customer access, and actual Azure WORM facts | PROVEN / ACTIVE FOR 90 DAYS | Runs `20260906T120359Z-e6e1ffc4` and `20260906T120541Z-b8d6d78e` prove private `SIEM_90` and `GENERAL_90` Cold/version-WORM routes with exact locked 90-day policies. OCI release `5c8e2dc` and production canary `20260907T091930Z-d1187dcd` prove exact route isolation, version identity, streamed SHA readback, ledger-before-delete, exact deletion, missing-route fail-closed preservation, and Legal Hold protect/release/retry. Existing blobs and legacy FBR/PECA records remain untouched. |
+| Physical retention classes | Separate logical entitlement, customer access, and actual Azure WORM facts | PROVEN / ACTIVE FOR 90/180/270/365 DAYS | The 90-day Azure and OCI acceptance runs prove fail-closed routing and Legal Hold behavior. Runtime canary `retention_canary_20260907T191203Z_dca3a697` proves separate SIEM/general 180/270/365 Cold/version-WORM routes, version identity, streamed SHA readback, ledger-before-delete and exact deletion. Existing blobs and legacy FBR/PECA records remain untouched. |
 | Evidence cases and custody | Reference original evidence and record hash-linked custody transitions | PROVEN | Production run `EVIDENCE-ACCEPTANCE-20260906T043509Z-c9b91a9d` proved tenant-scoped hot-evidence attachment, cross-tenant denial, custody verification, closure RBAC, and tamper-safe chain requirements. Cold evidence requires the isolated retrieval flow first. |
 | Legal holds | Prevent eligible hot and archived evidence from deletion | PROVEN | The same production run proved admin/auditor RBAC, apply/reconcile/release, hot-deletion blocking, and audited fail-closed release through the deployed hold worker. |
 | Evidence package export | Build signed packages outside the API and deliver directly from Azure | PROVEN | The deployed non-root worker produced a private Azure package, verified SHA-256, issued a short-lived read-only SAS, and passed offline RSA-PSS verification. The acceptance package was removed after validation. |
@@ -1937,8 +1956,8 @@ Do not declare the current release fully accepted until all of the following are
 14. Email delivery proof.
 15. PDF and CSV proof.
 16. Azure blob upload, Cold-tier/version identity, immutability, SHA verification
-    and archive-ledger proof. For FBR, prove `GENERAL_90` covers the tenant
-    entitlement and that an inadequate policy leaves Mongo untouched. If archive
+    and archive-ledger proof. For FBR, prove the exact `GENERAL_<days>` route
+    covers the tenant entitlement and that an inadequate policy leaves Mongo untouched. If archive
     retrieval is enabled for the release, require a separate asynchronous
     server-side-copy and short-lived SAS download proof.
 17. Backup restore proof distinct from the compliance archive.
@@ -1979,13 +1998,14 @@ Do not declare the current release fully accepted until all of the following are
 | Redis ingest memory admission | `app/utils/ingest_capacity.py` |
 | Windows event signing and protected key storage | `agent/windows_agent.py` |
 | Windows Server General Server V1 candidate and qualification contract | `docs/WARSOC_WINDOWS_SERVER_MONITORING_V1.md`, `agent/server_monitoring.py`, and `app/utils/collection_profiles.py` |
-| Security Stories V1 candidate, correlation, worker and API contract | `docs/WARSOC_SECURITY_STORIES_V1.md`, `app/utils/security_stories.py`, `app/workers/security_story_worker.py`, and `app/routes/security_stories.py` |
+| Security Stories V1 correlation, worker and API contract | `docs/WARSOC_SECURITY_STORIES_V1.md`, `app/utils/security_stories.py`, `app/workers/security_story_worker.py`, and `app/routes/security_stories.py` |
 | Network-relay API and admission | `app/routes/network_relay.py` |
 | Network-relay parsing, spooling, signing and runtime | `app/network_relay/` and `scripts/warsoc_relay_service.py` |
 | Network-relay as-built candidate contract | `docs/NETWORK_RELAY_BACKEND_FOUNDATION.md` |
 | Future generic detection engine and Wazuh integration | `docs/WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md` |
 | Reviewed 90-day backend evidence plan, phase gates, Azure decision points and contradictions | `docs/WARSOC_90_DAY_BACKEND_EVIDENCE_PLAN_REVIEW.md` |
-| Active 90-day retention contract, implementation boundary, and Azure activation gate | `docs/WARSOC_90_DAY_RETENTION_CLOSURE.md` |
+| Active commercial retention classes and Azure proof | `docs/WARSOC_COMMERCIAL_RETENTION_CLASSES.md` |
+| Historical 90-day activation evidence | `docs/WARSOC_90_DAY_RETENTION_CLOSURE.md` |
 | FBR/PECA Phase 0 legal, evidence, claim and API truth map | `docs/WARSOC_FBR_PECA_PHASE_0_TRUTH_MAP.md` |
 | P0 source isolation, canonical evidence, outbox and FBR-retention closure | `docs/WARSOC_P0_EVIDENCE_INTEGRITY_CLOSURE_2026-08-20.md` |
 | Current backend evidence-program implementation and open gates | `docs/WARSOC_BACKEND_EVIDENCE_PROGRAM_IMPLEMENTATION_2026-08-20.md` |

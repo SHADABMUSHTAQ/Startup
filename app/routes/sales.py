@@ -16,6 +16,7 @@ from app.utils.pricing import (
     public_pricing_catalog,
 )
 from app.utils.security_policy import PLATFORM_MAX_AGENTS
+from app.utils.retention_policy import retention_days_for_months
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ class QuoteCustomization(BaseModel):
         return {
             "endpoints": int(self.endpoints or fallback_endpoints),
             "retention_months": retention_months,
-            "retention_days": retention_months * 30,
+            "retention_days": retention_days_for_months(retention_months),
             "cold_archive_requested": retention_months > 0,
         }
 

@@ -88,48 +88,50 @@ validate_secret_file() {
     fi
 
     if grep -Eqi '^AZURE_EXACT_RETENTION_ROUTE_REQUIRED=(true|1|yes|on)$' "${env_file}"; then
-        local archive_name
-        for archive_name in \
-            AZURE_STORAGE_CONTAINER_SIEM_90 \
-            AZURE_STORAGE_CONTAINER_GENERAL_90 \
-            AZURE_STORAGE_TIER_SIEM_90 \
-            AZURE_STORAGE_TIER_GENERAL_90 \
-            AZURE_IMMUTABILITY_SCOPE_SIEM_90 \
-            AZURE_IMMUTABILITY_SCOPE_GENERAL_90 \
-            AZURE_CONTAINER_IMMUTABILITY_LOCKED_SIEM_90 \
-            AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_90 \
-            AZURE_CONTAINER_IMMUTABILITY_LOCKED_GENERAL_90 \
-            AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_90; do
-            grep -Eq "^${archive_name}=.+" "${env_file}" || \
-                fail "Exact Azure retention routing is enabled but ${archive_name} is absent or empty."
-        done
-
         grep -Eqi '^AZURE_IMMUTABILITY_REQUIRED=(true|1|yes|on)$' "${env_file}" || \
             fail "Exact Azure retention routing requires AZURE_IMMUTABILITY_REQUIRED=true."
         grep -Eqi '^AZURE_BLOB_VERSION_ID_REQUIRED=(true|1|yes|on)$' "${env_file}" || \
             fail "Exact Azure retention routing requires AZURE_BLOB_VERSION_ID_REQUIRED=true."
-        grep -Eqi '^AZURE_STORAGE_TIER_SIEM_90=cold$' "${env_file}" || \
-            fail "The SIEM 90-day route must use the verified Cold tier."
-        grep -Eqi '^AZURE_STORAGE_TIER_GENERAL_90=cold$' "${env_file}" || \
-            fail "The general 90-day route must use the verified Cold tier."
-        grep -Eqi '^AZURE_IMMUTABILITY_SCOPE_SIEM_90=blob$' "${env_file}" || \
-            fail "The SIEM 90-day route must verify version-level blob immutability."
-        grep -Eqi '^AZURE_IMMUTABILITY_SCOPE_GENERAL_90=blob$' "${env_file}" || \
-            fail "The general 90-day route must verify version-level blob immutability."
-        grep -Eqi '^AZURE_CONTAINER_IMMUTABILITY_LOCKED_SIEM_90=(true|1|yes|on)$' "${env_file}" || \
-            fail "The SIEM 90-day route must declare its independently verified locked policy."
-        grep -Eqi '^AZURE_CONTAINER_IMMUTABILITY_LOCKED_GENERAL_90=(true|1|yes|on)$' "${env_file}" || \
-            fail "The general 90-day route must declare its independently verified locked policy."
-        grep -Eq '^AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_90=90$' "${env_file}" || \
-            fail "The SIEM 90-day route must declare exactly 90 immutable days."
-        grep -Eq '^AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_90=90$' "${env_file}" || \
-            fail "The general 90-day route must declare exactly 90 immutable days."
 
-        local siem_container general_container
-        siem_container="$(sed -n 's/^AZURE_STORAGE_CONTAINER_SIEM_90=//p' "${env_file}" | tail -n 1 | tr -d "'\"\r")"
-        general_container="$(sed -n 's/^AZURE_STORAGE_CONTAINER_GENERAL_90=//p' "${env_file}" | tail -n 1 | tr -d "'\"\r")"
-        [[ "${siem_container}" != "${general_container}" ]] || \
-            fail "SIEM and general evidence must use separate Azure containers."
+        local retention_days archive_name siem_container general_container
+        for retention_days in 90 180 270 365; do
+            for archive_name in \
+                "AZURE_STORAGE_CONTAINER_SIEM_${retention_days}" \
+                "AZURE_STORAGE_CONTAINER_GENERAL_${retention_days}" \
+                "AZURE_STORAGE_TIER_SIEM_${retention_days}" \
+                "AZURE_STORAGE_TIER_GENERAL_${retention_days}" \
+                "AZURE_IMMUTABILITY_SCOPE_SIEM_${retention_days}" \
+                "AZURE_IMMUTABILITY_SCOPE_GENERAL_${retention_days}" \
+                "AZURE_CONTAINER_IMMUTABILITY_LOCKED_SIEM_${retention_days}" \
+                "AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_${retention_days}" \
+                "AZURE_CONTAINER_IMMUTABILITY_LOCKED_GENERAL_${retention_days}" \
+                "AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_${retention_days}"; do
+                grep -Eq "^${archive_name}=.+" "${env_file}" || \
+                    fail "Exact Azure retention routing is enabled but ${archive_name} is absent or empty."
+            done
+
+            grep -Eqi "^AZURE_STORAGE_TIER_SIEM_${retention_days}=cold$" "${env_file}" || \
+                fail "The SIEM ${retention_days}-day route must use the verified Cold tier."
+            grep -Eqi "^AZURE_STORAGE_TIER_GENERAL_${retention_days}=cold$" "${env_file}" || \
+                fail "The general ${retention_days}-day route must use the verified Cold tier."
+            grep -Eqi "^AZURE_IMMUTABILITY_SCOPE_SIEM_${retention_days}=blob$" "${env_file}" || \
+                fail "The SIEM ${retention_days}-day route must verify version-level blob immutability."
+            grep -Eqi "^AZURE_IMMUTABILITY_SCOPE_GENERAL_${retention_days}=blob$" "${env_file}" || \
+                fail "The general ${retention_days}-day route must verify version-level blob immutability."
+            grep -Eqi "^AZURE_CONTAINER_IMMUTABILITY_LOCKED_SIEM_${retention_days}=(true|1|yes|on)$" "${env_file}" || \
+                fail "The SIEM ${retention_days}-day route must declare its independently verified locked policy."
+            grep -Eqi "^AZURE_CONTAINER_IMMUTABILITY_LOCKED_GENERAL_${retention_days}=(true|1|yes|on)$" "${env_file}" || \
+                fail "The general ${retention_days}-day route must declare its independently verified locked policy."
+            grep -Eq "^AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_${retention_days}=${retention_days}$" "${env_file}" || \
+                fail "The SIEM ${retention_days}-day route must declare exactly ${retention_days} immutable days."
+            grep -Eq "^AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_${retention_days}=${retention_days}$" "${env_file}" || \
+                fail "The general ${retention_days}-day route must declare exactly ${retention_days} immutable days."
+
+            siem_container="$(sed -n "s/^AZURE_STORAGE_CONTAINER_SIEM_${retention_days}=//p" "${env_file}" | tail -n 1 | tr -d "'\"\r")"
+            general_container="$(sed -n "s/^AZURE_STORAGE_CONTAINER_GENERAL_${retention_days}=//p" "${env_file}" | tail -n 1 | tr -d "'\"\r")"
+            [[ "${siem_container}" != "${general_container}" ]] || \
+                fail "SIEM and general evidence must use separate Azure containers for ${retention_days} days."
+        done
     fi
 }
 

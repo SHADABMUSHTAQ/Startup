@@ -29,7 +29,11 @@ class ThreatIntelligenceManager:
         }
 
         self.trusted_networks = self._parse_networks(ti_options.get("trusted_networks", []))
-        self.private_ip_allowlist = {ip for ip in ti_options.get("private_ip_allowlist", []) if self._validate_ip(ip)}
+        self.private_ip_allowlist = {
+            str(ipaddress.ip_address(ip))
+            for ip in ti_options.get("private_ip_allowlist", [])
+            if self._validate_ip(ip)
+        }
 
         self.threat_data = self._load_all_intel(config)
         self.whitelist_ips = set(config.get("whitelist", {}).get("ips", []))
@@ -109,6 +113,20 @@ class ThreatIntelligenceManager:
 
         ip_obj = ipaddress.ip_address(ip)
         
+        normalized_ip = str(ip_obj)
+        explicit_private_indicator = normalized_ip in self.private_ip_allowlist
+
+        if ip_obj.is_loopback or ip_obj.is_unspecified or ip_obj.is_multicast:
+            return False, "Non-actionable IP ignored"
+
+        # Private and trusted addresses are not actionable unless explicitly approved.
+        if self.ignore_private_ips and not ip_obj.is_global and not explicit_private_indicator:
+            return False, "Private or non-global IP ignored"
+
+        for trusted_net in self.trusted_networks:
+            if ip_obj in trusted_net and not explicit_private_indicator:
+                return False, f"Trusted Network: {trusted_net}"
+
         # O(1) Blacklist Check
         if ip in self.threat_data['ips']:
             score = int(self.threat_data["ip_scores"].get(ip, self.confidence["direct_ip"]))
@@ -125,14 +143,6 @@ class ThreatIntelligenceManager:
                         return True, f"Matches Malicious Network: {cidr} (confidence={score})"
                     return False, f"Low Confidence Network Match: {cidr} (confidence={score})"
             except Exception: continue
-
-        # Suppress unknown traffic in low-signal trusted scopes only when no strong indicator matched.
-        if self.ignore_private_ips and ip_obj.is_private and ip not in self.private_ip_allowlist:
-            return False, "Private IP ignored"
-
-        for trusted_net in self.trusted_networks:
-            if ip_obj in trusted_net and ip not in self.private_ip_allowlist:
-                return False, f"Trusted Network: {trusted_net}"
 
         # --- VirusTotal Check (With Rate Limiting) ---
         if not self.vt_api_key or ip in self._vt_cache:

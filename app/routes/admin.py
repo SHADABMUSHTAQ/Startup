@@ -21,6 +21,7 @@ from app.utils.security_policy import (
     StrongPassword,
     USER_IDENTITY_COLLATION,
 )
+from app.utils.retention_policy import validate_tenant_retention_days
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -65,6 +66,11 @@ class ProvisionRequest(BaseModel):
     retention_days: int = Field(default=90, ge=1, le=2190)
     daily_ingest_quota_bytes: int | None = Field(default=None, ge=1)
     max_network_relays: int = Field(default=0, ge=0, le=10)
+
+    @field_validator("retention_days")
+    @classmethod
+    def enforce_supported_retention_route(cls, value: int) -> int:
+        return validate_tenant_retention_days(value)
 
     @field_validator("daily_ingest_quota_bytes")
     @classmethod

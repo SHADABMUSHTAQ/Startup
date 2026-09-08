@@ -181,15 +181,12 @@ SIEM_RULES = {
     },
     "threat_intelligence": {
         "enabled": True,
-        "ips": [
-            "192.168.1.100",
-            "10.0.0.200"
-        ],
+        "ips": [],
         "files": [
             "data/blacklist_ip.txt"
         ],
         "options": {
-            "ignore_private_ips": False,
+            "ignore_private_ips": True,
             "minimum_confidence": 80,
             "confidence": {
                 "direct_ip": 95,
@@ -320,6 +317,43 @@ SIEM_RULES = {
                     "token elevation type full",
                     "tokenelevationtypefull",
                     "full"
+                ]
+            },
+            "large_clock_change": {
+                "enabled": True,
+                "threshold_seconds": 300,
+                "severity": "HIGH",
+                "mitre_id": "T1070.006"
+            },
+            "suspicious_scheduled_task": {
+                "enabled": True,
+                "minimum_signals": 2,
+                "severity": "HIGH",
+                "critical_severity": "CRITICAL",
+                "mitre_id": "T1053.005",
+                "high_confidence_markers": [
+                    "-encodedcommand",
+                    " -enc ",
+                    "frombase64string",
+                    "downloadstring",
+                    "javascript:",
+                    "regsvr32 /s /u /i:"
+                ],
+                "risk_markers": [
+                    "powershell",
+                    "pwsh",
+                    "cmd.exe",
+                    "wscript",
+                    "cscript",
+                    "mshta",
+                    "rundll32",
+                    "regsvr32",
+                    "certutil",
+                    "bitsadmin",
+                    "http://",
+                    "https://",
+                    "\\appdata\\",
+                    "\\temp\\"
                 ]
             }
         },

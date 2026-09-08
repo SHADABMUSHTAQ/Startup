@@ -8,6 +8,7 @@ import os
 import re
 import uuid
 import time
+import xml.etree.ElementTree as ET
 from urllib.parse import unquote_plus, urlparse
 from datetime import datetime, timedelta, timezone
 import redis.asyncio as aioredis
@@ -46,7 +47,24 @@ class SIEMEngine:
 
         # 3. Threat Intelligence (Static + File Based)
         ti_config = self.config.get("threat_intelligence", {})
-        self.blacklisted_ips = set(ti_config.get("ips", []))
+        ti_options = ti_config.get("options", {}) if isinstance(ti_config, dict) else {}
+        self.ignore_private_threat_ips = bool(ti_options.get("ignore_private_ips", True))
+        self.explicit_private_threat_ips = {
+            str(value).strip()
+            for value in ti_options.get("private_ip_allowlist", [])
+            if str(value).strip()
+        }
+        self.trusted_threat_networks = []
+        for value in ti_options.get("trusted_networks", []):
+            try:
+                self.trusted_threat_networks.append(ipaddress.ip_network(value, strict=False))
+            except ValueError:
+                corr_logger.warning("Ignoring invalid trusted threat-intelligence network: %s", value)
+        self.blacklisted_ips = {
+            str(value).strip()
+            for value in ti_config.get("ips", [])
+            if self.is_actionable_threat_ip(str(value).strip())
+        }
 
         # 4. Event ID Mapping
         raw_event_id_rules = self.config.get("event_id_map", {}) or self.config.get("detection", {}).get("event_id_rules", {})
@@ -109,6 +127,24 @@ class SIEMEngine:
         """Inject Redis client for persistent cooldown tracking across worker restarts."""
         self.redis = redis_client
 
+    def is_actionable_threat_ip(self, value: str) -> bool:
+        """Reject non-routable/trusted indicators unless explicitly approved."""
+        try:
+            ip_obj = ipaddress.ip_address(str(value).strip())
+        except ValueError:
+            return False
+
+        ip_text = str(ip_obj)
+        if ip_obj.is_loopback or ip_obj.is_unspecified or ip_obj.is_multicast:
+            return False
+        if ip_text in self.explicit_private_threat_ips:
+            return True
+        if any(ip_obj in network for network in self.trusted_threat_networks):
+            return False
+        if self.ignore_private_threat_ips and not ip_obj.is_global:
+            return False
+        return True
+
     @staticmethod
     def _cooldown_fingerprint(message: str) -> str:
         normalized = " ".join(str(message or "").lower().split())
@@ -143,7 +179,7 @@ class SIEMEngine:
             return []
 
         # THREAT INTEL: 30-Day TTL Stateful Check
-        if self.redis and ip and ip not in {"0.0.0.0", "127.0.0.1", "::1"}:
+        if self.redis and self.is_actionable_threat_ip(ip):
             try:
                 is_malicious = await self.redis.exists(f"threat_intel:ip:{ip}")
                 if is_malicious:
@@ -182,8 +218,16 @@ class SIEMEngine:
             return findings
 
         elevated_powershell_alert = self._detect_elevated_powershell(log_entry, event_id)
-        if elevated_powershell_alert:
+        if elevated_powershell_alert and len(findings) < self.max_alerts_per_log:
             findings.append(elevated_powershell_alert)
+
+        clock_change_alert = self._detect_large_clock_change(log_entry, event_id)
+        if clock_change_alert and len(findings) < self.max_alerts_per_log:
+            findings.append(clock_change_alert)
+
+        scheduled_task_alert = self._detect_suspicious_scheduled_task(log_entry, event_id)
+        if scheduled_task_alert and len(findings) < self.max_alerts_per_log:
+            findings.append(scheduled_task_alert)
 
         phishing_alert = self._detect_phishing(
             log_entry,
@@ -191,7 +235,7 @@ class SIEMEngine:
             event_type,
             trusted_web_origin=trusted_web_origin,
         )
-        if phishing_alert:
+        if phishing_alert and len(findings) < self.max_alerts_per_log:
             findings.append(phishing_alert)
 
         for name, rule in self.rules.items():
@@ -360,6 +404,116 @@ class SIEMEngine:
             "Elevated PowerShell launched",
             log_entry,
             cfg.get("mitre_id", "T1059.001"),
+        )
+
+    @staticmethod
+    def _parse_event_time(value):
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            text = str(value or "").strip()
+            if not text:
+                return None
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def _detect_large_clock_change(self, log_entry: dict, event_id: str):
+        native_cfg = self.config.get("detection", {}).get("native_windows_detection", {})
+        cfg = native_cfg.get("large_clock_change", {})
+        if not cfg.get("enabled", False) or event_id != "4616":
+            return None
+
+        processed = log_entry.get("processed_data") if isinstance(log_entry.get("processed_data"), dict) else {}
+        raw_data = log_entry.get("raw_data") if isinstance(log_entry.get("raw_data"), dict) else {}
+        previous_time = self._parse_event_time(
+            processed.get("previous_time") or raw_data.get("PreviousTime") or raw_data.get("previous_time")
+        )
+        new_time = self._parse_event_time(
+            processed.get("new_time") or raw_data.get("NewTime") or raw_data.get("new_time")
+        )
+        if not previous_time or not new_time:
+            return None
+
+        delta_seconds = abs((new_time - previous_time).total_seconds())
+        threshold_seconds = max(1, int(cfg.get("threshold_seconds", 300)))
+        if delta_seconds < threshold_seconds:
+            return None
+
+        return self._create_alert(
+            "WINDOWS_LARGE_CLOCK_CHANGE",
+            cfg.get("severity", "HIGH"),
+            f"System clock changed by {int(delta_seconds)} seconds",
+            log_entry,
+            cfg.get("mitre_id", "T1070.006"),
+        )
+
+    def _detect_suspicious_scheduled_task(self, log_entry: dict, event_id: str):
+        native_cfg = self.config.get("detection", {}).get("native_windows_detection", {})
+        cfg = native_cfg.get("suspicious_scheduled_task", {})
+        if not cfg.get("enabled", False) or event_id != "4698":
+            return None
+
+        processed = log_entry.get("processed_data") if isinstance(log_entry.get("processed_data"), dict) else {}
+        raw_data = log_entry.get("raw_data") if isinstance(log_entry.get("raw_data"), dict) else {}
+        task_content = str(
+            processed.get("task_content")
+            or raw_data.get("TaskContentNew")
+            or raw_data.get("TaskContent")
+            or ""
+        ).strip()
+        if not task_content:
+            return None
+
+        # Only executable actions are indicators; XML namespaces, descriptions
+        # and author metadata commonly contain ordinary URLs and tool names.
+        if task_content.startswith("<"):
+            if len(task_content) > 262144 or re.search(r"<!\s*(?:DOCTYPE|ENTITY)\b", task_content, re.I):
+                return None
+            try:
+                task_root = ET.fromstring(task_content)  # nosec B314
+            except ET.ParseError:
+                return None
+            actions = []
+            for element in task_root.iter():
+                if element.tag.rsplit("}", 1)[-1] != "Actions":
+                    continue
+                for action in element:
+                    if action.tag.rsplit("}", 1)[-1] != "Exec":
+                        continue
+                    actions.extend(
+                        field.text or ""
+                        for field in action
+                        if field.tag.rsplit("}", 1)[-1] in {"Command", "Arguments", "WorkingDirectory"}
+                    )
+            task_content = " ".join(actions)
+        task_content = task_content.lower()
+
+        high_confidence = {
+            marker
+            for marker in cfg.get("high_confidence_markers", [])
+            if str(marker).lower() in task_content
+        }
+        risk_signals = {
+            marker
+            for marker in cfg.get("risk_markers", [])
+            if str(marker).lower() in task_content
+        }
+        minimum_signals = max(1, int(cfg.get("minimum_signals", 2)))
+        if not high_confidence and len(risk_signals) < minimum_signals:
+            return None
+
+        severity = cfg.get("critical_severity", "CRITICAL") if high_confidence else cfg.get("severity", "HIGH")
+        return self._create_alert(
+            "WINDOWS_SUSPICIOUS_SCHEDULED_TASK",
+            severity,
+            "Suspicious scheduled task persistence detected",
+            log_entry,
+            cfg.get("mitre_id", "T1053.005"),
         )
 
     def _fallback_summary(self, rule_name: str) -> str:

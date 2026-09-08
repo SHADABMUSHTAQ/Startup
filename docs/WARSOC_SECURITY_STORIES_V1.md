@@ -1,6 +1,6 @@
 # WarSOC Security Stories V1
 
-**Document status:** Engineering candidate contract
+**Document status:** Source/integration accepted; production runtime activation pending
 **As-of date:** 2026-09-04
 **Feature flag:** `SECURITY_STORIES_ENABLED=false` by default
 **Customer/production status:** Disabled; not a current capability claim
@@ -166,9 +166,17 @@ release candidate:
 10. Rollback is proven by setting `SECURITY_STORIES_ENABLED=false` and
     recreating the unified worker/API without altering canonical evidence.
 
-Current engineering evidence is 27 focused tests passing. The complete suite
-and security gate have not yet been recorded for this candidate, so production
-must remain disabled.
+Release-candidate evidence recorded on 2026-09-08 includes 27 focused story
+tests inside a 112-test focused release gate and a complete backend run of 684
+passed, 2 expected skips. Python compilation and the 132-route authorization
+inventory passed with zero manual-review routes. Bandit found zero high-severity
+issues across `app`, `agent`, and `scripts`; direct production and development
+requirements audits found no known vulnerabilities. The local developer venv
+contains unrelated/stale tool packages and is not production-image evidence.
+
+Production still remains disabled until one new-traffic runtime story, worker
+heartbeat, stream-group participation, rollback-to-disabled behavior and
+synthetic-data cleanup are captured against the deployed release.
 
 ## 9. Source Map
 

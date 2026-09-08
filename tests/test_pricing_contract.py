@@ -30,7 +30,7 @@ def test_quote_request_preserves_scope_without_requiring_a_client_price():
     assert quote.customization.normalized(fallback_endpoints=quote.endpoints) == {
         "endpoints": 50,
         "retention_months": 12,
-        "retention_days": 360,
+        "retention_days": 365,
         "cold_archive_requested": True,
     }
     assert quote.frontend_calculated_total is None

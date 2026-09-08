@@ -209,7 +209,7 @@ POS schemas or safely read arbitrary production databases.
 |---|---|---|---|
 | Mongo hot tier | `ACTIVE` | SIEM/raw/upload/analysis/PECA/FBR operational window is seven days with tenant/time indexes and bounded reads. | Exact-host query/working-set soak. |
 | Azure archiver | `ACTIVE / PRODUCTION-PROVEN` | Upload, streamed SHA-256 readback, immutability/version verification, ledger commit, Legal Hold recheck, then exact-ID Mongo deletion. Failure preserves Mongo data. | Monitor daily runs and alert on failures or unexpected Mongo growth. |
-| Physical retention split | `ACTIVE / PRODUCTION-PROVEN FOR 90 DAYS` | Private account `warsocevidence90prod` has exact `warsoc-siem-90` and `warsoc-general-90` routes with versioning, locked 90-day version-WORM policies and Cold blobs. OCI release `5c8e2dc` plus canary `20260907T091930Z-d1187dcd` proved route isolation, trusted clocks, customer-access expiry, Azure tier/version/ETag, streamed SHA readback, ledger-before-delete, Legal Hold protect/release/retry, and missing-route fail-closed preservation. | Keep exact routing fail-closed. Add another duration only after that entitlement is approved and sold. |
+| Physical retention split | `ACTIVE / PRODUCTION-PROVEN FOR 90/180/270/365 DAYS` | Private account `warsocevidence90prod` has separate SIEM/general Cold containers with versioning and locked exact-duration version-WORM policies for 3, 6, 9 and 12 month entitlements. The 90-day acceptance remains valid; runtime canary `retention_canary_20260907T191203Z_dca3a697` additionally proved all six 180/270/365 routes, streamed SHA readback, ledger-before-delete and exact hot deletion. | Keep exact routing fail-closed. Do not sell unsupported durations, and do not move legacy locked blobs. |
 | Historical retrieval | `IMPLEMENTED-DISABLED` | Async ledger/worker design avoids proxying GiB archives through the API. Customer queries exclude expired and legacy rows without an explicit access boundary. Browser UI and Azure staging/RBAC acceptance are incomplete. | Staging lifecycle, user-delegation SAS, server-side copy, limits, expiry and UI acceptance. |
 | Backup/restore | `SOURCE-PROVEN` drill | Mongo backup is separate from evidence archive. Final replacement-host recovery remains unproved. | Final-host encrypted backup and blank-host RPO/RTO drill. |
 
@@ -229,15 +229,16 @@ evidence must leave Mongo only through the archive-before-delete transaction.
 
 | Component | Current state | Boundary / limitation | Next gate |
 |---|---|---|---|
-| Correlation projection | `IMPLEMENTED-DISABLED` engineering candidate | Five bounded server/hybrid stories reference canonical evidence and incidents without modifying them. Medium confidence remains `CANDIDATE`; high confidence opens a story. | Complete the full backend/security gate and isolated runtime acceptance. |
-| Durable processing | `SOURCE-PROVEN` by focused tests | Independent Redis group, Mongo signal ledger, leases, retry, pending-incident recovery, idempotency and bounded references are implemented. First enable starts at new traffic rather than replaying historical backlog. | Redis outage/recovery, expired-lease and stream-trim runtime proof on the frozen candidate. |
-| Tenant and operator API | `SOURCE-PROVEN` by focused tests | Reads are admin/manager/analyst; workflow writes are admin/manager; every record is tenant-scoped and versioned. No frontend is included in this candidate. | Frozen-release API role matrix and later separately approved frontend work. |
+| Correlation projection | `SOURCE/INTEGRATION-ACCEPTED; RUNTIME DISABLED` | Five bounded server/hybrid stories reference canonical evidence and incidents without modifying them. Medium confidence remains `CANDIDATE`; high confidence opens a story. | Enable only for a labelled new-traffic runtime canary, prove rollback, then retain the accepted production setting. |
+| Durable processing | `INTEGRATION-PROVEN` | Independent Redis group, Mongo signal ledger, leases, retry, pending-incident recovery, idempotency and bounded references are covered by the complete suite. First enable starts at new traffic rather than replaying historical backlog. | Record production worker heartbeat, group participation, projection and cleanup. |
+| Tenant and operator API | `INTEGRATION-PROVEN` | Reads are admin/manager/analyst; workflow writes are admin/manager; every record is tenant-scoped and versioned. No frontend is included in this backend activation. | Production role smoke and later separately approved frontend work. |
 | Wazuh/firewall relationship | `IMPLEMENTED-DISABLED` | Shadow Wazuh data is never actionable. Allowed external activity requires authenticated relay evidence; Windows 5156/5157 and blocked traffic do not qualify. | Entitled relay runtime proof after both optional features pass their independent gates. |
 
-The feature flag remains `SECURITY_STORIES_ENABLED=false`. Focused evidence is
-27 passing tests; the complete regression/security gate has not yet been
-recorded. Security Stories are therefore not deployed, active or customer-safe
-claims. See `docs/WARSOC_SECURITY_STORIES_V1.md` for the rule and failure
+The source/integration gate recorded 112 focused passes and a complete backend
+run of 684 passed with 2 expected skips. High-severity Bandit and direct
+requirements audits are clean. `SECURITY_STORIES_ENABLED=false` remains the
+runtime setting until the labelled production canary and rollback proof are
+captured. See `docs/WARSOC_SECURITY_STORIES_V1.md` for the rule and failure
 contract.
 
 ## 6. Implemented but Disabled: Network Firewall Relay
@@ -430,11 +431,10 @@ Mongo indexes, queue lag, archive throughput, and query latency must be measured
 
 Before commercial retention promises are expanded:
 
-1. create private immutable containers for the approved tenant/general durations (currently 90, 180, 270 and 360 days);
-2. test each unlocked policy with harmless data, then lock it;
-3. configure duration-specific environment variables only after every target
-   exists and is locked;
-4. prove archive, hash, ledger, readback, and exact-ID deletion for every class;
+1. retain the proven private immutable SIEM/general routes for 90, 180, 270 and 365 days;
+2. monitor each exact locked policy and prevent configuration drift;
+3. reject unsupported tenant durations rather than falling back to another route;
+4. preserve archive, hash, ledger, readback, and exact-ID deletion evidence for every class;
 5. keep retrieval staging and database backups separate from evidence WORM storage;
 6. define the SIEM raw-evidence privacy model before broadening collected command
    lines, file details, firewall metadata, FIM, or SCA data;
@@ -535,12 +535,11 @@ production claim.
 **Priority:** P0 before paid retention promises; otherwise P2
 **Outcome:** Retention contracts and capacity are physically enforceable.
 **Current status:** Archive-before-delete and the historical immutable fallback
-are active. The two approved 90-day Azure containers are locked and routed from
-OCI release `5c8e2dc`. Production SIEM/general, failure-preservation and Legal
-Hold canaries passed. Retrieval staging/UI and replacement-host scale proof
-remain open.
+are active. Eight exact SIEM/general containers for 90, 180, 270 and 365 days
+are locked, routed from OCI and runtime-proven. Retrieval staging/UI and
+replacement-host scale proof remain open.
 
-- Monitor the active `SIEM_90` and `GENERAL_90` routes and daily archiver; finish retrieval staging separately.
+- Monitor all active exact-duration routes and the daily archiver; finish retrieval staging separately.
 - Complete asynchronous retrieval and monthly allowance enforcement.
 - Run exact-host multi-tenant soak, Azure-outage survival, and blank-host restore.
 - Raise capacity only from measured evidence.
@@ -566,7 +565,8 @@ WarSOC currently provides:
 
 - a Windows security telemetry agent that runs as a background service;
 - signed and authenticated event delivery;
-- WarSOC-native detection and correlation;
+- WarSOC-native detection and correlation, including structured suspicious-task
+  and large-clock-change rules with private/trusted threat-indicator suppression;
 - grouped operational incidents with evidence references;
 - PECA-oriented native Windows evidence for the WarSOC 11-control profile;
 - FBR invoice monitoring when the POS supplies the required structured events;
@@ -605,7 +605,7 @@ A capability is not `ACTIVE` merely because code exists. It is done only when:
 | Approved build, validation, pentest, and release sequence | `docs/WARSOC_BUILD_VALIDATE_FREEZE_EXECUTION_PLAN.md` |
 | Current as-built system | `docs/WARSOC_CURRENT_STATE_ARCHITECTURE.md` |
 | Windows Server General Server V1 candidate | `docs/WARSOC_WINDOWS_SERVER_MONITORING_V1.md` |
-| Security Stories V1 candidate | `docs/WARSOC_SECURITY_STORIES_V1.md` |
+| Security Stories V1 release contract | `docs/WARSOC_SECURITY_STORIES_V1.md` |
 | Current operator/customer flow | `docs/WARSOC_END_TO_END_PRODUCT_AND_OPERATOR_GUIDE.md` |
 | Current architecture questions and proof gaps | `docs/WARSOC_COMPLETE_ARCHITECTURE_QUESTION_REGISTER.md` |
 | Current-scope 15-question closure register | `docs/WARSOC_CURRENT_SCOPE_15_ARCHITECTURE_QUESTIONS.md` |
@@ -617,7 +617,8 @@ A capability is not `ACTIVE` merely because code exists. It is done only when:
 | Wazuh implementation sequence | `docs/WARSOC_WAZUH_EXECUTION_MIND_MAP.md` |
 | Wazuh lab/integration operations | `docs/WARSOC_WAZUH_IMPLEMENTATION_AND_LAB_RUNBOOK.md` |
 | Wazuh readiness requirements | `docs/WARSOC_WAZUH_INTEGRATION_READINESS_REQUIREMENTS.md` |
-| Active 90-day retention contract and Azure activation gate | `docs/WARSOC_90_DAY_RETENTION_CLOSURE.md` |
+| Active commercial retention classes and Azure proof | `docs/WARSOC_COMMERCIAL_RETENTION_CLASSES.md` |
+| Historical 90-day activation evidence | `docs/WARSOC_90_DAY_RETENTION_CLOSURE.md` |
 | Azure account/storage creation | `docs/AZURE_ACCOUNT_AND_STORAGE_CREATION_RUNBOOK.md` |
 | Backend migration | `docs/AZURE_BACKEND_MIGRATION_RUNBOOK.md` |
 | Production backup and restore | `docs/PRODUCTION_BACKUP_RUNBOOK.md` |

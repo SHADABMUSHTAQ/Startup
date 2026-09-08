@@ -943,26 +943,25 @@ def test_production_archiver_is_scheduled_and_requires_azure_secret():
     assert 'profiles: ["maintenance"]' not in service
     assert "restart: on-failure" in service
     assert "AZURE_STORAGE_CONNECTION_STRING required" in service
-    for variable in (
-        "AZURE_STORAGE_CONTAINER_SIEM_90",
-        "AZURE_STORAGE_CONTAINER_GENERAL_90",
-        "AZURE_STORAGE_TIER_SIEM_90",
-        "AZURE_STORAGE_TIER_GENERAL_90",
-        "AZURE_EXACT_RETENTION_ROUTE_REQUIRED",
-        "AZURE_BLOB_VERSION_ID_REQUIRED",
-        "AZURE_IMMUTABILITY_SCOPE_SIEM_90",
-        "AZURE_IMMUTABILITY_SCOPE_GENERAL_90",
-        "AZURE_CONTAINER_IMMUTABILITY_LOCKED_SIEM_90",
-        "AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_90",
-        "AZURE_CONTAINER_IMMUTABILITY_LOCKED_GENERAL_90",
-        "AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_90",
-    ):
+    variables = ["AZURE_EXACT_RETENTION_ROUTE_REQUIRED", "AZURE_BLOB_VERSION_ID_REQUIRED"]
+    for retention_days in (90, 180, 270, 365):
+        for retention_class in ("SIEM", "GENERAL"):
+            variables.extend(
+                [
+                    f"AZURE_STORAGE_CONTAINER_{retention_class}_{retention_days}",
+                    f"AZURE_STORAGE_TIER_{retention_class}_{retention_days}",
+                    f"AZURE_IMMUTABILITY_SCOPE_{retention_class}_{retention_days}",
+                    f"AZURE_CONTAINER_IMMUTABILITY_LOCKED_{retention_class}_{retention_days}",
+                    f"AZURE_CONTAINER_IMMUTABILITY_DAYS_{retention_class}_{retention_days}",
+                ]
+            )
+    for variable in variables:
         assert f"{variable}: ${{{variable}" in service
     assert "ARCHIVE_BATCH_MAX_BYTES" in service
     assert "ARCHIVE_INTERVAL_SECONDS" in service
 
 
-def test_oci_release_preflight_enforces_exact_90_day_archive_contract():
+def test_oci_release_preflight_enforces_every_sold_archive_contract():
     from pathlib import Path
 
     deploy_text = (
@@ -975,9 +974,10 @@ def test_oci_release_preflight_enforces_exact_90_day_archive_contract():
     assert "AZURE_EXACT_RETENTION_ROUTE_REQUIRED" in deploy_text
     assert "AZURE_BLOB_VERSION_ID_REQUIRED=true" in deploy_text
     assert "AZURE_IMMUTABILITY_REQUIRED=true" in deploy_text
-    assert "AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_90=90" in deploy_text
-    assert "AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_90=90" in deploy_text
-    assert "SIEM and general evidence must use separate Azure containers" in deploy_text
+    assert "for retention_days in 90 180 270 365" in deploy_text
+    assert "AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_${retention_days}=${retention_days}" in deploy_text
+    assert "AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_${retention_days}=${retention_days}" in deploy_text
+    assert "SIEM and general evidence must use separate Azure containers for ${retention_days} days" in deploy_text
 
 
 def test_async_azure_transport_is_packaged_for_archive_runtime():

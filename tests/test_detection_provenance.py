@@ -26,7 +26,7 @@ def test_detector_provenance_is_bounded_and_excludes_raw_evidence():
     )
 
     assert result["rule_id"] == "WINDOWS_SERVICE_INSTALLED"
-    assert result["rule_version"] == "2026.08.02.1"
+    assert result["rule_version"] == "2026.09.07.1"
     assert result["detector_module"] == "siem.native_event"
     assert result["required_telemetry_family"] == "windows_native"
     assert result["detection_provenance"]["schema_version"] == "detector-provenance-v1"

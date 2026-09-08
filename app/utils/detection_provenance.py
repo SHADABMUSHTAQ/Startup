@@ -10,9 +10,9 @@ PROVENANCE_SCHEMA_VERSION = "detector-provenance-v1"
 MAX_EVIDENCE_REFERENCES = 8
 
 DETECTOR_VERSIONS = {
-    "siem.native_event": "2026.08.02.1",
-    "siem.stateless": "2026.08.02.1",
-    "siem.correlation": "2026.08.02.1",
+    "siem.native_event": "2026.09.07.1",
+    "siem.stateless": "2026.09.07.1",
+    "siem.correlation": "2026.09.07.1",
     "siem.dlq_guard": "2026.08.02.1",
     "fbr.evidence": "2026.08.02.1",
     "legacy.detection_worker": "2026.08.02.1",

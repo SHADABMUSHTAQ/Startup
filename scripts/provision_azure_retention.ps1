@@ -28,24 +28,25 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+$approvedRetentionDays = @(90, 180, 270, 365)
 $approvedContainers = @(
-    "warsoc-siem-90",
-    "warsoc-general-90"
+    "warsoc-siem-$RetentionDays",
+    "warsoc-general-$RetentionDays"
 )
 $legacyContainer = "warsoc-cold-storage"
-$requiredLockConfirmation = "LOCK-WARSOC-90-DAY-RETENTION"
+$requiredLockConfirmation = "LOCK-WARSOC-$RetentionDays-DAY-RETENTION"
 $runId = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ") + "-" +
     ([guid]::NewGuid().ToString("N").Substring(0, 8))
 $script:AzureCliPath = $null
 
-if ($RetentionDays -ne 90) {
-    throw "This release supports exactly 90 days. Refusing RetentionDays=$RetentionDays."
+if ($RetentionDays -notin $approvedRetentionDays) {
+    throw "RetentionDays must be one of: $($approvedRetentionDays -join ', '). Refusing RetentionDays=$RetentionDays."
 }
 if ($approvedContainers -contains $legacyContainer) {
     throw "Safety invariant failed: the legacy container is in the mutation allowlist."
 }
 if ($Mode -eq "Prepare" -and -not $AcknowledgeValidationBlobRetention) {
-    throw "Prepare creates harmless validation blobs retained for 90 days. Re-run with -AcknowledgeValidationBlobRetention."
+    throw "Prepare creates harmless validation blobs retained for $RetentionDays days. Re-run with -AcknowledgeValidationBlobRetention."
 }
 if ($Mode -eq "Lock" -and $LockConfirmation -cne $requiredLockConfirmation) {
     throw "Lock requires -LockConfirmation '$requiredLockConfirmation'."
@@ -383,6 +384,16 @@ function Write-ResultReport {
     $outputPath = [IO.Path]::GetFullPath((Join-Path $projectRoot $OutputDirectory))
     New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
     $reportPath = Join-Path $outputPath "$runId-$($Mode.ToLowerInvariant()).json"
+    $activationEnvironment = [ordered]@{}
+    foreach ($retentionClass in @("SIEM", "GENERAL")) {
+        $containerName = "warsoc-$($retentionClass.ToLowerInvariant())-$RetentionDays"
+        $activationEnvironment["AZURE_STORAGE_CONTAINER_${retentionClass}_$RetentionDays"] = $containerName
+        $activationEnvironment["AZURE_STORAGE_TIER_${retentionClass}_$RetentionDays"] = "Cold"
+        $activationEnvironment["AZURE_IMMUTABILITY_SCOPE_${retentionClass}_$RetentionDays"] = "blob"
+        $activationEnvironment["AZURE_CONTAINER_IMMUTABILITY_LOCKED_${retentionClass}_$RetentionDays"] = "true"
+        $activationEnvironment["AZURE_CONTAINER_IMMUTABILITY_DAYS_${retentionClass}_$RetentionDays"] = "$RetentionDays"
+    }
+
     $report = [ordered]@{
         status = $Status
         mode = $Mode
@@ -405,14 +416,7 @@ function Write-ResultReport {
         }
         snapshot = $Snapshot
         validation_results = $ValidationResults
-        activation_environment = [ordered]@{
-            AZURE_STORAGE_CONTAINER_SIEM_90 = "warsoc-siem-90"
-            AZURE_STORAGE_CONTAINER_GENERAL_90 = "warsoc-general-90"
-            AZURE_STORAGE_TIER_SIEM_90 = "Cold"
-            AZURE_STORAGE_TIER_GENERAL_90 = "Cold"
-            AZURE_CONTAINER_IMMUTABILITY_DAYS_SIEM_90 = "90"
-            AZURE_CONTAINER_IMMUTABILITY_DAYS_GENERAL_90 = "90"
-        }
+        activation_environment = $activationEnvironment
     }
     $report | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $reportPath -Encoding UTF8
     Write-Host "Report: $reportPath" -ForegroundColor Cyan
@@ -491,9 +495,9 @@ if ($Mode -eq "Prepare") {
     if ($WhatIfPreference) {
         foreach ($operation in @(
             "Enable account blob versioning if disabled",
-            "Create private version-WORM container warsoc-siem-90 if absent",
-            "Create private version-WORM container warsoc-general-90 if absent",
-            "Create unlocked 90-day policies if absent",
+            "Create private version-WORM container warsoc-siem-$RetentionDays if absent",
+            "Create private version-WORM container warsoc-general-$RetentionDays if absent",
+            "Create unlocked $RetentionDays-day policies if absent",
             "Upload and hash-readback one retained Cold canary per container"
         )) {
             [void]$PSCmdlet.ShouldProcess($StorageAccount, $operation)
@@ -562,7 +566,7 @@ if ($Mode -eq "Prepare") {
         $readbackPath = Join-Path ([IO.Path]::GetTempPath()) "$runId-$containerName-readback.txt"
         $blobName = "policy-validation/$runId.txt"
         try {
-            "WarSOC 90-day retention validation $runId $containerName" |
+            "WarSOC $RetentionDays-day retention validation $runId $containerName" |
                 Set-Content -LiteralPath $sourcePath -Encoding UTF8
             $sourceHash = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash
 
@@ -634,7 +638,7 @@ if ($Mode -eq "Verify") {
     $snapshot = Get-RetentionSnapshot -IncludeValidationBlobs
     Assert-SnapshotReady -Snapshot $snapshot -RequiredPolicyState "Either" -RequireValidationBlob
     [void](Write-ResultReport -Status "VERIFIED" -Account $storageAccountResource -Snapshot $snapshot)
-    Write-Host "Both 90-day retention routes passed read-only verification." -ForegroundColor Green
+    Write-Host "Both $RetentionDays-day retention routes passed read-only verification." -ForegroundColor Green
     return
 }
 
@@ -672,5 +676,5 @@ if ($Mode -eq "Lock") {
     $lockedSnapshot = Get-RetentionSnapshot -IncludeValidationBlobs
     Assert-SnapshotReady -Snapshot $lockedSnapshot -RequiredPolicyState "Locked" -RequireValidationBlob
     [void](Write-ResultReport -Status "LOCKED_AND_VERIFIED" -Account $storageAccountResource -Snapshot $lockedSnapshot)
-    Write-Host "Both exact 90-day policies are LOCKED and verified." -ForegroundColor Green
+    Write-Host "Both exact $RetentionDays-day policies are LOCKED and verified." -ForegroundColor Green
 }

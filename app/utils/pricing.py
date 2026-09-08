@@ -1,6 +1,7 @@
 from typing import Any
 
 from app.utils.security_policy import PLATFORM_MAX_AGENTS
+from app.utils.retention_policy import SUPPORTED_RETENTION_MONTHS
 from app.utils.tenant_cache import normalize_pack_id
 
 
@@ -10,7 +11,6 @@ PUBLIC_MIN_ENDPOINTS = 10
 ENDPOINT_MONTHLY_PRICE = 2_000
 ONE_TIME_SETUP_FEE = 5_000
 ANNUAL_MONTHS = 12
-SUPPORTED_RETENTION_MONTHS = (3, 6, 9, 12)
 COMPLIANCE_PACK_MONTHLY_PRICES = {
     "fbr_pos": 20_000,
     "peca_forensic": 25_000,

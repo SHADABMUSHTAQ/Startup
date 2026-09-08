@@ -1,5 +1,9 @@
 # WarSOC 90-Day Retention Closure
 
+> Historical 90-day closure record. The active multi-duration contract is now
+> `docs/WARSOC_COMMERCIAL_RETENTION_CLASSES.md`. The evidence and run IDs below
+> remain valid for the 90-day route and must not be rewritten.
+
 **Status:** production active and accepted on OCI release `5c8e2dc`; both
 90-day Azure routes and the production archive/hold/failure paths are proven.
 
@@ -35,8 +39,8 @@ Only these new active-product evidence destinations are approved:
 
 Both require blob versioning, version-level immutability, a verified 90-day
 locked policy, public access disabled, and version IDs returned on upload.
-Containers for 180, 270, or 360 days are not part of the active product and
-must not be provisioned merely as placeholders.
+This section records the original 90-day activation. Exact 180-day, 270-day and
+365-day routes were subsequently approved and proven; see the active contract.
 
 The existing `warsoc-cold-storage` fallback and every existing blob remain
 untouched. Its historical 2,190-day lock cannot be shortened. Existing ledger
