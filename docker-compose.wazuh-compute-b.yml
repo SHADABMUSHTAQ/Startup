@@ -137,7 +137,7 @@ services:
     volumes:
       - warsoc_wazuh_bridge_spool:/var/lib/warsoc-wazuh
       - warsoc_wazuh_manager_logs:/var/ossec/logs:ro
-      - ./deploy/wazuh/registry/warsoc-projected-shadow-v1.json:/etc/warsoc-wazuh/rule-registry.json:ro
+      - ./deploy/wazuh/registry/warsoc-projected-shadow-v2.json:/etc/warsoc-wazuh/rule-registry.json:ro
       - ${WAZUH_BRIDGE_TLS_DIR:-./keys/wazuh-compute-b}:/run/warsoc-wazuh-tls:ro
     read_only: true
     tmpfs:

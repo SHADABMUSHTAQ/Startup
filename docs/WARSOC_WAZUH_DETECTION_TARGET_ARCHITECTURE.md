@@ -1,6 +1,8 @@
 # WarSOC Wazuh Detection Target Architecture
 
-**Document status:** Final reviewed target and integration contract; controlled four-family shadow deployment active as of 2026-08-28, primary promotion disabled
+**Document status:** Final reviewed target and integration contract; controlled
+four-family v1 shadow deployment active, 22-rule v2 shadow release candidate
+locally/native-engine proven as of 2026-09-08, primary promotion disabled
 
 **Decision date:** 2026-08-10
 
@@ -25,10 +27,43 @@ This is an enrichment boundary, not a transfer of platform authority. A Wazuh
 alert is never canonical evidence, never a compliance record, never a command to
 block an address, and never authority to select a tenant.
 
-The current WarSOC SIEM remains authoritative until individual rule families pass
-shadow acceptance and are promoted through the rule-ownership registry. The
-disabled adapter foundation is present in code. Wazuh is not present in the
-production runtime and has no production authority.
+The current WarSOC SIEM remains authoritative unless an individual rule family
+later passes shadow acceptance and is explicitly promoted through the
+rule-ownership registry. The private OCI Wazuh manager/bridge and v1 shadow
+adapter are active, but Wazuh has no production authority. The v2 candidate
+expands internal shadow observation only; it cannot create customer incidents,
+notifications, compliance evidence, or response actions.
+
+### 1.1 V2 governed expansion
+
+`warsoc-projected-shadow-v2` is intentionally not a copy of the full Wazuh
+catalog. It contains only detections supported by fields the WarSOC agent or
+relay actually emits and that can be projected without raw customer content.
+
+The candidate covers:
+
+- Windows logging/audit tampering, large clock changes, privileged group
+  membership, selected registry persistence, suspicious service/task creation;
+- one high-confidence Event 4688 classifier for obfuscated PowerShell,
+  credential dumping, defense impairment, recovery inhibition, LOLBin transfer
+  or proxy execution, lateral movement, process injection, reverse shells,
+  privileged-group commands, and known offensive-tool execution;
+- tenant/actor/source-scoped Windows authentication failure bursts; and
+- tenant-scoped firewall block, VPN authentication failure, and device-admin
+  authentication failure bursts from normalized relay evidence.
+
+The projector derives booleans, bounded numeric values, enumerated family names,
+and purpose-separated HMAC correlation keys after canonical persistence. It
+does not export raw commands, identities, IP addresses, task XML, registry or
+service text, tenant IDs, packet payloads, or FBR/PECA content. Every family
+remains `shadow`, and the registry validator rejects a v2 family marked
+approved or primary.
+
+The candidate was accepted by Wazuh 4.14.7 configuration validation and native
+rule execution for all rule IDs 100611-100632. This validates rule mechanics,
+not customer precision, production v2 activation, full Wazuh-catalog coverage,
+packet inspection, endpoint memory detection, Linux/cloud telemetry, SCA, FIM,
+or vulnerability inventory.
 
 ## 2. Verified Current Baseline
 
@@ -43,7 +78,7 @@ The target must preserve these existing facts:
 7. PECA evidence comes from the entitled WarSOC 11-control catalog.
 8. Mutable incidents are separate from immutable event-granular detection evidence.
 9. MongoDB is the seven-day hot tier; Azure is the immutable archive path.
-10. The network relay is a disabled candidate. Its raw vendor record is already encrypted before Redis/Mongo admission.
+10. The network relay backend is entitlement-gated. Its raw vendor record is encrypted before Redis/Mongo admission, and no tenant receives relay capacity by default.
 11. Firewall evidence remains `relay_attested`; it is not device-authenticated evidence.
 12. The shared deployment remains capped at 50 aggregate active agents until new capacity proof changes that limit.
 
@@ -111,7 +146,7 @@ The target must preserve these existing facts:
 ```mermaid
 flowchart LR
     A["WarSOC Windows Agent"] -->|"Signed HTTPS telemetry"| API["WarSOC API"]
-    R["Disabled WarSOC Relay candidate"] -->|"Signed HTTPS firewall batches"| API
+    R["Entitlement-gated WarSOC Relay"] -->|"Signed HTTPS firewall batches"| API
     API --> RS["Private Redis Streams"]
     RS --> SIEM["Current WarSOC SIEM and fallback rules"]
     RS --> FBR["WarSOC FBR worker"]

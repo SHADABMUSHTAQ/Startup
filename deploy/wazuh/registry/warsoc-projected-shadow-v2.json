@@ -1,0 +1,403 @@
+{
+  "schema": "warsoc.wazuh-rule-registry/v1",
+  "ruleset_version": "warsoc-projected-shadow-v2",
+  "projection_profile": "derived_features_only",
+  "authority_mode": "shadow_only",
+  "rules": [
+    {
+      "rule_id": "100611",
+      "parent_rule_id": "100600",
+      "family": "event_logging_stopped",
+      "category": "event_logging_stopped",
+      "severity": "CRITICAL",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1562.002"],
+      "allowed_engine_levels": [12],
+      "source_family": "windows_endpoint",
+      "event_ids": ["1100"],
+      "input_field_map": {
+        "event_logging_stopped": "detection_features.event_logging_stopped"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100612",
+      "parent_rule_id": "100600",
+      "family": "audit_log_cleared",
+      "category": "audit_log_cleared",
+      "severity": "HIGH",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1070.001"],
+      "allowed_engine_levels": [10],
+      "source_family": "windows_endpoint",
+      "event_ids": ["1102"],
+      "input_field_map": {
+        "audit_log_cleared": "detection_features.audit_log_cleared"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100613",
+      "parent_rule_id": "100600",
+      "family": "large_clock_change",
+      "category": "large_clock_change",
+      "severity": "HIGH",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1070.006"],
+      "allowed_engine_levels": [10],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4616"],
+      "input_field_map": {
+        "large_clock_change": "detection_features.large_clock_change",
+        "clock_change_seconds": "detection_features.clock_change_seconds"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100614",
+      "parent_rule_id": "100600",
+      "family": "audit_policy_weakened",
+      "category": "audit_policy_weakened",
+      "severity": "HIGH",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1562.002"],
+      "allowed_engine_levels": [10],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4719"],
+      "input_field_map": {
+        "audit_policy_weakened": "detection_features.audit_policy_weakened"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100615",
+      "parent_rule_id": "100600",
+      "family": "privileged_group_membership",
+      "category": "privileged_group_membership",
+      "severity": "HIGH",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1098.007"],
+      "allowed_engine_levels": [10],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4732"],
+      "input_field_map": {
+        "privileged_group_membership": "detection_features.privileged_group_membership"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100616",
+      "parent_rule_id": "100600",
+      "family": "registry_persistence",
+      "category": "registry_persistence",
+      "severity": "HIGH",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1547.001"],
+      "allowed_engine_levels": [10],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4657"],
+      "input_field_map": {
+        "registry_persistence": "detection_features.registry_persistence"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100617",
+      "parent_rule_id": "100600",
+      "family": "suspicious_service_install",
+      "category": "suspicious_service_install",
+      "severity": "HIGH",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1543.003"],
+      "allowed_engine_levels": [10],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4697", "7045"],
+      "input_field_map": {
+        "suspicious_service_install": "detection_features.suspicious_service_install"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100618",
+      "parent_rule_id": "100600",
+      "family": "suspicious_scheduled_task",
+      "category": "suspicious_scheduled_task",
+      "severity": "HIGH",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1053.005"],
+      "allowed_engine_levels": [10],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4698"],
+      "input_field_map": {
+        "suspicious_scheduled_task": "detection_features.suspicious_scheduled_task"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100619",
+      "parent_rule_id": "100600",
+      "family": "powershell_obfuscation",
+      "category": "powershell_obfuscation",
+      "severity": "CRITICAL",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1027"],
+      "allowed_engine_levels": [12],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4688"],
+      "input_field_map": {
+        "process_attack_family": "detection_features.process_attack_family"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100620",
+      "parent_rule_id": "100600",
+      "family": "credential_dumping",
+      "category": "credential_dumping",
+      "severity": "CRITICAL",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1003.001"],
+      "allowed_engine_levels": [12],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4688"],
+      "input_field_map": {
+        "process_attack_family": "detection_features.process_attack_family"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100621",
+      "parent_rule_id": "100600",
+      "family": "defense_impairment",
+      "category": "defense_impairment",
+      "severity": "CRITICAL",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1562.001"],
+      "allowed_engine_levels": [12],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4688"],
+      "input_field_map": {
+        "process_attack_family": "detection_features.process_attack_family"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100622",
+      "parent_rule_id": "100600",
+      "family": "recovery_inhibition",
+      "category": "recovery_inhibition",
+      "severity": "CRITICAL",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1490"],
+      "allowed_engine_levels": [12],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4688"],
+      "input_field_map": {
+        "process_attack_family": "detection_features.process_attack_family"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100623",
+      "parent_rule_id": "100600",
+      "family": "lolbin_transfer_or_execution",
+      "category": "lolbin_transfer_or_execution",
+      "severity": "HIGH",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1105", "T1218"],
+      "allowed_engine_levels": [10],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4688"],
+      "input_field_map": {
+        "process_attack_family": "detection_features.process_attack_family"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100624",
+      "parent_rule_id": "100600",
+      "family": "lateral_movement",
+      "category": "lateral_movement",
+      "severity": "HIGH",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1021"],
+      "allowed_engine_levels": [10],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4688"],
+      "input_field_map": {
+        "process_attack_family": "detection_features.process_attack_family"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100625",
+      "parent_rule_id": "100600",
+      "family": "process_injection",
+      "category": "process_injection",
+      "severity": "CRITICAL",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1055"],
+      "allowed_engine_levels": [12],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4688"],
+      "input_field_map": {
+        "process_attack_family": "detection_features.process_attack_family"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100626",
+      "parent_rule_id": "100600",
+      "family": "reverse_shell",
+      "category": "reverse_shell",
+      "severity": "CRITICAL",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1059.001", "T1059.003"],
+      "allowed_engine_levels": [12],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4688"],
+      "input_field_map": {
+        "process_attack_family": "detection_features.process_attack_family"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100627",
+      "parent_rule_id": "100600",
+      "family": "privileged_group_change",
+      "category": "privileged_group_change",
+      "severity": "HIGH",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1098.007"],
+      "allowed_engine_levels": [10],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4688"],
+      "input_field_map": {
+        "process_attack_family": "detection_features.process_attack_family"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100628",
+      "parent_rule_id": "100600",
+      "family": "known_attack_tool_execution",
+      "category": "known_attack_tool_execution",
+      "severity": "CRITICAL",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": [],
+      "allowed_engine_levels": [12],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4688"],
+      "input_field_map": {
+        "process_attack_family": "detection_features.process_attack_family"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"]
+    },
+    {
+      "rule_id": "100629",
+      "parent_rule_id": "100650",
+      "family": "credential_attack_burst",
+      "category": "credential_attack_burst",
+      "severity": "HIGH",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1110.001"],
+      "allowed_engine_levels": [10],
+      "source_family": "windows_endpoint",
+      "event_ids": ["4625", "4768", "4769", "4776"],
+      "input_field_map": {
+        "authentication_failure": "detection_features.authentication_failure"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"],
+      "correlation": {
+        "frequency": 12,
+        "timeframe_seconds": 120,
+        "same_field": "warsoc_corr_tenant_actor_source"
+      }
+    },
+    {
+      "rule_id": "100630",
+      "parent_rule_id": "100651",
+      "family": "network_block_burst",
+      "category": "network_block_burst",
+      "severity": "MEDIUM",
+      "attack_level": false,
+      "family_status": "shadow",
+      "mitre_ids": [],
+      "allowed_engine_levels": [7],
+      "source_family": "network_device",
+      "event_ids": ["NET-CONNECTION-BLOCK"],
+      "input_field_map": {
+        "network_connection_blocked": "detection_features.network_connection_blocked"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"],
+      "correlation": {
+        "frequency": 30,
+        "timeframe_seconds": 60,
+        "same_field": "warsoc_corr_tenant_source"
+      }
+    },
+    {
+      "rule_id": "100631",
+      "parent_rule_id": "100652",
+      "family": "vpn_credential_attack_burst",
+      "category": "vpn_credential_attack_burst",
+      "severity": "HIGH",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1110.001"],
+      "allowed_engine_levels": [10],
+      "source_family": "network_device",
+      "event_ids": ["NET-VPN-AUTH"],
+      "input_field_map": {
+        "vpn_authentication_rejected": "detection_features.vpn_authentication_rejected"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"],
+      "correlation": {
+        "frequency": 8,
+        "timeframe_seconds": 300,
+        "same_field": "warsoc_corr_tenant_actor_source"
+      }
+    },
+    {
+      "rule_id": "100632",
+      "parent_rule_id": "100653",
+      "family": "device_admin_credential_attack",
+      "category": "device_admin_credential_attack",
+      "severity": "HIGH",
+      "attack_level": true,
+      "family_status": "shadow",
+      "mitre_ids": ["T1110.001"],
+      "allowed_engine_levels": [10],
+      "source_family": "network_device",
+      "event_ids": ["NET-DEVICE-ADMIN"],
+      "input_field_map": {
+        "device_admin_rejected": "detection_features.device_admin_rejected"
+      },
+      "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"],
+      "correlation": {
+        "frequency": 5,
+        "timeframe_seconds": 300,
+        "same_field": "warsoc_corr_tenant_actor_source"
+      }
+    }
+  ]
+}

@@ -1,7 +1,8 @@
 # WarSOC Wazuh Execution Mind Map
 
-**Status:** Authoritative execution index; OCI manager-only shadow active, primary disabled
-**Runtime snapshot:** 2026-08-28, backend `3a35e3f`, deployment foundation `7cd02e0`
+**Status:** Authoritative execution index; OCI v1 shadow active, v2 shadow
+candidate fully regression/native-engine proven, primary disabled
+**Runtime snapshot:** production 2026-08-28; v2 candidate verification 2026-09-08
 
 **Architecture authority:**
 `docs/WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md`
@@ -119,10 +120,10 @@ flowchart LR
 | 0 | Freeze current WarSOC truth and fallback | Complete | Current WarSOC SIEM/FBR/PECA paths remain independent |
 | 1 | Contracts, threat model, queues and ownership | Code and contract complete | Versioned contracts, encrypted bounded outbox/spools, strict field registry, signed health channel and disabled-by-default settings exist |
 | 2 | Isolated Wazuh lab | Two-host shadow transport accepted | Local and separate-host 4.14.7 canaries, bidirectional mTLS, signed transport, tenant isolation, negative transport and selected outage recovery pass. |
-| 3 | Compatibility harness | Contracts and two-host live path complete | Maintained Wazuh and adjacent WarSOC regression gates pass; physical saturation and rule-quality corpora remain. |
-| 4 | Shadow integration | Controlled deployment active | OCI runs the WarSOC services plus an isolated, bounded manager-only Wazuh/bridge pair. Two projected Event 4625 canaries completed rule 100512 with complete lineage and zero incident promotion; one passed after the old laptop stack was stopped. |
+| 3 | Compatibility harness | V2 candidate complete | Focused contracts, false-positive negatives, all 22 native Wazuh rule paths, and the 733-test repository regression pass; physical saturation and measured customer precision remain. |
+| 4 | Shadow integration | V1 active; v2 deployment pending | OCI runs the isolated, bounded manager-only Wazuh/bridge pair. Production v1 Event 4625 canaries completed rule 100512 with complete lineage and zero incident promotion. Candidate v2 cannot be called active until its pinned registry and canaries are deployed. |
 | 5 | Limited primary promotion | Blocked | Requires accepted Gate 4 metrics and one-family rollback proof |
-| 6 | Firewall projection to Wazuh | Blocked separately | Network relay must pass its own packaged service, real-device and production-pilot gate first |
+| 6 | Firewall projection to Wazuh | Candidate code/native-engine proven | V2 accepts only derived block, VPN-auth-failure and device-admin-failure features. Entitled production-relay canaries and exact customer-device acceptance remain independent gates. |
 | 7 | Security release | Blocked | Requires complete acceptance artifacts, rollback and residual-risk approval |
 
 ## 4. Criticality Register
@@ -283,6 +284,21 @@ ruleset rollback or rule-quality evidence required before production promotion.
   certificates require rotation and measured capacity remains a promotion gate.
 - Firewall boundary: network relay and firewall-to-Wazuh projection remain
   disabled and require their own acceptance.
+
+### V2 Shadow Candidate - 2026-09-08
+
+- Registry: `warsoc-projected-shadow-v2`, SHA-256
+  `98D250C5435E433B36748D9A05107348118F1BEBC887F6468CF99DBE4BA4DD64`.
+- Candidate rules: 100611-100632; 18 direct Windows candidates and four
+  tenant-scoped Windows/network burst correlations.
+- Projection: derived features and opaque HMAC keys only; no raw customer
+  command, identity, IP, task, registry, service, tenant or compliance payload.
+- Native Wazuh 4.14.7: configuration validation passed and all 22 candidates
+  fired at the configured direct/correlation conditions.
+- Repository gate: 733 passed, 2 expected skips, 0 failed; high-severity Bandit,
+  dependency audit/check, compilation and diff checks passed.
+- Authority: every family remains shadow-only. Production remains on v1 until
+  the exact registry-hash deployment, canaries and rollback check complete.
 
 The current cross-system/customer-flow verification record is
 `docs/WARSOC_VERIFICATION_AND_CUSTOMER_ACCEPTANCE_2026-08-12.md`.

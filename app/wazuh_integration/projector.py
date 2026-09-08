@@ -16,8 +16,9 @@ from app.wazuh_integration.contracts import (
     CorrelationKeys,
     DetectionInput,
 )
-from app.wazuh_integration.security import encrypt_payload, purpose_hmac
+from app.wazuh_integration.detection_features import extract_detection_features
 from app.wazuh_integration.registry import source_path_allowed
+from app.wazuh_integration.security import encrypt_payload, purpose_hmac
 
 
 PROJECTOR_ID = "wazuh-detection-projector-v1"
@@ -43,6 +44,7 @@ ALLOWED_ROOT_FIELDS = {
     "message",
     "telemetry_family",
     "processed_data",
+    "detection_features",
 }
 SECRET_VALUE_PATTERN = re.compile(
     r"(?i)(authorization:\s*bearer\s+|(?:password|passwd|token|secret|api[_-]?key)\s*[=:]\s*)([^\s,;]+)"
@@ -170,7 +172,9 @@ def _security_fields(
     return fields
 
 
-def _correlation_keys(settings, tenant_id: str, document: dict[str, Any], endpoint_id: str) -> CorrelationKeys:
+def _correlation_keys(
+    settings, tenant_id: str, document: dict[str, Any], endpoint_id: str
+) -> CorrelationKeys:
     secret = settings.wazuh_correlation_hmac_key
     processed_data = document.get("processed_data")
     if not isinstance(processed_data, dict):
@@ -252,6 +256,11 @@ def build_detection_input(
         receipt_time = original_time
     age_ms = max(0, int((current - original_time).total_seconds() * 1000))
 
+    feature_document = dict(document)
+    feature_document["detection_features"] = extract_detection_features(
+        document, source_family
+    )
+
     return DetectionInput(
         dispatch_uid=_dispatch_uid(tenant_id, event_uid, settings.wazuh_ruleset_version),
         event_uid=event_uid,
@@ -271,7 +280,7 @@ def build_detection_input(
         endpoint_id=endpoint_id,
         correlation_key_version=settings.wazuh_correlation_key_version,
         correlation_keys=_correlation_keys(settings, tenant_id, document, endpoint_id),
-        security_fields=_security_fields(document, rules, source_family),
+        security_fields=_security_fields(feature_document, rules, source_family),
     )
 
 

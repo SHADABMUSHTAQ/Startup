@@ -220,11 +220,19 @@ requests. Candidate and bridge administration bind only to the OCI Tailscale
 address. The Wazuh manager has no host port; indexer, dashboard, enrollment,
 API, Wazuh agents, Active Response and Wazuh email are absent or disabled.
 
-The active registry is `warsoc-projected-shadow-v1`. It permits only four
-minimized Windows projections: Event 1102/rule 100511 (`audit_log_cleared`),
-4625/100512 (`authentication_failure`), 7045/100513
-(`service_installation`), and 4688/100514 (`process_creation`). All four are
-shadow-only in this deployment. `WAZUH_DETECTION_MODE=shadow` and
+The production registry remains `warsoc-projected-shadow-v1` until the v2
+release is deployed. It permits four minimized Windows projections: Event
+1102/rule 100511 (`audit_log_cleared`), 4625/100512
+(`authentication_failure`), 7045/100513 (`service_installation`), and
+4688/100514 (`process_creation`). The reviewed
+`warsoc-projected-shadow-v2` release candidate expands this to 22
+high-confidence candidates: 18 direct Windows rules and four tenant-scoped
+Windows/network correlation rules. It sends only bounded derived booleans,
+enumerated attack-family labels, a clock-delta value, and opaque correlation
+HMACs. Raw commands, identities, IP addresses, registry/task/service content,
+tenant IDs, FBR/PECA payloads, and free-form messages are not projected.
+
+All v1 and v2 families are shadow-only. `WAZUH_DETECTION_MODE=shadow` and
 `WAZUH_PRIMARY_APPROVED=false` prevent incident promotion. The current WarSOC
 SIEM remains authoritative. Wazuh must not own
 endpoint enrollment, tenant identity,
@@ -237,9 +245,13 @@ strict per-source projection fields, opaque tenant correlation HMACs, candidate
 event-time validation, pinned registry hashes, signed health/loss records and
 stage counters. A controlled Event 4625 canary completed canonical persistence,
 durable dispatch, Wazuh rule 100512, signed candidate return, WarSOC lineage
-validation and shadow persistence with zero incident promotion. This proves the
-approved transport and one positive family path; it is not broad Wazuh rule
-quality, capacity, high-availability or customer-firewall acceptance.
+validation and shadow persistence with zero incident promotion. The v2
+candidate subsequently passed registry/privacy contract tests, false-positive
+negative cases, native Wazuh 4.14.7 configuration validation, and native
+`wazuh-logtest-legacy` execution for rules 100611 through 100632. This proves
+candidate rule mechanics and the existing transport boundary; it is not
+production v2 activation, measured customer precision, capacity,
+high-availability, or exact customer-firewall acceptance.
 
 ### 1.6 August 14 release-candidate verification delta
 
@@ -1880,7 +1892,7 @@ Status meanings:
 | Capacity ceiling | Maximum 50 active agents per tenant and 50 aggregate active agents on the shared host | PROVEN by contract tests; prior synthetic soak | Mongo-backed floors prevent Redis restarts from bypassing either boundary. Real customer mix must still be monitored because event volume per endpoint varies. |
 | Linux/syslog | Linux endpoint telemetry | OUT OF SCOPE | Linux remains outside the Windows SMB pilot and no Linux agent/intake is claimed. |
 | Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | PFSENSE BACKEND ENABLED / CUSTOMER KIT SIGNING OPEN | The pfSense lab proved native pass/block syslog parsing, relay attestation, encrypted outage retention, restart recovery, deduplication and batch-chain continuity. Tenant entitlement defaults to zero. The API publishes nested relay/device health and generates an explicit unicast listener configuration separately from the one-time activation. The generic kit is reproducible and secret-free but remains unsigned/lab-only. Other vendor parsers are not commercially validated. |
-| Internal Wazuh detector | Receive minimized WarSOC projections and return validated candidate observations | CONTROLLED SHADOW ACTIVE / PRIMARY DISABLED | An OCI-local, manager-only Wazuh 4.14.7 deployment uses digest-pinned images, private Docker networks, mTLS, signed batches, bounded resources and encrypted spools. Two post-cutover Event 4625 canaries completed rule 100512 with first-attempt delivery, complete lineage and zero incident promotion; the second passed with the old laptop stack stopped. WarSOC remains authoritative and customer APIs hide detector-vendor provenance. Primary promotion, broad stock rules, full capacity/HA approval and firewall projection remain disabled. |
+| Internal Wazuh detector | Receive minimized WarSOC projections and return validated candidate observations | V1 CONTROLLED SHADOW ACTIVE / V2 RELEASE CANDIDATE / PRIMARY DISABLED | An OCI-local, manager-only Wazuh 4.14.7 deployment uses digest-pinned images, private Docker networks, mTLS, signed batches, bounded resources and encrypted spools. Production v1 canaries completed rule 100512 with complete lineage and zero incident promotion. Candidate v2 defines 22 derived-feature-only rules (100611-100632), including three bounded network-device correlation families; all passed native Wazuh 4.14.7 rule execution locally. WarSOC remains authoritative and customer APIs hide detector-vendor provenance. V2 deployment, measured customer precision, full capacity/HA approval and any primary promotion remain gated. |
 | External threat-intelligence enrichment | Third-party reputation/provider lookups | OUT OF SCOPE | No live provider integration is claimed for the current pilot. Native SIEM/FBR/PECA operation does not depend on it. |
 
 ## 23. Failure Map

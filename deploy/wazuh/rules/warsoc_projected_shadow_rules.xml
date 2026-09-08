@@ -1,41 +1,280 @@
 <group name="warsoc_shadow,warsoc_integration,">
-  <rule id="100510" level="0">
+  <rule id="100600" level="0">
     <decoded_as>json</decoded_as>
     <field name="warsoc_schema">^warsoc.wazuh-local-input/v1$</field>
-    <description>WarSOC minimized detection projection</description>
+    <description>WarSOC minimized detection projection v2</description>
+    <options>no_full_log</options>
   </rule>
 
-  <rule id="100511" level="9">
-    <if_sid>100510</if_sid>
+  <rule id="100611" level="12">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id">^1100$</field>
+    <field name="warsoc_field_event_logging_stopped">^true$</field>
+    <description>WarSOC shadow detection: Windows event logging stopped</description>
+    <mitre><id>T1562.002</id></mitre>
+    <group>event_logging_stopped,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100612" level="10">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
     <field name="warsoc_event_id">^1102$</field>
+    <field name="warsoc_field_audit_log_cleared">^true$</field>
     <description>WarSOC shadow detection: Windows audit log cleared</description>
-    <mitre>
-      <id>T1070.001</id>
-    </mitre>
+    <mitre><id>T1070.001</id></mitre>
     <group>audit_log_cleared,</group>
+    <options>no_full_log</options>
   </rule>
 
-  <rule id="100512" level="5">
-    <if_sid>100510</if_sid>
-    <field name="warsoc_event_id">^4625$</field>
-    <description>WarSOC shadow detection: Windows authentication failure</description>
-    <group>authentication_failed,</group>
+  <rule id="100613" level="10">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id">^4616$</field>
+    <field name="warsoc_field_large_clock_change">^true$</field>
+    <description>WarSOC shadow detection: large Windows clock change</description>
+    <mitre><id>T1070.006</id></mitre>
+    <group>large_clock_change,</group>
+    <options>no_full_log</options>
   </rule>
 
-  <rule id="100513" level="5">
-    <if_sid>100510</if_sid>
-    <field name="warsoc_event_id">^7045$</field>
-    <description>WarSOC shadow detection: Windows service installed</description>
-    <mitre>
-      <id>T1543.003</id>
-    </mitre>
-    <group>service_installation,</group>
+  <rule id="100614" level="10">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id">^4719$</field>
+    <field name="warsoc_field_audit_policy_weakened">^true$</field>
+    <description>WarSOC shadow detection: Windows audit policy weakened</description>
+    <mitre><id>T1562.002</id></mitre>
+    <group>audit_policy_weakened,</group>
+    <options>no_full_log</options>
   </rule>
 
-  <rule id="100514" level="3">
-    <if_sid>100510</if_sid>
+  <rule id="100615" level="10">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id">^4732$</field>
+    <field name="warsoc_field_privileged_group_membership">^true$</field>
+    <description>WarSOC shadow detection: privileged local group membership changed</description>
+    <mitre><id>T1098.007</id></mitre>
+    <group>privileged_group_membership,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100616" level="10">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id">^4657$</field>
+    <field name="warsoc_field_registry_persistence">^true$</field>
+    <description>WarSOC shadow detection: registry persistence location modified</description>
+    <mitre><id>T1547.001</id></mitre>
+    <group>registry_persistence,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100617" level="10">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id" type="pcre2">^(4697|7045)$</field>
+    <field name="warsoc_field_suspicious_service_install">^true$</field>
+    <description>WarSOC shadow detection: suspicious Windows service installed</description>
+    <mitre><id>T1543.003</id></mitre>
+    <group>suspicious_service_install,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100618" level="10">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id">^4698$</field>
+    <field name="warsoc_field_suspicious_scheduled_task">^true$</field>
+    <description>WarSOC shadow detection: suspicious scheduled task created</description>
+    <mitre><id>T1053.005</id></mitre>
+    <group>suspicious_scheduled_task,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100619" level="12">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
     <field name="warsoc_event_id">^4688$</field>
-    <description>WarSOC shadow detection: Windows process created</description>
-    <group>process_creation,</group>
+    <field name="warsoc_field_process_attack_family">^powershell_obfuscation$</field>
+    <description>WarSOC shadow detection: obfuscated PowerShell execution</description>
+    <mitre><id>T1027</id></mitre>
+    <group>powershell_obfuscation,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100620" level="12">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id">^4688$</field>
+    <field name="warsoc_field_process_attack_family">^credential_dumping$</field>
+    <description>WarSOC shadow detection: credential dumping behavior</description>
+    <mitre><id>T1003.001</id></mitre>
+    <group>credential_dumping,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100621" level="12">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id">^4688$</field>
+    <field name="warsoc_field_process_attack_family">^defense_impairment$</field>
+    <description>WarSOC shadow detection: security controls impaired</description>
+    <mitre><id>T1562.001</id></mitre>
+    <group>defense_impairment,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100622" level="12">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id">^4688$</field>
+    <field name="warsoc_field_process_attack_family">^recovery_inhibition$</field>
+    <description>WarSOC shadow detection: system recovery inhibited</description>
+    <mitre><id>T1490</id></mitre>
+    <group>recovery_inhibition,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100623" level="10">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id">^4688$</field>
+    <field name="warsoc_field_process_attack_family">^lolbin_transfer_or_execution$</field>
+    <description>WarSOC shadow detection: signed binary proxy execution or transfer</description>
+    <mitre><id>T1105</id><id>T1218</id></mitre>
+    <group>lolbin_transfer_or_execution,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100624" level="10">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id">^4688$</field>
+    <field name="warsoc_field_process_attack_family">^lateral_movement$</field>
+    <description>WarSOC shadow detection: remote execution or lateral movement command</description>
+    <mitre><id>T1021</id></mitre>
+    <group>lateral_movement,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100625" level="12">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id">^4688$</field>
+    <field name="warsoc_field_process_attack_family">^process_injection$</field>
+    <description>WarSOC shadow detection: process injection behavior</description>
+    <mitre><id>T1055</id></mitre>
+    <group>process_injection,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100626" level="12">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id">^4688$</field>
+    <field name="warsoc_field_process_attack_family">^reverse_shell$</field>
+    <description>WarSOC shadow detection: reverse shell behavior</description>
+    <mitre><id>T1059.001</id><id>T1059.003</id></mitre>
+    <group>reverse_shell,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100627" level="10">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id">^4688$</field>
+    <field name="warsoc_field_process_attack_family">^privileged_group_change$</field>
+    <description>WarSOC shadow detection: command added a privileged local group member</description>
+    <mitre><id>T1098.007</id></mitre>
+    <group>privileged_group_change,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100628" level="12">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id">^4688$</field>
+    <field name="warsoc_field_process_attack_family">^known_attack_tool_execution$</field>
+    <description>WarSOC shadow detection: known offensive tooling executed</description>
+    <group>known_attack_tool_execution,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100650" level="1">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^windows_endpoint$</field>
+    <field name="warsoc_event_id" type="pcre2">^(4625|4768|4769|4776)$</field>
+    <field name="warsoc_field_authentication_failure">^true$</field>
+    <field name="warsoc_corr_tenant_actor_source" type="pcre2">^[a-f0-9]{64}$</field>
+    <description>WarSOC internal correlation seed: Windows authentication failure</description>
+    <options>no_log</options>
+  </rule>
+
+  <rule id="100651" level="1">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^network_device$</field>
+    <field name="warsoc_event_id">^NET-CONNECTION-BLOCK$</field>
+    <field name="warsoc_field_network_connection_blocked">^true$</field>
+    <field name="warsoc_corr_tenant_source" type="pcre2">^[a-f0-9]{64}$</field>
+    <description>WarSOC internal correlation seed: network connection blocked</description>
+    <options>no_log</options>
+  </rule>
+
+  <rule id="100652" level="1">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^network_device$</field>
+    <field name="warsoc_event_id">^NET-VPN-AUTH$</field>
+    <field name="warsoc_field_vpn_authentication_rejected">^true$</field>
+    <field name="warsoc_corr_tenant_actor_source" type="pcre2">^[a-f0-9]{64}$</field>
+    <description>WarSOC internal correlation seed: VPN authentication rejected</description>
+    <options>no_log</options>
+  </rule>
+
+  <rule id="100653" level="1">
+    <if_sid>100600</if_sid>
+    <field name="warsoc_source_family">^network_device$</field>
+    <field name="warsoc_event_id">^NET-DEVICE-ADMIN$</field>
+    <field name="warsoc_field_device_admin_rejected">^true$</field>
+    <field name="warsoc_corr_tenant_actor_source" type="pcre2">^[a-f0-9]{64}$</field>
+    <description>WarSOC internal correlation seed: device administration rejected</description>
+    <options>no_log</options>
+  </rule>
+
+  <rule id="100629" level="10" frequency="12" timeframe="120">
+    <if_matched_sid>100650</if_matched_sid>
+    <same_field>warsoc_corr_tenant_actor_source</same_field>
+    <description>WarSOC shadow detection: repeated Windows credential failures</description>
+    <mitre><id>T1110.001</id></mitre>
+    <group>credential_attack_burst,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100630" level="7" frequency="30" timeframe="60">
+    <if_matched_sid>100651</if_matched_sid>
+    <same_field>warsoc_corr_tenant_source</same_field>
+    <description>WarSOC shadow observation: repeated blocked network connections</description>
+    <group>network_block_burst,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100631" level="10" frequency="8" timeframe="300">
+    <if_matched_sid>100652</if_matched_sid>
+    <same_field>warsoc_corr_tenant_actor_source</same_field>
+    <description>WarSOC shadow detection: repeated VPN credential failures</description>
+    <mitre><id>T1110.001</id></mitre>
+    <group>vpn_credential_attack_burst,</group>
+    <options>no_full_log</options>
+  </rule>
+
+  <rule id="100632" level="10" frequency="5" timeframe="300">
+    <if_matched_sid>100653</if_matched_sid>
+    <same_field>warsoc_corr_tenant_actor_source</same_field>
+    <description>WarSOC shadow detection: repeated device administration failures</description>
+    <mitre><id>T1110.001</id></mitre>
+    <group>device_admin_credential_attack,</group>
+    <options>no_full_log</options>
   </rule>
 </group>

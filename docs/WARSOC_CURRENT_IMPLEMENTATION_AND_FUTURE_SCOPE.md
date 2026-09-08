@@ -349,13 +349,23 @@ Implemented controls include:
   host with no public Wazuh port. Indexer, dashboard, enrollment, Wazuh agents,
   Active Response and Wazuh email are absent or disabled in production.
 - Private Docker DNS, mTLS and signed requests protect both detector hops.
-- The active registry allows only Events 1102, 4625, 7045 and 4688 through
-  WarSOC-specific shadow rules 100511 through 100514.
+- The production registry still allows only Events 1102, 4625, 7045 and 4688
+  through WarSOC-specific shadow rules 100511 through 100514.
 - Controlled Event 4625 canaries completed canonical persistence, durable
   dispatch, Wazuh matching, signed candidate return, WarSOC lineage validation
   and shadow persistence with zero incident promotion. One passed after the
   former laptop detector was stopped, proving that production does not depend
   on a staff laptop.
+- The `warsoc-projected-shadow-v2` release candidate adds 22 explicitly
+  registered candidates: 18 direct Windows rules and four tenant-scoped burst
+  correlations across Windows authentication and relay-derived network events.
+  The projector supplies only bounded derived features and opaque correlation
+  HMACs. Raw command lines, identities, IP addresses, task XML, registry/service
+  content, tenant IDs, and FBR/PECA payloads remain outside Wazuh.
+- Candidate v2 passed its focused contract/negative corpus and native Wazuh
+  4.14.7 configuration plus rule-execution validation for every rule ID
+  100611-100632. It is not production-active until the final release gate,
+  pinned-registry deployment, and shadow canaries pass.
 - Focused WarSOC/Wazuh and manager-only deployment contract suites pass.
 - Wazuh TCP handoff does not provide an application acknowledgement for every
   nonmatching event. It cannot be used as the legal evidence/completeness source.
@@ -530,7 +540,11 @@ pilot, and customer UI remain open; production stays disabled.
 - Validate pfSense end to end first, then each separately offered vendor.
 - Measure normal and burst EPS, clock skew, parsing, drops, outage spool time, and
   daily storage cost.
-- Project accepted firewall metadata to both WarSOC-native and Wazuh shadow rules.
+- Candidate v2 can project only derived `NET-CONNECTION-BLOCK`, `NET-VPN-AUTH`,
+  and `NET-DEVICE-ADMIN` failure features to tenant-scoped Wazuh shadow rules.
+  Treat this as code/native-engine proof until an entitled relay produces the
+  exact production canaries; do not infer packet inspection or device-native
+  authentication.
 - Prove tenant/device isolation and endpoint/network correlations.
 - Keep the module disabled until the accepted tenant is explicitly enabled.
 

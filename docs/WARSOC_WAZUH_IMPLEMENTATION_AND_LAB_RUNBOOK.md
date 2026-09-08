@@ -1,6 +1,7 @@
 # WarSOC Wazuh Implementation and Two-Laptop Lab Runbook
 
-**Status:** Controlled two-host shadow active as of 2026-08-28; primary promotion, broad rule coverage, HA and firewall projection remain disabled
+**Status:** OCI-hosted v1 shadow active; v2 derived-feature shadow candidate
+native-engine proven as of 2026-09-08; primary promotion and HA remain disabled
 
 **Last updated:** 2026-08-28
 
@@ -62,6 +63,9 @@ Azure archival.
 | Bridge spool | `app/wazuh_integration/bridge_spool.py` | Encrypted byte/age-bounded SQLite spools, retry scheduling, bounded receipts, counters, health events and digest checkpoints |
 | Bridge runtime | `app/wazuh_integration/bridge_runtime.py` | Signed ingress, Wazuh loopback delivery, truncation/rotation-safe tail, signed candidates and signed health |
 | Registry validator | `app/wazuh_integration/registry.py` | Enforces reviewed per-source projection fields and rule metadata before seeding or bridge startup |
+| Derived-feature extractor | `app/wazuh_integration/detection_features.py` | Converts supported canonical Windows/relay fields into bounded booleans, numeric values, enumerated families and tenant-safe correlation inputs without exporting raw content |
+| V2 shadow registry | `deploy/wazuh/registry/warsoc-projected-shadow-v2.json` | Pins 22 shadow-only candidate semantics, levels, MITRE mappings, source families and correlation thresholds |
+| V2 Wazuh rules | `deploy/wazuh/rules/warsoc_projected_shadow_rules.xml` | Contains candidate rules 100611-100632 and no-log correlation seeds 100650-100653 |
 | Compute-A services | `docker-compose.prod.yml` profile `wazuh-detection` | Disabled dispatcher and candidate API services |
 | Compute-B service | `docker-compose.wazuh-bridge.yml` | Disabled-by-operator isolated bridge deployment |
 | Canary rule | `deploy/wazuh/rules/warsoc_canary_rules.xml` | Matches only signed Windows 4688 events for `whoami.exe` |
@@ -183,6 +187,29 @@ two-tenant lineage isolation, manager/bridge/candidate-API outage recovery and
 fail-closed live-window expiry. The adjacent maintained Docker regression gate
 recorded **233 passed**. Real spool saturation under load, explicit host-firewall
 rules, ruleset upgrade/rollback and production detection quality remain open.
+
+### 7.1 V2 candidate validation - 2026-09-08
+
+The expanded candidate was validated as one bounded phase before the final
+repository gate:
+
+- focused projector, feature, registry, bridge, integration and deployment
+  contracts: 77 passed; the one scheduled-task fixture defect found during the
+  run was corrected and its exact test passed;
+- native `wazuh-analysisd -t` on Wazuh 4.14.7: passed;
+- native `wazuh-logtest-legacy` on Wazuh 4.14.7: every candidate rule
+  100611-100632 fired at its specified direct or correlation threshold;
+- final repository regression: 733 passed, 2 expected skips, 0 failed;
+- compile, dependency consistency, dependency audit, diff hygiene and the
+  high-severity Bandit gate passed with zero high-severity findings.
+
+The v2 registry remains entirely `shadow`. Raw command lines, identities, IP
+addresses, task XML, registry/service content, tenant IDs, packet payloads and
+FBR/PECA data are not projected. Production v2 still requires exact
+registry-hash deployment, positive and negative shadow canaries, and rollback
+verification. Do not advertise Linux/auditd, cloud/SaaS, email, web-proxy,
+packet/IDS, memory/EDR, Wazuh-agent FIM/SCA, vulnerability inventory, or the
+complete stock Wazuh catalog as covered.
 
 ## 8. Compute-B Preparation
 

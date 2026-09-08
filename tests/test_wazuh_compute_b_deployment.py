@@ -60,6 +60,10 @@ def test_bridge_is_mtls_private_and_uses_the_manager_alert_volume():
     assert "--ssl-cert-reqs" in bridge["command"]
     assert "2" in bridge["command"]
     assert "warsoc_wazuh_manager_logs:/var/ossec/logs:ro" in bridge["volumes"]
+    assert (
+        "./deploy/wazuh/registry/warsoc-projected-shadow-v2.json:"
+        "/etc/warsoc-wazuh/rule-registry.json:ro"
+    ) in bridge["volumes"]
     assert bridge["networks"]["wazuh_compute_b_private"]["ipv4_address"] == "172.31.40.20"
     assert compose["networks"]["wazuh_compute_b_private"]["internal"] is True
 

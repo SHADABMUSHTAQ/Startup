@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.wazuh_integration.candidate_service import admit_candidate
+from app.wazuh_integration.bridge_runtime import _wazuh_line
 from app.wazuh_integration.contracts import DetectionCandidate
 from app.wazuh_integration.projector import build_detection_input
 
@@ -115,6 +116,83 @@ def test_network_projection_requires_network_feature_gate():
     projected = build_detection_input(event, [], _settings(network_relay_enabled=True))
     assert projected.source_family == "network_device"
     assert projected.source_assurance == "relay_attested"
+
+
+def test_v2_process_projection_exports_only_the_derived_attack_family():
+    event = _signed_windows_event()
+    event["processed_data"] = {
+        "new_process_name": r"C:\Tools\Mimikatz.exe",
+        "command_line": "mimikatz.exe sekurlsa::logonpasswords --token=do-not-export",
+    }
+    rules = [
+        {
+            "input_field_map": {
+                "process_attack_family": "detection_features.process_attack_family"
+            }
+        }
+    ]
+
+    projected = build_detection_input(
+        event,
+        rules,
+        _settings(wazuh_ruleset_version="warsoc-projected-shadow-v2"),
+    )
+    line = _wazuh_line(projected)
+
+    assert projected.security_fields == {
+        "process_attack_family": "credential_dumping"
+    }
+    assert b"Mimikatz" not in line
+    assert b"do-not-export" not in line
+    assert b"WARSOC_TENANT_A" not in line
+
+
+def test_v2_network_projection_exports_rejection_feature_and_hmacs_only():
+    now = datetime.now(timezone.utc)
+    event = {
+        "tenant_id": "WARSOC_TENANT_A",
+        "agent_id": "WARSOC_RELAY_A",
+        "network_device_id": "firewall-1",
+        "event_uid": "network-event-0002",
+        "event_id": "NET-VPN-AUTH",
+        "event_type": "vpn_authentication",
+        "telemetry_family": "network",
+        "source_type": "network_device",
+        "source_assurance": "relay_attested",
+        "signature_verified": True,
+        "timestamp": now,
+        "ingested_at": now,
+        "processed_data": {
+            "action": "rejected",
+            "src_ip": "198.51.100.25",
+            "user": "vpn-user",
+        },
+    }
+    rules = [
+        {
+            "input_field_map": {
+                "vpn_authentication_rejected": (
+                    "detection_features.vpn_authentication_rejected"
+                )
+            }
+        }
+    ]
+
+    projected = build_detection_input(
+        event,
+        rules,
+        _settings(
+            network_relay_enabled=True,
+            wazuh_ruleset_version="warsoc-projected-shadow-v2",
+        ),
+    )
+    line = _wazuh_line(projected)
+
+    assert projected.security_fields == {"vpn_authentication_rejected": True}
+    assert projected.correlation_keys.corr_tenant_actor_source is not None
+    assert b"198.51.100.25" not in line
+    assert b"vpn-user" not in line
+    assert b"WARSOC_TENANT_A" not in line
 
 
 class _FakeDb:
