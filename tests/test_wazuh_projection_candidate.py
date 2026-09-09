@@ -147,6 +147,31 @@ def test_v2_process_projection_exports_only_the_derived_attack_family():
     assert b"WARSOC_TENANT_A" not in line
 
 
+def test_v2_projection_uses_bounded_features_persisted_before_raw_encryption():
+    event = _signed_windows_event()
+    event["processed_data"] = "fernet-v1:encrypted-canonical-payload"
+    event["detection_features"] = {
+        "process_attack_family": "powershell_obfuscation"
+    }
+    rules = [
+        {
+            "input_field_map": {
+                "process_attack_family": "detection_features.process_attack_family"
+            }
+        }
+    ]
+
+    projected = build_detection_input(
+        event,
+        rules,
+        _settings(wazuh_ruleset_version="warsoc-projected-shadow-v2"),
+    )
+
+    assert projected.security_fields == {
+        "process_attack_family": "powershell_obfuscation"
+    }
+
+
 def test_v2_network_projection_exports_rejection_feature_and_hmacs_only():
     now = datetime.now(timezone.utc)
     event = {

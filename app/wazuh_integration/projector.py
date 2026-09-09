@@ -257,8 +257,11 @@ def build_detection_input(
     age_ms = max(0, int((current - original_time).total_seconds() * 1000))
 
     feature_document = dict(document)
-    feature_document["detection_features"] = extract_detection_features(
-        document, source_family
+    persisted_features = document.get("detection_features")
+    feature_document["detection_features"] = (
+        dict(persisted_features)
+        if isinstance(persisted_features, dict)
+        else extract_detection_features(document, source_family)
     )
 
     return DetectionInput(

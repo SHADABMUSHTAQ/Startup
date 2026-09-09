@@ -15,6 +15,7 @@ def test_siem_persistence_encrypts_raw_fields_and_sensitive_command_line():
         "message": "Command: powershell.exe -Password TopSecret123!",
         "raw_event_data": {"event_data": {"CommandLine": "powershell.exe -enc AAA"}},
         "processed_data": {"command_line": "powershell.exe -enc AAA"},
+        "detection_features": {"process_attack_family": "powershell_obfuscation"},
         "context": {"command_line": "powershell.exe -Password TopSecret123!"},
     }
 
@@ -26,6 +27,9 @@ def test_siem_persistence_encrypts_raw_fields_and_sensitive_command_line():
     assert protected["raw_message"].startswith("fernet-v1:")
     assert protected["raw_event_data"].startswith("fernet-v1:")
     assert protected["processed_data"].startswith("fernet-v1:")
+    assert protected["detection_features"] == {
+        "process_attack_family": "powershell_obfuscation"
+    }
     assert "command_line" not in protected["context"]
     assert decrypt_siem_value(protected["raw_message"], cipher).startswith("Command:")
     assert decrypt_siem_value(protected["raw_event_data"], cipher)["event_data"]

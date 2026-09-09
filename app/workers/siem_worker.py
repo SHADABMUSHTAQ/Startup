@@ -27,6 +27,7 @@ from app.utils.detection_provenance import attach_detection_provenance
 from app.utils.security_incidents import project_and_publish_incident
 from app.utils.siem_privacy import protect_siem_document
 from app.actions.alerting import dispatch_alert_if_entitled, is_email_trigger_severity
+from app.wazuh_integration.detection_features import extract_detection_features
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [SIEM-Worker] %(message)s")
 logger = logging.getLogger("SIEM-Worker")
@@ -349,6 +350,28 @@ async def _flush_siem_cold_vault(db, cold_docs: list[dict]) -> int:
         event_uid = item.get("event_uid") or str(uuid.uuid4())
         item["event_uid"] = event_uid
         item["context"] = build_alert_context(item)
+        # Derive the bounded Wazuh input while canonical structured fields are
+        # still available. Raw and processed evidence is encrypted immediately
+        # below; only this server-derived, non-sensitive feature map remains.
+        item.pop("detection_features", None)
+        source_family = None
+        if (
+            item.get("telemetry_family") == "windows"
+            and item.get("signature_verified") is True
+            and item.get("source_assurance") == "agent_signed"
+        ):
+            source_family = "windows_endpoint"
+        elif (
+            item.get("telemetry_family") == "network"
+            and item.get("source_type") == "network_device"
+            and item.get("signature_verified") is True
+            and item.get("source_assurance") == "relay_attested"
+        ):
+            source_family = "network_device"
+        if source_family:
+            detection_features = extract_detection_features(item, source_family)
+            if detection_features:
+                item["detection_features"] = detection_features
         persistence_item = protect_siem_document(item, settings.encryption_key)
         ops.append(
             UpdateOne(
