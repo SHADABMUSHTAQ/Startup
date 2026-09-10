@@ -20,6 +20,33 @@ from app.workers import archive_retrieval_worker
 from tests.helpers import provision_and_login_admin
 
 
+def _retrieval_doc(
+    *,
+    request_id: str,
+    tenant_id: str,
+    status: str = "APPROVED",
+    collections: list[str] | None = None,
+    expires_at: datetime | None = None,
+) -> dict:
+    now = datetime.now(timezone.utc)
+    return {
+        "request_id": request_id,
+        "tenant_id": tenant_id,
+        "requested_by": "archive-test@example.com",
+        "collections": collections or ["siem_cold_vault"],
+        "start_at": now - timedelta(days=30),
+        "end_at": now - timedelta(days=29),
+        "reason": "Maintained archive API boundary test",
+        "status": status,
+        "estimated_bytes": 1024,
+        "estimated_blob_count": 1,
+        "expires_at": expires_at,
+        "created_at": now,
+        "updated_at": now,
+        "items": [],
+    }
+
+
 @pytest.mark.asyncio
 async def test_service_sas_download_link_is_https_read_only_and_short_lived(monkeypatch):
     account_key = base64.b64encode(b"warsoc-test-key-material-32byte").decode("ascii")
@@ -256,6 +283,182 @@ async def test_authenticated_tenant_can_create_bounded_retrieval_request(
     assert body["tenant_id"] == session["tenant_id"]
     assert body["estimated_bytes"] == 1024
     assert body["estimated_blob_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_archive_list_requires_authentication(async_client):
+    response = await async_client.get("/api/v1/archive-retrievals")
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_archive_list_enforces_current_database_role_and_source_scope(
+    async_client,
+    db,
+):
+    session = await provision_and_login_admin(async_client, "archive_roles")
+    tenant_id = session["tenant_id"]
+    await db["archive_retrieval_requests"].insert_many(
+        [
+            _retrieval_doc(request_id="ARR-OPERATIONAL", tenant_id=tenant_id),
+            _retrieval_doc(
+                request_id="ARR-COMPLIANCE",
+                tenant_id=tenant_id,
+                collections=["fbr_pos_logs"],
+            ),
+        ]
+    )
+
+    admin_response = await async_client.get("/api/v1/archive-retrievals")
+    assert admin_response.status_code == 200
+    assert {item["request_id"] for item in admin_response.json()["items"]} == {
+        "ARR-OPERATIONAL",
+        "ARR-COMPLIANCE",
+    }
+
+    await db["users"].update_one(
+        {"tenant_id": tenant_id},
+        {"$set": {"role": "manager"}},
+    )
+    manager_response = await async_client.get("/api/v1/archive-retrievals")
+    assert manager_response.status_code == 200
+    assert [item["request_id"] for item in manager_response.json()["items"]] == [
+        "ARR-OPERATIONAL"
+    ]
+
+    await db["users"].update_one(
+        {"tenant_id": tenant_id},
+        {"$set": {"role": "auditor"}},
+    )
+    auditor_response = await async_client.get("/api/v1/archive-retrievals")
+    assert auditor_response.status_code == 200
+    assert [item["request_id"] for item in auditor_response.json()["items"]] == [
+        "ARR-COMPLIANCE"
+    ]
+
+    await db["users"].update_one(
+        {"tenant_id": tenant_id},
+        {"$set": {"role": "analyst"}},
+    )
+    analyst_response = await async_client.get("/api/v1/archive-retrievals")
+    assert analyst_response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_archive_create_rejects_forged_sources_for_each_role(
+    async_client,
+    db,
+    monkeypatch,
+):
+    session = await provision_and_login_admin(async_client, "archive_source_roles")
+    tenant_id = session["tenant_id"]
+    now = datetime.now(timezone.utc)
+    base_body = {
+        "start_at": (now - timedelta(days=31)).isoformat(),
+        "end_at": (now - timedelta(days=28)).isoformat(),
+        "reason": "Forged source authorization boundary test",
+    }
+    monkeypatch.setenv("ARCHIVE_RETRIEVAL_ENABLED", "true")
+
+    await db["users"].update_one(
+        {"tenant_id": tenant_id},
+        {"$set": {"role": "manager"}},
+    )
+    manager_response = await async_client.post(
+        "/api/v1/archive-retrievals",
+        json={**base_body, "collections": ["fbr_pos_logs"]},
+    )
+
+    await db["users"].update_one(
+        {"tenant_id": tenant_id},
+        {"$set": {"role": "auditor"}},
+    )
+    auditor_response = await async_client.post(
+        "/api/v1/archive-retrievals",
+        json={**base_body, "collections": ["siem_cold_vault"]},
+    )
+
+    await db["users"].update_one(
+        {"tenant_id": tenant_id},
+        {"$set": {"role": "analyst"}},
+    )
+    analyst_response = await async_client.post(
+        "/api/v1/archive-retrievals",
+        json={**base_body, "collections": ["siem_cold_vault"]},
+    )
+
+    assert manager_response.status_code == 403
+    assert auditor_response.status_code == 403
+    assert analyst_response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_archive_request_and_download_ids_are_tenant_scoped(
+    async_client,
+    db,
+    monkeypatch,
+):
+    session = await provision_and_login_admin(async_client, "archive_tenant_a")
+    await db["archive_retrieval_requests"].insert_one(
+        _retrieval_doc(
+            request_id="ARR-OTHER-TENANT",
+            tenant_id="WARSOC_OTHER_TENANT",
+            status="READY",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+    )
+    monkeypatch.setenv("ARCHIVE_RETRIEVAL_ENABLED", "true")
+
+    get_response = await async_client.get(
+        "/api/v1/archive-retrievals/ARR-OTHER-TENANT"
+    )
+    download_response = await async_client.post(
+        "/api/v1/archive-retrievals/ARR-OTHER-TENANT/download-links",
+        headers={"x-csrf-token": session["csrf_token"]},
+    )
+
+    assert get_response.status_code == 404
+    assert download_response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_archive_download_requires_ready_and_unexpired_request(
+    async_client,
+    db,
+    monkeypatch,
+):
+    session = await provision_and_login_admin(async_client, "archive_download_state")
+    tenant_id = session["tenant_id"]
+    await db["archive_retrieval_requests"].insert_many(
+        [
+            _retrieval_doc(
+                request_id="ARR-NOT-READY",
+                tenant_id=tenant_id,
+                status="APPROVED",
+            ),
+            _retrieval_doc(
+                request_id="ARR-EXPIRED",
+                tenant_id=tenant_id,
+                status="READY",
+                expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+            ),
+        ]
+    )
+    monkeypatch.setenv("ARCHIVE_RETRIEVAL_ENABLED", "true")
+    headers = {"x-csrf-token": session["csrf_token"]}
+
+    not_ready = await async_client.post(
+        "/api/v1/archive-retrievals/ARR-NOT-READY/download-links",
+        headers=headers,
+    )
+    expired = await async_client.post(
+        "/api/v1/archive-retrievals/ARR-EXPIRED/download-links",
+        headers=headers,
+    )
+
+    assert not_ready.status_code == 409
+    assert expired.status_code == 410
 
 
 @pytest.mark.asyncio
