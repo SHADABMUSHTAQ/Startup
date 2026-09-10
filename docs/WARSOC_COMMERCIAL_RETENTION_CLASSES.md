@@ -1,7 +1,9 @@
 # WarSOC Commercial Retention Classes
 
 **Status:** Azure infrastructure and application archive routing are production
-active for the supported 3, 6, 9, and 12 month entitlements.
+active for the supported 3, 6, 9, and 12 month entitlements. The historical
+retrieval backend is production-proven as of 2026-09-10; browser workflow
+acceptance remains separate.
 
 ## Product Contract
 
@@ -87,19 +89,26 @@ under `tmp/azure-retention/`. OCI runtime canary
 - synthetic mutable tenant/source data was removed after validation;
 - immutable labelled canary blobs and ledgers remain as audit evidence.
 
-Backend revision `5bdb107` carries these exact route contracts and is deployed
-from `/opt/warsoc/releases/5bdb107`. All eight revision-labelled application
-containers passed the final OCI identity/health check with zero restarts.
+Backend revision `5bdb107` introduced these exact route contracts. Scoped core
+release `7e9f00d` now runs from `/opt/warsoc/releases/7e9f00d` and preserves
+them while enabling the isolated retrieval worker. The existing Wazuh shadow
+containers retain their separate deployment identity.
 
 ## Customer Access Boundary
 
-Physical retention does not mean all historical data is currently searchable.
-Normal dashboard, CSV and PDF operations remain bounded to hot Mongo data.
-`ARCHIVE_RETRIEVAL_ENABLED=false` remains the safe default until the private
-staging lifecycle, least-privilege identity, server-side copy, user-delegation
-SAS, byte/month limits, expiry, frontend workflow and end-to-end download proof
-are accepted.
+Physical retention does not make historical data part of normal search.
+Dashboard, CSV and PDF operations remain bounded to hot Mongo data. Historical
+objects use the explicit asynchronous `/api/v1/archive-retrievals` workflow,
+with tenant/date/collection authorization, one included job and 10 GiB monthly
+allowance, private server-side staging, streamed SHA verification, and direct
+short-lived read-only Azure downloads.
 
-Until that independent gate closes, the truthful offer is approximately seven
-days of self-service hot search plus immutable retained evidence for the
-tenant's selected term, with historical access handled outside self-service.
+Production canary `ARCHIVE-RETRIEVAL-CANARY-20260910T133007Z-413b5717` proved
+that backend path and cleanup on OCI release `7e9f00d`. Source defaults remain
+disabled, while production explicitly enables the feature through a separate
+protected environment file. The current university subscription uses a
+documented `service_sas` fallback because the preferred Microsoft Entra
+service-principal/user-delegation path was unavailable. No API byte proxying is
+allowed. Move to user-delegation SAS when a commercial Azure identity permits
+it and complete role-by-role browser acceptance before claiming a polished
+self-service UI.

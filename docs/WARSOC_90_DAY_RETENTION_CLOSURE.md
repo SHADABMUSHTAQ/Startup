@@ -4,8 +4,9 @@
 > `docs/WARSOC_COMMERCIAL_RETENTION_CLASSES.md`. The evidence and run IDs below
 > remain valid for the 90-day route and must not be rewritten.
 
-**Status:** production active and accepted on OCI release `5c8e2dc`; both
-90-day Azure routes and the production archive/hold/failure paths are proven.
+**Status:** 90-day archive routing remains production active and accepted. Core
+OCI release `7e9f00d` additionally closes the backend historical-retrieval gate;
+browser workflow acceptance remains separate.
 
 ## 1. Product Contract
 
@@ -138,7 +139,8 @@ rows. Read-only Azure inspection run `20260907T093110Z-2d241c2c` independently
 reconfirmed private access, account-level versioning, and locked 90-day
 version-WORM on both containers. Existing legacy objects and ledgers were not
 moved or rewritten.
-Customer retrieval remains a separate disabled gate.
+At this dated archive-routing acceptance, customer retrieval remained a
+separate disabled gate. Section 5 records its later 2026-09-10 closure.
 
 If any check fails, keep exact routing fail-closed and preserve eligible records
 in MongoDB while the new route is repaired. Do not silently send new commercial
@@ -147,20 +149,24 @@ lock.
 
 ## 5. Retrieval Gate
 
-Code alone does not make days 8-90 usable. Before advertising 90-day accessible
-history, WarSOC must separately prove the disabled asynchronous retrieval flow:
+The backend gate closed on 2026-09-10. Private container
+`warsoc-retrieval-staging` has a three-day lifecycle backstop, and OCI release
+`7e9f00d` runs an isolated bounded worker. Production canary
+`ARCHIVE-RETRIEVAL-CANARY-20260910T133007Z-413b5717` proved:
 
-- private `warsoc-retrieval-staging` with automatic short-lived deletion;
-- least-privilege Microsoft Entra access and user-delegation SAS permission;
-- tenant/role/collection/date authorization;
-- monthly and byte limits;
-- Azure server-side copy with no API or local-disk byte proxy;
-- SHA-256 verification, short-lived read-only download, expiry, and audit;
-- rejection of expired or legacy ledger rows without customer access metadata.
+- tenant/role/collection/date authorization and monthly allowance reservation;
+- Azure server-side copy without API or local-disk byte proxying;
+- streamed SHA-256 equality before `READY`;
+- one short-lived HTTPS-only read-only direct Azure download;
+- staged-object and synthetic database cleanup with the immutable source intact.
 
-Until that gate passes, the truthful offer is seven-day self-service search plus
-90-day retained immutable evidence. Automated customer retrieval for days 8-90
-is not yet available, so WarSOC must not advertise 90-day self-service history.
+The current university Azure subscription could not provide the preferred
+service-principal/user-delegation path. Production therefore uses the explicit
+`service_sas` fallback with the already protected storage connection credential.
+This is accepted for the current deployment but remains an identity-hardening
+item for a commercial Azure tenant. The browser UI and role-by-role click-through
+remain separate acceptance evidence; normal dashboard search still covers only
+the hot Mongo window.
 
 ## 6. Acceptance Evidence
 

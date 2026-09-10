@@ -1,7 +1,9 @@
 # WarSOC Network Relay Backend Foundation
 
-**Status:** Backend candidate implemented; disabled by default; not production enabled
-**Snapshot:** 2026-07-28
+**Status:** Backend enabled on OCI behind fail-closed tenant entitlement;
+pfSense virtual lab validated; customer-style service/heartbeat accepted with
+first physical `filterlog` event still open
+**Snapshot:** 2026-09-10
 **Scope:** Customer-LAN network-device metadata ingestion and PECA-oriented SIEM correlation
 **Non-scope:** Linux endpoints, PCAP, packet payload capture, public UDP syslog, and new FBR invoice truth
 
@@ -372,6 +374,21 @@ vendor summaries, and backlog-safe hybrid correlation chronology.
 The suite verifies parser conservatism, packet/raw rejection, schema rejection, signing compatibility, encrypted spool bounds, FIFO retention, tamper detection, exact outbox retries, control priority, atomic Redis admission, duplicate suppression, quota rejection, VPN spraying, non-alert VPN context, same-host hybrid correlation, source-family isolation, worker behavior, FBR, PECA, retention, and archive contracts.
 
 It does not replace real-device acceptance.
+
+Customer-style relay evidence supplied on 2026-09-09 additionally proves the
+generated device/listener configuration, one-time activation, locally built
+relay executable, Automatic/running `WarSOC_Relay` service, Windows firewall
+source restriction, backend seat use, version match, and fresh heartbeat for
+device `host-pfsense-relay-01`. Its listener is `192.168.56.1:5514/udp` and the
+registered source is `192.168.56.254/32` at expected 10 EPS. Production has no
+device-status row or parseable event for this device yet. That installation is
+therefore `SERVICE_ACCEPTED_EVENT_PENDING`, not end-to-end firewall accepted.
+
+Separately, software canary `NETWORK-WAZUH-CANARY-20260909T181805Z-b59594ca`
+proved signed relay admission through canonical persistence to Wazuh shadow
+rule 100630, including a permitted-traffic negative and zero incident
+promotion. Synthetic signed input cannot substitute for the missing physical
+pfSense packet.
 
 The current Windows relay candidate is a reproducible 30,189,810-byte
 executable with SHA-256

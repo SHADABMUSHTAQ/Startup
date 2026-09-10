@@ -1,8 +1,8 @@
 # WarSOC Wazuh Execution Mind Map
 
-**Status:** Authoritative execution index; OCI v1 shadow active, v2 shadow
-candidate fully regression/native-engine proven, primary disabled
-**Runtime snapshot:** production 2026-08-28; v2 candidate verification 2026-09-08
+**Status:** Authoritative execution index; OCI v2 shadow active, primary disabled
+**Runtime snapshot:** production network/Wazuh canary 2026-09-09; architecture
+reconciled 2026-09-10
 
 **Architecture authority:**
 `docs/WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md`
@@ -121,9 +121,9 @@ flowchart LR
 | 1 | Contracts, threat model, queues and ownership | Code and contract complete | Versioned contracts, encrypted bounded outbox/spools, strict field registry, signed health channel and disabled-by-default settings exist |
 | 2 | Isolated Wazuh lab | Two-host shadow transport accepted | Local and separate-host 4.14.7 canaries, bidirectional mTLS, signed transport, tenant isolation, negative transport and selected outage recovery pass. |
 | 3 | Compatibility harness | V2 candidate complete | Focused contracts, false-positive negatives, all 22 native Wazuh rule paths, and the 733-test repository regression pass; physical saturation and measured customer precision remain. |
-| 4 | Shadow integration | V1 active; v2 deployment pending | OCI runs the isolated, bounded manager-only Wazuh/bridge pair. Production v1 Event 4625 canaries completed rule 100512 with complete lineage and zero incident promotion. Candidate v2 cannot be called active until its pinned registry and canaries are deployed. |
+| 4 | Shadow integration | V2 active | OCI runs the isolated, bounded manager-only Wazuh/bridge pair with registry `warsoc-projected-shadow-v2`. V1 Event 4625 and v2 network rule 100630 canaries completed lineage with zero incident promotion. |
 | 5 | Limited primary promotion | Blocked | Requires accepted Gate 4 metrics and one-family rollback proof |
-| 6 | Firewall projection to Wazuh | Candidate code/native-engine proven | V2 accepts only derived block, VPN-auth-failure and device-admin-failure features. Entitled production-relay canaries and exact customer-device acceptance remain independent gates. |
+| 6 | Firewall projection to Wazuh | Software runtime proven; physical event open | V2 accepts only derived block, VPN-auth-failure and device-admin-failure features. Production signed-relay canary proved rule 100630 and its allowed-traffic negative. The colleague relay is active through heartbeat but still needs one physical pfSense `filterlog` event. |
 | 7 | Security release | Blocked | Requires complete acceptance artifacts, rollback and residual-risk approval |
 
 ## 4. Criticality Register
@@ -282,10 +282,11 @@ ruleset rollback or rule-quality evidence required before production promotion.
 - Operational boundary: laptops are no longer in the detection path. The OCI
   manager-only topology is still a single-host deployment without HA; leaf
   certificates require rotation and measured capacity remains a promotion gate.
-- Firewall boundary: network relay and firewall-to-Wazuh projection remain
-  disabled and require their own acceptance.
+- Firewall boundary at this dated v1 activation: network relay and
+  firewall-to-Wazuh projection were still disabled. The v2 record below
+  supersedes only the software shadow-path status.
 
-### V2 Shadow Candidate - 2026-09-08
+### V2 Shadow Activation - 2026-09-08/09
 
 - Registry: `warsoc-projected-shadow-v2`, SHA-256
   `98D250C5435E433B36748D9A05107348118F1BEBC887F6468CF99DBE4BA4DD64`.
@@ -297,8 +298,15 @@ ruleset rollback or rule-quality evidence required before production promotion.
   fired at the configured direct/correlation conditions.
 - Repository gate: 733 passed, 2 expected skips, 0 failed; high-severity Bandit,
   dependency audit/check, compilation and diff checks passed.
-- Authority: every family remains shadow-only. Production remains on v1 until
-  the exact registry-hash deployment, canaries and rollback check complete.
+- Production runtime: registry `warsoc-projected-shadow-v2` is active in shadow
+  mode. Canary `NETWORK-WAZUH-CANARY-20260909T181805Z-b59594ca` admitted 32
+  signed relay events; 31 blocked events produced rule 100630, the permitted
+  comparison produced none, and zero incidents were promoted.
+- Authority: every family remains shadow-only and
+  `WAZUH_PRIMARY_APPROVED=false`. Native WarSOC detection remains primary.
+- Residual operations evidence: 249 historical `LIVE_WINDOW_EXPIRED` terminal
+  dispatch failures and two bridge-rotation gaps remain recorded. They are not
+  replayed into live correlation.
 
 The current cross-system/customer-flow verification record is
 `docs/WARSOC_VERIFICATION_AND_CUSTOMER_ACCEPTANCE_2026-08-12.md`.

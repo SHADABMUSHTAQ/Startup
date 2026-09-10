@@ -1,8 +1,8 @@
 # WarSOC Wazuh Detection Target Architecture
 
-**Document status:** Final reviewed target and integration contract; controlled
-four-family v1 shadow deployment active, 22-rule v2 shadow release candidate
-locally/native-engine proven as of 2026-09-08, primary promotion disabled
+**Document status:** Final reviewed target and integration contract; governed
+22-rule v2 registry active in production shadow mode as of 2026-09-09, primary
+promotion disabled
 
 **Decision date:** 2026-08-10
 
@@ -29,9 +29,9 @@ block an address, and never authority to select a tenant.
 
 The current WarSOC SIEM remains authoritative unless an individual rule family
 later passes shadow acceptance and is explicitly promoted through the
-rule-ownership registry. The private OCI Wazuh manager/bridge and v1 shadow
-adapter are active, but Wazuh has no production authority. The v2 candidate
-expands internal shadow observation only; it cannot create customer incidents,
+rule-ownership registry. The private OCI Wazuh manager/bridge and v2 shadow
+adapter are active, but Wazuh has no production authority. V2 expands internal
+shadow observation only; it cannot create customer incidents,
 notifications, compliance evidence, or response actions.
 
 ### 1.1 V2 governed expansion
@@ -40,7 +40,7 @@ notifications, compliance evidence, or response actions.
 catalog. It contains only detections supported by fields the WarSOC agent or
 relay actually emits and that can be projected without raw customer content.
 
-The candidate covers:
+The active shadow registry covers:
 
 - Windows logging/audit tampering, large clock changes, privileged group
   membership, selected registry persistence, suspicious service/task creation;
@@ -59,9 +59,13 @@ service text, tenant IDs, packet payloads, or FBR/PECA content. Every family
 remains `shadow`, and the registry validator rejects a v2 family marked
 approved or primary.
 
-The candidate was accepted by Wazuh 4.14.7 configuration validation and native
-rule execution for all rule IDs 100611-100632. This validates rule mechanics,
-not customer precision, production v2 activation, full Wazuh-catalog coverage,
+V2 was accepted by Wazuh 4.14.7 configuration validation and native rule
+execution for all rule IDs 100611-100632. Production canary
+`NETWORK-WAZUH-CANARY-20260909T181805Z-b59594ca` then proved the signed
+relay-to-Wazuh runtime path for rule 100630: 31 blocked events produced the
+expected shadow candidate, a permitted comparison produced none, and WarSOC
+created zero Wazuh-derived incidents. This validates rule mechanics and one
+network runtime family, not customer precision, full Wazuh-catalog coverage,
 packet inspection, endpoint memory detection, Linux/cloud telemetry, SCA, FIM,
 or vulnerability inventory.
 
@@ -99,7 +103,7 @@ The target must preserve these existing facts:
 | 11. Firewall architecture | Accept | WarSOC Relay remains the collection and source-assurance boundary. |
 | 12. Firewall detections | Narrow | Promote rule by rule only after real-device, tenant and chronology proof. Existing hybrid rules do not move automatically. |
 | 13. Relay assurance | Accept | Preserve `relay_attested` in every derived detection. |
-| 14. Raw firewall encryption | Already complete in current source | Keep it as an invariant, not a future P0 item. Production relay is still disabled. |
+| 14. Raw firewall encryption | Already complete in current source | Keep it as an invariant, not a future P0 item. Production relay is enabled only behind fail-closed tenant entitlement. |
 | 15. PECA ownership | Accept | Wazuh may create a SIEM candidate from the same event but cannot create PECA evidence. |
 | 16. FBR ownership | Accept | Wazuh never receives invoice payloads and cannot create FBR evidence. |
 | 17. FBR/PECA independence | Accept | Add automated outage proof. |
@@ -177,6 +181,13 @@ Traffic between the computes uses a private overlay such as WireGuard, mTLS,
 provider firewall rules and host firewall rules. Wazuh ports are never public.
 The Wazuh syslog listener binds to loopback and permits only the local durable
 ingress service; no WarSOC application sends directly to port 514 across hosts.
+
+The current no-customer OCI shadow deployment is a resource-constrained
+exception: Compute-A and manager/bridge containers share one physical OCI host
+but remain on private, purpose-specific Docker networks with separate mTLS,
+signing, spool and credential boundaries. No staff laptop is required. This
+does not satisfy the target failure-domain/HA boundary; move the detector to a
+separate compute before a capacity or availability commitment requires it.
 
 ## 6. Detection Input Contract
 
@@ -574,6 +585,10 @@ The approved sequence is:
 The Wazuh dashboard is an internal diagnostic surface if installed. Customers and
 tenant support users never receive access to it.
 
+Current OCI shadow operation uses the manager-only co-located exception above.
+The separate-Compute-B topology remains the production scaling target, not a
+prerequisite for the present shadow-only/no-customer deployment.
+
 ### 11.1 Component and interface register
 
 | Component | Host | Responsibility | Explicit non-responsibility |
@@ -769,7 +784,7 @@ The following are not part of the Wazuh v1 integration:
 - Migrating FBR or PECA evidence logic into Wazuh.
 - Enabling the disabled WarSOC network relay merely because Wazuh exists.
 - Increasing the 50-agent platform cap without a new load test.
-- Treating historical retrieval as commercial-ready before its separate gate closes.
+- Treating backend retrieval proof as complete browser/customer acceptance.
 
 ## 15. Gated Implementation Sequence
 
@@ -831,6 +846,12 @@ The following are not part of the Wazuh v1 integration:
 2. Validate each physical vendor and expected EPS.
 3. Shadow only tenant-safe generic firewall rules.
 4. Preserve `relay_attested`, event/receipt clocks and raw hash lineage.
+
+The software portion of this gate passed production canary
+`NETWORK-WAZUH-CANARY-20260909T181805Z-b59594ca`. The colleague relay has also
+passed activation, service, listener and heartbeat checks. The gate remains
+open only for its first physical pfSense `filterlog` event and customer-shaped
+EPS/loss observation; synthetic signed relay events cannot close that fact.
 
 ### Gate 7 - Security release
 
@@ -936,7 +957,8 @@ items remain evidence gates and must not be described as completed features:
 6. Complete shadow precision, recall, latency and operator-usefulness review before promoting one rule family.
 7. Prove the per-rule SIEM/PECA-context/FBR-context approval matrix and strict
    canonical evidence linkage before exposing compliance context to customers.
-8. Keep the firewall path disabled until its separate relay and physical-device gates close.
+8. Keep firewall-derived candidates shadow-only until the exact relay's first
+   physical-device event and customer-shaped EPS/loss gates close.
 9. Run the final infrastructure security review and external penetration test after deployment stabilizes.
 
 These are implementation and acceptance uncertainties, not permission to change

@@ -1,15 +1,16 @@
 # WarSOC Current-State Architecture and Operational Contract
 
 **Document status:** Authoritative as-built map
-**Snapshot date:** 2026-09-08
+**Snapshot date:** 2026-09-10
 **Windows Server engineering delta:** 2026-09-03. General Server V1 is a local
 source candidate, not a deployed or customer-supported capability.
-**Release acceptance delta:** 2026-09-08. Backend `5bdb107` is the current
-production executable; its exact scope and verification are recorded in
-`WARSOC_RELEASE_5BDB107_PRODUCTION_ACCEPTANCE.md`.
+**Release acceptance delta:** 2026-09-10. Core OCI application release
+`7e9f00d` is active and its historical-retrieval path passed a named live Azure
+canary. The existing Wazuh shadow containers were preserved by this scoped
+deployment and retain their separate detector acceptance record.
 **Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the controlled pfSense network-relay path, and the controlled Wazuh shadow-detector path.
 
-**Current OCI application identity:** `5bdb107`
+**Current OCI application identity:** `7e9f00d`
 **Always-on Wazuh deployment foundation:** `7cd02e0`
 **Repository note:** the manager-only deployment package changes the Wazuh runtime boundary; it does not replace the core application image identity
 **Current Vercel frontend identity:** `e7c5aa0`
@@ -29,7 +30,7 @@ WarSOC currently has a coherent end-to-end architecture. The application enforce
 7. FBR creates encrypted invoice evidence and database-file tamper evidence for the entitled six-control catalog.
 8. MongoDB holds seven days of operational SIEM, PECA, and FBR data.
 9. The storage archiver uploads expired hot records to immutable Azure Blob storage, verifies integrity and immutability, writes a Mongo archive ledger, and only then removes the Mongo copies.
-10. Normal compliance views, search, CSV exports, and PDF reports read bounded hot Mongo data and archive-ledger availability. Historical bytes require the feature-gated asynchronous retrieval workflow.
+10. Normal compliance views, search, CSV exports, and PDF reports read bounded hot Mongo data and archive-ledger availability. The asynchronous historical-retrieval backend is active on OCI and returns direct, short-lived Azure links; the customer-facing browser workflow remains a separate frontend acceptance item.
 11. The dashboard separates normal endpoint telemetry, immutable detection evidence, and mutable operator incidents.
 
 The public Azure artifact is Windows agent `4.2.11` at the approved versioned
@@ -96,8 +97,9 @@ The latest complete backend campaign closed with 684 passed, 2 expected skips
 and zero assertion failures on 2026-09-08. `pip check`, Python compilation,
 diff hygiene, the 132-route authorization inventory, direct production and
 development requirements audits, and the full-tree high-severity Bandit gate
-passed. Backend `5bdb107` is deployed on OCI and healthy; frontend `e7c5aa0` is
-live on Vercel.
+passed. Core backend `7e9f00d` is deployed on OCI and healthy; frontend
+`e7c5aa0` is live on Vercel. The scoped core deployment preserved the existing
+Wazuh shadow containers rather than rebuilding them.
 The public relay contract is live,
 and its authenticated status and setup-package routes are present. Package
 availability remains false until the versioned pilot ZIP is uploaded and its
@@ -220,12 +222,7 @@ requests. Candidate and bridge administration bind only to the OCI Tailscale
 address. The Wazuh manager has no host port; indexer, dashboard, enrollment,
 API, Wazuh agents, Active Response and Wazuh email are absent or disabled.
 
-The production registry remains `warsoc-projected-shadow-v1` until the v2
-release is deployed. It permits four minimized Windows projections: Event
-1102/rule 100511 (`audit_log_cleared`), 4625/100512
-(`authentication_failure`), 7045/100513 (`service_installation`), and
-4688/100514 (`process_creation`). The reviewed
-`warsoc-projected-shadow-v2` release candidate expands this to 22
+The production registry is `warsoc-projected-shadow-v2`. It contains 22
 high-confidence candidates: 18 direct Windows rules and four tenant-scoped
 Windows/network correlation rules. It sends only bounded derived booleans,
 enumerated attack-family labels, a clock-delta value, and opaque correlation
@@ -245,13 +242,15 @@ strict per-source projection fields, opaque tenant correlation HMACs, candidate
 event-time validation, pinned registry hashes, signed health/loss records and
 stage counters. A controlled Event 4625 canary completed canonical persistence,
 durable dispatch, Wazuh rule 100512, signed candidate return, WarSOC lineage
-validation and shadow persistence with zero incident promotion. The v2
-candidate subsequently passed registry/privacy contract tests, false-positive
+validation and shadow persistence with zero incident promotion. V2
+subsequently passed registry/privacy contract tests, false-positive
 negative cases, native Wazuh 4.14.7 configuration validation, and native
-`wazuh-logtest-legacy` execution for rules 100611 through 100632. This proves
-candidate rule mechanics and the existing transport boundary; it is not
-production v2 activation, measured customer precision, capacity,
-high-availability, or exact customer-firewall acceptance.
+`wazuh-logtest-legacy` execution for rules 100611 through 100632. Production
+canary `NETWORK-WAZUH-CANARY-20260909T181805Z-b59594ca` then proved network
+rule 100630 and its permitted-traffic negative with zero incident promotion.
+This proves v2 activation and one network runtime family; it is not measured
+customer precision, capacity, high availability, or exact customer-firewall
+acceptance.
 
 ### 1.6 August 14 release-candidate verification delta
 
@@ -628,8 +627,8 @@ and evidence-hold worker all reported running, zero restarts, exact revision
 identity, healthy dependencies, and no critical errors in the final observation
 window. Synthetic MongoDB and Azure acceptance artifacts were removed.
 
-This is a scoped acceptance, not whole-platform `BACKEND_ACCEPTED`. Historical
-archive retrieval remains disabled, cold evidence is not silently attached to a
+This was a scoped acceptance, not whole-platform `BACKEND_ACCEPTED`. At that
+dated checkpoint historical archive retrieval remained disabled; cold evidence is not silently attached to a
 case, and daily anchoring, backup recovery, Security Stories UI/real-server
 qualification, broad Wazuh promotion, and future FBR connectors keep their
 independent gates.
@@ -648,10 +647,11 @@ remains valid. Existing legacy blobs and locks were not changed.
 
 Tenant provisioning accepts only 90, 180, 270 or 365 days, while quote terms
 map 12 months to 365 rather than 360. Unsupported durations fail closed instead
-of silently using another physical route. Historical self-service retrieval is
-still disabled and is not implied by physical retention.
+of silently using another physical route. At this dated checkpoint historical
+self-service retrieval was still disabled; section 1.19 records the later
+backend activation.
 
-Production release `5bdb107` removes unsafe private sample indicators from the
+Production release `5bdb107` at this dated checkpoint removed unsafe private sample indicators from the
 active threat-intelligence catalog, suppresses private/non-global/trusted IPs
 unless explicitly approved, and adds structured native detection for Windows
 Event 4616 clock changes of at least five minutes and suspicious Event 4698
@@ -660,8 +660,51 @@ WarSOC as the only customer-visible detection authority. Labelled runtime run
 `DETECTION-STORY-20260908T055417Z-8a55d8` proved both alert and incident paths,
 the `2026.09.07.1` rule version, and non-triggering 4616/4698 comparison events.
 All eight application containers run the same revision-labelled image with zero
-restarts; API, MongoDB and Redis are healthy. Wazuh remains shadow-only and
+restarts; API, MongoDB and Redis were healthy. Wazuh remains shadow-only and
 cannot promote incidents.
+
+### 1.19 September 10 retrieval and firewall/Wazuh acceptance delta
+
+Core OCI application release `7e9f00d` is active at `api.warsoc.tech`. The API,
+MongoDB and Redis passed health checks and the isolated
+`archive-retrieval-worker` is running. Production canary
+`ARCHIVE-RETRIEVAL-CANARY-20260910T133007Z-413b5717` proved the complete
+backend historical-retrieval transaction against Azure:
+
+1. An authenticated tenant-scoped request was accepted under the included
+   monthly allowance and progressed to `READY`.
+2. The worker copied one immutable Cold source object to the private staging
+   container, streamed it for SHA-256 verification, and recorded verified
+   integrity in the request ledger.
+3. The API returned one short-lived, HTTPS-only, read-only Azure SAS URL; the
+   direct download returned HTTP 200 and exactly matched the source hash.
+4. The staged object and all synthetic Mongo/Redis state were removed. The
+   immutable source object was not modified or deleted.
+
+The preferred long-term SAS mode remains Microsoft Entra user delegation. The
+current university subscription did not permit the required service-principal
+creation, so this deployment uses an explicit `service_sas` fallback derived
+inside the backend from the already protected storage connection credential.
+No SAS token is persisted in MongoDB, emitted in normal logs, or used for write
+access. The API still never proxies archive bytes. This fallback must be
+replaced with user delegation when the production Azure identity permits it.
+
+The governed `warsoc-projected-shadow-v2` registry is active in shadow mode.
+Production network/Wazuh canary
+`NETWORK-WAZUH-CANARY-20260909T181805Z-b59594ca` admitted 32 signed relay
+events: 31 blocked events reached Wazuh and produced the expected rule `100630`
+shadow candidate, while the permitted comparison event produced no candidate.
+WarSOC created zero Wazuh-derived incidents. `WAZUH_PRIMARY_APPROVED=false`
+remains mandatory; WarSOC-native detection is still authoritative.
+
+The colleague's customer-style pfSense relay installation is accepted through
+package configuration, one-time activation, Automatic Windows service state,
+source-restricted UDP listener, backend `ACTIVE` status, entitlement use, and
+fresh relay heartbeat. The exact registered device is
+`host-pfsense-relay-01`, source `192.168.56.254/32`, expected 10 EPS. The final
+physical acceptance item remains open because no parseable pfSense `filterlog`
+event or device-status row was captured from that installation. Control
+heartbeats are not a substitute for a firewall event.
 
 ## 2. Product Boundary
 
@@ -681,7 +724,9 @@ cannot promote incidents.
 - Immutable Azure archive storage with hashes and an archive ledger.
 - Tenant-scoped evidence cases, hash-linked custody, legal holds, and signed
   evidence-package exports through an isolated worker and private Azure storage.
-- Hot compliance/search/export paths plus archive availability metadata; historical blob retrieval is implemented but disabled pending Azure and UI acceptance.
+- Hot compliance/search/export paths plus archive availability metadata; the
+  asynchronous historical-retrieval backend is active and production-proven,
+  while its customer browser workflow remains a separate frontend acceptance.
 - Email queue processing for configured operational messages and high/critical alert notifications.
 - Manual B2B sales, manual payment/invoicing, and administrative tenant provisioning.
 
@@ -1504,7 +1549,12 @@ The public agent-artifact account/container must remain separate from the privat
 
 Archive retrieval exists so an authorized tenant can request historical evidence after it has left hot MongoDB and been retained in Azure Cold or Archive storage. It is not used for live dashboards, detection, ingestion or routine seven-day searches.
 
-The complete retrieval implementation migrates with every backend release even while `ARCHIVE_RETRIEVAL_ENABLED=false`. The flag prevents request execution and worker activation; it does not remove routes, ledgers, indexes, tests, the Compose profile or configuration from the deployed software.
+The complete retrieval implementation migrates with every backend release.
+Source defaults remain fail-closed, but OCI release `7e9f00d` explicitly sets
+`ARCHIVE_RETRIEVAL_ENABLED=true` and runs the isolated worker using a separate,
+root-readable environment file. Disabling the flag stops request execution and
+worker activation without removing routes, ledgers, indexes, tests, the Compose
+profile, or configuration from deployed software.
 
 ### 16.1 API memory boundary
 
@@ -1522,21 +1572,40 @@ Historical retrieval is an explicit, opt-in workflow:
 4. Wider, additional, or legacy unknown-size requests enter `PENDING_APPROVAL`.
 5. WarSOC operations approves a paid/manual request using the super-admin control.
 6. An isolated 256 MiB worker performs an Azure server-side copy from the
-   immutable source to a private staging object using Microsoft Entra source
-   authorization. The approved 90-day source tier is Cold and remains online;
+   immutable source to a private staging object using the configured
+   server-side Azure authorization mode. The approved source tier is Cold and remains online;
    an independently archived legacy source would require rehydration before
    copy. No archive byte passes through the API or local disk.
 7. The request becomes `READY` only after every copy reports success.
-8. The API creates short-lived, read-only user-delegation SAS URLs for exact staged objects and returns each expected SHA-256.
+8. The API creates short-lived, HTTPS-only, read-only SAS URLs for exact staged
+   objects and returns each expected SHA-256. User delegation is preferred;
+   the current explicitly selected fallback is service SAS.
 9. Staged copies expire after 48 to 72 hours. The worker deletes them; an Azure lifecycle rule is a mandatory independent cleanup backstop.
 
 The immutable source blob is never modified or deleted by retrieval.
 
 ### 16.3 Deployment gate
 
-`ARCHIVE_RETRIEVAL_ENABLED=false` is the default. Do not enable it until the private staging container, lifecycle cleanup, service-principal/managed-identity RBAC, user-delegation permission, both 90-day retention containers, and an end-to-end server-side-copy/download proof exist. The worker is behind the Compose `archive-retrieval` profile, so a normal deployment does not start it accidentally.
+`ARCHIVE_RETRIEVAL_ENABLED=false` remains the source default. OCI is an explicit
+exception because the private staging container, three-day lifecycle backstop,
+bounded worker, authorization and allowance checks, server-side copy, streamed
+hash verification, direct download, and cleanup were accepted by production
+canary `ARCHIVE-RETRIEVAL-CANARY-20260910T133007Z-413b5717`. The worker remains
+behind the Compose `archive-retrieval` profile, so a normal deployment does not
+start it accidentally.
 
-The frontend request/status/download interface is implemented against the plural `/api/v1/archive-retrievals` contract but remains hidden by `VITE_ARCHIVE_RETRIEVAL_ENABLED=false`. Backend execution independently remains disabled until the Azure staging gate above passes. Archive retrieval is collection/date scoped and is not embedded as a case-scoped operation.
+The university Azure tenant denied the preferred service-principal path. OCI
+therefore uses `AZURE_RETRIEVAL_SAS_MODE=service_sas` as a documented temporary
+fallback. It reuses the protected storage connection credential already needed
+by the archiver and generates only short-lived read-only object URLs. Moving to
+a commercial Azure identity must replace this with user-delegation SAS; that is
+an identity-hardening task, not a reason to proxy data through FastAPI.
+
+The frontend request/status/download interface is implemented against the plural
+`/api/v1/archive-retrievals` contract but its production browser enablement and
+role-by-role click-through remain separate frontend evidence. Backend execution
+is active. Archive retrieval is collection/date scoped and is not embedded as a
+case-scoped operation.
 
 For the selected clean production launch, legacy pilot archives are not attached to the new tenant database or retrieval ledger. A locked legacy pilot container remains isolated until its policy expires; it cannot be destroyed early merely because the pilot data is no longer commercially required.
 
@@ -1560,7 +1629,7 @@ For the selected clean production launch, legacy pilot archives are not attached
 | Retention status | `GET /api/v1/compliance/retention/status` | Admin/auditor tenant entitlement, hot window, FBR/PECA tenant-retention model, active-hold count, and observed archive-ledger availability. It exposes no Azure object paths or credentials. |
 | Evidence cases and custody | `GET|POST /api/v1/compliance/cases` and case subroutes | Admin/auditor case records, evidence references and custody verification. Case closure requires an Admin `VERIFY` action with a recorded reason. |
 | Legal holds | `GET|POST /api/v1/compliance/holds` and `POST /holds/{hold_id}/release` | Admin applies/releases tenant, collection or event holds; Auditor receives read-only access. |
-| Evidence package exports | Case `/exports` subroutes | Enabled for accepted case exports through the isolated worker and private Azure container. Historical cold evidence still requires the separate disabled retrieval workflow. |
+| Evidence package exports | Case `/exports` subroutes | Enabled for accepted case exports through the isolated worker and private Azure container. Historical cold evidence still requires the separately active retrieval workflow and is not silently attached to a case. |
 
 The Agent Feed and Live Inspection must not use the same dataset. Normal endpoint evidence belongs in the feed; actionable detections belong in incidents. Historical search rows are explicitly typed and cannot expose acknowledgement, closure, or block actions.
 
@@ -1685,7 +1754,7 @@ flowchart LR
     M --> AR["Daily storage archiver"]
     AR --> AZ["Private immutable Azure evidence storage"]
     M --> RL["Archive retrieval request ledger"]
-    RL -. "disabled profile" .-> RR["Isolated retrieval worker"]
+    RL --> RR["Isolated retrieval worker (explicit OCI profile)"]
     RR -. "server-side copy" .-> AZ
     RR -.-> ST["Private temporary staging"]
     API -. "short-lived SAS metadata" .-> ST
@@ -1848,7 +1917,7 @@ Status meanings:
 | DNS and TLS | `warsoc.tech` to Vercel; `api.warsoc.tech` to OCI/Nginx | PROVEN | DNS separation, HTTPS certificates, HSTS and certificate validity passed OCI production acceptance. |
 | Vercel frontend | Browser UI, auth hydration, dashboard, endpoint fleet, compliance and team workflows | PROVEN for evidence-governance bundle | Frontend `e7c5aa0` from `origin/main` is live. Its production bundle points to `https://api.warsoc.tech/api/v1` and contains Evidence Cases, Legal Holds, Firewall Relays, and evidence-export support. |
 | Nginx gateway | TLS termination, security headers and reverse proxy | PROVEN with observation | Public headers/CORS/private-port checks pass. Real ingest returns 200. Some request bodies are buffered to temporary files; disk impact needs pilot measurement. |
-| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | PROVEN for revision `5bdb107` | OCI runs `/opt/warsoc/releases/5bdb107`; public health is green and all eight application containers report the exact revision with zero restarts. Evidence governance and the scoped detection/Stories release each have named authenticated production acceptance; unrelated routes keep their own gates. |
+| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | PROVEN for core revision `7e9f00d` | OCI runs `/opt/warsoc/releases/7e9f00d`; public health is green. This scoped release recreated the core API, workers and archiver and added the retrieval worker. Existing Wazuh shadow containers were preserved and retain their separate accepted image identity. |
 | Authentication/session | Login, HttpOnly access cookie, CSRF double-submit and `/auth/me` | PROVEN | Existing tenant login, auth context and profile returned 200. Public signup returned 403. |
 | Manual sales flow | Quote/contact to operator follow-up; no automatic payment | PROVEN | Quote and contact requests returned 200; legacy payment webhook returned 404. No Safepay dependency is required. |
 | Tenant provisioning | Super-admin creates tenant, admin, packs and seat limit | PROVEN | Disposable production tenant provisioning and login passed in run `b87116c8af`. |
@@ -1875,7 +1944,7 @@ Status meanings:
 | MongoDB hot tier | Seven-day operational store and tenant-scoped indexes | PROVEN baseline / CANDIDATE SEARCH FIX | Live-query index use is proven. Backend `d92fb65` removes the unindexed `_id` tie-breaker that caused the seven-day search to examine 471,571 matching records. Repeat the authenticated seven-day request after deployment and require a clear margin below the browser timeout. |
 | Daily storage archiver | Archive-before-delete transaction from Mongo to Azure | PROVEN | Service is running; latest cycle completed without errors. It verifies upload/hash/immutability/ledger before exact Mongo deletion. |
 | Azure immutable evidence | Private blob storage, SHA companion and locked retention | PROVEN | Runtime probe verified ledger, SHA-256, immutability and actual Azure retrieval for SIEM, alerts, FBR and PECA. |
-| Archive retrieval | Asynchronous server-side copy and direct Azure download | CODE COMPLETE / DISABLED | Request ledger, one-job/10-GiB monthly allowance, approval path, isolated server-side-copy worker, short-lived user-delegation SAS, and expiry logic are implemented. `ARCHIVE_RETRIEVAL_ENABLED=false`; Azure staging/lifecycle/RBAC, real copy/hash/SAS/expiry, and frontend workflow remain mandatory. |
+| Archive retrieval | Asynchronous server-side copy and direct Azure download | BACKEND PRODUCTION-PROVEN / FRONTEND ACCEPTANCE OPEN | OCI release `7e9f00d` enables the isolated worker. Canary `ARCHIVE-RETRIEVAL-CANARY-20260910T133007Z-413b5717` proved allowance reservation, server-side copy, streamed SHA verification, `READY`, one direct read-only SAS download, and cleanup with the WORM source untouched. Current SAS mode is the documented temporary `service_sas` fallback; user delegation and production browser click-through remain open. |
 | CSV export | Bounded detailed export from hot operational data | PROVEN | Current production CSV returned HTTP 200 and 204,350 bytes; validator CSV also passed. Historical export requires the separate retrieval workflow. |
 | PDF report | Human-readable compliance summary | PROVEN | Current PECA PDF returned HTTP 200 and a valid PDF payload. The PDF itself is not cryptographically signed. |
 | Email daemon | Queue, retry, SMTP delivery and DLQ | OPTIONAL/PARTIAL | Security-alert email is disabled. Quote/contact records persist before email queueing. Team invitations return a secure manual handoff link even when SMTP is unavailable. Current SMTP quota/delivery must not be assumed. |
@@ -1891,8 +1960,8 @@ Status meanings:
 | Installer code signing | Publisher reputation and Defender trust | PARTIAL | Exact hash allowlisting supports the pilot while Defender stays enabled; the binary remains unsigned. |
 | Capacity ceiling | Maximum 50 active agents per tenant and 50 aggregate active agents on the shared host | PROVEN by contract tests; prior synthetic soak | Mongo-backed floors prevent Redis restarts from bypassing either boundary. Real customer mix must still be monitored because event volume per endpoint varies. |
 | Linux/syslog | Linux endpoint telemetry | OUT OF SCOPE | Linux remains outside the Windows SMB pilot and no Linux agent/intake is claimed. |
-| Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | PFSENSE BACKEND ENABLED / CUSTOMER KIT SIGNING OPEN | The pfSense lab proved native pass/block syslog parsing, relay attestation, encrypted outage retention, restart recovery, deduplication and batch-chain continuity. Tenant entitlement defaults to zero. The API publishes nested relay/device health and generates an explicit unicast listener configuration separately from the one-time activation. The generic kit is reproducible and secret-free but remains unsigned/lab-only. Other vendor parsers are not commercially validated. |
-| Internal Wazuh detector | Receive minimized WarSOC projections and return validated candidate observations | V1 CONTROLLED SHADOW ACTIVE / V2 RELEASE CANDIDATE / PRIMARY DISABLED | An OCI-local, manager-only Wazuh 4.14.7 deployment uses digest-pinned images, private Docker networks, mTLS, signed batches, bounded resources and encrypted spools. Production v1 canaries completed rule 100512 with complete lineage and zero incident promotion. Candidate v2 defines 22 derived-feature-only rules (100611-100632), including three bounded network-device correlation families; all passed native Wazuh 4.14.7 rule execution locally. WarSOC remains authoritative and customer APIs hide detector-vendor provenance. V2 deployment, measured customer precision, full capacity/HA approval and any primary promotion remain gated. |
+| Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | PFSENSE SERVICE ACCEPTED / FIRST DEVICE EVENT OPEN | The earlier pfSense lab proved pass/block parsing, relay attestation, encrypted outage retention, restart recovery, deduplication and chain continuity. The colleague installation additionally proved the exact configuration, one-time activation, Automatic Windows service, source-restricted `192.168.56.1:5514` listener, active backend relay and heartbeat for `host-pfsense-relay-01`. No parseable `filterlog` event/device-status row was captured from that installation, so physical customer-style event acceptance remains open. The kit is still unsigned; other vendors remain parser-only. |
+| Internal Wazuh detector | Receive minimized WarSOC projections and return validated candidate observations | V2 CONTROLLED SHADOW ACTIVE / PRIMARY DISABLED | The OCI-local Wazuh 4.14.7 manager/bridge uses private Docker networks, mTLS, signed batches, bounded resources and encrypted spools. Registry `warsoc-projected-shadow-v2` is active with all 22 families shadow-only. Network canary `NETWORK-WAZUH-CANARY-20260909T181805Z-b59594ca` delivered 31 signed blocked events, fired rule `100630`, rejected the permitted comparison from candidate creation, and created zero Wazuh-derived incidents. WarSOC remains authoritative; measured customer precision, capacity/HA approval and every primary promotion remain gated. |
 | External threat-intelligence enrichment | Third-party reputation/provider lookups | OUT OF SCOPE | No live provider integration is claimed for the current pilot. Native SIEM/FBR/PECA operation does not depend on it. |
 
 ## 23. Failure Map

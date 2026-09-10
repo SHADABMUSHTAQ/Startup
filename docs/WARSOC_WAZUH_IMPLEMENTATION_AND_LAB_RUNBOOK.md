@@ -1,9 +1,9 @@
 # WarSOC Wazuh Implementation and Two-Laptop Lab Runbook
 
-**Status:** OCI-hosted v1 shadow active; v2 derived-feature shadow candidate
-native-engine proven as of 2026-09-08; primary promotion and HA remain disabled
+**Status:** OCI-hosted v2 derived-feature registry active in controlled shadow
+mode as of 2026-09-09; primary promotion and HA remain disabled
 
-**Last updated:** 2026-08-28
+**Last updated:** 2026-09-10
 
 ## 1. Non-Negotiable Boundary
 
@@ -12,15 +12,21 @@ detection engine. It cannot enroll endpoints, choose a tenant, read canonical
 evidence, create FBR or PECA evidence, create customer incidents directly,
 change retention, block an address, or expose a customer dashboard.
 
-The two machines have different roles:
+The original two-machine lab had different roles:
 
 | Machine | Role | Components |
 |---|---|---|
 | WarSOC development/backend machine (Compute A) | Trust and evidence owner | Canonical Mongo SIEM, projector, encrypted dispatch outbox, dispatcher, candidate API, validator and shadow ledger |
 | Colleague's Wazuh laptop (Compute B) | Isolated detector lab | Wazuh 4.14.7 manager/indexer/dashboard, private JSON listener, WarSOC bridge, encrypted local spools and `alerts.json` tailer |
 
-Do not install Wazuh on Compute A. Do not give Compute B MongoDB, Redis, FBR,
-PECA, tenant-admin, archive, or incident credentials.
+For the original two-machine lab, do not install Wazuh on Compute A and do not
+give Compute B MongoDB, Redis, FBR, PECA, tenant-admin, archive, or incident
+credentials.
+
+Production no longer depends on either staff laptop. The Wazuh manager and
+bridge run as isolated, bounded OCI containers on private Docker networks; the
+same credential and authority separation remains mandatory even though Compute
+A and the detector currently share one physical OCI host.
 
 ## 2. Implemented Data Flow
 
@@ -66,8 +72,8 @@ Azure archival.
 | Derived-feature extractor | `app/wazuh_integration/detection_features.py` | Converts supported canonical Windows/relay fields into bounded booleans, numeric values, enumerated families and tenant-safe correlation inputs without exporting raw content |
 | V2 shadow registry | `deploy/wazuh/registry/warsoc-projected-shadow-v2.json` | Pins 22 shadow-only candidate semantics, levels, MITRE mappings, source families and correlation thresholds |
 | V2 Wazuh rules | `deploy/wazuh/rules/warsoc_projected_shadow_rules.xml` | Contains candidate rules 100611-100632 and no-log correlation seeds 100650-100653 |
-| Compute-A services | `docker-compose.prod.yml` profile `wazuh-detection` | Disabled dispatcher and candidate API services |
-| Compute-B service | `docker-compose.wazuh-bridge.yml` | Disabled-by-operator isolated bridge deployment |
+| Compute-A services | `docker-compose.prod.yml` profile `wazuh-detection` | Active dispatcher and private candidate API; mode remains shadow |
+| Detector service | `docker-compose.wazuh-bridge.yml` and production manager/bridge profiles | Active isolated bridge and manager; no public detector port |
 | Canary rule | `deploy/wazuh/rules/warsoc_canary_rules.xml` | Matches only signed Windows 4688 events for `whoami.exe` |
 | Canary registry | `deploy/wazuh/registry/warsoc-lab-canary-v1.json` | Pins category, severity, fields, Wazuh level and reviewed ruleset hash |
 
@@ -188,7 +194,7 @@ fail-closed live-window expiry. The adjacent maintained Docker regression gate
 recorded **233 passed**. Real spool saturation under load, explicit host-firewall
 rules, ruleset upgrade/rollback and production detection quality remain open.
 
-### 7.1 V2 candidate validation - 2026-09-08
+### 7.1 V2 validation and shadow activation - 2026-09-08/09
 
 The expanded candidate was validated as one bounded phase before the final
 repository gate:
@@ -209,7 +215,11 @@ FBR/PECA data are not projected. Production v2 still requires exact
 registry-hash deployment, positive and negative shadow canaries, and rollback
 verification. Do not advertise Linux/auditd, cloud/SaaS, email, web-proxy,
 packet/IDS, memory/EDR, Wazuh-agent FIM/SCA, vulnerability inventory, or the
-complete stock Wazuh catalog as covered.
+complete stock Wazuh catalog as covered. Production canary
+`NETWORK-WAZUH-CANARY-20260909T181805Z-b59594ca` subsequently admitted 32
+signed relay events. Thirty-one blocked events reached Wazuh and produced rule
+`100630`; the permitted comparison produced no candidate, and WarSOC created
+zero Wazuh-derived incidents. Synthetic canary state was removed afterward.
 
 ## 8. Compute-B Preparation
 
@@ -332,7 +342,8 @@ manager/bridge/candidate-API recovery passed. Alert-file identity change was
 reported and processing resumed. A dispatch older than its bounded live window
 expired with signed critical health instead of producing a late detection.
 
-The integration is not production-complete until these artifacts pass:
+The production shadow integration is active. It is not eligible for primary
+ownership until these artifacts pass:
 
 - explicit bridge and candidate API Windows firewall proof on both hosts;
 - physical outbox and both bridge-spool saturation/load behavior (bounded
@@ -343,9 +354,16 @@ The integration is not production-complete until these artifacts pass:
   rule family;
 - measured shadow precision, recall, latency, and operator usefulness.
 
+The operations ledger also retains 249 historical terminal
+`LIVE_WINDOW_EXPIRED` dispatch failures and two bridge-rotation gap records.
+They are visible historical coverage gaps, not items to replay into live
+correlation and not evidence loss from the current canonical WarSOC store.
+
 Only one reviewed generic SIEM rule family may be promoted at a time. Primary
-mode remains blocked by `WAZUH_PRIMARY_APPROVED=false`. Firewall relay enablement
-is a separate acceptance decision and is not implied by Wazuh readiness.
+mode remains blocked by `WAZUH_PRIMARY_APPROVED=false`. The software
+relay-to-Wazuh shadow path is proven, but the colleague relay still needs one
+real pfSense `filterlog` event; service heartbeat alone cannot close physical
+firewall acceptance.
 
 ## 13. Rollback
 

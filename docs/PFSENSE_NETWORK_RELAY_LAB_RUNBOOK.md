@@ -1,10 +1,11 @@
 # WarSOC pfSense Network Relay Lab Runbook
 
-**Status:** `VIRTUAL_LAB_VALIDATED` for pfSense CE 2.8.1; production disabled
-**Last verified:** 2026-08-02
-**Production impact:** None
-**Required production state:** `NETWORK_RELAY_ENABLED=false`
-**Purpose:** Obtain the first real-firewall-OS proof for the disabled network relay
+**Status:** `VIRTUAL_LAB_VALIDATED` for pfSense CE 2.8.1; OCI backend enabled
+behind fail-closed tenant entitlement; customer-style first event pending
+**Last verified:** 2026-09-10 documentation reconciliation
+**Production impact:** Entitled relay path only; Windows endpoint/FBR/PECA paths remain independent
+**Required production state:** `NETWORK_RELAY_ENABLED=true`, with zero seats unless explicitly entitled
+**Purpose:** Preserve the real-firewall-OS proof and define exact customer-device acceptance
 
 ## 1. Acceptance Boundary
 
@@ -209,5 +210,12 @@ Known omissions: system, DNS, DHCP, VPN and authentication log families
 Performance status: NOT VALIDATED
 ```
 
-Do not enable the production feature from this result. The next gate is the
-MikroTik CHR virtual lab, followed by exact physical/customer-device acceptance.
+This historical virtual-lab result did not itself authorize production. The OCI
+backend was enabled later behind fail-closed entitlement. The colleague's
+customer-style relay now passes configuration, one-time activation, Windows
+service, source-restricted listener, entitlement, version and heartbeat checks,
+but has not supplied one parseable pfSense `filterlog` event. Record that state
+as `SERVICE_ACCEPTED_EVENT_PENDING`. Exact physical/customer-device acceptance
+closes only after the event maps to the registered tenant/device and the
+device-status row becomes current. MikroTik, Fortinet and Cisco ASA remain
+separate vendor gates.
