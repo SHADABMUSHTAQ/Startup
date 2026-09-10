@@ -11,6 +11,7 @@ readonly CURRENT_LINK="/opt/warsoc/Startup-backend"
 readonly ARCHIVE="${MIGRATION_DIR}/warsoc-backend-${RELEASE_ID}.tar.gz"
 readonly CHECKSUM_FILE="${ARCHIVE}.sha256"
 readonly SOURCE_ENV="${MIGRATION_DIR}/.env.prod"
+readonly SOURCE_ARCHIVE_RETRIEVAL_ENV="${MIGRATION_DIR}/.env.archive-retrieval"
 readonly SOURCE_KEYS="${MIGRATION_DIR}/keys"
 readonly COMPOSE_FILE="docker-compose.prod.yml"
 readonly COMPOSE_PROJECT="warsoc-production"
@@ -135,6 +136,35 @@ validate_secret_file() {
     fi
 }
 
+validate_archive_retrieval_secret_file() {
+    local env_file="$1"
+    local required_name
+    local required_names=(
+        ARCHIVE_RETRIEVAL_ENABLED
+        AZURE_RETRIEVAL_STAGING_CONTAINER
+        AZURE_RETRIEVAL_SAS_MODE
+        AZURE_STORAGE_ACCOUNT_URL
+    )
+
+    [[ -s "${env_file}" ]] || fail "Archive retrieval environment file is empty: ${env_file}"
+    for required_name in "${required_names[@]}"; do
+        grep -Eq "^${required_name}=.+" "${env_file}" || \
+            fail "Archive retrieval environment is missing ${required_name}."
+    done
+    grep -Eqi '^ARCHIVE_RETRIEVAL_ENABLED=(true|1|yes|on)$' "${env_file}" || \
+        fail "Archive retrieval environment must explicitly enable the worker."
+    if grep -Eqi '^AZURE_RETRIEVAL_SAS_MODE=user_delegation$' "${env_file}"; then
+        for required_name in AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET; do
+            grep -Eq "^${required_name}=.+" "${env_file}" || \
+                fail "User-delegation archive retrieval is missing ${required_name}."
+        done
+    elif ! grep -Eqi '^AZURE_RETRIEVAL_SAS_MODE=service_sas$' "${env_file}"; then
+        fail "Archive retrieval SAS mode must be user_delegation or service_sas."
+    fi
+    grep -Eq '^AZURE_STORAGE_ACCOUNT_URL=https://[^/]+\.blob\.core\.windows\.net/?$' "${env_file}" || \
+        fail "Archive retrieval storage account URL must be an Azure HTTPS blob endpoint."
+}
+
 normalize_container_entrypoint() {
     local entrypoint_path="${RELEASE_DIR}/scripts/entrypoint.sh"
 
@@ -161,6 +191,9 @@ prepare_release() {
     [[ -s "${CHECKSUM_FILE}" ]] || fail "Missing release checksum: ${CHECKSUM_FILE}"
     [[ -d "${SOURCE_KEYS}" ]] || fail "Missing signing-key directory: ${SOURCE_KEYS}"
     validate_secret_file "${SOURCE_ENV}"
+    if [[ -e "${SOURCE_ARCHIVE_RETRIEVAL_ENV}" ]]; then
+        validate_archive_retrieval_secret_file "${SOURCE_ARCHIVE_RETRIEVAL_ENV}"
+    fi
 
     log "Verifying immutable release archive ${RELEASE_ID}."
     (
@@ -184,6 +217,12 @@ prepare_release() {
     normalize_container_entrypoint
 
     install -m 0600 "${SOURCE_ENV}" "${RELEASE_DIR}/.env.prod"
+    if [[ -f "${SOURCE_ARCHIVE_RETRIEVAL_ENV}" ]]; then
+        install -m 0600 "${SOURCE_ARCHIVE_RETRIEVAL_ENV}" \
+            "${RELEASE_DIR}/.env.archive-retrieval"
+    else
+        rm -f "${RELEASE_DIR}/.env.archive-retrieval"
+    fi
     install -d -m 0750 "${RELEASE_DIR}/keys"
     cp -a "${SOURCE_KEYS}/." "${RELEASE_DIR}/keys/"
     chown -R 1000:1000 "${RELEASE_DIR}/keys"
@@ -200,7 +239,7 @@ prepare_release() {
     compose pull mongodb redis nginx
 
     log "Building the exact WarSOC ${RELEASE_ID} application image on ARM64."
-    compose build warsoc-api unified-worker compliance-cron storage-archiver evidence-hold-worker evidence-export-worker
+    compose build warsoc-api unified-worker compliance-cron storage-archiver evidence-hold-worker evidence-export-worker archive-retrieval-worker
 
     log "Starting private persistence services."
     compose up -d mongodb redis
@@ -225,6 +264,10 @@ prepare_release() {
 
     log "Starting the core workers."
     compose up -d unified-worker compliance-cron storage-archiver evidence-hold-worker evidence-export-worker
+    if [[ -f .env.archive-retrieval ]]; then
+        log "Starting the explicitly enabled archive retrieval worker."
+        compose --profile archive-retrieval up -d archive-retrieval-worker
+    fi
     compose ps
 
     log "Prepare stage passed. Change ${API_HOST} A record to ${PUBLIC_IP}, then run:"

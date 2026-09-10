@@ -1,13 +1,22 @@
 import asyncio
+import hashlib
+import hmac
 import logging
 import os
 import socket
 import uuid
 from datetime import timedelta
+from urllib.parse import urlparse
 
+from azure.core.utils import parse_connection_string
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.identity.aio import DefaultAzureCredential
-from azure.storage.blob import RehydratePriority, StandardBlobTier
+from azure.storage.blob import (
+    BlobSasPermissions,
+    RehydratePriority,
+    StandardBlobTier,
+    generate_blob_sas,
+)
 from azure.storage.blob.aio import BlobServiceClient
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
@@ -41,6 +50,14 @@ def _safe_segment(value: str) -> str:
     return "".join(character for character in value if character.isalnum() or character in {"-", "_"})
 
 
+async def _stream_blob_sha256(blob_client) -> str:
+    downloader = await blob_client.download_blob(max_concurrency=1)
+    digest = hashlib.sha256()
+    async for chunk in downloader.chunks():
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
 async def _claim_approved_request(db, worker_id: str) -> dict | None:
     now = utc_now()
     return await db["archive_retrieval_requests"].find_one_and_update(
@@ -71,7 +88,9 @@ async def _start_request_copies(
     db,
     request_doc: dict,
     *,
-    source_authorization: str,
+    source_authorization: str | None,
+    source_account_name: str | None = None,
+    source_account_key: str | None = None,
 ) -> None:
     staging_container_name = _staging_container_name()
     if not staging_container_name:
@@ -124,16 +143,33 @@ async def _start_request_copies(
             copy_status = str(properties.copy.status or "").lower()
             copy_id = properties.copy.id
         except ResourceNotFoundError:
-            result = await destination_blob.start_copy_from_url(
-                source_blob.url,
-                metadata={
+            source_url = source_blob.url
+            if source_account_name and source_account_key:
+                source_sas = generate_blob_sas(
+                    account_name=source_account_name,
+                    container_name=source_container_name,
+                    blob_name=source_blob_name,
+                    account_key=source_account_key,
+                    permission=BlobSasPermissions(read=True),
+                    start=utc_now() - timedelta(minutes=5),
+                    expiry=utc_now() + timedelta(hours=24),
+                    protocol="https",
+                )
+                source_url = f"{source_url}?{source_sas}"
+            copy_options = {
+                "metadata": {
                     "request_id": request_doc["request_id"],
                     "archive_key": archive_key,
                     "sha256": str(entry.get("sha256") or ""),
                 },
-                standard_blob_tier=StandardBlobTier.COOL,
-                rehydrate_priority=RehydratePriority.STANDARD,
-                source_authorization=source_authorization,
+                "standard_blob_tier": StandardBlobTier.COOL,
+                "rehydrate_priority": RehydratePriority.STANDARD,
+            }
+            if source_authorization:
+                copy_options["source_authorization"] = source_authorization
+            result = await destination_blob.start_copy_from_url(
+                source_url,
+                **copy_options,
             )
             copy_status = str(result.get("copy_status") or "pending").lower()
             copy_id = result.get("copy_id")
@@ -175,7 +211,9 @@ async def _refresh_pending_request(
     db,
     request_doc: dict,
     *,
-    source_authorization: str,
+    source_authorization: str | None,
+    source_account_name: str | None = None,
+    source_account_key: str | None = None,
 ) -> None:
     items = request_doc.get("items") or []
     if not items:
@@ -184,12 +222,15 @@ async def _refresh_pending_request(
             db,
             request_doc,
             source_authorization=source_authorization,
+            source_account_name=source_account_name,
+            source_account_key=source_account_key,
         )
         return
 
     refreshed = []
     all_ready = True
     failed = False
+    failure_code = None
     actual_bytes = 0
     for item in items:
         destination = blob_service.get_blob_client(
@@ -202,9 +243,30 @@ async def _refresh_pending_request(
             all_ready = False
         if status in {"failed", "aborted"}:
             failed = True
+            failure_code = "AZURE_COPY_FAILED"
         size = int(getattr(properties, "size", 0) or 0)
         actual_bytes += size
-        refreshed.append({**item, "status": status, "bytes": size})
+        refreshed_item = {**item, "status": status, "bytes": size}
+        if status == "success":
+            expected_sha256 = str(item.get("sha256") or "").strip().lower()
+            if len(expected_sha256) != 64 or any(
+                character not in "0123456789abcdef" for character in expected_sha256
+            ):
+                failed = True
+                failure_code = "ARCHIVE_SHA256_INVALID"
+                refreshed_item["status"] = "integrity_failed"
+            else:
+                observed_sha256 = str(item.get("verified_sha256") or "").strip().lower()
+                if not hmac.compare_digest(observed_sha256, expected_sha256):
+                    observed_sha256 = await _stream_blob_sha256(destination)
+                if not hmac.compare_digest(observed_sha256, expected_sha256):
+                    failed = True
+                    failure_code = "STAGED_SHA256_MISMATCH"
+                    refreshed_item["status"] = "integrity_failed"
+                else:
+                    refreshed_item["verified_sha256"] = observed_sha256
+                    refreshed_item["integrity_status"] = "verified"
+        refreshed.append(refreshed_item)
 
     now = utc_now()
     if failed:
@@ -216,6 +278,7 @@ async def _refresh_pending_request(
                     "items": refreshed,
                     "updated_at": now,
                     "failed_at": now,
+                    "last_error_internal": failure_code or "ARCHIVE_RETRIEVAL_FAILED",
                 },
                 "$push": {
                     "history": {
@@ -330,8 +393,26 @@ async def run_worker() -> None:
 
     mongo_client = AsyncIOMotorClient(settings.mongodb_uri)
     db = mongo_client[settings.mongodb_db_name]
-    credential = DefaultAzureCredential()
-    blob_service = BlobServiceClient(account_url=account_url, credential=credential)
+    sas_mode = os.getenv("AZURE_RETRIEVAL_SAS_MODE", "user_delegation").strip().lower()
+    credential = None
+    source_account_name = None
+    source_account_key = None
+    if sas_mode == "user_delegation":
+        credential = DefaultAzureCredential()
+        blob_service = BlobServiceClient(account_url=account_url, credential=credential)
+    elif sas_mode == "service_sas":
+        connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").strip()
+        if not connection_string:
+            raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING is required for service SAS")
+        parsed = parse_connection_string(connection_string)
+        source_account_name = str(parsed.get("accountname") or "")
+        source_account_key = str(parsed.get("accountkey") or "")
+        account_url_name = urlparse(account_url).netloc.split(".", 1)[0]
+        if source_account_name != account_url_name or not source_account_key:
+            raise RuntimeError("Azure storage connection identity does not match the account URL")
+        blob_service = BlobServiceClient.from_connection_string(connection_string)
+    else:
+        raise RuntimeError("Unsupported archive retrieval SAS mode")
     worker_id = f"archive-retrieval:{socket.gethostname()}:{uuid.uuid4().hex[:8]}"
     interval = _poll_interval_seconds()
     try:
@@ -339,12 +420,17 @@ async def run_worker() -> None:
             try:
                 claimed = await _claim_approved_request(db, worker_id)
                 if claimed is not None:
-                    token = await credential.get_token("https://storage.azure.com/.default")
+                    source_authorization = None
+                    if credential is not None:
+                        token = await credential.get_token("https://storage.azure.com/.default")
+                        source_authorization = f"Bearer {token.token}"
                     await _start_request_copies(
                         blob_service,
                         db,
                         claimed,
-                        source_authorization=f"Bearer {token.token}",
+                        source_authorization=source_authorization,
+                        source_account_name=source_account_name,
+                        source_account_key=source_account_key,
                     )
 
                 pending = await db["archive_retrieval_requests"].find(
@@ -352,12 +438,19 @@ async def run_worker() -> None:
                 ).sort("created_at", 1).limit(20).to_list(length=20)
                 for request_doc in pending:
                     try:
-                        token = await credential.get_token("https://storage.azure.com/.default")
+                        source_authorization = None
+                        if credential is not None:
+                            token = await credential.get_token(
+                                "https://storage.azure.com/.default"
+                            )
+                            source_authorization = f"Bearer {token.token}"
                         await _refresh_pending_request(
                             blob_service,
                             db,
                             request_doc,
-                            source_authorization=f"Bearer {token.token}",
+                            source_authorization=source_authorization,
+                            source_account_name=source_account_name,
+                            source_account_key=source_account_key,
                         )
                     except Exception as exc:
                         logger.exception(
@@ -379,7 +472,8 @@ async def run_worker() -> None:
             await asyncio.sleep(interval)
     finally:
         await blob_service.close()
-        await credential.close()
+        if credential is not None:
+            await credential.close()
         mongo_client.close()
 
 

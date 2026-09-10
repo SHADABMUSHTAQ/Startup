@@ -1,5 +1,8 @@
+import base64
+import hashlib
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,6 +18,63 @@ from app.utils.archive_retrieval import (
 )
 from app.workers import archive_retrieval_worker
 from tests.helpers import provision_and_login_admin
+
+
+@pytest.mark.asyncio
+async def test_service_sas_download_link_is_https_read_only_and_short_lived(monkeypatch):
+    account_key = base64.b64encode(b"warsoc-test-key-material-32byte").decode("ascii")
+    monkeypatch.setenv("AZURE_RETRIEVAL_SAS_MODE", "service_sas")
+    monkeypatch.setenv(
+        "AZURE_STORAGE_ACCOUNT_URL",
+        "https://warsocevidence90prod.blob.core.windows.net",
+    )
+    monkeypatch.setenv(
+        "AZURE_STORAGE_CONNECTION_STRING",
+        "DefaultEndpointsProtocol=https;"
+        "AccountName=warsocevidence90prod;"
+        f"AccountKey={account_key};"
+        "EndpointSuffix=core.windows.net",
+    )
+
+    links, expires_at = await archive_retrieval._archive_download_links(
+        [
+            {
+                "archive_key": "archive-1",
+                "collection": "siem_cold_vault",
+                "staging_container": "warsoc-retrieval-staging",
+                "staging_blob_name": "tenant/request/archive.json",
+                "sha256": "a" * 64,
+                "bytes": 123,
+            }
+        ],
+        30,
+    )
+
+    assert len(links) == 1
+    parsed = urlparse(links[0]["url"])
+    query = parse_qs(parsed.query)
+    assert parsed.scheme == "https"
+    assert query["sp"] == ["r"]
+    assert query["spr"] == ["https"]
+    assert timedelta(minutes=29) < expires_at - datetime.now(timezone.utc) <= timedelta(
+        minutes=30
+    )
+
+
+@pytest.mark.asyncio
+async def test_service_sas_rejects_mismatched_storage_identity(monkeypatch):
+    monkeypatch.setenv("AZURE_RETRIEVAL_SAS_MODE", "service_sas")
+    monkeypatch.setenv(
+        "AZURE_STORAGE_ACCOUNT_URL",
+        "https://warsocevidence90prod.blob.core.windows.net",
+    )
+    monkeypatch.setenv(
+        "AZURE_STORAGE_CONNECTION_STRING",
+        "DefaultEndpointsProtocol=https;AccountName=wrongaccount;AccountKey=dGVzdA==;",
+    )
+
+    with pytest.raises(RuntimeError, match="does not match"):
+        await archive_retrieval._archive_download_links([], 30)
 
 
 def test_hot_search_is_exact_tenant_scoped_and_never_uses_regex():
@@ -334,3 +394,190 @@ async def test_worker_uses_server_side_copy_with_source_authorization(monkeypatc
     assert kwargs["source_authorization"] == "Bearer test-token"
     assert kwargs["standard_blob_tier"] == archive_retrieval_worker.StandardBlobTier.COOL
     assert destination.start_copy_from_url.await_args.args[0] == source.url
+
+
+@pytest.mark.asyncio
+async def test_worker_service_sas_copy_source_is_read_only(monkeypatch):
+    destination = SimpleNamespace(
+        get_blob_properties=AsyncMock(
+            side_effect=archive_retrieval_worker.ResourceNotFoundError("missing")
+        ),
+        start_copy_from_url=AsyncMock(
+            return_value={"copy_status": "pending", "copy_id": "copy-1"}
+        ),
+    )
+    source = SimpleNamespace(url="https://account.blob.core.windows.net/source/blob.json")
+    staging = SimpleNamespace(
+        get_container_properties=AsyncMock(return_value={}),
+        get_blob_client=lambda _name: destination,
+    )
+
+    class FakeBlobService:
+        def get_container_client(self, _name):
+            return staging
+
+        def get_blob_client(self, _container, _name):
+            return source
+
+    class FakeCursor:
+        def sort(self, *_args):
+            return self
+
+        def limit(self, _value):
+            return self
+
+        async def to_list(self, length):
+            return [
+                {
+                    "archive_key": "archive-1",
+                    "collection": "siem_cold_vault",
+                    "container_name": "source",
+                    "blob_name": "blob.json",
+                    "sha256": "b" * 64,
+                    "blob_size_bytes": 100,
+                }
+            ][:length]
+
+    db = {
+        "storage_archives": SimpleNamespace(find=lambda _query: FakeCursor()),
+        "archive_retrieval_requests": SimpleNamespace(update_one=AsyncMock()),
+    }
+    monkeypatch.setenv("AZURE_RETRIEVAL_STAGING_CONTAINER", "staging")
+
+    await archive_retrieval_worker._start_request_copies(
+        FakeBlobService(),
+        db,
+        {
+            "request_id": "ARR-1",
+            "tenant_id": "TENANT-A",
+            "collections": ["siem_cold_vault"],
+            "start_at": datetime.now(timezone.utc) - timedelta(days=30),
+            "end_at": datetime.now(timezone.utc),
+        },
+        source_authorization=None,
+        source_account_name="account",
+        source_account_key=base64.b64encode(b"warsoc-test-key-material-32byte").decode(
+            "ascii"
+        ),
+    )
+
+    source_url = destination.start_copy_from_url.await_args.args[0]
+    query = parse_qs(urlparse(source_url).query)
+    assert query["sp"] == ["r"]
+    assert query["spr"] == ["https"]
+    assert "source_authorization" not in destination.start_copy_from_url.await_args.kwargs
+
+
+class _ChunkedDownload:
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    async def chunks(self):
+        for chunk in self._chunks:
+            yield chunk
+
+
+class _RetrievalBlobService:
+    def __init__(self, destination):
+        self.destination = destination
+
+    def get_blob_client(self, _container, _name):
+        return self.destination
+
+
+@pytest.mark.asyncio
+async def test_worker_verifies_staged_sha256_before_ready():
+    payload = b"bounded archive payload"
+    expected_sha256 = hashlib.sha256(payload).hexdigest()
+    destination = SimpleNamespace(
+        get_blob_properties=AsyncMock(
+            return_value=SimpleNamespace(
+                copy=SimpleNamespace(status="success"),
+                size=len(payload),
+            )
+        ),
+        download_blob=AsyncMock(return_value=_ChunkedDownload([payload[:7], payload[7:]])),
+    )
+    requests = SimpleNamespace(
+        update_one=AsyncMock(),
+        find_one_and_update=AsyncMock(return_value={"request_id": "ARR-READY"}),
+    )
+    usage = SimpleNamespace(update_one=AsyncMock())
+    db = {
+        "archive_retrieval_requests": requests,
+        "archive_retrieval_usage": usage,
+    }
+
+    await archive_retrieval_worker._refresh_pending_request(
+        _RetrievalBlobService(destination),
+        db,
+        {
+            "request_id": "ARR-READY",
+            "tenant_id": "TENANT-A",
+            "status": "PENDING_REHYDRATION",
+            "items": [
+                {
+                    "archive_key": "archive-1",
+                    "collection": "siem_cold_vault",
+                    "staging_container": "staging",
+                    "staging_blob_name": "tenant/request/archive.json",
+                    "sha256": expected_sha256,
+                }
+            ],
+        },
+        source_authorization="Bearer test-token",
+    )
+
+    ready_update = requests.find_one_and_update.await_args.args[1]["$set"]
+    assert ready_update["status"] == "READY"
+    assert ready_update["items"][0]["integrity_status"] == "verified"
+    assert ready_update["items"][0]["verified_sha256"] == expected_sha256
+    assert destination.download_blob.await_args.kwargs == {"max_concurrency": 1}
+    usage.update_one.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_worker_fails_closed_when_staged_sha256_mismatches():
+    destination = SimpleNamespace(
+        get_blob_properties=AsyncMock(
+            return_value=SimpleNamespace(
+                copy=SimpleNamespace(status="success"),
+                size=8,
+            )
+        ),
+        download_blob=AsyncMock(return_value=_ChunkedDownload([b"tampered"])),
+    )
+    requests = SimpleNamespace(
+        update_one=AsyncMock(),
+        find_one_and_update=AsyncMock(),
+    )
+    db = {
+        "archive_retrieval_requests": requests,
+        "archive_retrieval_usage": SimpleNamespace(update_one=AsyncMock()),
+    }
+
+    await archive_retrieval_worker._refresh_pending_request(
+        _RetrievalBlobService(destination),
+        db,
+        {
+            "request_id": "ARR-TAMPERED",
+            "tenant_id": "TENANT-A",
+            "status": "PENDING_REHYDRATION",
+            "items": [
+                {
+                    "archive_key": "archive-1",
+                    "collection": "siem_cold_vault",
+                    "staging_container": "staging",
+                    "staging_blob_name": "tenant/request/archive.json",
+                    "sha256": "a" * 64,
+                }
+            ],
+        },
+        source_authorization="Bearer test-token",
+    )
+
+    failed_update = requests.update_one.await_args.args[1]["$set"]
+    assert failed_update["status"] == "FAILED"
+    assert failed_update["items"][0]["status"] == "integrity_failed"
+    assert failed_update["last_error_internal"] == "STAGED_SHA256_MISMATCH"
+    requests.find_one_and_update.assert_not_awaited()

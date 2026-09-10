@@ -79,6 +79,31 @@ def test_oci_release_starts_evidence_governance_workers():
     ) in deploy
 
 
+def test_archive_retrieval_identity_is_isolated_and_started_only_when_explicitly_enabled():
+    compose = _read("docker-compose.prod.yml")
+    deploy = _read("deploy/oci/deploy_warsoc_release.sh")
+
+    assert compose.count("WARSOC_ARCHIVE_RETRIEVAL_ENV_FILE") == 2
+    api_block = compose.split("  warsoc-api:", 1)[1].split("\n  unified-worker:", 1)[0]
+    retrieval_block = compose.split("  archive-retrieval-worker:", 1)[1].split(
+        "\n  mongodb:", 1
+    )[0]
+    hold_block = compose.split("  evidence-hold-worker:", 1)[1].split(
+        "\n  archive-retrieval-worker:", 1
+    )[0]
+    assert "WARSOC_ARCHIVE_RETRIEVAL_ENV_FILE" in api_block
+    assert "WARSOC_ARCHIVE_RETRIEVAL_ENV_FILE" in retrieval_block
+    assert "WARSOC_ARCHIVE_RETRIEVAL_ENV_FILE" not in hold_block
+    assert "required: false" in compose
+    assert "container_name: warsoc-archive-retrieval-prod" in compose
+    assert 'profiles: ["archive-retrieval"]' in compose
+    assert 'SOURCE_ARCHIVE_RETRIEVAL_ENV="${MIGRATION_DIR}/.env.archive-retrieval"' in deploy
+    assert "validate_archive_retrieval_secret_file" in deploy
+    assert "AZURE_RETRIEVAL_SAS_MODE=user_delegation" in deploy
+    assert "AZURE_RETRIEVAL_SAS_MODE=service_sas" in deploy
+    assert "compose --profile archive-retrieval up -d archive-retrieval-worker" in deploy
+
+
 def test_backend_contains_only_the_cdn_agent_download_route():
     orchestration = _read("app/routes/agent_orchestration.py")
     config = _read("app/config/config.py")

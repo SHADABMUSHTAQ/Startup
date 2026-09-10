@@ -19,6 +19,8 @@ services:
     logging: *warsoc-logging
     env_file:
       - ${WARSOC_ENV_FILE:-.env.prod}
+      - path: ${WARSOC_ARCHIVE_RETRIEVAL_ENV_FILE:-.env.archive-retrieval}
+        required: false
     environment:
       APP_ENV: production
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS required}
@@ -415,16 +417,12 @@ services:
     logging: *warsoc-logging
     env_file:
       - ${WARSOC_ENV_FILE:-.env.prod}
+      - path: ${WARSOC_ARCHIVE_RETRIEVAL_ENV_FILE:-.env.archive-retrieval}
+        required: false
     environment:
       APP_ENV: production
       MONGODB_URI: mongodb://${MONGO_USER:?MONGO_USER required}:${MONGO_PASSWORD:?MONGO_PASSWORD required}@mongodb:27017/${MONGODB_DB_NAME:?MONGODB_DB_NAME required}?authSource=admin
       MONGODB_DB_NAME: ${MONGODB_DB_NAME:?MONGODB_DB_NAME required}
-      ARCHIVE_RETRIEVAL_ENABLED: ${ARCHIVE_RETRIEVAL_ENABLED:-false}
-      AZURE_RETRIEVAL_STAGING_CONTAINER: ${AZURE_RETRIEVAL_STAGING_CONTAINER:-warsoc-retrieval-staging}
-      AZURE_STORAGE_ACCOUNT_URL: ${AZURE_STORAGE_ACCOUNT_URL:-}
-      AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
-      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
-      AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
     read_only: true
     tmpfs:
       - /tmp

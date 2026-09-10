@@ -4,6 +4,8 @@ import uuid
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
+from azure.core.utils import parse_connection_string
+from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pymongo import ReturnDocument
@@ -335,19 +337,74 @@ async def approve_archive_retrieval(
     return serialize_retrieval(result)
 
 
-async def _user_delegation_links(items: list[dict], expires_minutes: int) -> tuple[list[dict], datetime]:
-    if os.getenv("AZURE_RETRIEVAL_SAS_MODE", "user_delegation").strip().lower() != "user_delegation":
-        raise RuntimeError("User-delegation SAS is required")
+def _sas_link_items(
+    items: list[dict],
+    *,
+    account_url: str,
+    sas_factory,
+) -> list[dict]:
+    links = []
+    for item in items:
+        container_name = str(item.get("staging_container") or "")
+        blob_name = str(item.get("staging_blob_name") or "")
+        if not container_name or not blob_name:
+            continue
+        sas = sas_factory(container_name, blob_name)
+        links.append(
+            {
+                "archive_key": item.get("archive_key"),
+                "collection": item.get("collection"),
+                "sha256": item.get("sha256"),
+                "bytes": item.get("bytes"),
+                "url": f"{account_url}/{container_name}/{blob_name}?{sas}",
+            }
+        )
+    return links
+
+
+async def _archive_download_links(
+    items: list[dict], expires_minutes: int
+) -> tuple[list[dict], datetime]:
+    sas_mode = os.getenv("AZURE_RETRIEVAL_SAS_MODE", "user_delegation").strip().lower()
     account_url = os.getenv("AZURE_STORAGE_ACCOUNT_URL", "").strip().rstrip("/")
     if not account_url or urlparse(account_url).scheme != "https":
         raise RuntimeError("AZURE_STORAGE_ACCOUNT_URL must be configured with HTTPS")
 
-    from azure.identity.aio import DefaultAzureCredential
-    from azure.storage.blob import BlobSasPermissions, generate_blob_sas
-    from azure.storage.blob.aio import BlobServiceClient
-
     now = utc_now()
     expires_at = now + timedelta(minutes=expires_minutes)
+    account_name = urlparse(account_url).netloc.split(".", 1)[0]
+
+    if sas_mode == "service_sas":
+        connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").strip()
+        if not connection_string:
+            raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING is required for service SAS")
+        parsed = parse_connection_string(connection_string)
+        configured_name = str(parsed.get("accountname") or "")
+        account_key = str(parsed.get("accountkey") or "")
+        if configured_name != account_name or not account_key:
+            raise RuntimeError("Azure storage connection identity does not match the account URL")
+        links = _sas_link_items(
+            items,
+            account_url=account_url,
+            sas_factory=lambda container, blob: generate_blob_sas(
+                account_name=account_name,
+                container_name=container,
+                blob_name=blob,
+                account_key=account_key,
+                permission=BlobSasPermissions(read=True),
+                start=now - timedelta(minutes=5),
+                expiry=expires_at,
+                protocol="https",
+            ),
+        )
+        return links, expires_at
+
+    if sas_mode != "user_delegation":
+        raise RuntimeError("Unsupported archive retrieval SAS mode")
+
+    from azure.identity.aio import DefaultAzureCredential
+    from azure.storage.blob.aio import BlobServiceClient
+
     credential = DefaultAzureCredential()
     client = BlobServiceClient(account_url=account_url, credential=credential)
     try:
@@ -355,32 +412,20 @@ async def _user_delegation_links(items: list[dict], expires_minutes: int) -> tup
             key_start_time=now - timedelta(minutes=5),
             key_expiry_time=expires_at + timedelta(minutes=5),
         )
-        account_name = urlparse(account_url).netloc.split(".", 1)[0]
-        links = []
-        for item in items:
-            container_name = str(item.get("staging_container") or "")
-            blob_name = str(item.get("staging_blob_name") or "")
-            if not container_name or not blob_name:
-                continue
-            sas = generate_blob_sas(
+        links = _sas_link_items(
+            items,
+            account_url=account_url,
+            sas_factory=lambda container, blob: generate_blob_sas(
                 account_name=account_name,
-                container_name=container_name,
-                blob_name=blob_name,
+                container_name=container,
+                blob_name=blob,
                 user_delegation_key=delegation_key,
                 permission=BlobSasPermissions(read=True),
                 start=now - timedelta(minutes=5),
                 expiry=expires_at,
                 protocol="https",
-            )
-            links.append(
-                {
-                    "archive_key": item.get("archive_key"),
-                    "collection": item.get("collection"),
-                    "sha256": item.get("sha256"),
-                    "bytes": item.get("bytes"),
-                    "url": f"{account_url}/{container_name}/{blob_name}?{sas}",
-                }
-            )
+            ),
+        )
         return links, expires_at
     finally:
         await client.close()
@@ -410,7 +455,9 @@ async def issue_archive_download_links(
 
     expires_minutes = max(5, min(60, int(os.getenv("ARCHIVE_RETRIEVAL_SAS_MINUTES", "30"))))
     try:
-        links, sas_expires_at = await _user_delegation_links(doc.get("items") or [], expires_minutes)
+        links, sas_expires_at = await _archive_download_links(
+            doc.get("items") or [], expires_minutes
+        )
     except Exception as exc:
         logger.exception("Unable to issue archive download links for %s", request_id)
         raise HTTPException(
