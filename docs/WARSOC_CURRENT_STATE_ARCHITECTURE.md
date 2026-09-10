@@ -1602,10 +1602,11 @@ a commercial Azure identity must replace this with user-delegation SAS; that is
 an identity-hardening task, not a reason to proxy data through FastAPI.
 
 The frontend request/status/download interface is implemented against the plural
-`/api/v1/archive-retrievals` contract but its production browser enablement and
-role-by-role click-through remain separate frontend evidence. Backend execution
-is active. Archive retrieval is collection/date scoped and is not embedded as a
-case-scoped operation.
+`/api/v1/archive-retrievals` contract. Frontend commit `caa10bc` enables that raw
+view in the production bundle for roles with `archive.retrieve`; the final visual
+design and authenticated role-by-role browser click-through remain separate
+frontend acceptance. Backend execution is active. Archive retrieval is
+collection/date scoped and is not embedded as a case-scoped operation.
 
 For the selected clean production launch, legacy pilot archives are not attached to the new tenant database or retrieval ledger. A locked legacy pilot container remains isolated until its policy expires; it cannot be destroyed early merely because the pilot data is no longer commercially required.
 
@@ -1944,7 +1945,7 @@ Status meanings:
 | MongoDB hot tier | Seven-day operational store and tenant-scoped indexes | PROVEN baseline / CANDIDATE SEARCH FIX | Live-query index use is proven. Backend `d92fb65` removes the unindexed `_id` tie-breaker that caused the seven-day search to examine 471,571 matching records. Repeat the authenticated seven-day request after deployment and require a clear margin below the browser timeout. |
 | Daily storage archiver | Archive-before-delete transaction from Mongo to Azure | PROVEN | Service is running; latest cycle completed without errors. It verifies upload/hash/immutability/ledger before exact Mongo deletion. |
 | Azure immutable evidence | Private blob storage, SHA companion and locked retention | PROVEN | Runtime probe verified ledger, SHA-256, immutability and actual Azure retrieval for SIEM, alerts, FBR and PECA. |
-| Archive retrieval | Asynchronous server-side copy and direct Azure download | BACKEND PRODUCTION-PROVEN / FRONTEND ACCEPTANCE OPEN | OCI release `7e9f00d` enables the isolated worker. Canary `ARCHIVE-RETRIEVAL-CANARY-20260910T133007Z-413b5717` proved allowance reservation, server-side copy, streamed SHA verification, `READY`, one direct read-only SAS download, and cleanup with the WORM source untouched. Current SAS mode is the documented temporary `service_sas` fallback; user delegation and production browser click-through remain open. |
+| Archive retrieval | Asynchronous server-side copy and direct Azure download | BACKEND PRODUCTION-PROVEN / RAW FRONTEND LIVE / DESIGN ACCEPTANCE OPEN | OCI release `7e9f00d` enables the isolated worker. Canary `ARCHIVE-RETRIEVAL-CANARY-20260910T133007Z-413b5717` proved allowance reservation, server-side copy, streamed SHA verification, `READY`, one direct read-only SAS download, and cleanup with the WORM source untouched. Frontend `caa10bc` exposes the role-gated request/status/download view in production. Current SAS mode is the documented temporary `service_sas` fallback; user delegation, designer polish, and authenticated role-by-role browser acceptance remain open. |
 | CSV export | Bounded detailed export from hot operational data | PROVEN | Current production CSV returned HTTP 200 and 204,350 bytes; validator CSV also passed. Historical export requires the separate retrieval workflow. |
 | PDF report | Human-readable compliance summary | PROVEN | Current PECA PDF returned HTTP 200 and a valid PDF payload. The PDF itself is not cryptographically signed. |
 | Email daemon | Queue, retry, SMTP delivery and DLQ | OPTIONAL/PARTIAL | Security-alert email is disabled. Quote/contact records persist before email queueing. Team invitations return a secure manual handoff link even when SMTP is unavailable. Current SMTP quota/delivery must not be assumed. |

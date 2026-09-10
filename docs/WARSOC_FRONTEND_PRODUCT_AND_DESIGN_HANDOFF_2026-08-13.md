@@ -374,11 +374,14 @@ Show metadata only: no packet payloads, firewall credentials or firewall policy
 editing. Parsers exist for pfSense, Fortinet, Cisco ASA and MikroTik, but do not
 claim production support before each real-device test passes.
 
-## 13. Archive Requests - Design, Keep Hidden
+## 13. Archive Requests - Raw Workflow Live, Design Pending
 
-Hide while either `VITE_ARCHIVE_RETRIEVAL_ENABLED=false` in the frontend or
-`ARCHIVE_RETRIEVAL_ENABLED=false` in the backend. Archive retrieval is scoped
-by allowed collections and date range, not by evidence case ID.
+Frontend commit `caa10bc` exposes the raw production workflow to users whose
+role has `archive.retrieve`; OCI enables the accepted backend path separately.
+Keep both feature flags fail-closed in unaccepted environments. Archive
+retrieval is scoped by allowed collections and date range, not by evidence case
+ID. The frontend designer should improve presentation and states without
+changing these API, role, source, allowance, or direct-download contracts.
 
 User selects allowed source, date range and reason. Show estimated size and:
 

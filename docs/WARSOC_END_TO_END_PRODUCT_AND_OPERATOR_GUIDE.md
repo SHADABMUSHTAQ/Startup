@@ -235,9 +235,9 @@ The archiver runs continuously on a daily interval in production Compose. Produc
 6. Deletes only the exact successfully archived MongoDB records.
 7. Leaves records in MongoDB when upload, immutability, or ledger verification fails.
 
-Normal API routes never download or stream archive bytes. An opt-in archive retrieval ledger accepts a tenant-scoped date/source request, applies the one-job/10-GiB monthly included allowance atomically, and sends wider or repeated requests for manual approval. A separate 256-MiB worker performs Azure server-side rehydration into a private temporary container. When every copy is ready, the API issues short-lived read-only user-delegation SAS URLs and the expected SHA-256 directly to the authorized browser.
+Normal API routes never download or stream archive bytes. An opt-in archive retrieval ledger accepts a tenant-scoped date/source request, applies the one-job/10-GiB monthly included allowance atomically, and sends wider or repeated requests for manual approval. A separate 256-MiB worker performs Azure server-side rehydration into a private temporary container. When every copy is ready, the API issues short-lived HTTPS-only read-only SAS URLs and the expected SHA-256 directly to the authorized browser. Production currently uses the explicitly accepted service-SAS fallback; user delegation remains the preferred future identity mode.
 
-`ARCHIVE_RETRIEVAL_ENABLED` remains false until the staging container, three-day lifecycle cleanup, Azure identity/RBAC, user-delegation permission, exact retention containers, and a real rehydration test pass. The normal dashboard and CSV/PDF routes are hot-data operations; they do not proxy multi-GiB historical archives through FastAPI.
+The source default for `ARCHIVE_RETRIEVAL_ENABLED` remains false. OCI enables it explicitly because the staging container, three-day lifecycle cleanup, bounded worker, authorization, allowance, exact retention routing, server-side copy, hash validation, direct download, and cleanup passed the production canary. The normal dashboard and CSV/PDF routes remain hot-data operations; they do not proxy multi-GiB historical archives through FastAPI.
 
 ## 12. Optional network syslog path
 

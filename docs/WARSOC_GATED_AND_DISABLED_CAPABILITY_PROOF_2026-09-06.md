@@ -6,6 +6,11 @@
 **Purpose:** Prove which capabilities are active, deliberately disabled, or
 genuinely unfinished without enabling them in production.
 
+> Historical snapshot: archive retrieval was enabled and production-proven on
+> 2026-09-10, and raw frontend commit `caa10bc` now exposes its role-gated view.
+> Use `WARSOC_CURRENT_STATE_ARCHITECTURE.md` for current status; the evidence
+> below remains the accurate 2026-09-06 pre-activation record.
+
 ## 1. Proof Method
 
 Each conclusion uses the strongest applicable evidence:
