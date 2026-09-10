@@ -2,7 +2,18 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2, Clock3, Copy, Database, Download, FileSpreadsheet, KeyRound, RadioTower, RefreshCw, ShieldCheck, Upload, X } from "lucide-react";
 import apiClient from "../../../api/apiClient";
 import AsyncState from "../../../components/AsyncState";
-import { API_ROUTES, archiveSourceOptions, buildArchiveRetrievalPayload, safeDownloadUrl } from "../../../contracts/backendContracts";
+import {
+  API_ROUTES,
+  archiveActionErrorMessage,
+  archiveSourceOptions,
+  archiveStatusInfo,
+  buildArchiveRetrievalPayload,
+  formatArchiveBytes,
+  formatArchiveDateRange,
+  formatArchiveSources,
+  formatArchiveTimestamp,
+  safeDownloadUrl,
+} from "../../../contracts/backendContracts";
 import useRole from "../../../hooks/useRole";
 import EndpointTrust from "./EndpointTrust";
 import "./OperationsViews.css";
@@ -294,7 +305,7 @@ function RelayView() {
   </section>;
 }
 
-function ArchiveView() {
+export function ArchiveView() {
   const { role } = useRole();
   const [items, setItems] = useState([]);
   const [sources, setSources] = useState([]);
@@ -302,6 +313,7 @@ function ArchiveView() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [links, setLinks] = useState([]);
+  const busyRef = useRef(false);
   const load = useCallback(async () => {
     setState("loading");
     try {
@@ -319,6 +331,8 @@ function ArchiveView() {
 
   const request = async (event) => {
     event.preventDefault();
+    if (busyRef.current) return;
+    busyRef.current = true;
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     setBusy(true);
@@ -330,37 +344,43 @@ function ArchiveView() {
       formElement.reset();
       setMessage("Archive request submitted.");
       await load();
-    } catch {
-      setMessage("The archive request could not be submitted. Check the date range and selected source, then retry.");
-    } finally { setBusy(false); }
+    } catch (error) {
+      setMessage(error?.response ? archiveActionErrorMessage(error) : error?.message || archiveActionErrorMessage(error));
+    } finally { busyRef.current = false; setBusy(false); }
   };
   const download = async (id) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setLinks([]);
     try {
       const { data } = await apiClient.post(API_ROUTES.archiveRetrievalDownloads(id));
-      const next = (data?.items || []).map((item) => ({ ...item, url: safeDownloadUrl(item.url) }));
+      const next = (data?.items || []).map((item) => ({
+        ...item,
+        expires_at: data?.expires_at,
+        url: safeDownloadUrl(item.url),
+      }));
       if (!next.length || next.some((item) => !item.url)) throw new Error("No valid download links");
       setLinks(next);
       setMessage("");
-    } catch {
-      setMessage("Short-lived download links are not available right now. Please retry.");
-    } finally { setBusy(false); }
+    } catch (error) {
+      setMessage(archiveActionErrorMessage(error, "download"));
+    } finally { busyRef.current = false; setBusy(false); }
   };
 
   return <section className="ops-view">
-    <div className="ops-heading"><div><p className="ops-eyebrow">Historical evidence</p><h2>Archive Requests</h2></div><button className="ops-secondary" onClick={load} disabled={state === "loading"}><RefreshCw size={16} /> Refresh</button></div>
+    <div className="ops-heading"><div><p className="ops-eyebrow">Historical evidence</p><h2>Archive Requests</h2></div><button type="button" className="ops-secondary" onClick={load} disabled={busy || state === "loading"}><RefreshCw size={16} /> Refresh</button></div>
     {message && <div className="ops-notice" role="status"><AlertCircle size={16}/>{message}</div>}
     <form className="archive-form" onSubmit={request}>
-      <label>Source<select name="source" required disabled={!sources.length}>{sources.length ? sources.map(([value, label]) => <option key={value} value={value}>{label}</option>) : <option value="">No authorized sources</option>}</select></label>
-      <label>Start date<input type="datetime-local" name="start" required/></label>
-      <label>End date<input type="datetime-local" name="end" required/></label>
-      <label className="archive-reason">Reason<textarea name="reason" required minLength={8} maxLength={500}/></label>
+      <label htmlFor="archive-source">Evidence source<select id="archive-source" name="source" required disabled={!sources.length}>{sources.length ? sources.map(([value, label]) => <option key={value} value={value}>{label}</option>) : <option value="">No authorized sources</option>}</select></label>
+      <label htmlFor="archive-start">Start date<input id="archive-start" type="datetime-local" name="start" required/></label>
+      <label htmlFor="archive-end">End date<input id="archive-end" type="datetime-local" name="end" required/></label>
+      <label className="archive-reason" htmlFor="archive-reason">Business reason<textarea id="archive-reason" name="reason" required minLength={8} maxLength={500}/></label>
       <button type="submit" disabled={busy || state !== "ready" || !sources.length}>{busy ? "Working..." : "Request archive retrieval"}</button>
     </form>
-    {links.length > 0 && <div className="ops-notice">{links.map((item, index) => <a key={item.archive_key || index} href={item.url} target="_blank" rel="noopener noreferrer"><Download size={15}/> Download {index + 1}{item.expires_at ? ` (expires ${new Date(item.expires_at).toLocaleString()})` : ""}</a>)}</div>}
+    {links.length > 0 && <section className="archive-downloads" aria-label="Available archive downloads"><div><strong>Secure downloads are ready</strong><span>Links expire automatically. Download the files before the time shown.</span></div>{links.map((item, index) => <a key={item.archive_key || index} href={item.url} target="_blank" rel="noopener noreferrer"><Download size={15}/><span>Download {formatArchiveSources([item.collection])}{item.bytes != null ? ` (${formatArchiveBytes(item.bytes)})` : ""}</span>{item.expires_at && <small>Expires {formatArchiveTimestamp(item.expires_at)}</small>}</a>)}</section>}
     <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Request</th><th>Source</th><th>Date range</th><th>Estimated size</th><th>Status</th><th>Action</th></tr></thead><tbody>
-      {state === "loading" ? <tr><td colSpan="6" className="ops-empty">Loading archive requests...</td></tr> : items.length ? items.map((item) => <tr key={item.request_id}><td className="ops-code">{item.request_id}</td><td>{(item.collections || []).join(", ")}</td><td>{display(item.start_at)} - {display(item.end_at)}</td><td>{item.estimated_bytes != null ? `${item.estimated_bytes} bytes` : "Not recorded"}</td><td><span className="ops-status">{String(item.status || "Awaiting approval").replaceAll("_", " ")}</span></td><td>{item.status === "READY" ? <button onClick={() => download(item.request_id)} disabled={busy}><Download size={15}/>Get download links</button> : "-"}</td></tr>) : <tr><td colSpan="6" className="ops-empty">{state === "error" ? "Archive requests could not be loaded." : "No archive requests have been recorded."}</td></tr>}
+      {state === "loading" ? <tr><td colSpan="6" className="ops-empty">Loading archive requests...</td></tr> : items.length ? items.map((item) => { const status = archiveStatusInfo(item.status); return <tr key={item.request_id}><td className="ops-code" title={item.request_id}>{item.request_id}</td><td>{formatArchiveSources(item.collections)}</td><td>{formatArchiveDateRange(item.start_at, item.end_at)}</td><td>{formatArchiveBytes(item.estimated_bytes)}</td><td><span className={`ops-status archive-status-${status.className}`}>{status.label}</span></td><td>{item.status === "READY" ? <button type="button" onClick={() => download(item.request_id)} disabled={busy}><Download size={15}/>Get download links</button> : <span className="archive-no-action">Not available</span>}</td></tr>; }) : <tr><td colSpan="6" className="ops-empty">{state === "error" ? <><span>Archive requests could not be loaded.</span><button type="button" className="ops-secondary archive-retry" onClick={load}>Try again</button></> : "No archive requests have been recorded."}</td></tr>}
     </tbody></table></div>
   </section>;
 }

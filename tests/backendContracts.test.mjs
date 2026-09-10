@@ -5,7 +5,9 @@ import test from "node:test";
 
 import {
   API_ROUTES,
+  archiveActionErrorMessage,
   archiveSourceOptions,
+  archiveStatusInfo,
   buildArchiveRetrievalPayload,
   buildCaseClosurePayload,
   buildCustodyActionPayload,
@@ -14,9 +16,13 @@ import {
   buildEvidenceExportPayload,
   buildLegalHoldPayload,
   buildLegalHoldReleasePayload,
+  formatArchiveBytes,
+  formatArchiveDateRange,
+  formatArchiveSources,
+  formatArchiveTimestamp,
+  formatPackRetention,
   normalizeEvidenceCaseDetail,
   safeDownloadUrl,
-  formatPackRetention,
 } from "../src/contracts/backendContracts.js";
 import { ROLE_PERMISSIONS, hasPermission } from "../src/utils/roleContract.js";
 import { shouldDisplayLog } from "../src/utils/logSearch.js";
@@ -109,14 +115,60 @@ test("frontend role names match provisionable backend roles", () => {
   assert.deepEqual(Object.keys(ROLE_PERMISSIONS).sort(), ["admin", "analyst", "auditor", "manager"]);
   assert.equal(hasPermission("manager", "endpoint.trust.read"), true);
   assert.equal(hasPermission("auditor", "retention.read"), true);
+  assert.equal(hasPermission("admin", "archive.retrieve"), true);
+  assert.equal(hasPermission("manager", "archive.retrieve"), true);
+  assert.equal(hasPermission("auditor", "archive.retrieve"), true);
+  assert.equal(hasPermission("analyst", "archive.retrieve"), false);
   assert.equal(hasPermission("viewer", "operations.read"), false);
 });
 
 test("archive inputs use UTC and reject inverted windows", () => {
-  const body = buildArchiveRetrievalPayload({ source: "security_alerts", start: "2026-08-01T10:00:00+05:00", end: "2026-08-02T10:00:00+05:00", reason: " Authorized review " });
+  const now = new Date("2026-08-03T00:00:00Z");
+  const body = buildArchiveRetrievalPayload({ source: "security_alerts", start: "2026-08-01T10:00:00+05:00", end: "2026-08-02T10:00:00+05:00", reason: " Authorized review " }, now);
   assert.deepEqual(body, { collections: ["security_alerts"], start_at: "2026-08-01T05:00:00.000Z", end_at: "2026-08-02T05:00:00.000Z", reason: "Authorized review" });
   assert.throws(() => buildArchiveRetrievalPayload({ start: "invalid", end: "invalid" }));
-  assert.throws(() => buildArchiveRetrievalPayload({ start: "2026-08-02", end: "2026-08-01" }));
+  assert.throws(() => buildArchiveRetrievalPayload({ source: "logs", start: "2026-08-02", end: "2026-08-01", reason: "Authorized review" }, now), /valid archive date range/);
+  assert.throws(() => buildArchiveRetrievalPayload({ source: "unknown", start: "2026-08-01", end: "2026-08-02", reason: "Authorized review" }, now), /authorized evidence source/);
+  assert.throws(() => buildArchiveRetrievalPayload({ source: "logs", start: "2026-08-01", end: "2026-08-04", reason: "Authorized review" }, now), /cannot be in the future/);
+  assert.throws(() => buildArchiveRetrievalPayload({ source: "logs", start: "2020-01-01", end: "2026-01-01", reason: "Authorized review" }, now), /2,190 days/);
+  assert.throws(() => buildArchiveRetrievalPayload({ source: "logs", start: "2026-08-01", end: "2026-08-02", reason: "short" }, now), /8 and 500/);
+  assert.throws(() => buildArchiveRetrievalPayload({ source: "logs", start: "2026-08-01", end: "2026-08-02", reason: "x".repeat(501) }, now), /8 and 500/);
+});
+
+test("archive lifecycle, source, date, and byte labels are deterministic", () => {
+  const expected = {
+    PENDING_APPROVAL: ["Waiting for approval", "pending"],
+    APPROVED: ["Accepted and queued", "queued"],
+    PENDING_REHYDRATION: ["Preparing secure archive", "preparing"],
+    READY: ["Download available", "ready"],
+    FAILED: ["Retrieval failed", "failed"],
+    REJECTED: ["Request rejected", "failed"],
+    CANCELLED: ["Request cancelled", "closed"],
+    EXPIRED: ["Download period ended", "closed"],
+  };
+  for (const [key, [label, className]] of Object.entries(expected)) {
+    assert.deepEqual(archiveStatusInfo(key), { label, className });
+  }
+  assert.deepEqual(archiveStatusInfo("new_worker_state"), { label: "New Worker State", className: "unknown" });
+  assert.equal(formatArchiveSources(["siem_cold_vault", "fbr_pos_logs"]), "Endpoint evidence, FBR evidence");
+  assert.equal(formatArchiveSources([]), "Not recorded");
+  assert.equal(formatArchiveBytes(458752), "448 KB");
+  assert.equal(formatArchiveBytes(10 * 1024 * 1024), "10 MB");
+  assert.equal(formatArchiveBytes(-1), "Not recorded");
+  assert.equal(formatArchiveBytes(null), "Not recorded");
+  assert.equal(formatArchiveDateRange("2026-07-26T15:39:21Z", "2026-08-02T15:39:21Z"), "2026-07-26 15:39:21Z to 2026-08-02 15:39:21Z");
+  assert.equal(formatArchiveDateRange("invalid", "2026-08-02T15:39:21Z"), "Not recorded");
+  assert.equal(formatArchiveTimestamp(null), "Not recorded");
+});
+
+test("archive API failures are translated without exposing backend details", () => {
+  const failure = (status) => ({ response: { status, data: { detail: "internal storage path" } } });
+  assert.equal(archiveActionErrorMessage(failure(403)), "Your role cannot request the selected evidence source.");
+  assert.equal(archiveActionErrorMessage(failure(404)), "No retained evidence matches that source and date range.");
+  assert.equal(archiveActionErrorMessage(failure(413)), "The request is too broad. Select a smaller date range.");
+  assert.equal(archiveActionErrorMessage(failure(410), "download"), "The download period for this archive has ended.");
+  assert.equal(archiveActionErrorMessage(failure(409), "download"), "This archive is not ready for download.");
+  assert.equal(archiveActionErrorMessage(new Error("connection refused"), "download"), "Secure download links are temporarily unavailable. Please retry.");
 });
 
 test("archive source choices respect role and pack entitlement", () => {
