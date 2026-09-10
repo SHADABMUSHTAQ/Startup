@@ -146,13 +146,11 @@ test("removed placeholder API paths cannot return to application source", () => 
   }
 });
 
-test("historical retrieval stays disabled while accepted package exports are enabled only in production", () => {
-  for (const file of [".env.local.example", ".env.production", ".env.production.example"]) {
-    const content = readFileSync(join(process.cwd(), file), "utf8");
-    assert.match(content, /^VITE_ARCHIVE_RETRIEVAL_ENABLED=false$/m);
-  }
+test("accepted historical retrieval and package exports are enabled only in production", () => {
+  assert.match(readFileSync(join(process.cwd(), ".env.local.example"), "utf8"), /^VITE_ARCHIVE_RETRIEVAL_ENABLED=false$/m);
   assert.match(readFileSync(join(process.cwd(), ".env.local.example"), "utf8"), /^VITE_EVIDENCE_EXPORT_ENABLED=false$/m);
   for (const file of [".env.production", ".env.production.example"]) {
+    assert.match(readFileSync(join(process.cwd(), file), "utf8"), /^VITE_ARCHIVE_RETRIEVAL_ENABLED=true$/m);
     assert.match(readFileSync(join(process.cwd(), file), "utf8"), /^VITE_EVIDENCE_EXPORT_ENABLED=true$/m);
   }
 });

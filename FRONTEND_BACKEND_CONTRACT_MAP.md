@@ -82,7 +82,7 @@ Evidence packages are called exports by the backend. Case closure requires a `VE
 - `GET /archive-retrievals/{request_id}`
 - `POST /archive-retrievals/{request_id}/download-links`
 
-Archive retrieval is not case-scoped. It remains hidden while `VITE_ARCHIVE_RETRIEVAL_ENABLED=false`; backend execution separately requires `ARCHIVE_RETRIEVAL_ENABLED=true` and its accepted Azure staging controls.
+Archive retrieval is not case-scoped. The raw production view is exposed when `VITE_ARCHIVE_RETRIEVAL_ENABLED=true`; backend execution separately requires `ARCHIVE_RETRIEVAL_ENABLED=true` and its accepted Azure staging controls. Local development remains disabled by default and a frontend developer can opt in by setting the same flag to `true` in `.env.local`.
 
 Evidence package export remains hidden while `VITE_EVIDENCE_EXPORT_ENABLED=false`; backend execution separately requires `EVIDENCE_EXPORT_ENABLED=true` and its worker/storage configuration.
 
