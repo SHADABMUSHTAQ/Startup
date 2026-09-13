@@ -7,6 +7,7 @@ import {
   archiveActionErrorMessage,
   archiveSourceOptions,
   archiveStatusInfo,
+  buildArchiveAvailabilityParams,
   buildArchiveRetrievalPayload,
   formatArchiveBytes,
   formatArchiveDateRange,
@@ -309,6 +310,8 @@ export function ArchiveView() {
   const { role } = useRole();
   const [items, setItems] = useState([]);
   const [sources, setSources] = useState([]);
+  const [availability, setAvailability] = useState(null);
+  const [selectedSource, setSelectedSource] = useState("");
   const [state, setState] = useState("loading");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -317,10 +320,28 @@ export function ArchiveView() {
   const load = useCallback(async () => {
     setState("loading");
     try {
-      const { data: packs } = await apiClient.get("/auth/my-packs");
-      setSources(archiveSourceOptions(role, packs?.compliance_packs || []));
-      const { data } = await apiClient.get(API_ROUTES.archiveRetrievals);
-      setItems(data?.items || []);
+      const [{ data: packs }, { data: requests }] = await Promise.all([
+        apiClient.get("/auth/my-packs"),
+        apiClient.get(API_ROUTES.archiveRetrievals),
+      ]);
+      const nextSources = archiveSourceOptions(role, packs?.compliance_packs || []);
+      let nextAvailability = null;
+      try {
+        const { data } = await apiClient.get(API_ROUTES.archiveRetrievalAvailability);
+        nextAvailability = Object.fromEntries(
+          (data?.sources || []).map((source) => [source.collection, source]),
+        );
+      } catch (availabilityError) {
+        if (availabilityError?.response?.status !== 404) throw availabilityError;
+      }
+      setSources(nextSources);
+      setAvailability(nextAvailability);
+      setSelectedSource((current) => (
+        nextSources.some(([value]) => value === current && nextAvailability?.[value]?.available !== false)
+          ? current
+          : ""
+      ));
+      setItems(requests?.items || []);
       setState("ready");
     } catch {
       setState("error");
@@ -338,10 +359,35 @@ export function ArchiveView() {
     setBusy(true);
     setMessage("");
     try {
-      await apiClient.post(API_ROUTES.archiveRetrievals, buildArchiveRetrievalPayload({
-        source: form.get("source"), start: form.get("start"), end: form.get("end"), reason: form.get("reason"),
-      }));
+      const source = form.get("source");
+      const start = form.get("start");
+      const end = form.get("end");
+      const payload = buildArchiveRetrievalPayload({
+        source, start, end, reason: form.get("reason"),
+      });
+      try {
+        const { data: preview } = await apiClient.get(
+          API_ROUTES.archiveRetrievalAvailability,
+          { params: buildArchiveAvailabilityParams({ source, start, end }) },
+        );
+        const sourcePreview = (preview?.sources || []).find((item) => item.collection === source);
+        if (!sourcePreview?.available) {
+          setMessage("No retained evidence matches that source and date range.");
+          return;
+        }
+        if (!sourcePreview.within_request_limit) {
+          setMessage(
+            `This range matches ${Number(sourcePreview.blob_count).toLocaleString()} archive files; `
+            + `the maximum per request is ${Number(preview.max_blobs_per_request).toLocaleString()}.`,
+          );
+          return;
+        }
+      } catch (previewError) {
+        if (previewError?.response?.status !== 404) throw previewError;
+      }
+      await apiClient.post(API_ROUTES.archiveRetrievals, payload);
       formElement.reset();
+      setSelectedSource("");
       setMessage("Archive request submitted.");
       await load();
     } catch (error) {
@@ -372,7 +418,7 @@ export function ArchiveView() {
     <div className="ops-heading"><div><p className="ops-eyebrow">Historical evidence</p><h2>Archive Requests</h2></div><button type="button" className="ops-secondary" onClick={load} disabled={busy || state === "loading"}><RefreshCw size={16} /> Refresh</button></div>
     {message && <div className="ops-notice" role="status"><AlertCircle size={16}/>{message}</div>}
     <form className="archive-form" onSubmit={request}>
-      <label htmlFor="archive-source">Evidence source<select id="archive-source" name="source" required disabled={!sources.length}>{sources.length ? sources.map(([value, label]) => <option key={value} value={value}>{label}</option>) : <option value="">No authorized sources</option>}</select></label>
+      <label htmlFor="archive-source">Evidence source<select id="archive-source" name="source" required disabled={!sources.length} value={selectedSource} onChange={(event) => setSelectedSource(event.target.value)}><option value="">{sources.length ? "Select evidence source" : "No authorized sources"}</option>{sources.map(([value, label]) => { const sourceAvailability = availability?.[value]; const unavailable = sourceAvailability?.available === false; return <option key={value} value={value} disabled={unavailable}>{label}{unavailable ? " - no archived data" : ""}</option>; })}</select>{selectedSource && availability?.[selectedSource] && <span className="archive-source-availability">{Number(availability[selectedSource].document_count).toLocaleString()} records across {Number(availability[selectedSource].blob_count).toLocaleString()} archive files{availability[selectedSource].earliest_at && availability[selectedSource].latest_at ? ` · ${formatArchiveDateRange(availability[selectedSource].earliest_at, availability[selectedSource].latest_at)}` : ""}</span>}</label>
       <label htmlFor="archive-start">Start date<input id="archive-start" type="datetime-local" name="start" required/></label>
       <label htmlFor="archive-end">End date<input id="archive-end" type="datetime-local" name="end" required/></label>
       <label className="archive-reason" htmlFor="archive-reason">Business reason<textarea id="archive-reason" name="reason" required minLength={8} maxLength={500}/></label>

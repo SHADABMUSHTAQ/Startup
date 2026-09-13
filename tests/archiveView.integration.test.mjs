@@ -61,6 +61,24 @@ const requestRow = (status, index) => ({
   status,
 });
 
+const availabilitySource = (collection, overrides = {}) => ({
+  collection,
+  available: true,
+  within_request_limit: true,
+  blob_count: 1,
+  document_count: 10,
+  estimated_bytes: 1024,
+  estimate_exact: true,
+  earliest_at: "2026-08-01T00:00:00Z",
+  latest_at: "2026-08-02T00:00:00Z",
+  ...overrides,
+});
+
+const availabilityPayload = (sources = []) => ({
+  max_blobs_per_request: 100,
+  sources,
+});
+
 before(async () => {
   vite = await createServer({
     configFile: join(process.cwd(), "tests", "vite.integration.config.mjs"),
@@ -100,9 +118,15 @@ test("archive view renders every lifecycle state and downloads only READY eviden
     "EXPIRED",
     "NEW_WORKER_STATE",
   ];
-  apiClient.get = async (url) => url === "/auth/my-packs"
-    ? { data: { compliance_packs: ["peca_forensic", "fbr_pos"] } }
-    : { data: { items: statuses.map(requestRow) } };
+  apiClient.get = async (url) => {
+    if (url === "/auth/my-packs") {
+      return { data: { compliance_packs: ["peca_forensic", "fbr_pos"] } };
+    }
+    if (url === "/archive-retrievals/availability") {
+      return { data: availabilityPayload() };
+    }
+    return { data: { items: statuses.map(requestRow) } };
+  };
   apiClient.post = async (url) => {
     assert.equal(url, "/archive-retrievals/ARR-3/download-links");
     return {
@@ -148,9 +172,13 @@ test("archive view renders every lifecycle state and downloads only READY eviden
 });
 
 test("archive view blocks invalid and duplicate submissions before the API boundary", async () => {
-  apiClient.get = async (url) => url === "/auth/my-packs"
-    ? { data: { compliance_packs: [] } }
-    : { data: { items: [] } };
+  apiClient.get = async (url) => {
+    if (url === "/auth/my-packs") return { data: { compliance_packs: [] } };
+    if (url === "/archive-retrievals/availability") {
+      return { data: availabilityPayload([availabilitySource("logs")]) };
+    }
+    return { data: { items: [] } };
+  };
 
   let postCount = 0;
   let resolvePost;
@@ -162,7 +190,10 @@ test("archive view blocks invalid and duplicate submissions before the API bound
   await renderArchive();
   await waitForText("No archive requests have been recorded.");
   const form = document.querySelector(".archive-form");
-  form.elements.source.value = "logs";
+  await act(async () => {
+    form.elements.source.value = "logs";
+    form.elements.source.dispatchEvent(new Event("change", { bubbles: true }));
+  });
   form.elements.start.value = "2026-08-01T00:00";
   form.elements.end.value = "2026-08-02T00:00";
   form.elements.reason.value = "short";
@@ -185,9 +216,13 @@ test("archive view blocks invalid and duplicate submissions before the API bound
 });
 
 test("archive view rejects unsafe download URLs without rendering a link", async () => {
-  apiClient.get = async (url) => url === "/auth/my-packs"
-    ? { data: { compliance_packs: [] } }
-    : { data: { items: [requestRow("READY", 1)] } };
+  apiClient.get = async (url) => {
+    if (url === "/auth/my-packs") return { data: { compliance_packs: [] } };
+    if (url === "/archive-retrievals/availability") {
+      return { data: availabilityPayload() };
+    }
+    return { data: { items: [requestRow("READY", 1)] } };
+  };
   apiClient.post = async () => ({
     data: { items: [{ archive_key: "unsafe", url: "javascript:alert(1)" }] },
   });
@@ -201,4 +236,60 @@ test("archive view rejects unsafe download URLs without rendering a link", async
   });
   await waitForText("Secure download links are temporarily unavailable.");
   assert.equal(document.querySelector(".archive-downloads a"), null);
+});
+
+test("archive view disables empty sources and blocks an oversized range before submission", async () => {
+  apiClient.get = async (url) => {
+    if (url === "/auth/my-packs") return { data: { compliance_packs: [] } };
+    if (url === "/archive-retrievals/availability") {
+      return {
+        data: availabilityPayload([
+          availabilitySource("logs", {
+            available: false,
+            blob_count: 0,
+            document_count: 0,
+            estimated_bytes: 0,
+            earliest_at: null,
+            latest_at: null,
+          }),
+          availabilitySource("siem_cold_vault", {
+            within_request_limit: false,
+            blob_count: 775,
+            document_count: 19355,
+            estimated_bytes: 206569472,
+          }),
+        ]),
+      };
+    }
+    return { data: { items: [] } };
+  };
+
+  let postCount = 0;
+  apiClient.post = async () => {
+    postCount += 1;
+    return { data: {} };
+  };
+
+  await renderArchive();
+  await waitForText("No archive requests have been recorded.");
+
+  const form = document.querySelector(".archive-form");
+  const options = [...form.elements.source.options];
+  assert.equal(options.find((option) => option.value === "logs").disabled, true);
+  assert.match(options.find((option) => option.value === "logs").textContent, /no archived data/);
+  assert.equal(options.find((option) => option.value === "siem_cold_vault").disabled, false);
+
+  await act(async () => {
+    form.elements.source.value = "siem_cold_vault";
+    form.elements.source.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  form.elements.start.value = "2026-08-01T00:00";
+  form.elements.end.value = "2026-08-02T00:00";
+  form.elements.reason.value = "Authorized historical SIEM review";
+
+  await act(async () => {
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await waitForText("This range matches 775 archive files; the maximum per request is 100.");
+  assert.equal(postCount, 0);
 });

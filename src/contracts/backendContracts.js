@@ -20,6 +20,7 @@ export const API_ROUTES = Object.freeze({
   legalHoldRelease: (holdId) => `/compliance/holds/${encodeId(holdId)}/release`,
   retentionStatus: "/compliance/retention/status",
   archiveRetrievals: "/archive-retrievals",
+  archiveRetrievalAvailability: "/archive-retrievals/availability",
   archiveRetrieval: (requestId) => `/archive-retrievals/${encodeId(requestId)}`,
   archiveRetrievalDownloads: (requestId) => `/archive-retrievals/${encodeId(requestId)}/download-links`,
 });
@@ -111,6 +112,22 @@ export const buildArchiveRetrievalPayload = ({ source, start, end, reason }, now
     end_at: endAt.toISOString(),
     reason: normalizedReason,
   };
+};
+
+export const buildArchiveAvailabilityParams = ({ source, start, end } = {}) => {
+  const params = {};
+  const normalizedSource = String(source || "").trim();
+  if (normalizedSource) params.collection = normalizedSource;
+  if (!start && !end) return params;
+
+  const startAt = new Date(start);
+  const endAt = new Date(end);
+  if (!Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime()) || endAt <= startAt) {
+    throw new Error("Choose a valid archive date range.");
+  }
+  params.start_at = startAt.toISOString();
+  params.end_at = endAt.toISOString();
+  return params;
 };
 
 const ARCHIVE_STATUS = Object.freeze({

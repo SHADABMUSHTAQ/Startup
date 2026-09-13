@@ -8,6 +8,7 @@ import {
   archiveActionErrorMessage,
   archiveSourceOptions,
   archiveStatusInfo,
+  buildArchiveAvailabilityParams,
   buildArchiveRetrievalPayload,
   buildCaseClosurePayload,
   buildCustodyActionPayload,
@@ -62,6 +63,7 @@ test("evidence and retention routes match the FastAPI contract", () => {
   assert.equal(API_ROUTES.legalHoldRelease("HOLD/A"), "/compliance/holds/HOLD%2FA/release");
   assert.equal(API_ROUTES.retentionStatus, "/compliance/retention/status");
   assert.equal(API_ROUTES.archiveRetrievals, "/archive-retrievals");
+  assert.equal(API_ROUTES.archiveRetrievalAvailability, "/archive-retrievals/availability");
   assert.equal(API_ROUTES.archiveRetrievalDownloads("ARR/A"), "/archive-retrievals/ARR%2FA/download-links");
 });
 
@@ -133,6 +135,24 @@ test("archive inputs use UTC and reject inverted windows", () => {
   assert.throws(() => buildArchiveRetrievalPayload({ source: "logs", start: "2020-01-01", end: "2026-01-01", reason: "Authorized review" }, now), /2,190 days/);
   assert.throws(() => buildArchiveRetrievalPayload({ source: "logs", start: "2026-08-01", end: "2026-08-02", reason: "short" }, now), /8 and 500/);
   assert.throws(() => buildArchiveRetrievalPayload({ source: "logs", start: "2026-08-01", end: "2026-08-02", reason: "x".repeat(501) }, now), /8 and 500/);
+});
+
+test("archive availability parameters use the source and UTC window contract", () => {
+  assert.deepEqual(buildArchiveAvailabilityParams(), {});
+  assert.deepEqual(buildArchiveAvailabilityParams({ source: " security_alerts " }), { collection: "security_alerts" });
+  assert.deepEqual(
+    buildArchiveAvailabilityParams({
+      source: "siem_cold_vault",
+      start: "2026-09-01T10:00:00+05:00",
+      end: "2026-09-01T11:00:00+05:00",
+    }),
+    {
+      collection: "siem_cold_vault",
+      start_at: "2026-09-01T05:00:00.000Z",
+      end_at: "2026-09-01T06:00:00.000Z",
+    },
+  );
+  assert.throws(() => buildArchiveAvailabilityParams({ source: "logs", start: "2026-09-01" }));
 });
 
 test("archive lifecycle, source, date, and byte labels are deterministic", () => {
