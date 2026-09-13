@@ -120,6 +120,75 @@ async def _estimate_selection(
     }
 
 
+async def _availability_by_collection(
+    db,
+    *,
+    tenant_id: str,
+    collections: list[str],
+    start_at: datetime | None,
+    end_at: datetime | None,
+    customer_access_at: datetime,
+) -> list[dict]:
+    if not collections:
+        return []
+    query = archive_ledger_query(
+        tenant_id=tenant_id,
+        collections=collections,
+        start_dt=start_at,
+        end_dt=end_at,
+        customer_access_at=customer_access_at,
+    )
+    rows = await db["storage_archives"].aggregate(
+        [
+            {"$match": query},
+            {
+                "$group": {
+                    "_id": "$collection",
+                    "blob_count": {"$sum": 1},
+                    "estimated_bytes": {"$sum": {"$ifNull": ["$blob_size_bytes", 0]}},
+                    "document_count": {"$sum": {"$ifNull": ["$document_count", 0]}},
+                    "unknown_size_blobs": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$gte": [
+                                        {"$ifNull": ["$blob_size_bytes", -1]},
+                                        0,
+                                    ]
+                                },
+                                0,
+                                1,
+                            ]
+                        }
+                    },
+                    "earliest_at": {"$min": "$oldest_at"},
+                    "latest_at": {"$max": "$newest_at"},
+                }
+            },
+        ]
+    ).to_list(length=len(collections))
+    by_collection = {str(row.get("_id") or ""): row for row in rows}
+    max_blobs = maximum_retrieval_blobs()
+    result = []
+    for collection in sorted(collections):
+        row = by_collection.get(collection) or {}
+        blob_count = int(row.get("blob_count") or 0)
+        result.append(
+            {
+                "collection": collection,
+                "available": blob_count > 0,
+                "within_request_limit": 0 < blob_count <= max_blobs,
+                "blob_count": blob_count,
+                "document_count": int(row.get("document_count") or 0),
+                "estimated_bytes": int(row.get("estimated_bytes") or 0),
+                "estimate_exact": int(row.get("unknown_size_blobs") or 0) == 0,
+                "earliest_at": row.get("earliest_at"),
+                "latest_at": row.get("latest_at"),
+            }
+        )
+    return result
+
+
 def _require_enabled() -> None:
     if not retrieval_enabled():
         raise HTTPException(
@@ -140,6 +209,8 @@ def _require_collection_access(current_user: dict, role: str, collections: list[
             role=role,
             compliance_packs=_current_compliance_packs(current_user),
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(
             status_code=403,
@@ -197,10 +268,14 @@ async def create_archive_retrieval(
     blob_count = int(estimate.get("blob_count") or 0)
     if blob_count == 0:
         raise HTTPException(status_code=404, detail="No archived records match this request.")
-    if blob_count > maximum_retrieval_blobs():
+    max_blobs = maximum_retrieval_blobs()
+    if blob_count > max_blobs:
         raise HTTPException(
             status_code=413,
-            detail="The archive request is too broad. Select a smaller date range or fewer sources.",
+            detail=(
+                f"The selected range matches {blob_count} archive files; the maximum "
+                f"per request is {max_blobs}. Select a smaller date range."
+            ),
         )
 
     month_key = retrieval_month_key()
@@ -282,6 +357,63 @@ async def list_archive_retrievals(
         }
     ).sort("created_at", -1).limit(limit).to_list(length=limit)
     return {"items": [serialize_retrieval(row) for row in rows]}
+
+
+@router.get("/availability")
+async def get_archive_availability(
+    collection: str | None = Query(default=None),
+    start_at: datetime | None = Query(default=None),
+    end_at: datetime | None = Query(default=None),
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    _role: str = Depends(RoleChecker(["admin", "manager", "auditor"])),
+):
+    _require_enabled()
+    tenant_id = str(current_user.get("tenant_id") or "").strip()
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="Unauthorized tenant scope")
+    if (start_at is None) != (end_at is None):
+        raise HTTPException(
+            status_code=422,
+            detail="start_at and end_at must be provided together.",
+        )
+    if start_at is not None and end_at is not None:
+        start_at = normalize_utc(start_at)
+        end_at = normalize_utc(end_at)
+        if end_at <= start_at:
+            raise HTTPException(status_code=422, detail="end_at must be later than start_at")
+        if end_at > utc_now() + timedelta(minutes=5):
+            raise HTTPException(status_code=422, detail="end_at cannot be in the future")
+        if end_at - start_at > timedelta(days=2190):
+            raise HTTPException(
+                status_code=422,
+                detail="Archive retrieval window cannot exceed 2190 days",
+            )
+
+    if collection:
+        collections = _require_collection_access(current_user, _role, [collection])
+    else:
+        collections = sorted(
+            authorized_archive_collections(
+                _role,
+                _current_compliance_packs(current_user),
+            )
+        )
+    max_blobs = maximum_retrieval_blobs()
+    sources = await _availability_by_collection(
+        db,
+        tenant_id=tenant_id,
+        collections=collections,
+        start_at=start_at,
+        end_at=end_at,
+        customer_access_at=utc_now(),
+    )
+    return {
+        "start_at": start_at,
+        "end_at": end_at,
+        "max_blobs_per_request": max_blobs,
+        "sources": sources,
+    }
 
 
 @router.get("/{request_id}")

@@ -57,6 +57,7 @@ def test_implementation_inventory_matches_independent_authorization_policy():
     [
         "/api/v1/admin/tenants",
         "/api/v1/archive-retrievals",
+        "/api/v1/archive-retrievals/availability",
         "/api/v1/compliance/cases",
         "/api/v1/compliance/evidence",
         "/api/v1/compliance/holds",

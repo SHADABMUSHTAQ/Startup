@@ -286,6 +286,156 @@ async def test_authenticated_tenant_can_create_bounded_retrieval_request(
 
 
 @pytest.mark.asyncio
+async def test_archive_availability_is_tenant_scoped_and_reports_empty_sources(
+    async_client,
+    db,
+    monkeypatch,
+):
+    session = await provision_and_login_admin(async_client, "archive_availability")
+    now = datetime.now(timezone.utc)
+    await db["storage_archives"].insert_many(
+        [
+            {
+                "tenant_id": session["tenant_id"],
+                "collection": "security_alerts",
+                "status": "archived",
+                "archive_key": "availability-security-alerts",
+                "oldest_at": now - timedelta(days=4),
+                "newest_at": now - timedelta(days=3),
+                "blob_size_bytes": 2048,
+                "document_count": 12,
+                "oldest_customer_access_until": now + timedelta(days=80),
+            },
+            {
+                "tenant_id": session["tenant_id"],
+                "collection": "siem_cold_vault",
+                "status": "archived_hot_deleted",
+                "archive_key": "availability-siem",
+                "oldest_at": now - timedelta(days=6),
+                "newest_at": now - timedelta(days=5),
+                "document_count": 20,
+                "oldest_customer_access_until": now + timedelta(days=80),
+            },
+            {
+                "tenant_id": "WARSOC_OTHER_TENANT",
+                "collection": "security_alerts",
+                "status": "archived",
+                "archive_key": "availability-other-tenant",
+                "oldest_at": now - timedelta(days=4),
+                "newest_at": now - timedelta(days=3),
+                "blob_size_bytes": 999999,
+                "document_count": 999,
+                "oldest_customer_access_until": now + timedelta(days=80),
+            },
+        ]
+    )
+    monkeypatch.setenv("ARCHIVE_RETRIEVAL_ENABLED", "true")
+
+    response = await async_client.get("/api/v1/archive-retrievals/availability")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    sources = {item["collection"]: item for item in body["sources"]}
+    assert sources["security_alerts"]["blob_count"] == 1
+    assert sources["security_alerts"]["document_count"] == 12
+    assert sources["security_alerts"]["estimated_bytes"] == 2048
+    assert sources["security_alerts"]["estimate_exact"] is True
+    assert sources["security_alerts"]["available"] is True
+    assert sources["siem_cold_vault"]["blob_count"] == 1
+    assert sources["siem_cold_vault"]["estimate_exact"] is False
+    assert sources["logs"]["available"] is False
+    assert sources["logs"]["within_request_limit"] is False
+
+
+@pytest.mark.asyncio
+async def test_archive_range_preview_and_create_share_the_blob_limit(
+    async_client,
+    db,
+    monkeypatch,
+):
+    session = await provision_and_login_admin(async_client, "archive_range_preview")
+    now = datetime.now(timezone.utc)
+    for index in range(2):
+        await db["storage_archives"].insert_one(
+            {
+                "tenant_id": session["tenant_id"],
+                "collection": "siem_cold_vault",
+                "status": "archived",
+                "archive_key": f"range-preview-{index}",
+                "oldest_at": now - timedelta(days=4, minutes=index + 1),
+                "newest_at": now - timedelta(days=4, minutes=index),
+                "blob_size_bytes": 1024,
+                "document_count": 10,
+                "oldest_customer_access_until": now + timedelta(days=80),
+            }
+        )
+    monkeypatch.setenv("ARCHIVE_RETRIEVAL_ENABLED", "true")
+    monkeypatch.setenv("ARCHIVE_RETRIEVAL_MAX_BLOBS", "1")
+    start_at = now - timedelta(days=5)
+    end_at = now - timedelta(days=3)
+
+    preview = await async_client.get(
+        "/api/v1/archive-retrievals/availability",
+        params={
+            "collection": "siem_cold_vault",
+            "start_at": start_at.isoformat(),
+            "end_at": end_at.isoformat(),
+        },
+    )
+    create = await async_client.post(
+        "/api/v1/archive-retrievals",
+        json={
+            "collections": ["siem_cold_vault"],
+            "start_at": start_at.isoformat(),
+            "end_at": end_at.isoformat(),
+            "reason": "Range limit contract test",
+        },
+    )
+
+    assert preview.status_code == 200, preview.text
+    source = preview.json()["sources"][0]
+    assert source["blob_count"] == 2
+    assert source["within_request_limit"] is False
+    assert preview.json()["max_blobs_per_request"] == 1
+    assert create.status_code == 413
+    assert create.json()["detail"] == (
+        "The selected range matches 2 archive files; the maximum per request is 1. "
+        "Select a smaller date range."
+    )
+
+
+@pytest.mark.asyncio
+async def test_archive_availability_rejects_partial_windows_and_unauthorized_sources(
+    async_client,
+    db,
+    monkeypatch,
+):
+    session = await provision_and_login_admin(async_client, "archive_preview_auth")
+    monkeypatch.setenv("ARCHIVE_RETRIEVAL_ENABLED", "true")
+    await db["users"].update_one(
+        {"tenant_id": session["tenant_id"]},
+        {"$set": {"role": "manager"}},
+    )
+
+    partial = await async_client.get(
+        "/api/v1/archive-retrievals/availability",
+        params={"start_at": datetime.now(timezone.utc).isoformat()},
+    )
+    unauthorized = await async_client.get(
+        "/api/v1/archive-retrievals/availability",
+        params={"collection": "fbr_pos_logs"},
+    )
+    unsupported = await async_client.get(
+        "/api/v1/archive-retrievals/availability",
+        params={"collection": "unknown_collection"},
+    )
+
+    assert partial.status_code == 422
+    assert unauthorized.status_code == 403
+    assert unsupported.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_archive_list_requires_authentication(async_client):
     response = await async_client.get("/api/v1/archive-retrievals")
 

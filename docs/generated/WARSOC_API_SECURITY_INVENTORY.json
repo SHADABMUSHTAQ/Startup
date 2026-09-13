@@ -7,7 +7,7 @@
     "Runtime middleware and nested dependency behavior require test evidence in addition to this artifact."
   ],
   "summary": {
-    "route_count": 132,
+    "route_count": 133,
     "manual_review_required": 0,
     "feature_gated_routes": 32
   },
@@ -368,7 +368,7 @@
       "method": "GET",
       "route": "/api/v1/archive-retrievals/",
       "source_file": "app/routes/archive_retrieval.py",
-      "source_line": 263,
+      "source_line": 338,
       "handler": "list_archive_retrievals",
       "router_module": "archive_retrieval",
       "feature_condition": null,
@@ -395,7 +395,7 @@
       "method": "POST",
       "route": "/api/v1/archive-retrievals/",
       "source_file": "app/routes/archive_retrieval.py",
-      "source_line": 172,
+      "source_line": 243,
       "handler": "create_archive_retrieval",
       "router_module": "archive_retrieval",
       "feature_condition": null,
@@ -420,9 +420,34 @@
     },
     {
       "method": "GET",
+      "route": "/api/v1/archive-retrievals/availability",
+      "source_file": "app/routes/archive_retrieval.py",
+      "source_line": 363,
+      "handler": "get_archive_availability",
+      "router_module": "archive_retrieval",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
       "route": "/api/v1/archive-retrievals/{request_id}",
       "source_file": "app/routes/archive_retrieval.py",
-      "source_line": 288,
+      "source_line": 420,
       "handler": "get_archive_retrieval",
       "router_module": "archive_retrieval",
       "feature_condition": null,
@@ -447,7 +472,7 @@
       "method": "POST",
       "route": "/api/v1/archive-retrievals/{request_id}/approve",
       "source_file": "app/routes/archive_retrieval.py",
-      "source_line": 305,
+      "source_line": 437,
       "handler": "approve_archive_retrieval",
       "router_module": "archive_retrieval",
       "feature_condition": null,
@@ -469,7 +494,7 @@
       "method": "POST",
       "route": "/api/v1/archive-retrievals/{request_id}/download-links",
       "source_file": "app/routes/archive_retrieval.py",
-      "source_line": 436,
+      "source_line": 568,
       "handler": "issue_archive_download_links",
       "router_module": "archive_retrieval",
       "feature_condition": null,

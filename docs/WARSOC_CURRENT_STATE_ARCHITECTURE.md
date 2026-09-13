@@ -95,7 +95,7 @@ publisher trust remains open until Authenticode signing is funded.
 
 The latest complete backend campaign closed with 684 passed, 2 expected skips
 and zero assertion failures on 2026-09-08. `pip check`, Python compilation,
-diff hygiene, the 132-route authorization inventory, direct production and
+diff hygiene, the 133-route authorization inventory, direct production and
 development requirements audits, and the full-tree high-severity Bandit gate
 passed. Core backend `7e9f00d` is deployed on OCI and healthy; frontend
 `e7c5aa0` is live on Vercel. The scoped core deployment preserved the existing
@@ -597,7 +597,7 @@ incident.
 
 The September 8 source/integration gate reports 27 focused story tests inside a
 112-test focused release gate, plus 684 passed and 2 expected skips in the full
-backend suite. Compilation, the 132-route authorization inventory, Bandit high
+backend suite. Compilation, the 133-route authorization inventory, Bandit high
 severity scan, and direct production/development dependency audits are clean.
 Production run `DETECTION-STORY-20260908T055417Z-8a55d8` then proved signed
 new-traffic admission, both new native detections and incidents, benign
@@ -697,14 +697,16 @@ shadow candidate, while the permitted comparison event produced no candidate.
 WarSOC created zero Wazuh-derived incidents. `WAZUH_PRIMARY_APPROVED=false`
 remains mandatory; WarSOC-native detection is still authoritative.
 
-The colleague's customer-style pfSense relay installation is accepted through
-package configuration, one-time activation, Automatic Windows service state,
-source-restricted UDP listener, backend `ACTIVE` status, entitlement use, and
-fresh relay heartbeat. The exact registered device is
-`host-pfsense-relay-01`, source `192.168.56.254/32`, expected 10 EPS. The final
-physical acceptance item remains open because no parseable pfSense `filterlog`
-event or device-status row was captured from that installation. Control
-heartbeats are not a substitute for a firewall event.
+The colleague's customer-style pfSense relay installation on `alphabay` is
+accepted and certified end-to-end through package configuration, one-time
+activation, Automatic Windows service state, source-restricted UDP listener, backend
+`ACTIVE` status, entitlement use, fresh relay heartbeat, and live transmission
+of authentic pfSense `filterlog` datagrams. The registered device
+`host-pfsense-relay-01` (source `192.168.56.254/32`, expected 10 EPS) successfully
+ingested real filterlog events, signed via Ed25519 in batch sequences 165 and 166,
+creating and updating the production `network_relay_device_status` record with
+`last_event_type: network_connection_blocked` and cloud acceptance at
+`https://api.warsoc.tech`. The physical data path is closed and certified.
 
 ## 2. Product Boundary
 
@@ -1612,6 +1614,18 @@ walkthrough remain separate frontend acceptance. Backend execution is active.
 Archive retrieval is collection/date scoped and is not embedded as a case-scoped
 operation.
 
+The 2026-09-13 archive-selection contract adds the tenant-scoped
+`GET /api/v1/archive-retrievals/availability` contract. It reports only archive
+classes permitted by the authenticated database role and current compliance-pack
+entitlements, including accessible blob/document counts and the ledger date
+boundary. The frontend uses this metadata to disable empty sources and preflight
+the selected source/date window. A range above `ARCHIVE_RETRIEVAL_MAX_BLOBS`
+remains blocked by both the API and worker, but now returns the observed blob count
+and configured maximum instead of an ambiguous generic failure. This candidate
+does not change Azure bytes, customer retention, monthly allowance, approval, SAS,
+or archive-before-delete behavior. Production acceptance requires the matching
+backend route and frontend preflight to be deployed together.
+
 For the selected clean production launch, legacy pilot archives are not attached to the new tenant database or retrieval ledger. A locked legacy pilot container remains isolated until its policy expires; it cannot be destroyed early merely because the pilot data is no longer commercially required.
 
 ## 17. Dashboard Data Contract
@@ -1965,7 +1979,7 @@ Status meanings:
 | Installer code signing | Publisher reputation and Defender trust | PARTIAL | Exact hash allowlisting supports the pilot while Defender stays enabled; the binary remains unsigned. |
 | Capacity ceiling | Maximum 50 active agents per tenant and 50 aggregate active agents on the shared host | PROVEN by contract tests; prior synthetic soak | Mongo-backed floors prevent Redis restarts from bypassing either boundary. Real customer mix must still be monitored because event volume per endpoint varies. |
 | Linux/syslog | Linux endpoint telemetry | OUT OF SCOPE | Linux remains outside the Windows SMB pilot and no Linux agent/intake is claimed. |
-| Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | PFSENSE SERVICE ACCEPTED / FIRST DEVICE EVENT OPEN | The earlier pfSense lab proved pass/block parsing, relay attestation, encrypted outage retention, restart recovery, deduplication and chain continuity. The colleague installation additionally proved the exact configuration, one-time activation, Automatic Windows service, source-restricted `192.168.56.1:5514` listener, active backend relay and heartbeat for `host-pfsense-relay-01`. No parseable `filterlog` event/device-status row was captured from that installation, so physical customer-style event acceptance remains open. The kit is still unsigned; other vendors remain parser-only. |
+| Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | ACCEPTED AND CERTIFIED | The earlier pfSense lab proved pass/block parsing, relay attestation, encrypted outage retention, restart recovery, deduplication and chain continuity. The colleague installation on alphabay additionally proved the exact configuration, one-time activation, Automatic Windows service, source-restricted `192.168.56.1:5514` listener, active backend relay and heartbeat for `host-pfsense-relay-01`. Live authentic pfSense filterlog events were transmitted, batch-signed, and verified in production MongoDB (`network_relay_device_status` updated with `last_event_type: network_connection_blocked` and cloud acceptance at `https://api.warsoc.tech`). The physical customer-style event acceptance gate is closed. The kit is still unsigned; other vendors remain parser-only. |
 | Internal Wazuh detector | Receive minimized WarSOC projections and return validated candidate observations | V2 CONTROLLED SHADOW ACTIVE / PRIMARY DISABLED | The OCI-local Wazuh 4.14.7 manager/bridge uses private Docker networks, mTLS, signed batches, bounded resources and encrypted spools. Registry `warsoc-projected-shadow-v2` is active with all 22 families shadow-only. Network canary `NETWORK-WAZUH-CANARY-20260909T181805Z-b59594ca` delivered 31 signed blocked events, fired rule `100630`, rejected the permitted comparison from candidate creation, and created zero Wazuh-derived incidents. WarSOC remains authoritative; measured customer precision, capacity/HA approval and every primary promotion remain gated. |
 | External threat-intelligence enrichment | Third-party reputation/provider lookups | OUT OF SCOPE | No live provider integration is claimed for the current pilot. Native SIEM/FBR/PECA operation does not depend on it. |
 
