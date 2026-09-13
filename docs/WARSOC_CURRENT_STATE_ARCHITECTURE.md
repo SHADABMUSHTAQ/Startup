@@ -33,9 +33,9 @@ WarSOC currently has a coherent end-to-end architecture. The application enforce
 10. Normal compliance views, search, CSV exports, and PDF reports read bounded hot Mongo data and archive-ledger availability. The asynchronous historical-retrieval backend is active on OCI and returns direct, short-lived Azure links; the customer-facing browser workflow remains a separate frontend acceptance item.
 11. The dashboard separates normal endpoint telemetry, immutable detection evidence, and mutable operator incidents.
 
-The public Azure artifact is Windows agent `4.2.11` at the approved versioned
-artifact URL. Its installer SHA-256 is
-`534BEF422B0DFBE7B4D16088823E23D9C633C4BA9093E2FBF89E605CE074CB43`.
+The newest public Azure engineering artifact is Windows agent `4.2.14` at its
+immutable versioned URL. Its installer SHA-256 is
+`87FC6FF1B08F2BF5AB4742B3F2C4144EBC774AEF5EABF4E392DC74294F49E1E9`.
 The production backend requires signed endpoint events. The executable is still
 not Authenticode publisher-signed, so exact-hash verification remains a pilot
 control rather than an enterprise publisher-trust claim.
@@ -54,7 +54,7 @@ Existing signed collection-v2 and collection-v3 agents remain accepted. The
 candidate becomes the public release only after immutable artifact upload,
 exact-hash verification, installation, and runtime acceptance proof.
 
-Agent `4.2.13-Native-Signed-Server-V1` is now the local engineering candidate.
+Agent `4.2.14-Native-Signed-Server-V1` is now the engineering candidate.
 It preserves the 4.2.12 workstation pipeline and adds a backend-owned,
 revisioned and hash-bound `general_server` monitoring profile for Windows Server
 2022 Standard Desktop Experience AMD64. Profile delivery is nonce-bound to the
@@ -64,8 +64,11 @@ spooling. Effective audit state is read through the native Windows API and drift
 degrades health without runtime GPO or firewall remediation. The feature flag is
 off by default. This is not a public/deployed agent or a Windows Server support
 claim until clean-server event, failure/recovery and soak qualification passes.
-The local installer is 18,879,454 bytes with SHA-256
-`6D1800F253EA74F3953BEED1F80B9A90DACD0EFCB90413503B543FE12FC41648`;
+Its spool drain reads bounded chunks, persists crash-safe acknowledgement
+cursors, compacts acknowledged prefixes, and rotates new files into bounded
+segments. This prevents a full 500 MiB outage spool from being loaded into RAM.
+The installer is 18,883,134 bytes with SHA-256
+`87FC6FF1B08F2BF5AB4742B3F2C4144EBC774AEF5EABF4E392DC74294F49E1E9`;
 it is not Authenticode-signed.
 The detailed contract is `docs/WARSOC_WINDOWS_SERVER_MONITORING_V1.md`.
 The completed local verification campaign closed with 109 focused tests and the
@@ -402,11 +405,12 @@ historical evidence.
    in application and Mongo index contracts after a live duplicate audit found
    no conflicts. Candidate production startup rejects short JWT and platform
    administrator secrets without printing them.
-4. **Agent:** 4.2.9 extends the signed endpoint envelope with collection time,
+4. **Agent:** 4.2.14 extends the signed endpoint envelope with collection time,
    channel, epoch and sequence continuity and reports signed coverage in the
    heartbeat. It preserves the bounded spool, XML parser guard and POS source
-   contract. The local installer and manifest are built, but the installer is
-   unsigned and not yet on the public Azure artifact path.
+   contract. The versioned installer and manifest are on the public Azure
+   artifact path, but the installer remains unsigned and customer acceptance
+   still requires exact-hash installation and runtime proof.
 5. **Production at that checkpoint:** the pre-candidate backend `d92fb65`
    reported healthy Mongo and Redis dependencies and the expected containers.
    Optional network relay, Wazuh, evidence export, daily anchor and FBR

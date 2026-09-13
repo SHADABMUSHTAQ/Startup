@@ -153,7 +153,7 @@ flowchart TD
 | Activation/enrollment | `ACTIVE` | One-time activation code binds an Ed25519 public key to the server-created tenant/agent identity. Random strings must not enroll. | Exact-release invalid/replay/dead-code proof. |
 | Windows service | `ACTIVE` | Agent runs independently of the dashboard as an automatic Windows service. Closing the browser does not stop collection. | Service restart/upgrade and clean-machine proof for 4.2.8. |
 | Native collection | `ACTIVE` | Security and System channels only, plus health. No Sysmon and no plaintext password collection. | Match every advertised rule to an enabled audit category and accepted event volume. |
-| Local spool | `SOURCE-PROVEN` | 500 MiB hard ceiling, lower resume boundary, retry-preserving files, quarantine, disk checks, and watermark safety. | Controlled outage, saturation, restart, and recovery test on the release binary. |
+| Local spool | `SOURCE-PROVEN` | 500 MiB hard ceiling, lower resume boundary, bounded file segments, bounded-memory draining, crash-safe byte cursors, incremental compaction, quarantine, disk checks, and watermark safety. | Controlled outage, saturation, restart, and recovery test on the 4.2.14 release binary. |
 | Event signing | `SOURCE-PROVEN`; 4.2.6 historically proven | Ed25519 signature is verified before Redis admission. Production candidate defaults to `required`; development may use `observe`. | Verify zero legitimate unsigned traffic from approved agents, then deploy `required` with rollback. |
 | Endpoint health | `ACTIVE` | Health depends on recent signed heartbeats, channel/audit status, spool state, and agent state. | Define exact customer-facing degraded reasons for the deployed UI. |
 
@@ -432,13 +432,14 @@ capability-driven collector rather than a blind second agent installation.
 
 ### 9.2 General Server V1 engineering candidate
 
-Agent `4.2.13-Native-Signed-Server-V1` adds a fixed, backend-owned and
+Agent `4.2.14-Native-Signed-Server-V1` adds a fixed, backend-owned and
 monitor-only profile for Windows Server 2022 Standard Desktop Experience AMD64.
-Source, API and packaging work is implemented locally, but the feature flag is
-off and the candidate is neither deployed nor customer-supported. It reuses the
+Source, API and packaging work is implemented and the versioned candidate is
+published, but the feature flag is off and it is not customer-supported. It reuses the
 signed ingestion, spool, SIEM, PECA, incident and storage paths while excluding
 IIS, domain controllers, shares, POS/database paths, broad FIM and automatic
-response. Clean-server functional, outage/recovery and soak evidence remain the
+response. Its bounded-memory spool recovery is source-tested; clean-server
+functional, outage/recovery and soak evidence remain the
 release gate. See `docs/WARSOC_WINDOWS_SERVER_MONITORING_V1.md`.
 
 ### 9.3 Future endpoint modules

@@ -1,10 +1,10 @@
 # WarSOC Windows Server Monitoring V1
 
 **Status:** Implemented engineering candidate; not deployed or customer-supported
-**Candidate:** `4.2.13-Native-Signed-Server-V1`
-**Contract date:** 2026-09-03
-**Local installer:** 18,879,454 bytes; SHA-256
-`6D1800F253EA74F3953BEED1F80B9A90DACD0EFCB90413503B543FE12FC41648`
+**Candidate:** `4.2.14-Native-Signed-Server-V1`
+**Contract date:** 2026-09-13
+**Published installer:** 18,883,134 bytes; SHA-256
+`87FC6FF1B08F2BF5AB4742B3F2C4144EBC774AEF5EABF4E392DC74294F49E1E9`
 **Publisher trust:** Not Authenticode-signed; exact-hash qualification only
 
 ## 1. Scope

@@ -907,11 +907,16 @@ def test_sender_isolates_409_conflict_without_deadlocking_later_events(monkeypat
             self.quarantined = []
             self.cleared = []
 
-        def consume_batch(self):
+        def consume_chunk(self, _max_records, _max_bytes):
             if self.consumed:
                 raise KeyboardInterrupt
             self.consumed = True
-            return events, "processing-test.jsonl"
+            return events, {
+                "file_path": "processing-test.jsonl",
+                "start_offset": 0,
+                "end_offset": 100,
+                "eof": True,
+            }
 
         def quarantine(self, event, reason):
             self.quarantined.append((event["event_uid"], reason))
@@ -919,8 +924,8 @@ def test_sender_isolates_409_conflict_without_deadlocking_later_events(monkeypat
         def append(self, _event):
             raise AssertionError("permanent conflicts must not be requeued")
 
-        def clear_batch(self, filename):
-            self.cleared.append(filename)
+        def acknowledge_chunk(self, token):
+            self.cleared.append(token["file_path"])
 
     class FakeResponse:
         def __init__(self, status_code):
@@ -972,6 +977,83 @@ def test_native_spool_hard_limit_blocks_without_deleting_unacknowledged_data(mon
     status = spooler.status()
     assert status["blocked"] is True
     assert status["usage_bytes"] <= status["max_bytes"]
+
+
+def test_spool_chunk_cursor_is_bounded_durable_and_replay_safe(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    spooler = agent.DiskSpooler(
+        tmp_path / "chunked-spool",
+        max_bytes=64 * 1024,
+        resume_bytes=32 * 1024,
+        min_free_bytes=0,
+        compact_after_bytes=64 * 1024,
+    )
+    processing = spooler.spool_dir / "processing_1.jsonl"
+    processing.write_text(
+        "".join(json.dumps({"event_id": str(index)}) + "\n" for index in range(6)),
+        encoding="utf-8",
+    )
+
+    first, token = spooler.consume_chunk(2, 4096)
+    replay, replay_token = spooler.consume_chunk(2, 4096)
+    assert [item["event_id"] for item in first] == ["0", "1"]
+    assert replay == first
+    assert replay_token == token
+
+    spooler.acknowledge_chunk(token)
+    second, second_token = spooler.consume_chunk(2, 4096)
+    assert [item["event_id"] for item in second] == ["2", "3"]
+    spooler.acknowledge_chunk(second_token)
+    final, final_token = spooler.consume_chunk(2, 4096)
+    assert [item["event_id"] for item in final] == ["4", "5"]
+    assert final_token["eof"] is True
+    spooler.acknowledge_chunk(final_token)
+    assert not processing.exists()
+
+
+def test_spool_compaction_reclaims_acknowledged_prefix_without_skipping(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    spooler = agent.DiskSpooler(
+        tmp_path / "compact-spool",
+        max_bytes=64 * 1024,
+        resume_bytes=32 * 1024,
+        min_free_bytes=0,
+        compact_after_bytes=1,
+    )
+    processing = spooler.spool_dir / "processing_1.jsonl"
+    processing.write_text(
+        "".join(json.dumps({"event_id": str(index), "message": "x" * 100}) + "\n" for index in range(5)),
+        encoding="utf-8",
+    )
+    original_size = processing.stat().st_size
+
+    first, token = spooler.consume_chunk(2, 4096)
+    spooler.acknowledge_chunk(token)
+
+    assert processing.stat().st_size < original_size
+    assert not spooler._checkpoint_path(processing).exists()
+    remaining, _ = spooler.consume_chunk(2, 4096)
+    assert [item["event_id"] for item in first] == ["0", "1"]
+    assert [item["event_id"] for item in remaining] == ["2", "3"]
+
+
+def test_spool_rotates_pending_into_bounded_segments(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    spooler = agent.DiskSpooler(
+        tmp_path / "segmented-spool",
+        max_bytes=4096,
+        resume_bytes=2048,
+        min_free_bytes=0,
+        segment_bytes=180,
+    )
+
+    assert spooler.append({"event_id": "1", "message": "x" * 100})
+    assert spooler.append({"event_id": "2", "message": "y" * 100})
+
+    processing = list(spooler.spool_dir.glob("processing_*.jsonl"))
+    assert len(processing) == 1
+    assert processing[0].stat().st_size <= spooler.segment_bytes
+    assert spooler.pending_file.stat().st_size <= spooler.segment_bytes
 
 
 def test_historical_spool_replay_is_rate_limited_after_success(monkeypatch, tmp_path):

@@ -57,7 +57,7 @@ if not env_loaded:
     print(f"[WARN] .env not found in any standard location. Using system environment variables.")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-AGENT_VERSION = "4.2.13-Native-Signed-Server-V1"
+AGENT_VERSION = "4.2.14-Native-Signed-Server-V1"
 EVENT_SIGNATURE_VERSION = "ed25519-v2"
 COLLECTION_PROTOCOL_VERSION = "warsoc-agent-collection-v4"
 WINDOWS_EVENT_XML_ENCODING = "zlib-base64-v1"
@@ -745,6 +745,8 @@ class DiskSpooler:
         max_bytes=None,
         resume_bytes=None,
         min_free_bytes=None,
+        segment_bytes=None,
+        compact_after_bytes=None,
     ):
         self.spool_dir = Path(spool_dir)
         self.pending_file = self.spool_dir / "pending_logs.jsonl"
@@ -753,12 +755,24 @@ class DiskSpooler:
         self.max_bytes = int(max_bytes or os.getenv("AGENT_SPOOL_MAX_BYTES", str(500 * 1024 * 1024)))
         self.resume_bytes = int(resume_bytes or os.getenv("AGENT_SPOOL_RESUME_BYTES", str(400 * 1024 * 1024)))
         self.min_free_bytes = int(min_free_bytes or os.getenv("AGENT_MIN_FREE_DISK_BYTES", str(2 * 1024 * 1024 * 1024)))
+        configured_segment_bytes = int(
+            segment_bytes or os.getenv("AGENT_SPOOL_SEGMENT_BYTES", str(8 * 1024 * 1024))
+        )
+        self.segment_bytes = min(configured_segment_bytes, self.max_bytes)
+        self.compact_after_bytes = int(
+            compact_after_bytes
+            or os.getenv("AGENT_SPOOL_COMPACT_AFTER_BYTES", str(64 * 1024 * 1024))
+        )
         if self.max_bytes <= 0:
             raise ValueError("AGENT_SPOOL_MAX_BYTES must be positive")
         if not 0 <= self.resume_bytes < self.max_bytes:
             raise ValueError("AGENT_SPOOL_RESUME_BYTES must be lower than AGENT_SPOOL_MAX_BYTES")
         if self.min_free_bytes < 0:
             raise ValueError("AGENT_MIN_FREE_DISK_BYTES cannot be negative")
+        if not 0 < self.segment_bytes <= self.max_bytes:
+            raise ValueError("AGENT_SPOOL_SEGMENT_BYTES must be positive and no larger than AGENT_SPOOL_MAX_BYTES")
+        if self.compact_after_bytes <= 0:
+            raise ValueError("AGENT_SPOOL_COMPACT_AFTER_BYTES must be positive")
         self.backpressure_active = False
         self.backpressure_reason = ""
 
@@ -841,6 +855,9 @@ class DiskSpooler:
             encoded_size = len(line.encode("utf-8"))
             with self.lock:
                 self._ensure_capacity_unlocked(encoded_size)
+                pending_size = self.pending_file.stat().st_size if self.pending_file.exists() else 0
+                if pending_size and pending_size + encoded_size > self.segment_bytes:
+                    self._rotate_pending_unlocked()
                 with open(self.pending_file, "a", encoding="utf-8") as f:
                     f.write(line)
                     f.flush()
@@ -851,6 +868,128 @@ class DiskSpooler:
                 SENSOR_COUNTERS["spool_write_failures"] += 1
             print(f"[!] Spooler Append Error: {e}")
             raise SpoolWriteError(str(e)) from e
+
+    def _rotate_pending_unlocked(self):
+        if not self.pending_file.exists() or self.pending_file.stat().st_size == 0:
+            return None
+        processing_file = self.spool_dir / (
+            f"processing_{time.time_ns()}_{uuid.uuid4().hex[:8]}.jsonl"
+        )
+        os.rename(str(self.pending_file), str(processing_file))
+        return processing_file
+
+    @staticmethod
+    def _checkpoint_path(file_path):
+        return Path(f"{file_path}.offset")
+
+    def _read_checkpoint(self, file_path):
+        checkpoint = self._checkpoint_path(file_path)
+        try:
+            value = int(checkpoint.read_text(encoding="ascii").strip())
+            size = Path(file_path).stat().st_size
+            return value if 0 <= value <= size else 0
+        except (OSError, TypeError, ValueError):
+            return 0
+
+    def _write_checkpoint(self, file_path, offset):
+        checkpoint = self._checkpoint_path(file_path)
+        temporary = Path(f"{checkpoint}.tmp")
+        with open(temporary, "w", encoding="ascii") as handle:
+            handle.write(str(int(offset)))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, checkpoint)
+
+    def consume_chunk(self, max_records, max_bytes):
+        """Read a bounded processing chunk and return it with an acknowledgement token."""
+        max_records = max(1, int(max_records))
+        max_bytes = max(1, int(max_bytes))
+        with self.lock:
+            processing_files = sorted(self.spool_dir.glob("processing_*.jsonl"))
+            processing_file = processing_files[0] if processing_files else self._rotate_pending_unlocked()
+        if processing_file is None:
+            return None, None
+
+        start_offset = self._read_checkpoint(processing_file)
+        records = []
+        end_offset = start_offset
+        malformed_count = 0
+        lines_seen = 0
+        with open(processing_file, "rb") as handle:
+            handle.seek(start_offset)
+            while lines_seen < max_records:
+                line_start = handle.tell()
+                raw_line = handle.readline()
+                if not raw_line:
+                    break
+                line_end = handle.tell()
+                if lines_seen and line_end - start_offset > max_bytes:
+                    handle.seek(line_start)
+                    break
+                end_offset = line_end
+                lines_seen += 1
+                if not raw_line.strip():
+                    continue
+                try:
+                    parsed = json.loads(raw_line.decode("utf-8"))
+                    if not isinstance(parsed, dict):
+                        raise ValueError("spool record is not a JSON object")
+                    records.append(parsed)
+                except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+                    malformed_count += 1
+                    self.quarantine(
+                        {"raw_spool_line_b64": base64.b64encode(raw_line).decode("ascii")},
+                        f"malformed_spool_json:{processing_file}",
+                    )
+            eof = handle.readline(1) == b""
+
+        if malformed_count:
+            print(f"[!] Spooler skipped {malformed_count} malformed JSONL records from {processing_file}")
+        token = {
+            "file_path": str(processing_file),
+            "start_offset": start_offset,
+            "end_offset": end_offset,
+            "eof": eof,
+        }
+        return records, token
+
+    def _compact_processing_file(self, file_path, acknowledged_offset):
+        source = Path(file_path)
+        temporary = Path(f"{source}.compact.tmp")
+        with open(source, "rb") as reader, open(temporary, "wb") as writer:
+            reader.seek(acknowledged_offset)
+            shutil.copyfileobj(reader, writer, length=1024 * 1024)
+            writer.flush()
+            os.fsync(writer.fileno())
+
+        checkpoint = self._checkpoint_path(source)
+        try:
+            checkpoint.unlink()
+        except FileNotFoundError:
+            pass
+        # Removing the checkpoint first can only cause duplicate replay after a
+        # crash; replacing first could skip unacknowledged evidence.
+        os.replace(temporary, source)
+
+    def acknowledge_chunk(self, token):
+        """Advance a durable cursor only after the chunk reached the backend."""
+        file_path = Path(str(token.get("file_path") or ""))
+        if file_path.parent.resolve() != self.spool_dir.resolve() or not file_path.name.startswith("processing_"):
+            raise ValueError("Invalid spool acknowledgement token")
+        end_offset = int(token.get("end_offset") or 0)
+        start_offset = int(token.get("start_offset") or 0)
+        if end_offset < start_offset:
+            raise ValueError("Spool acknowledgement moved backwards")
+
+        with self.lock:
+            if not file_path.exists():
+                return
+            if token.get("eof"):
+                self.clear_batch(file_path)
+                return
+            self._write_checkpoint(file_path, end_offset)
+            if end_offset >= self.compact_after_bytes:
+                self._compact_processing_file(file_path, end_offset)
 
     def quarantine(self, log_dict, reason):
         """Durably retain events rejected by the backend for later inspection."""
@@ -888,11 +1027,8 @@ class DiskSpooler:
             if not self.pending_file.exists() or os.path.getsize(self.pending_file) == 0:
                 return None, None
 
-            timestamp = int(time.time() * 1000)
-            processing_file = self.spool_dir / f"processing_{timestamp}.jsonl"
-
             try:
-                os.rename(str(self.pending_file), str(processing_file))
+                processing_file = self._rotate_pending_unlocked()
             except Exception as e:
                 print(f"[!] Spooler Rotation Error: {e}")
                 return None, None
@@ -938,6 +1074,9 @@ class DiskSpooler:
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
+            checkpoint = self._checkpoint_path(file_path)
+            if checkpoint.exists():
+                checkpoint.unlink()
         except Exception as e:
             print(f"[!] Spooler Cleanup Error: {e}")
 
@@ -1508,145 +1647,121 @@ def ingest_sender_thread():
     print(f"[*] Sender Online. Zero-Loss 'Rotate & Drain' Active. Batch Size: {OUTBOUND_BATCH_SIZE}")
     while True:
         try:
-            # THE DRAIN: Fetch atomic processing batch
-            batch, filename = SPOOLER.consume_batch()
+            # Read only one bounded chunk. A durable byte cursor advances after
+            # backend acknowledgement, so a 500 MiB outage spool cannot be
+            # loaded into RAM and crashes only cause idempotent replay.
+            batch, batch_token = SPOOLER.consume_chunk(
+                OUTBOUND_BATCH_SIZE,
+                MAX_OUTBOUND_BYTES,
+            )
 
             if batch is None:
                 time.sleep(1) # Wait for new pending logs
                 continue
 
             if not batch:
-                # Clear empty/corrupt rotated artifact so it cannot deadlock sender loop.
-                if filename:
-                    SPOOLER.clear_batch(filename)
+                SPOOLER.acknowledge_chunk(batch_token)
                 time.sleep(1)
                 continue
 
-            all_success = True
-            retain_original = False
+            if signing_key is None:
+                signing_key = _load_or_create_signing_key()
+            signed_chunk = [_sign_event_for_delivery(log, signing_key) for log in batch]
 
-            # CHUNK THE BATCH (dynamically uses updated OUTBOUND_BATCH_SIZE)
-            for i in range(0, len(batch), OUTBOUND_BATCH_SIZE):
-                chunk = batch[i:i + OUTBOUND_BATCH_SIZE]
-                if signing_key is None:
-                    signing_key = _load_or_create_signing_key()
-                chunk = [_sign_event_for_delivery(log, signing_key) for log in chunk]
+            chunk_bytes = _estimate_payload_bytes(signed_chunk)
+            if chunk_bytes > MAX_OUTBOUND_BYTES and len(batch) > 1:
+                OUTBOUND_BATCH_SIZE = max(1, len(batch) // 2)
+                print(
+                    f"[INFO] Preflight split: {len(batch)} logs ({chunk_bytes} bytes) "
+                    f"-> batch size {OUTBOUND_BATCH_SIZE}"
+                )
+                continue
+            if chunk_bytes > MAX_OUTBOUND_BYTES:
+                print(f"[WARN] Preflight single-log trim: {chunk_bytes} bytes > {MAX_OUTBOUND_BYTES} bytes")
+                signed_chunk = [
+                    _sign_event_for_delivery(_truncate_single_log_payload(batch[0]), signing_key)
+                ]
 
-                # Preflight split before network call to avoid 413/reset loops.
-                chunk_bytes = _estimate_payload_bytes(chunk)
-                if chunk_bytes > MAX_OUTBOUND_BYTES:
-                    if len(chunk) > 1:
-                        OUTBOUND_BATCH_SIZE = max(1, len(chunk) // 2)
-                        print(f"[INFO] Preflight split: {len(chunk)} logs ({chunk_bytes} bytes) -> batch size {OUTBOUND_BATCH_SIZE}")
-                        retain_original = True
-                        all_success = False
-                        break
-                    else:
-                        print(f"[WARN] Preflight single-log trim: {chunk_bytes} bytes > {MAX_OUTBOUND_BYTES} bytes")
-                        chunk = [
-                            _sign_event_for_delivery(
-                                _truncate_single_log_payload(chunk[0]),
-                                signing_key,
-                            )
-                        ]
+            resp = secure_request(
+                "POST",
+                INGEST_URL,
+                json=_build_ingest_envelope(signed_chunk),
+                timeout=20,
+            )
+            if resp is not None and resp.status_code in (200, 202):
+                SPOOLER.acknowledge_chunk(batch_token)
+                OUTBOUND_BATCH_SIZE = ORIGINAL_BATCH_SIZE
+                time.sleep(_successful_delivery_delay_seconds(signed_chunk))
+                continue
 
-                # TRANSMISSION
-                resp = secure_request("POST", INGEST_URL, json=_build_ingest_envelope(chunk), timeout=20)
-
-                if resp is not None and resp.status_code in (200, 202):
-                    # SUCCESS: Reset batch size back to max if it was previously throttled
-                    if OUTBOUND_BATCH_SIZE < ORIGINAL_BATCH_SIZE:
-                        OUTBOUND_BATCH_SIZE = ORIGINAL_BATCH_SIZE
-                    time.sleep(_successful_delivery_delay_seconds(chunk))
-                    continue
-
-                elif resp is not None and resp.status_code in (409, 422):
-                    # A malformed record or evidence-identity conflict must not
-                    # deadlock every later event in the durable spool. Retry the
-                    # records individually, quarantine permanent conflicts, and
-                    # preserve transient failures for another pass.
-                    print(
-                        f"[WARN] Batch chunk rejected ({resp.status_code}). "
-                        "Isolating conflicting records..."
+            if resp is not None and resp.status_code in (409, 422):
+                print(f"[WARN] Batch chunk rejected ({resp.status_code}). Isolating conflicting records...")
+                transient_retry = False
+                for single_log in batch:
+                    signed_single = _sign_event_for_delivery(single_log, signing_key)
+                    sr = secure_request(
+                        "POST",
+                        INGEST_URL,
+                        json=_build_ingest_envelope([signed_single]),
+                        timeout=10,
                     )
-                    transient_retry = False
-                    for single_log in chunk:
-                        signed_single = _sign_event_for_delivery(single_log, signing_key)
-                        sr = secure_request(
-                            "POST",
-                            INGEST_URL,
-                            json=_build_ingest_envelope([signed_single]),
-                            timeout=10,
-                        )
-                        if sr is not None and sr.status_code in (200, 202):
-                            time.sleep(_successful_delivery_delay_seconds([single_log]))
-                            continue
-
-                        status = sr.status_code if sr is not None else "timeout"
-                        if sr is not None and sr.status_code in (400, 409, 422):
-                            SPOOLER.quarantine(single_log, f"backend_rejected:{status}")
-                            print(f"[QUARANTINE] Backend rejected forensic event: {single_log.get('event_id')}")
-                        elif sr is not None and sr.status_code == 413:
-                            SPOOLER.append(_truncate_single_log_payload(single_log))
-                            print(f"[WARN] Oversized isolated event trimmed and re-queued: {single_log.get('event_id')}")
-                        else:
-                            SPOOLER.append(single_log)
-                            transient_retry = True
-                            print(f"[WARN] Isolated event delivery deferred ({status}): {single_log.get('event_id')}")
-                    if transient_retry:
-                        time.sleep(5)
-                    continue
-
-                else:
-                    # FAILURE RECOVERY STATE
-                    code = resp.status_code if resp is not None else "timeout"
-
-                    if resp is not None and resp.status_code == 413:
-                        print(f"[FAIL] Backend rejected payload: 413.")
-
-                        # Fix the Uvicorn Keep-Alive Socket Poisoning
-                        # Uvicorn abruptly closes the socket on 413, poisoning our connection pool.
-                        # This clears the broken socket to prevent the subsequent "timeout" error.
-                        try:
-                            REQUEST_SESSION.close()
-                            REQUEST_SESSION = requests.Session()
-                        except: pass
-
-                        # -- STRATEGY 1: GLOBAL BATCH HALVING --
-                        if len(chunk) > 1:
-                            OUTBOUND_BATCH_SIZE = max(1, len(chunk) // 2)
-                            print(f"[INFO] Halving OUTBOUND_BATCH_SIZE to {OUTBOUND_BATCH_SIZE} to respect 1MB limit...")
-                            retain_original = True
-
-                        # -- STRATEGY 2: SINGLE-LOG TRUNCATION --
-                        else:
-                            print(f"[WARN] Single log exceeds backend limit. Truncating and re-queuing it.")
-                            SPOOLER.append(_truncate_single_log_payload(chunk[0]))
-                            for remaining_log in batch[i + len(chunk):]:
-                                SPOOLER.append(remaining_log)
-                            OUTBOUND_BATCH_SIZE = ORIGINAL_BATCH_SIZE
-
-                    else:
-                        if resp is not None and resp.status_code == 429:
-                            print("[WARN] Backend rate limited (429). Backing off for 10s...")
-                            retain_original = True
-                            all_success = False
-                            time.sleep(10)
-                            break
-
-                        # STANDARD UNAVAILABLE / TIMEOUT ERROR
-                        print(f"[WARN] Backend Unavailable ({code}). Retrying in 5s...")
-                        retain_original = True
-
-                    all_success = False
-                    time.sleep(5)
+                    if sr is not None and sr.status_code in (200, 202):
+                        time.sleep(_successful_delivery_delay_seconds([single_log]))
+                        continue
+                    status = sr.status_code if sr is not None else "timeout"
+                    if sr is not None and sr.status_code in (400, 409, 422):
+                        SPOOLER.quarantine(single_log, f"backend_rejected:{status}")
+                        print(f"[QUARANTINE] Backend rejected forensic event: {single_log.get('event_id')}")
+                        continue
+                    transient_retry = True
+                    print(f"[WARN] Isolated event delivery deferred ({status}): {single_log.get('event_id')}")
                     break
+                if not transient_retry:
+                    SPOOLER.acknowledge_chunk(batch_token)
+                else:
+                    time.sleep(5)
+                continue
 
-            # Keep the original artifact during transient failures. Re-reading may
-            # redeliver an already accepted chunk, so backend event_uid idempotency
-            # remains the final duplicate-suppression boundary.
-            if not retain_original:
-                SPOOLER.clear_batch(filename)
+            code = resp.status_code if resp is not None else "timeout"
+            if resp is not None and resp.status_code == 413:
+                print("[FAIL] Backend rejected payload: 413.")
+                try:
+                    REQUEST_SESSION.close()
+                    REQUEST_SESSION = requests.Session()
+                except Exception:
+                    pass
+                if len(batch) > 1:
+                    OUTBOUND_BATCH_SIZE = max(1, len(batch) // 2)
+                    print(f"[INFO] Halving OUTBOUND_BATCH_SIZE to {OUTBOUND_BATCH_SIZE} to respect 1MB limit...")
+                else:
+                    # The source remains durable until the trimmed form is
+                    # accepted. A crash between acceptance and acknowledgement
+                    # only causes an idempotent retry.
+                    trimmed = _sign_event_for_delivery(
+                        _truncate_single_log_payload(batch[0]),
+                        signing_key,
+                    )
+                    retry = secure_request(
+                        "POST",
+                        INGEST_URL,
+                        json=_build_ingest_envelope([trimmed]),
+                        timeout=20,
+                    )
+                    if retry is not None and retry.status_code in (200, 202):
+                        SPOOLER.acknowledge_chunk(batch_token)
+                        OUTBOUND_BATCH_SIZE = ORIGINAL_BATCH_SIZE
+                        time.sleep(_successful_delivery_delay_seconds([trimmed]))
+                        continue
+                time.sleep(5)
+                continue
+
+            if resp is not None and resp.status_code == 429:
+                print("[WARN] Backend rate limited (429). Backing off for 10s...")
+                time.sleep(10)
+                continue
+
+            print(f"[WARN] Backend Unavailable ({code}). Retrying in 5s...")
+            time.sleep(5)
 
         except Exception as e:
             print(f"[!] Bulk Sender Crash: {e}")
