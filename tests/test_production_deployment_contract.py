@@ -25,6 +25,16 @@ def test_production_gateway_uses_real_domain_certbot_and_health_proxy():
     assert "proxy_send_timeout 120s;" in nginx
 
 
+def test_nginx_compresses_large_dashboard_json_at_the_edge():
+    for path in ("nginx/nginx.conf", "nginx/nginx.prod.conf"):
+        nginx = _read(path)
+        assert "gzip on;" in nginx
+        assert "gzip_vary on;" in nginx
+        assert "gzip_proxied any;" in nginx
+        assert "gzip_min_length 1024;" in nginx
+        assert "application/json" in nginx
+
+
 def test_production_compose_is_private_fail_fast_and_sized_for_pilot():
     compose = _read("docker-compose.prod.yml")
     assert "image: mongo:7" in compose
