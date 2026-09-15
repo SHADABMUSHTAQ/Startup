@@ -1,8 +1,8 @@
 # WarSOC Current Implementation and Future Scope Register
 
 **Document role:** Consolidated source-of-truth index
-**Snapshot date:** 2026-09-10
-**Windows Server engineering delta:** 2026-09-03
+**Snapshot date:** 2026-09-15
+**Windows Server engineering delta:** 2026-09-15
 **Evidence governance delta:** 2026-09-06
 **Retention, detector, and Security Stories production delta:** 2026-09-08
 **Historical retrieval and firewall/Wazuh acceptance delta:** 2026-09-10
@@ -430,17 +430,21 @@ capability-driven collector rather than a blind second agent installation.
 - strict POS JSONL ingestion;
 - health, audit-policy, channel, spool, and signature state.
 
-### 9.2 General Server V1 engineering candidate
+### 9.2 General Server V1 engineering pilot
 
 Agent `4.2.14-Native-Signed-Server-V1` adds a fixed, backend-owned and
 monitor-only profile for Windows Server 2022 Standard Desktop Experience AMD64.
-Source, API and packaging work is implemented and the versioned candidate is
-published, but the feature flag is off and it is not customer-supported. It reuses the
+Source, API and packaging work is implemented, the versioned candidate is
+published, and OCI release `b0d02db` has the feature flag enabled. It is still
+not customer-supported. It reuses the
 signed ingestion, spool, SIEM, PECA, incident and storage paths while excluding
 IIS, domain controllers, shares, POS/database paths, broad FIM and automatic
-response. Its bounded-memory spool recovery is source-tested; clean-server
-functional, outage/recovery and soak evidence remain the
-release gate. See `docs/WARSOC_WINDOWS_SERVER_MONITORING_V1.md`.
+response. The target Windows Server proved profile revision 1, signed heartbeat,
+audit/channel readiness, reboot recovery and offline spool drain. Frontend
+`28c7e8e` now exposes the backend-calculated status and the admin-only fixed
+profile control. The remaining event matrix, backend/Redis interruption and
+24-to-72-hour soak remain the customer-support gate. See
+`docs/WARSOC_WINDOWS_SERVER_MONITORING_V1.md`.
 
 ### 9.3 Future endpoint modules
 
@@ -660,7 +664,7 @@ A capability is not `ACTIVE` merely because code exists. It is done only when:
 |---|---|
 | Approved build, validation, pentest, and release sequence | `docs/WARSOC_BUILD_VALIDATE_FREEZE_EXECUTION_PLAN.md` |
 | Current as-built system | `docs/WARSOC_CURRENT_STATE_ARCHITECTURE.md` |
-| Windows Server General Server V1 candidate | `docs/WARSOC_WINDOWS_SERVER_MONITORING_V1.md` |
+| Windows Server General Server V1 engineering pilot | `docs/WARSOC_WINDOWS_SERVER_MONITORING_V1.md` |
 | Security Stories V1 release contract | `docs/WARSOC_SECURITY_STORIES_V1.md` |
 | Current operator/customer flow | `docs/WARSOC_END_TO_END_PRODUCT_AND_OPERATOR_GUIDE.md` |
 | Current architecture questions and proof gaps | `docs/WARSOC_COMPLETE_ARCHITECTURE_QUESTION_REGISTER.md` |

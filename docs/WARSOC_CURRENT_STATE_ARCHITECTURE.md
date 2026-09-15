@@ -1,19 +1,21 @@
 # WarSOC Current-State Architecture and Operational Contract
 
 **Document status:** Authoritative as-built map
-**Snapshot date:** 2026-09-10
-**Windows Server engineering delta:** 2026-09-03. General Server V1 is a local
-source candidate, not a deployed or customer-supported capability.
-**Release acceptance delta:** 2026-09-10. Core OCI application release
-`7e9f00d` is active and its historical-retrieval path passed a named live Azure
-canary. The existing Wazuh shadow containers were preserved by this scoped
-deployment and retain their separate detector acceptance record.
+**Snapshot date:** 2026-09-15
+**Windows Server engineering delta:** 2026-09-15. General Server V1 is a
+deployed engineering/pilot capability with target-host functional and offline
+spool-recovery proof. Customer support remains gated on the remaining event
+matrix and 24-to-72-hour soak.
+**Release acceptance delta:** 2026-09-15. Core OCI application release
+`b0d02db` is active and healthy. Its historical-retrieval path retains its named
+live Azure canary. The existing Wazuh shadow containers retain their separate
+detector acceptance record.
 **Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the controlled pfSense network-relay path, and the controlled Wazuh shadow-detector path.
 
-**Current OCI application identity:** `7e9f00d`
+**Current OCI application identity:** `b0d02db`
 **Always-on Wazuh deployment foundation:** `7cd02e0`
 **Repository note:** the manager-only deployment package changes the Wazuh runtime boundary; it does not replace the core application image identity
-**Current Vercel frontend identity:** `e7c5aa0`
+**Current Vercel frontend identity:** `28c7e8e`
 
 This document describes what the current source code does. It is not a sales claim and it does not treat an implemented path as production-proven unless verification evidence exists.
 
@@ -54,16 +56,17 @@ Existing signed collection-v2 and collection-v3 agents remain accepted. The
 candidate becomes the public release only after immutable artifact upload,
 exact-hash verification, installation, and runtime acceptance proof.
 
-Agent `4.2.14-Native-Signed-Server-V1` is now the engineering candidate.
+Agent `4.2.14-Native-Signed-Server-V1` is now the deployed engineering pilot.
 It preserves the 4.2.12 workstation pipeline and adds a backend-owned,
 revisioned and hash-bound `general_server` monitoring profile for Windows Server
 2022 Standard Desktop Experience AMD64. Profile delivery is nonce-bound to the
 signed heartbeat, server response is permanently monitor-only, and collected
 events carry the exact profile provenance before endpoint signing and durable
 spooling. Effective audit state is read through the native Windows API and drift
-degrades health without runtime GPO or firewall remediation. The feature flag is
-off by default. This is not a public/deployed agent or a Windows Server support
-claim until clean-server event, failure/recovery and soak qualification passes.
+degrades health without runtime GPO or firewall remediation. Production OCI
+release `b0d02db` has the feature flag enabled. This remains an engineering/pilot
+capability, not a customer-support claim, until the remaining event, failure and
+soak qualification passes.
 Its spool drain reads bounded chunks, persists crash-safe acknowledgement
 cursors, compacts acknowledged prefixes, and rotates new files into bounded
 segments. This prevents a full 500 MiB outage spool from being loaded into RAM.
@@ -74,8 +77,13 @@ The detailed contract is `docs/WARSOC_WINDOWS_SERVER_MONITORING_V1.md`.
 The completed local verification campaign closed with 109 focused tests and the
 full maintained suite at 607 passed, one explicitly skipped and zero assertion
 failures. Packaging, manifest verification, dependency auditing and the
-high-severity static security gate also passed. Real Windows Server functional,
-failure/recovery and soak qualification remains open.
+high-severity static security gate also passed. The September 14 target-host run
+proved profile revision 1, signed heartbeat and host identity, audit/channel
+readback, service restart/reboot recovery, and an exact offline spool cycle of
+0 to 53,110 bytes to 0. Frontend `28c7e8e` displays the authoritative status and
+provides the admin-only compare-and-set profile control. Destructive Event 1102,
+the remaining event-family matrix, backend/Redis interruption, and the
+24-to-72-hour soak remain open.
 
 The 2026-07-21 `4.2.6-Native-Signed` run remains a historical complete
 exact-machine workflow baseline: enrollment, fresh heartbeats, SIEM alerting,
@@ -2115,7 +2123,7 @@ Do not declare the current release fully accepted until all of the following are
 | FBR reconciliation contract/lab engine | `app/utils/fbr_reconciliation.py` |
 | Redis ingest memory admission | `app/utils/ingest_capacity.py` |
 | Windows event signing and protected key storage | `agent/windows_agent.py` |
-| Windows Server General Server V1 candidate and qualification contract | `docs/WARSOC_WINDOWS_SERVER_MONITORING_V1.md`, `agent/server_monitoring.py`, and `app/utils/collection_profiles.py` |
+| Windows Server General Server V1 engineering pilot and qualification contract | `docs/WARSOC_WINDOWS_SERVER_MONITORING_V1.md`, `agent/server_monitoring.py`, and `app/utils/collection_profiles.py` |
 | Security Stories V1 correlation, worker and API contract | `docs/WARSOC_SECURITY_STORIES_V1.md`, `app/utils/security_stories.py`, `app/workers/security_story_worker.py`, and `app/routes/security_stories.py` |
 | Network-relay API and admission | `app/routes/network_relay.py` |
 | Network-relay parsing, spooling, signing and runtime | `app/network_relay/` and `scripts/warsoc_relay_service.py` |

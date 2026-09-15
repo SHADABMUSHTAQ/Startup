@@ -1,8 +1,11 @@
 # WarSOC Windows Server Monitoring V1
 
-**Status:** Implemented engineering candidate; not deployed or customer-supported
+**Status:** Deployed engineering pilot; functional and outage recovery proven;
+customer support remains gated on the remaining qualification and soak evidence
 **Candidate:** `4.2.14-Native-Signed-Server-V1`
 **Contract date:** 2026-09-13
+**Runtime evidence date:** 2026-09-14
+**Production identities:** OCI backend `b0d02db`; Vercel frontend `28c7e8e`
 **Published installer:** 18,883,134 bytes; SHA-256
 `87FC6FF1B08F2BF5AB4742B3F2C4144EBC774AEF5EABF4E392DC74294F49E1E9`
 **Publisher trust:** Not Authenticode-signed; exact-hash qualification only
@@ -206,15 +209,37 @@ The 2026-09-03 local candidate completed:
 - full deployable-tree high-severity Bandit scan with no findings;
 - `pip-audit` with no known requirement vulnerabilities and `pip check` clean.
 
-The current Windows 10 development host was correctly classified as a client and
-the non-elevated audit query failed closed when its token lacked
-`SeSecurityPrivilege`. The packaged agent service runs as LocalSystem and now
-temporarily enables/restores that privilege around audit readback, but this still
-requires proof on the target Windows Server VM.
+The Windows 10 development host was correctly classified as a client and the
+non-elevated audit query failed closed when its token lacked
+`SeSecurityPrivilege`. The packaged agent service runs as LocalSystem and
+temporarily enables/restores that privilege around audit readback.
+
+The 2026-09-14 target-host campaign then proved the deployed engineering path on
+the qualified Windows Server host:
+
+- agent `WARSOC_AGENT_6f5a91b00dfd42efb397c685f295f2ab` ran as an automatic
+  service and resumed after host restart;
+- candidate `4.2.14-Native-Signed-Server-V1` delivered and acknowledged General
+  Server V1 revision 1 with `AUDIT_OK`, Security/System coverage, verified host
+  identity, and `MONITOR_ONLY` response mode;
+- controlled account/group and audit-policy canaries reached the native event
+  path without enabling automated response;
+- an outbound API interruption grew the durable spool from 0 to 53,110 bytes;
+  after connectivity returned, it drained back to 0 and the service remained
+  `Running`/`Automatic`;
+- OCI release `b0d02db` is healthy with
+  `WINDOWS_SERVER_MONITORING_ENABLED=true`, and frontend `28c7e8e` consumes the
+  tenant-scoped status/catalog/compare-and-set profile APIs.
+
+This is not complete Stage D acceptance. The destructive Event 1102 canary,
+remaining event-family runtime matrix, backend/Redis interruption exercise, and
+24-to-72-hour resource/false-positive soak remain open.
 
 ## 9. Acceptance Boundary
 
 Source tests or a successful workstation build do not approve Windows Server.
-Customer support may be declared only after Stage B through D evidence is saved
-against the exact installer hash. The current shared 50-agent platform ceiling
-does not increase as part of this feature.
+The named target-host proof above permits engineering/pilot use only. Customer
+support may be declared only after the remaining Stage B/C checks and Stage D
+evidence are saved against the exact installer hash. The backend catalog must
+therefore continue to return `customer_supported=false`. The current shared
+50-agent platform ceiling does not increase as part of this feature.
