@@ -10,6 +10,8 @@ export default function CustomCursor() {
   const positionRef = useRef({ x: -100, y: -100 });
 
   useEffect(() => {
+    const cursorNode = cursorRef.current;
+    const ringNode = ringRef.current;
     const finePointer = window.matchMedia("(pointer: fine)");
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -24,7 +26,18 @@ export default function CustomCursor() {
       );
     };
 
+    // Native modal dialogs render in the browser top layer. Move the cursor
+    // nodes into the open dialog while hovering it so they remain visible.
+    const syncCursorLayer = (target) => {
+      const modal = target instanceof Element ? target.closest("dialog[open]") : null;
+      const parent = modal || document.body;
+      if (!parent) return;
+      if (cursorRef.current?.parentElement !== parent) parent.append(cursorRef.current);
+      if (ringRef.current?.parentElement !== parent) parent.append(ringRef.current);
+    };
+
     const moveCursor = (event) => {
+      syncCursorLayer(event.target);
       positionRef.current = { x: event.clientX, y: event.clientY };
       if (frameRef.current) return;
 
@@ -73,6 +86,8 @@ export default function CustomCursor() {
       finePointer.removeEventListener("change", updateAvailability);
       reducedMotion.removeEventListener("change", updateAvailability);
       document.documentElement.classList.remove("has-custom-cursor", "custom-cursor-hovering", "custom-cursor-clicked", "custom-cursor-outside");
+      if (cursorNode) document.body.append(cursorNode);
+      if (ringNode) document.body.append(ringNode);
       if (frameRef.current) window.cancelAnimationFrame(frameRef.current);
     };
   }, []);

@@ -465,3 +465,85 @@
     transition: none;
   }
 }
+
+/* Footer alignment pass: crop the transparent logo canvas so the visible mark
+   has a deliberate scale and lines up with the brand copy. */
+.footer {
+  padding: 4.5rem 2rem 1.75rem;
+}
+
+.footer-container {
+  width: min(1200px, 100%);
+}
+
+.footer-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: clamp(3.5rem, 10vw, 9rem);
+  margin-bottom: 3.25rem;
+}
+
+.footer-brand-section {
+  display: grid;
+  justify-items: start;
+  min-width: 0;
+  max-width: 440px;
+}
+
+.brand-logo {
+  width: 180px;
+  height: 130px;
+  margin: 0 0 1rem;
+  overflow: visible;
+}
+
+.fot-logo {
+  width: 180px;
+  height: 180px;
+  max-width: none;
+  transform: translateY(-10px);
+}
+
+.brand-desc {
+  max-width: 360px;
+  margin: 0 0 1.5rem;
+}
+
+.footer-links-grid {
+  align-items: start;
+  justify-content: end;
+  gap: clamp(3rem, 7vw, 6rem);
+  padding-top: 0.4rem;
+}
+
+.link-column {
+  min-width: 120px;
+}
+
+.footer-bottom {
+  padding-top: 1.5rem;
+}
+
+@media (max-width: 768px) {
+  .footer {
+    padding: 3.5rem 1.25rem 1.5rem;
+  }
+
+  .footer-top {
+    display: flex;
+    gap: 2.5rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .brand-logo {
+    width: 160px;
+    height: 120px;
+  }
+
+  .fot-logo {
+    width: 160px;
+    height: 160px;
+    transform: translateY(-8px);
+  }
+}
