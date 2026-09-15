@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, Clock3, Copy, Database, Download, FileSpreadsheet, KeyRound, RadioTower, RefreshCw, ShieldCheck, Upload, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock3, Copy, Database, Download, FileSpreadsheet, KeyRound, RadioTower, RefreshCw, ServerCog, ShieldCheck, Upload, X } from "lucide-react";
 import apiClient from "../../../api/apiClient";
 import AsyncState from "../../../components/AsyncState";
 import {
@@ -9,10 +9,12 @@ import {
   archiveStatusInfo,
   buildArchiveAvailabilityParams,
   buildArchiveRetrievalPayload,
+  buildServerProfilePayload,
   formatArchiveBytes,
   formatArchiveDateRange,
   formatArchiveSources,
   formatArchiveTimestamp,
+  normalizeEndpointStatus,
   safeDownloadUrl,
 } from "../../../contracts/backendContracts";
 import useRole from "../../../hooks/useRole";
@@ -23,33 +25,128 @@ const display = (value, fallback = "Not recorded") => value === undefined || val
 const healthLabel = (value) => ({ active: "Online", degraded: "Degraded", offline: "Offline", revoked: "Revoked" }[String(value).toLowerCase()] || "Not recorded");
 
 function Fleet({ onDownloadAgent }) {
+  const { is } = useRole();
+  const canManageServerProfiles = is("admin");
   const [state, setState] = useState("loading");
   const [fleet, setFleet] = useState(null);
   const [message, setMessage] = useState("");
+  const [serverCatalog, setServerCatalog] = useState(null);
+  const [profileTarget, setProfileTarget] = useState(null);
+  const [profileDraft, setProfileDraft] = useState({ enabled: true, environment: "unknown", criticality: "medium" });
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileNotice, setProfileNotice] = useState("");
   const load = useCallback(async () => {
     setState((current) => current === "ready" ? "refreshing" : "loading");
     try {
       const { data } = await apiClient.get(API_ROUTES.endpointStatus);
       setFleet(data);
+      if (canManageServerProfiles) {
+        try {
+          const { data: catalog } = await apiClient.get(API_ROUTES.serverProfiles);
+          setServerCatalog(catalog);
+        } catch {
+          setServerCatalog(null);
+        }
+      }
       setState("ready");
       setMessage("");
     } catch (error) {
       setState("degraded");
       setMessage(error.response?.status === 403 ? "Access denied. Your role cannot view endpoint fleet status." : "Endpoint fleet status is temporarily unavailable. Last known information is kept when available.");
     }
-  }, []);
+  }, [canManageServerProfiles]);
   useEffect(() => { load(); }, [load]);
   const rows = fleet?.data || [];
   const summary = [
     ["Seats purchased", fleet?.max_agents], ["Enrolled", fleet?.registered_agents], ["Remaining", Math.max(0, Number(fleet?.max_agents || 0) - Number(fleet?.registered_agents || 0))],
     ["Online", fleet?.agents_online], ["Degraded", fleet?.agents_degraded], ["Offline", fleet?.agents_offline],
   ];
+  const profileDefinition = serverCatalog?.profiles?.find((profile) => profile.profile_id === "general_server") || null;
+  const profileControlsAvailable = serverCatalog?.engineering_enabled === true && Boolean(profileDefinition);
+
+  const openProfile = (endpoint) => {
+    const view = normalizeEndpointStatus(endpoint);
+    setProfileDraft({
+      enabled: endpoint.server_monitoring?.desired ? view.profileEnabled : true,
+      environment: view.environment,
+      criticality: view.criticality,
+    });
+    setProfileTarget({ endpoint, view });
+    setProfileNotice("");
+  };
+
+  const saveProfile = async (event) => {
+    event.preventDefault();
+    if (!profileTarget || !profileControlsAvailable) return;
+    setProfileBusy(true);
+    setProfileNotice("");
+    try {
+      const payload = buildServerProfilePayload({
+        expectedRevision: profileTarget.view.desiredRevision,
+        ...profileDraft,
+      });
+      await apiClient.put(API_ROUTES.serverProfile(profileTarget.endpoint.agent_id), payload);
+      setProfileTarget(null);
+      setProfileNotice("Server profile update accepted. Health will refresh after the next signed heartbeat.");
+      await load();
+    } catch (error) {
+      const status = error.response?.status;
+      setProfileNotice(
+        status === 409
+          ? "The profile or host state changed. Refresh the fleet and retry."
+          : status === 403
+            ? "Only a tenant administrator can change a server profile."
+            : status === 503
+              ? "Server profile management is currently disabled."
+              : "The server profile could not be updated.",
+      );
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
   return <section className="ops-view">
     <div className="ops-heading"><div><p className="ops-eyebrow">Endpoint operations</p><h2>Endpoint Fleet</h2><p>Current fleet status is based on agent health, not log rows.</p></div><div className="ops-actions"><button className="ops-secondary" onClick={load} disabled={state === "loading" || state === "refreshing"}><RefreshCw size={16} className={state === "refreshing" ? "ops-spin" : ""} /> Refresh</button>{onDownloadAgent && <button onClick={onDownloadAgent}><Download size={16} /> Download Agent</button>}</div></div>
     {message && <div className="ops-notice"><AlertCircle size={17} />{message}<button onClick={load}>Retry</button></div>}
+    {profileNotice && <div className="ops-notice" role="status"><ServerCog size={17} />{profileNotice}</div>}
     <div className="ops-stats">{summary.map(([label, value]) => <div className="ops-stat" key={label}><span>{label}</span><strong>{state === "loading" ? "—" : display(value, "0")}</strong></div>)}</div>
-    <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Endpoint</th><th>Agent ID</th><th>Version</th><th>Last seen</th><th>Health</th><th>Signing</th><th>Audit / sensor</th><th>POS feed</th><th>Spool</th><th>Degradation reason</th></tr></thead><tbody>{state === "loading" ? <tr><td colSpan="10" className="ops-empty">Loading endpoint fleet…</td></tr> : rows.length ? rows.map((endpoint) => { const sensor = endpoint.sensor_status || {}; const channels = sensor.channels || {}; const spool = sensor.spool || {}; return <tr key={endpoint.agent_id}><td>{display(endpoint.endpoint_name)}</td><td className="ops-code">{display(endpoint.agent_id)}</td><td>{display(endpoint.version)}</td><td>{endpoint.last_seen ? new Date(endpoint.last_seen).toLocaleString() : "Not recorded"}</td><td><span className={`ops-status ${String(endpoint.health || "offline").toLowerCase()}`}>{healthLabel(endpoint.health)}</span></td><td>{display(endpoint.event_signing?.status)}</td><td>{display(sensor.audit_policy_status)} / {display(channels.Security?.status)}</td><td>{display(sensor.pos?.status)}</td><td>{spool.blocked ? "Blocked" : display(spool.status)}</td><td>{display(sensor.degradation_reason || endpoint.degradation_reason)}</td></tr>; }) : <tr><td colSpan="10" className="ops-empty">No endpoint fleet records have been received yet.</td></tr>}</tbody></table></div>
+    <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Endpoint</th><th>Agent ID</th><th>Version</th><th>Last seen</th><th>Health</th><th>Signing</th><th>Audit / sensor</th><th>POS feed</th><th>Spool</th><th>Profile / reason</th></tr></thead><tbody>{state === "loading" ? <tr><td colSpan="10" className="ops-empty">Loading endpoint fleet…</td></tr> : rows.length ? rows.map((endpoint) => {
+      const sensor = endpoint.sensor_status || {};
+      const channels = sensor.channels || {};
+      const view = normalizeEndpointStatus(endpoint);
+      return <tr key={endpoint.agent_id}>
+        <td><div className="endpoint-name-cell"><span>{display(endpoint.endpoint_name)}</span>{view.isServer && <span className="endpoint-type-badge">Server</span>}</div></td>
+        <td className="ops-code">{display(endpoint.agent_id)}</td>
+        <td>{display(endpoint.version)}</td>
+        <td>{endpoint.last_seen ? new Date(endpoint.last_seen).toLocaleString() : "Not recorded"}</td>
+        <td><span className={`ops-status ${String(endpoint.health || "offline").toLowerCase()}`}>{healthLabel(endpoint.health)}</span></td>
+        <td>{display(endpoint.event_signing?.status)}</td>
+        <td>{display(view.auditStatus)} / {display(channels.Security?.status)}</td>
+        <td>{display(view.posStatus)}</td>
+        <td>{view.spoolBlocked ? "BLOCKED" : display(view.spoolStatus)}</td>
+        <td>{view.isServer ? <div className="server-profile-cell"><strong>{display(view.serverHealth)}</strong>{canManageServerProfiles && <button type="button" className="ops-secondary server-profile-button" onClick={() => openProfile(endpoint)} disabled={!profileControlsAvailable}><ServerCog size={14} /> Configure</button>}</div> : display(view.degradationReason)}</td>
+      </tr>;
+    }) : <tr><td colSpan="10" className="ops-empty">No endpoint fleet records have been received yet.</td></tr>}</tbody></table></div>
     <EndpointTrust endpoints={rows} loading={state === "loading"} />
+    {profileTarget && <div className="relay-modal-overlay">
+      <form className="relay-modal server-profile-modal" onSubmit={saveProfile} role="dialog" aria-modal="true" aria-labelledby="server-profile-title">
+        <button type="button" className="relay-modal-close" onClick={() => setProfileTarget(null)} aria-label="Close server profile"><X size={18} /></button>
+        <div><span className="ops-eyebrow">Server monitoring</span><h3 id="server-profile-title">General Server V1</h3></div>
+        <p>{display(profileTarget.endpoint.endpoint_name || profileTarget.endpoint.agent_id)} · revision {profileTarget.view.desiredRevision}</p>
+        <div className={`server-support-state ${profileDefinition?.customer_supported ? "supported" : "pilot"}`}>
+          <ShieldCheck size={16} />
+          <span>{profileDefinition?.customer_supported ? "Customer-supported profile" : "Engineering-qualified pilot profile"}</span>
+        </div>
+        <p>{display(profileDefinition?.qualification_target)}</p>
+        <label className="server-profile-toggle"><input type="checkbox" checked={profileDraft.enabled} onChange={(event) => setProfileDraft((current) => ({ ...current, enabled: event.target.checked }))} /><span>Enable monitor-only server profile</span></label>
+        <div className="server-profile-fields">
+          <label>Environment<select value={profileDraft.environment} onChange={(event) => setProfileDraft((current) => ({ ...current, environment: event.target.value }))}><option value="production">Production</option><option value="staging">Staging</option><option value="development">Development</option><option value="unknown">Unknown</option></select></label>
+          <label>Criticality<select value={profileDraft.criticality} onChange={(event) => setProfileDraft((current) => ({ ...current, criticality: event.target.value }))}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></select></label>
+        </div>
+        <div className="server-profile-facts"><span>Host identity: {display(profileTarget.view.hostIdentityStatus)}</span><span>Response mode: MONITOR_ONLY</span><span>Reported revision: {profileTarget.view.reportedRevision ?? "Pending"}</span></div>
+        <div><button type="button" className="ops-secondary" onClick={() => setProfileTarget(null)}>Cancel</button><button type="submit" disabled={profileBusy}>{profileBusy ? "Applying..." : "Apply profile"}</button></div>
+      </form>
+    </div>}
   </section>;
 }
 

@@ -23,7 +23,7 @@ const AgentLogs = ({ logs = [] }) => {
   const renderTable = (maxHeight) => (
     <div
       className="agent-table-container"
-      style={{ maxHeight, overflowY: "auto", overflowX: "hidden" }}
+      style={{ maxHeight, overflowY: "auto", overflowX: "auto" }}
     >
       <table
         className="agent-table"
@@ -139,9 +139,10 @@ const AgentLogs = ({ logs = [] }) => {
                       fontSize: "13px",
                       color: "var(--text-main)",
                       maxWidth: isFullscreen ? "none" : "250px",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
+                      minWidth: "240px",
+                      whiteSpace: "normal",
+                      overflowWrap: "anywhere",
+                      lineHeight: "1.45",
                     }}
                     title={log.message}
                   >

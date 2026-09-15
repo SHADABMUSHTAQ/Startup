@@ -35,6 +35,7 @@ import OperationsViews from "../../Components/OperationsViews/OperationsViews";
 import EvidenceCases from "../Evidence/EvidenceCases";
 import LegalHolds from "../Evidence/LegalHolds";
 import useRole from "../../../hooks/useRole";
+import { formatSecurityEvent } from "../../../utils/securityEventDisplay";
 
 import {
   ShieldCheck,
@@ -504,8 +505,8 @@ function Dashboard() {
         const aggregatedLogs = response.data
           .map((log, index) => {
             const context = log.context || {};
-            const ip = context.source_address || log.source_ip || log.ip || "N/A";
-            const rawMessage = log.message || log.title || "Unknown Event";
+            const display = formatSecurityEvent(log);
+            const ip = display.sourceIp;
             const eventId = log.event_id || 0;
             return {
               id: log.incident_id || `${ip}-${eventId}-${index}`,
@@ -514,9 +515,10 @@ function Dashboard() {
               firstSeen: log.first_seen || log.timestamp,
               lastSeen: log.last_seen || log.timestamp,
               level: String(log.severity || "INFO").toUpperCase(),
-              message: rawMessage,
+              message: display.message,
               ip,
-              host: context.endpoint || context.agent_id || "Unknown endpoint",
+              host: display.host,
+              sourceType: display.sourceType,
               engine: log.engine_source || "SIEM",
               eventId,
               eventUids: log.event_uids || [],
@@ -580,11 +582,8 @@ function Dashboard() {
         setAgentEvents(
           response.data.map((event, index) => {
             const eventId = event.event_id || 0;
-            const host =
-              event.computer ||
-              event.hostname ||
-              event.agent_id ||
-              "Unknown endpoint";
+            const display = formatSecurityEvent(event);
+            const host = display.host;
             return {
               id:
                 event._id ||
@@ -592,15 +591,12 @@ function Dashboard() {
                 `${host}-${eventId}-${index}`,
               time: event.timestamp || event.ingested_at,
               level: String(event.severity || "INFO").toUpperCase(),
-              message:
-                event.event_id_meaning ||
-                event.summary ||
-                (eventId ? `Windows Event ${eventId}` : "Endpoint telemetry"),
-              ip: event.source_ip || event.ip || "N/A",
+              message: display.message,
+              ip: display.sourceIp,
               host,
               engine:
-                event.telemetry_family || event.engine_source || "WINDOWS",
-              sourceType: event.telemetry_family || event.engine_source || "Not recorded",
+                event.telemetry_family || event.engine_source || display.sourceType,
+              sourceType: display.sourceType,
               eventId,
               eventUid: event.event_uid,
               context: event.context || {},

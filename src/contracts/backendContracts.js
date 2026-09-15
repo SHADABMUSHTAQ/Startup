@@ -8,6 +8,8 @@ export const formatPackRetention = (retention) => {
 
 export const API_ROUTES = Object.freeze({
   endpointStatus: "/data/status",
+  serverProfiles: "/agent/server-profiles",
+  serverProfile: (agentId) => `/agent/${encodeId(agentId)}/server-profile`,
   evidenceCases: "/compliance/cases",
   evidenceCase: (caseId) => `/compliance/cases/${encodeId(caseId)}`,
   evidenceCaseItems: (caseId) => `/compliance/cases/${encodeId(caseId)}/items`,
@@ -24,6 +26,80 @@ export const API_ROUTES = Object.freeze({
   archiveRetrieval: (requestId) => `/archive-retrievals/${encodeId(requestId)}`,
   archiveRetrievalDownloads: (requestId) => `/archive-retrievals/${encodeId(requestId)}/download-links`,
 });
+
+const SERVER_ENVIRONMENTS = new Set(["production", "staging", "development", "unknown"]);
+const SERVER_CRITICALITIES = new Set(["low", "medium", "high", "critical"]);
+
+export const buildServerProfilePayload = ({ expectedRevision, enabled, environment, criticality }) => {
+  const revision = Number(expectedRevision);
+  const normalizedEnvironment = String(environment || "unknown").trim().toLowerCase();
+  const normalizedCriticality = String(criticality || "medium").trim().toLowerCase();
+
+  if (!Number.isInteger(revision) || revision < 0 || revision > 2147483646) {
+    throw new Error("Server profile revision is invalid. Refresh the fleet and retry.");
+  }
+  if (typeof enabled !== "boolean") {
+    throw new Error("Server profile state is invalid.");
+  }
+  if (!SERVER_ENVIRONMENTS.has(normalizedEnvironment)) {
+    throw new Error("Server environment is invalid.");
+  }
+  if (!SERVER_CRITICALITIES.has(normalizedCriticality)) {
+    throw new Error("Server criticality is invalid.");
+  }
+
+  return {
+    expected_revision: revision,
+    enabled,
+    environment: normalizedEnvironment,
+    criticality: normalizedCriticality,
+  };
+};
+
+export const normalizeEndpointStatus = (endpoint = {}) => {
+  const sensor = endpoint.sensor_status || {};
+  const server = endpoint.server_monitoring || {};
+  const desired = server.desired || null;
+  const reported = server.reported || null;
+  const host = server.host || {};
+  const desiredRevision = Number(desired?.revision);
+  const reportedRevision = Number(reported?.applied_revision);
+  const isServer = endpoint.asset_class === "server"
+    || server.required === true
+    || Number(host.product_type) === 3;
+  const serverHealth = String(server.health || (isServer ? "AUDIT_UNKNOWN" : "NOT_APPLICABLE")).toUpperCase();
+  const hasAuthoritativeSpoolBlocked = Object.prototype.hasOwnProperty.call(
+    endpoint.spool_health || {},
+    "blocked",
+  );
+  const spoolBlocked = hasAuthoritativeSpoolBlocked
+    ? endpoint.spool_health.blocked === true
+    : sensor.spool?.blocked === true;
+  const spoolStatus = endpoint.spool_health?.status || sensor.spool?.status || (spoolBlocked ? "BLOCKED" : "UNKNOWN");
+  const posStatus = endpoint.pos_coverage?.status || sensor.pos?.status || "UNKNOWN";
+  const auditStatus = endpoint.audit_coverage?.status || sensor.audit_policy_status || "UNKNOWN";
+  const degradationReason = endpoint.spool_health?.reason
+    || sensor.degradation_reason
+    || endpoint.degradation_reason
+    || (isServer && serverHealth !== "READY" ? serverHealth : null);
+
+  return {
+    isServer,
+    serverHealth,
+    hostIdentityStatus: server.host_identity_status || "UNKNOWN",
+    desiredRevision: Number.isInteger(desiredRevision) && desiredRevision >= 0 ? desiredRevision : 0,
+    reportedRevision: Number.isInteger(reportedRevision) && reportedRevision >= 0 ? reportedRevision : null,
+    profileEnabled: desired?.profile?.enabled === true,
+    environment: endpoint.environment || "unknown",
+    criticality: endpoint.criticality || "medium",
+    responseMode: endpoint.response_mode || (isServer ? "MONITOR_ONLY" : "LEGACY_ENDPOINT"),
+    posStatus: String(posStatus).toUpperCase(),
+    spoolStatus: String(spoolStatus).toUpperCase(),
+    spoolBlocked,
+    auditStatus: String(auditStatus).toUpperCase(),
+    degradationReason,
+  };
+};
 
 export const HOLDABLE_EVIDENCE_COLLECTIONS = Object.freeze([
   "fbr_pos_logs",

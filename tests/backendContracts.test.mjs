@@ -17,17 +17,129 @@ import {
   buildEvidenceExportPayload,
   buildLegalHoldPayload,
   buildLegalHoldReleasePayload,
+  buildServerProfilePayload,
   formatArchiveBytes,
   formatArchiveDateRange,
   formatArchiveSources,
   formatArchiveTimestamp,
   formatPackRetention,
+  normalizeEndpointStatus,
   normalizeEvidenceCaseDetail,
   safeDownloadUrl,
 } from "../src/contracts/backendContracts.js";
 import { ROLE_PERMISSIONS, hasPermission } from "../src/utils/roleContract.js";
 import { shouldDisplayLog } from "../src/utils/logSearch.js";
 import { parseBackendTime } from "../src/utils/backendTime.js";
+import { formatSecurityEvent } from "../src/utils/securityEventDisplay.js";
+
+test("server monitoring routes and update payload match the backend contract", () => {
+  assert.equal(API_ROUTES.serverProfiles, "/agent/server-profiles");
+  assert.equal(API_ROUTES.serverProfile("SERVER/A"), "/agent/SERVER%2FA/server-profile");
+  assert.deepEqual(
+    buildServerProfilePayload({
+      expectedRevision: "1",
+      enabled: true,
+      environment: " Production ",
+      criticality: "HIGH",
+    }),
+    {
+      expected_revision: 1,
+      enabled: true,
+      environment: "production",
+      criticality: "high",
+    },
+  );
+  assert.throws(() => buildServerProfilePayload({ expectedRevision: -1, enabled: true }));
+  assert.throws(() => buildServerProfilePayload({ expectedRevision: 1, enabled: "true" }));
+  assert.throws(() => buildServerProfilePayload({ expectedRevision: 1, enabled: true, environment: "qa" }));
+  assert.throws(() => buildServerProfilePayload({ expectedRevision: 1, enabled: true, criticality: "urgent" }));
+});
+
+test("endpoint status normalization prefers authoritative server, POS, spool, and audit fields", () => {
+  const normalized = normalizeEndpointStatus({
+    asset_class: "server",
+    environment: "production",
+    criticality: "critical",
+    response_mode: "MONITOR_ONLY",
+    audit_coverage: { status: "READY" },
+    pos_coverage: { status: "READY" },
+    spool_health: { status: "HEALTHY", blocked: false },
+    sensor_status: {
+      audit_policy_status: "DEGRADED",
+      pos: { status: "NOT_CONFIGURED" },
+      spool: { status: "BLOCKED", blocked: true },
+    },
+    server_monitoring: {
+      required: true,
+      health: "READY",
+      host_identity_status: "verified",
+      host: { product_type: 3 },
+      desired: { revision: 4, profile: { enabled: true } },
+      reported: { applied_revision: 4 },
+    },
+  });
+
+  assert.equal(normalized.isServer, true);
+  assert.equal(normalized.auditStatus, "READY");
+  assert.equal(normalized.posStatus, "READY");
+  assert.equal(normalized.spoolStatus, "HEALTHY");
+  assert.equal(normalized.spoolBlocked, false);
+  assert.equal(normalized.serverHealth, "READY");
+  assert.equal(normalized.hostIdentityStatus, "verified");
+  assert.equal(normalized.desiredRevision, 4);
+  assert.equal(normalized.reportedRevision, 4);
+  assert.equal(normalized.profileEnabled, true);
+  assert.equal(normalized.environment, "production");
+  assert.equal(normalized.criticality, "critical");
+  assert.equal(normalized.responseMode, "MONITOR_ONLY");
+});
+
+test("legacy pfSense telemetry is rendered as readable firewall activity", () => {
+  const display = formatSecurityEvent({
+    event_id: "NET-CONNECTION-BLOCK",
+    event_type: "network_connection_blocked",
+    source_type: "network_device",
+    network_device_id: "host-pfsense-relay-01",
+    network_vendor: "pfsense",
+    source_ip: "192.168.56.1",
+    message: "Security telemetry event NET-CONNECTION-BLOCK observed",
+    context: {
+      direction: "in",
+      protocol: "tcp",
+      rule_id: "96",
+      source_address: "192.168.56.1",
+    },
+  });
+
+  assert.equal(display.message, "pfSense blocked TCP traffic from 192.168.56.1 (inbound, rule 96)");
+  assert.equal(display.host, "host-pfsense-relay-01");
+  assert.equal(display.sourceType, "PFSENSE");
+});
+
+test("current pfSense telemetry includes source, destination, rule, and interface", () => {
+  const display = formatSecurityEvent({
+    event_id: "NET-CONNECTION-BLOCK",
+    source_type: "network_device",
+    network_vendor: "pfsense",
+    display_message: "Security telemetry event NET-CONNECTION-BLOCK observed",
+    context: {
+      action: "block",
+      direction: "in",
+      protocol: "tcp",
+      source_address: "192.168.56.1",
+      source_port: 49152,
+      destination_address: "192.168.56.254",
+      destination_port: 9999,
+      rule_id: "96",
+      interface: "em0",
+    },
+  });
+
+  assert.equal(
+    display.message,
+    "pfSense blocked TCP traffic from 192.168.56.1:49152 to 192.168.56.254:9999 (inbound, rule 96, interface em0)",
+  );
+});
 
 test("Mongo UTC timestamps do not silently become browser-local times", () => {
   assert.equal(parseBackendTime("2026-09-02T19:21:10").toISOString(), "2026-09-02T19:21:10.000Z");
