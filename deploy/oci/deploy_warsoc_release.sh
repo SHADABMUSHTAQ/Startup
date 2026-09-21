@@ -33,6 +33,10 @@ compose() {
         "$@"
 }
 
+wazuh_detection_enabled() {
+    grep -Eqi '^WAZUH_DETECTION_MODE=(shadow|primary)$' .env.prod
+}
+
 require_root() {
     [[ "${EUID}" -eq 0 ]] || fail "Run with sudo."
 }
@@ -237,8 +241,21 @@ prepare_release() {
     log "Pulling ARM64 database and edge images."
     compose pull mongodb redis nginx
 
+    local -a application_services=(
+        warsoc-api
+        unified-worker
+        compliance-cron
+        storage-archiver
+        evidence-hold-worker
+        evidence-export-worker
+        archive-retrieval-worker
+    )
+    if wazuh_detection_enabled; then
+        application_services+=(wazuh-dispatch-worker wazuh-candidate-api)
+    fi
+
     log "Building the exact WarSOC ${RELEASE_ID} application image on ARM64."
-    compose build warsoc-api unified-worker compliance-cron storage-archiver evidence-hold-worker evidence-export-worker archive-retrieval-worker
+    compose --profile wazuh-detection build "${application_services[@]}"
 
     log "Starting private persistence services."
     compose up -d mongodb redis
@@ -263,6 +280,14 @@ prepare_release() {
 
     log "Starting the core workers."
     compose up -d unified-worker compliance-cron storage-archiver evidence-hold-worker evidence-export-worker
+    if wazuh_detection_enabled; then
+        log "Reconciling the explicitly enabled Wazuh shadow services to this release."
+        compose --profile wazuh-detection up -d wazuh-dispatch-worker wazuh-candidate-api
+        [[ "$(docker inspect --format '{{.State.Running}}' warsoc-wazuh-dispatch-prod 2>/dev/null || true)" == "true" ]] || \
+            fail "Wazuh dispatch worker is not running after release reconciliation."
+        [[ "$(docker inspect --format '{{.State.Running}}' warsoc-wazuh-candidate-api-prod 2>/dev/null || true)" == "true" ]] || \
+            fail "Wazuh candidate API is not running after release reconciliation."
+    fi
     if [[ -f .env.archive-retrieval ]]; then
         log "Starting the explicitly enabled archive retrieval worker."
         compose --profile archive-retrieval up -d archive-retrieval-worker

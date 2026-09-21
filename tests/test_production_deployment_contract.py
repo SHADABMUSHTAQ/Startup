@@ -97,6 +97,20 @@ def test_oci_release_starts_evidence_governance_workers():
     )
 
 
+def test_oci_release_reconciles_enabled_wazuh_services_to_the_release_image():
+    deploy = _read("deploy/oci/deploy_warsoc_release.sh")
+
+    assert "wazuh_detection_enabled()" in deploy
+    assert "^WAZUH_DETECTION_MODE=(shadow|primary)$" in deploy
+    assert "application_services+=(wazuh-dispatch-worker wazuh-candidate-api)" in deploy
+    assert (
+        "compose --profile wazuh-detection up -d "
+        "wazuh-dispatch-worker wazuh-candidate-api"
+    ) in deploy
+    assert "Wazuh dispatch worker is not running after release reconciliation." in deploy
+    assert "Wazuh candidate API is not running after release reconciliation." in deploy
+
+
 def test_archive_retrieval_identity_is_isolated_and_started_only_when_explicitly_enabled():
     compose = _read("docker-compose.prod.yml")
     deploy = _read("deploy/oci/deploy_warsoc_release.sh")
