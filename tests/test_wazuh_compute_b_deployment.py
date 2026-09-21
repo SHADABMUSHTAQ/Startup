@@ -103,6 +103,13 @@ def test_native_agent_operator_path_does_not_accept_a_plaintext_key_argument():
     assert "Get-Content -LiteralPath $EnrollmentKeyPath -Raw" in script
     assert "Remove-Item -LiteralPath $EnrollmentKeyPath -Force" in script
     assert "Run this script from an elevated PowerShell window." in script
+    assert "$writerSettings.OmitXmlDeclaration = $true" in script
+    assert "[IO.File]::WriteAllBytes($configPath" in script
+    assert "failed semantic validation" in script
+    assert "$failedConfig" in script
+    assert script.index("Start-Service -Name $serviceName") < script.index(
+        "Remove-Item -LiteralPath $EnrollmentKeyPath -Force"
+    )
 
 
 def test_host_firewall_blocks_native_wazuh_ports_on_the_public_interface():

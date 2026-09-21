@@ -27,6 +27,8 @@ $serviceName = 'WazuhSvc'
 $timestamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $configBackup = "$configPath.warsoc-$timestamp.bak"
 $keyBackup = "$keyPath.warsoc-$timestamp.bak"
+$configCandidate = "$configPath.warsoc-$timestamp.candidate"
+$failedConfig = "$configPath.warsoc-$timestamp.failed"
 $enrollmentKey = (Get-Content -LiteralPath $EnrollmentKeyPath -Raw).Trim()
 
 if ($enrollmentKey -notmatch '^[A-Za-z0-9+/=]{40,4096}$') {
@@ -40,6 +42,11 @@ foreach ($requiredPath in @($configPath, $keyPath, $manageAgentsPath, $scaPath))
 }
 if (-not (Get-ChildItem -LiteralPath $scaPath -Filter '*.yml' -File -ErrorAction SilentlyContinue)) {
     throw 'No local Wazuh SCA policy files are installed.'
+}
+
+$connection = Test-NetConnection -ComputerName $ManagerAddress -Port 1514 -WarningAction SilentlyContinue
+if (-not $connection.TcpTestSucceeded) {
+    throw "The private Wazuh manager channel $ManagerAddress`:1514 is unreachable."
 }
 
 Copy-Item -LiteralPath $configPath -Destination $configBackup
@@ -109,8 +116,34 @@ try {
     $writerSettings = [Xml.XmlWriterSettings]::new()
     $writerSettings.Encoding = $utf8NoBom
     $writerSettings.Indent = $false
-    $writer = [Xml.XmlWriter]::Create($configPath, $writerSettings)
+    # Wazuh's configuration reader expects its native XML fragment without an
+    # XML declaration. A declaration can produce the unhelpful "line 0" error.
+    $writerSettings.OmitXmlDeclaration = $true
+    $writer = [Xml.XmlWriter]::Create($configCandidate, $writerSettings)
     try { $xml.Save($writer) } finally { $writer.Dispose() }
+
+    $candidateText = [IO.File]::ReadAllText($configCandidate, $utf8NoBom)
+    if ($candidateText.TrimStart().StartsWith('<?xml', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The generated Wazuh configuration unexpectedly contains an XML declaration.'
+    }
+    $candidateXml = [xml]::new()
+    $candidateXml.Load($configCandidate)
+    $candidateAddress = $candidateXml.SelectSingleNode('/ossec_config/client/server/address')
+    $candidatePort = $candidateXml.SelectSingleNode('/ossec_config/client/server/port')
+    $candidateProtocol = $candidateXml.SelectSingleNode('/ossec_config/client/server/protocol')
+    $candidateSca = $candidateXml.SelectSingleNode('/ossec_config/sca/enabled')
+    if (
+        $null -eq $candidateAddress -or $candidateAddress.InnerText -ne $ManagerAddress -or
+        $null -eq $candidatePort -or $candidatePort.InnerText -ne '1514' -or
+        $null -eq $candidateProtocol -or $candidateProtocol.InnerText -ne 'tcp' -or
+        $null -eq $candidateSca -or $candidateSca.InnerText -ne 'yes'
+    ) {
+        throw 'The generated Wazuh configuration failed semantic validation.'
+    }
+
+    # Write through the existing destination so its protected Windows ACL is
+    # retained. The original remains available in the timestamped backup.
+    [IO.File]::WriteAllBytes($configPath, [IO.File]::ReadAllBytes($configCandidate))
 
     $startInfo = [Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $manageAgentsPath
@@ -130,8 +163,6 @@ try {
         $errorText = $process.StandardError.ReadToEnd().Trim()
         throw "Wazuh enrollment-key import failed (exit $($process.ExitCode)): $errorText"
     }
-    Remove-Item -LiteralPath $EnrollmentKeyPath -Force
-    $enrollmentKey = $null
 
     Start-Service -Name $serviceName
     Start-Sleep -Seconds 10
@@ -140,10 +171,9 @@ try {
         throw 'WazuhSvc did not return to the Running state.'
     }
 
-    $connection = Test-NetConnection -ComputerName $ManagerAddress -Port 1514 -WarningAction SilentlyContinue
-    if (-not $connection.TcpTestSucceeded) {
-        throw "The private Wazuh manager channel $ManagerAddress`:1514 is unreachable."
-    }
+    Remove-Item -LiteralPath $EnrollmentKeyPath -Force
+    $enrollmentKey = $null
+    Remove-Item -LiteralPath $configCandidate -Force -ErrorAction SilentlyContinue
 
     [pscustomobject]@{
         status = 'CONFIGURED'
@@ -158,8 +188,14 @@ try {
 }
 catch {
     $enrollmentKey = $null
+    if (Test-Path -LiteralPath $configPath) {
+        Copy-Item -LiteralPath $configPath -Destination $failedConfig -Force -ErrorAction SilentlyContinue
+    }
     Copy-Item -LiteralPath $configBackup -Destination $configPath -Force
     Copy-Item -LiteralPath $keyBackup -Destination $keyPath -Force
     Start-Service -Name $serviceName -ErrorAction SilentlyContinue
     throw
+}
+finally {
+    Remove-Item -LiteralPath $configCandidate -Force -ErrorAction SilentlyContinue
 }
