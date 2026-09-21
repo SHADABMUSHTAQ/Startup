@@ -138,6 +138,7 @@ def test_backend_contains_only_the_cdn_agent_download_route():
     assert "COPY ./scripts/bind_wazuh_native_agent.py" in dockerfile
     assert "COPY ./deploy/wazuh/registry /app/deploy/wazuh/registry" in dockerfile
     assert "!scripts/launch_readiness_validator.py" in dockerignore
+    assert "!scripts/bind_wazuh_native_agent.py" in dockerignore
     assert "agent/" in dockerignore
 
 
