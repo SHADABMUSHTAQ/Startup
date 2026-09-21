@@ -229,8 +229,7 @@ prepare_release() {
     find "${RELEASE_DIR}/keys" -type f -exec chmod 0600 {} +
     install -d -m 0755 "${RELEASE_DIR}/certbot/www"
 
-    ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"
-    cd "${CURRENT_LINK}"
+    cd "${RELEASE_DIR}"
 
     log "Validating the production Compose model without printing secrets."
     compose config --quiet
@@ -270,6 +269,10 @@ prepare_release() {
     fi
     compose ps
 
+    # Publish the release pointer only after image construction and runtime
+    # health checks pass. A failed prepare must not identify an unaccepted
+    # candidate as the active release.
+    ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"
     log "Prepare stage passed. Change ${API_HOST} A record to ${PUBLIC_IP}, then run:"
     log "sudo bash ${MIGRATION_DIR}/deploy_warsoc_release.sh activate ${RELEASE_ID}"
 }

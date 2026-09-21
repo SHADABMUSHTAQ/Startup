@@ -87,6 +87,14 @@ def test_oci_release_starts_evidence_governance_workers():
         "compose up -d unified-worker compliance-cron storage-archiver "
         "evidence-hold-worker evidence-export-worker"
     ) in deploy
+    prepare = deploy.split("prepare_release()", 1)[1].split("activate_edge()", 1)[0]
+    assert 'cd "${RELEASE_DIR}"' in prepare
+    assert prepare.index('compose build warsoc-api') < prepare.index(
+        'ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"'
+    )
+    assert prepare.index('compose ps') < prepare.index(
+        'ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"'
+    )
 
 
 def test_archive_retrieval_identity_is_isolated_and_started_only_when_explicitly_enabled():
