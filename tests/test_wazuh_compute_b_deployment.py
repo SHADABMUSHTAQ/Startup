@@ -38,6 +38,15 @@ def test_manager_is_pinned_private_persistent_and_bounded():
     assert "warsoc_wazuh_manager_etc:/target" in config_init["volumes"]
     assert manager["depends_on"]["wazuh-manager-config-init"]["condition"] == "service_completed_successfully"
     assert "./deploy/wazuh/rules:/var/ossec/etc/warsoc-rules:ro" in manager["volumes"]
+    assert set(manager["networks"]) == {
+        "wazuh_agent_ingress",
+        "wazuh_compute_b_private",
+    }
+    assert compose["networks"]["wazuh_agent_ingress"] == {
+        "name": "warsoc-wazuh-agent-ingress",
+        "driver": "bridge",
+    }
+    assert "wazuh_agent_ingress" not in compose["services"]["warsoc-wazuh-bridge"]["networks"]
 
 
 def test_manager_config_accepts_bridge_projection_and_pre_enrolled_secure_agents():

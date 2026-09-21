@@ -57,6 +57,7 @@ services:
     ports:
       - "${WAZUH_AGENT_BIND_IP:?WAZUH_AGENT_BIND_IP is required}:1514:1514/tcp"
     networks:
+      wazuh_agent_ingress:
       wazuh_compute_b_private:
         ipv4_address: 172.31.40.10
         aliases:
@@ -188,6 +189,11 @@ volumes:
   warsoc_wazuh_bridge_spool:
 
 networks:
+  # A dedicated non-internal bridge is required for Docker to publish the
+  # Tailscale-bound native-agent port. No other service joins this network.
+  wazuh_agent_ingress:
+    name: warsoc-wazuh-agent-ingress
+    driver: bridge
   wazuh_compute_b_private:
     name: warsoc-wazuh-compute-b-private
     internal: true
