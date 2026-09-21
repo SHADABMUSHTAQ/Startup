@@ -1,11 +1,12 @@
 # WarSOC Current Implementation and Future Scope Register
 
 **Document role:** Consolidated source-of-truth index
-**Snapshot date:** 2026-09-15
+**Snapshot date:** 2026-09-21
 **Windows Server engineering delta:** 2026-09-15
 **Evidence governance delta:** 2026-09-06
 **Retention, detector, and Security Stories production delta:** 2026-09-08
 **Historical retrieval and firewall/Wazuh acceptance delta:** 2026-09-10
+**Controlled SCA shadow acceptance delta:** 2026-09-21
 **Audience:** WarSOC engineering, operations, security review, and product leadership
 **Applies to:** The backend and frontend release state, the published Windows agent boundary, the entitled network relay, and the controlled Wazuh shadow boundary
 
@@ -368,12 +369,13 @@ Implemented controls include:
 ### 7.3 Current proof and limitations
 
 - Pinned Wazuh 4.14.7 manager and the WarSOC bridge run on the always-on OCI
-  host with no public Wazuh port. Indexer, dashboard, enrollment, Wazuh agents,
-  Active Response and Wazuh email are absent or disabled in production.
+  host. Agent TCP 1514, candidate 8443, and bridge 9443 bind only to Tailscale;
+  no Wazuh listener is public. Indexer, dashboard, public enrollment/API,
+  Active Response, and Wazuh email are absent or disabled in production.
 - Private Docker DNS, mTLS and signed requests protect both detector hops.
-- The active registry is `warsoc-projected-shadow-v2`. It contains 22 explicitly
-  registered candidates: 18 direct Windows rules and four tenant-scoped burst
-  correlations across Windows authentication and relay-derived network events.
+- The active registry is `warsoc-projected-shadow-v3`. It contains the 22
+  reviewed direct/correlation rules from v2 plus SCA rules `19007` through
+  `19015`, for 31 governed shadow rules.
   The projector supplies only bounded derived features and opaque correlation
   HMACs. Raw command lines, identities, IP addresses, task XML, registry/service
   content, tenant IDs, and FBR/PECA payloads remain outside Wazuh.
@@ -384,6 +386,11 @@ Implemented controls include:
   31 blocked events reached Wazuh, one permitted comparison produced no
   candidate, and no Wazuh-derived WarSOC incident was created.
 - Focused WarSOC/Wazuh and manager-only deployment contract suites pass.
+- Native agent `001` is Active and server-bound to one WarSOC tenant/agent.
+  Scan `573050547` produced 424 accepted check observations (120 passed, 299
+  failed, 5 not applicable), zero summary-rule controls, zero promotions, and
+  zero matching incidents. Backend `3335112` keeps the Wazuh application
+  services aligned with the active OCI release.
 - Wazuh TCP handoff does not provide an application acknowledgement for every
   nonmatching event. It cannot be used as the legal evidence/completeness source.
 - No Wazuh rule family is approved for primary incident creation.
@@ -451,17 +458,18 @@ profile control. The remaining event matrix, backend/Redis interruption and
 | Module | Future purpose | Hard boundary |
 |---|---|---|
 | Expanded FIM | Baseline/checksum and change evidence for explicitly approved paths. | Do not monitor whole disks or broad read activity by default. |
-| SCA/posture | A disabled release-candidate parser, tenant-scoped posture projector and read-only API now exist for real Wazuh SCA check events. Customer activation still requires an accepted SCA registry and live two-host evidence. | `WAZUH_SCA_ENABLED=false` by default; evidence and scoring only, no automatic remediation. |
+| SCA/posture | Controlled production shadow posture for tenant-bound Wazuh `type=check` evidence, with a read-only WarSOC API and minimal frontend view. | `WAZUH_SCA_ENABLED=true` only with shadow detection; evidence and scoring only, no automatic remediation or certification claim. |
 | Wazuh projection | Convert canonical WarSOC endpoint evidence into the minimized Wazuh contract. | Wazuh never receives secrets, authoritative tenant IDs, or unrestricted raw evidence. |
 | Coverage telemetry | Per-tenant/per-endpoint proof that required sources and checks are healthy. | Missing telemetry must degrade coverage, not silently produce a green status. |
 
 Current WarSOC protected-path FIM is not a complete Wazuh-style whole-host FIM
 inventory. Current WarSOC audit-policy checks are not a complete SCA/CIS engine.
-The local SCA candidate accepts only Wazuh `type=check` payloads and deliberately
-does not treat summary rules as individual controls. The active
-`warsoc-projected-shadow-v2` production registry contains no SCA rules, so the
-candidate API and fleet projection remain fail-closed until a separately
-reviewed registry and real-manager acceptance campaign are completed.
+The SCA path accepts only Wazuh `type=check` payloads and deliberately does not
+treat summary rules as individual controls. The active
+`warsoc-projected-shadow-v3` registry includes only official SCA check-state
+rules `19007` through `19015`. Production acceptance covers one Windows 10
+endpoint; Windows Server SCA and customer-fleet qualification remain future
+gates.
 
 ## 10. Multi-Tenant Detection and Reputation Rules
 
@@ -644,9 +652,10 @@ Customer material must also state:
 - FBR invoice and path monitoring require customer-specific configuration;
 - the PECA/FBR profiles are evidence-support capabilities, not blanket legal
   certification;
-- network firewall ingestion, expanded FIM/SCA, historical self-service retrieval,
-  and Wazuh-assisted detection are not current customer capabilities until their
-  respective gates are accepted.
+- pfSense relay ingestion, controlled SCA posture, historical retrieval, and
+  Wazuh-assisted shadow observations are available only within their explicitly
+  accepted and entitled scopes; other firewall vendors, broad FIM, Windows
+  Server SCA, and Wazuh primary incident authority remain unaccepted.
 
 ## 15. Definition of Done for a Capability
 
@@ -681,6 +690,7 @@ A capability is not `ACTIVE` merely because code exists. It is done only when:
 | Wazuh implementation sequence | `docs/WARSOC_WAZUH_EXECUTION_MIND_MAP.md` |
 | Wazuh lab/integration operations | `docs/WARSOC_WAZUH_IMPLEMENTATION_AND_LAB_RUNBOOK.md` |
 | Wazuh readiness requirements | `docs/WARSOC_WAZUH_INTEGRATION_READINESS_REQUIREMENTS.md` |
+| SCA release execution and live acceptance | `docs/WARSOC_SCA_RELEASE_EXECUTION_LEDGER_2026-09-21.md` |
 | Active commercial retention classes and Azure proof | `docs/WARSOC_COMMERCIAL_RETENTION_CLASSES.md` |
 | Backend release `5bdb107` production acceptance | `docs/WARSOC_RELEASE_5BDB107_PRODUCTION_ACCEPTANCE.md` |
 | Historical 90-day activation evidence | `docs/WARSOC_90_DAY_RETENTION_CLOSURE.md` |

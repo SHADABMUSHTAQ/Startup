@@ -1,21 +1,22 @@
 # WarSOC Current-State Architecture and Operational Contract
 
 **Document status:** Authoritative as-built map
-**Snapshot date:** 2026-09-15
+**Snapshot date:** 2026-09-21
 **Windows Server engineering delta:** 2026-09-15. General Server V1 is a
 deployed engineering/pilot capability with target-host functional and offline
 spool-recovery proof. Customer support remains gated on the remaining event
 matrix and 24-to-72-hour soak.
-**Release acceptance delta:** 2026-09-15. Core OCI application release
-`b0d02db` is active and healthy. Its historical-retrieval path retains its named
-live Azure canary. The existing Wazuh shadow containers retain their separate
-detector acceptance record.
+**Release acceptance delta:** 2026-09-21. Core OCI application release
+`3335112` is active and healthy. Its historical-retrieval path retains its named
+live Azure canary. The Wazuh candidate and dispatch services are reconciled to
+the same release; the manager and bridge retain their separate detector
+foundation identity.
 **Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the controlled pfSense network-relay path, and the controlled Wazuh shadow-detector path.
 
-**Current OCI application identity:** `b0d02db`
+**Current OCI application identity:** `3335112`
 **Always-on Wazuh deployment foundation:** `7cd02e0`
 **Repository note:** the manager-only deployment package changes the Wazuh runtime boundary; it does not replace the core application image identity
-**Current Vercel frontend identity:** `28c7e8e`
+**Current Vercel frontend identity:** `1e64b79`
 
 This document describes what the current source code does. It is not a sales claim and it does not treat an implemented path as production-proven unless verification evidence exists.
 
@@ -229,18 +230,21 @@ acceptance used a temporary colleague-hosted Compute B. That dependency has now
 been removed: pinned Wazuh manager 4.14.7 and the WarSOC bridge run as bounded,
 isolated containers on the always-on OCI host. Dispatcher-to-bridge and
 bridge-to-candidate traffic uses private Docker DNS with mutual TLS and signed
-requests. Candidate and bridge administration bind only to the OCI Tailscale
-address. The Wazuh manager has no host port; indexer, dashboard, enrollment,
-API, Wazuh agents, Active Response and Wazuh email are absent or disabled.
+requests. Candidate, bridge, and native-agent traffic bind only to the OCI
+Tailscale address. The manager exposes agent traffic only on private TCP 1514;
+public enrollment/API, indexer, dashboard, Active Response, and Wazuh email are
+absent or disabled. Native agents require pre-enrollment and a server-owned
+WarSOC tenant/agent binding.
 
-The production registry is `warsoc-projected-shadow-v2`. It contains 22
-high-confidence candidates: 18 direct Windows rules and four tenant-scoped
-Windows/network correlation rules. It sends only bounded derived booleans,
+The production registry is `warsoc-projected-shadow-v3`. It contains the 22
+reviewed direct/correlation rules from v2 plus nine official SCA check-state
+rules (`19007` through `19015`), for 31 governed shadow rules. It sends only
+bounded derived booleans,
 enumerated attack-family labels, a clock-delta value, and opaque correlation
 HMACs. Raw commands, identities, IP addresses, registry/task/service content,
 tenant IDs, FBR/PECA payloads, and free-form messages are not projected.
 
-All v1 and v2 families are shadow-only. `WAZUH_DETECTION_MODE=shadow` and
+All v3 families are shadow-only. `WAZUH_DETECTION_MODE=shadow` and
 `WAZUH_PRIMARY_APPROVED=false` prevent incident promotion. The current WarSOC
 SIEM remains authoritative. Wazuh must not own
 endpoint enrollment, tenant identity,
@@ -259,9 +263,12 @@ negative cases, native Wazuh 4.14.7 configuration validation, and native
 `wazuh-logtest-legacy` execution for rules 100611 through 100632. Production
 canary `NETWORK-WAZUH-CANARY-20260909T181805Z-b59594ca` then proved network
 rule 100630 and its permitted-traffic negative with zero incident promotion.
-This proves v2 activation and one network runtime family; it is not measured
-customer precision, capacity, high availability, or exact customer-firewall
-acceptance.
+The native SCA acceptance subsequently proved manager agent `001`, server-owned
+tenant binding, scan `573050547`, and 424 check observations (120 passed, 299
+failed, 5 not applicable) with zero summary rows, promotion, or incidents. This
+proves the controlled Windows 10 SCA path and one network runtime family; it is
+not measured customer precision, fleet capacity, high availability, Windows
+Server SCA acceptance, or every customer-firewall implementation.
 
 ### 1.6 August 14 release-candidate verification delta
 
@@ -701,7 +708,7 @@ No SAS token is persisted in MongoDB, emitted in normal logs, or used for write
 access. The API still never proxies archive bytes. This fallback must be
 replaced with user delegation when the production Azure identity permits it.
 
-The governed `warsoc-projected-shadow-v2` registry is active in shadow mode.
+The governed `warsoc-projected-shadow-v3` registry is active in shadow mode.
 Production network/Wazuh canary
 `NETWORK-WAZUH-CANARY-20260909T181805Z-b59594ca` admitted 32 signed relay
 events: 31 blocked events reached Wazuh and produced the expected rule `100630`
@@ -709,13 +716,14 @@ shadow candidate, while the permitted comparison event produced no candidate.
 WarSOC created zero Wazuh-derived incidents. `WAZUH_PRIMARY_APPROVED=false`
 remains mandatory; WarSOC-native detection is still authoritative.
 
-A local release candidate can project real Wazuh SCA check events into a
-tenant-scoped posture view, but it is not part of the accepted production
-capability. `WAZUH_SCA_ENABLED=false` is the default and the application refuses
-to enable it when generic Wazuh detection is disabled. Only `type=check` events
-are posture inputs; summary events are not converted into controls. The active
-`warsoc-projected-shadow-v2` registry has no SCA rules, the authoritative
-frontend exposes no SCA screen, and live two-host SCA acceptance is still open.
+The controlled SCA posture path is active with `WAZUH_SCA_ENABLED=true` while
+generic detection remains shadow-only. Only `type=check` events are posture
+inputs; summary events are not converted into controls. Native agent `001`
+completed scan `573050547` and produced 424 tenant-bound check observations.
+All remained `shadow_observation`, and no matching WarSOC incident was created.
+Frontend `1e64b79` exposes the result as WarSOC Configuration Assessment, not as
+a separate Wazuh product. This acceptance covers one Windows 10 endpoint only;
+Windows Server policy coverage and customer-fleet qualification remain open.
 
 The colleague's customer-style pfSense relay installation on `alphabay` is
 accepted and certified end-to-end through package configuration, one-time
@@ -2000,7 +2008,7 @@ Status meanings:
 | Capacity ceiling | Maximum 50 active agents per tenant and 50 aggregate active agents on the shared host | PROVEN by contract tests; prior synthetic soak | Mongo-backed floors prevent Redis restarts from bypassing either boundary. Real customer mix must still be monitored because event volume per endpoint varies. |
 | Linux/syslog | Linux endpoint telemetry | OUT OF SCOPE | Linux remains outside the Windows SMB pilot and no Linux agent/intake is claimed. |
 | Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | ACCEPTED AND CERTIFIED | The earlier pfSense lab proved pass/block parsing, relay attestation, encrypted outage retention, restart recovery, deduplication and chain continuity. The colleague installation on alphabay additionally proved the exact configuration, one-time activation, Automatic Windows service, source-restricted `192.168.56.1:5514` listener, active backend relay and heartbeat for `host-pfsense-relay-01`. Live authentic pfSense filterlog events were transmitted, batch-signed, and verified in production MongoDB (`network_relay_device_status` updated with `last_event_type: network_connection_blocked` and cloud acceptance at `https://api.warsoc.tech`). The physical customer-style event acceptance gate is closed. The kit is still unsigned; other vendors remain parser-only. |
-| Internal Wazuh detector | Receive minimized WarSOC projections and return validated candidate observations | V2 CONTROLLED SHADOW ACTIVE / PRIMARY DISABLED | The OCI-local Wazuh 4.14.7 manager/bridge uses private Docker networks, mTLS, signed batches, bounded resources and encrypted spools. Registry `warsoc-projected-shadow-v2` is active with all 22 families shadow-only. Network canary `NETWORK-WAZUH-CANARY-20260909T181805Z-b59594ca` delivered 31 signed blocked events, fired rule `100630`, rejected the permitted comparison from candidate creation, and created zero Wazuh-derived incidents. WarSOC remains authoritative; measured customer precision, capacity/HA approval and every primary promotion remain gated. |
+| Internal Wazuh detector and SCA posture | Receive minimized WarSOC projections and tenant-bound native SCA checks | V3 CONTROLLED SHADOW ACTIVE / PRIMARY DISABLED | The OCI-local Wazuh 4.14.7 manager/bridge uses private Docker networks, Tailscale-only listeners, mTLS, signed batches, bounded resources and encrypted spools. Registry `warsoc-projected-shadow-v3` governs 31 shadow rules. The network canary proved rule `100630`; native agent `001` proved scan `573050547` with 424 check observations and zero summary-row, promotion, or incident pollution. Backend `3335112` aligns candidate/dispatch services to the active release. WarSOC remains authoritative; Windows Server SCA, measured customer precision, fleet capacity/HA and all primary promotion remain gated. |
 | External threat-intelligence enrichment | Third-party reputation/provider lookups | OUT OF SCOPE | No live provider integration is claimed for the current pilot. Native SIEM/FBR/PECA operation does not depend on it. |
 
 ## 23. Failure Map
@@ -2136,7 +2144,8 @@ Do not declare the current release fully accepted until all of the following are
 | Network-relay API and admission | `app/routes/network_relay.py` |
 | Network-relay parsing, spooling, signing and runtime | `app/network_relay/` and `scripts/warsoc_relay_service.py` |
 | Network-relay as-built candidate contract | `docs/NETWORK_RELAY_BACKEND_FOUNDATION.md` |
-| Future generic detection engine and Wazuh integration | `docs/WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md` |
+| Generic detection engine and Wazuh integration boundary | `docs/WARSOC_WAZUH_DETECTION_TARGET_ARCHITECTURE.md` |
+| SCA release execution and live acceptance | `docs/WARSOC_SCA_RELEASE_EXECUTION_LEDGER_2026-09-21.md` |
 | Reviewed 90-day backend evidence plan, phase gates, Azure decision points and contradictions | `docs/WARSOC_90_DAY_BACKEND_EVIDENCE_PLAN_REVIEW.md` |
 | Active commercial retention classes and Azure proof | `docs/WARSOC_COMMERCIAL_RETENTION_CLASSES.md` |
 | Backend release `5bdb107` production acceptance | `docs/WARSOC_RELEASE_5BDB107_PRODUCTION_ACCEPTANCE.md` |

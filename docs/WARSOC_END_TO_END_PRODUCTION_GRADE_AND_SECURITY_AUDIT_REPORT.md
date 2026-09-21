@@ -1,8 +1,8 @@
 # WarSOC September 21 Architecture Correction Ledger
 
-**Status:** Local release candidate, not deployed
+**Status:** Corrected and deployed for the controlled SCA shadow scope
 **Scope:** Review of the September 19 Wazuh/SCA and evidence-integrity change batch
-**Production authority:** Existing OCI release and `warsoc-projected-shadow-v2`
+**Production authority:** OCI backend `3335112` and `warsoc-projected-shadow-v3`
 
 ## 1. Executive result
 
@@ -27,13 +27,13 @@ Signed WarSOC endpoint / relay evidence
         |
         +--> durable minimized Wazuh projection
                   |
-                  +--> active registry: warsoc-projected-shadow-v2
-                  |        22 governed families, all shadow
+                  +--> active registry: warsoc-projected-shadow-v3
+                  |        31 governed rules, all shadow
                   |
                   +--> candidate observation stores
                            no primary promotion in production
 
-Optional SCA candidate (OFF)
+Controlled SCA posture path (ON; shadow only)
 Wazuh real type=check alert
         --> bounded check-field projection
         --> tenant/agent binding
@@ -51,11 +51,11 @@ Evidence case
 
 | Finding | Disposition |
 |---|---|
-| The edited `warsoc-v1-production-registry.json` was not the active production registry. | Restored to its reviewed six-rule baseline. Production remains on `warsoc-projected-shadow-v2`. |
+| The edited `warsoc-v1-production-registry.json` was not the active production registry. | Restored to its reviewed six-rule baseline. Production now uses the separately reviewed `warsoc-projected-shadow-v3`. |
 | Rules `60106`, `60200`-`60202`, and `60600`-`60602` were assigned incorrect meanings. | Removed from the batch; no production mapping was changed. |
 | Wazuh SCA summary rules `19000`-`19003` were treated as individual control results. | Parser now projects posture fields only for `data.sca.type=check`; tests use real failed/passed check IDs `19007`/`19008`. |
-| SCA was presented as complete and customer-facing. | Added `WAZUH_SCA_ENABLED=false`; it cannot be enabled while Wazuh detection is disabled. Active registry and live frontend still contain no SCA product surface. |
-| Dashboard status scanned tenant observation history unconditionally. | No SCA query or response field is produced while the feature is off. Enabled queries are tenant/agent restricted, latest-scan scoped, and bounded. |
+| SCA was presented as complete and customer-facing before runtime proof. | The feature remained disabled until registry, two-host, tenant-binding, zero-promotion, API, and frontend gates passed. Production now enables only the controlled shadow posture surface. |
+| Dashboard status scanned tenant observation history unconditionally. | Enabled queries are tenant/agent restricted, latest-scan scoped, and bounded. |
 | A second email address was called a dual signature without independent authentication. | Removed. Custody actions retain the authenticated actor and audit reason only. |
 | HIGH/CRITICAL Wazuh observations silently created a hard-coded 90-day hold. | Removed. Tenant retention and explicit Legal Hold remain the only active retention authorities. |
 | Candidate observations attempted to hash themselves before insertion. | Removed. Candidate persistence no longer makes a circular self-integrity claim. |
@@ -70,11 +70,11 @@ Evidence case
 - Valid source-envelope ordering and source identity work remains intact.
 - Valid pfSense/network display normalization remains intact.
 - Valid network context extraction and capacity-script changes remain intact.
-- Detection observation and agent-binding indexes remain because they support
-  existing tenant-scoped Wazuh operations as well as the disabled SCA candidate.
+- Detection observation and agent-binding indexes support the accepted
+  tenant-scoped Wazuh shadow and SCA posture paths.
 - Evidence-integrity endpoints are admin/auditor-only and rate-limited.
 - SCA endpoints are authenticated, role-restricted, tenant-scoped, rate-limited,
-  and additionally blocked by the explicit feature gate.
+  and controlled by the explicit production feature gate.
 
 ## 5. Frontend truth
 
@@ -84,10 +84,9 @@ The authoritative production-aligned checkout is:
 C:\Users\Lenovo\Desktop\Startup-main-archive-availability
 ```
 
-It is clean and contains no SCA UI. Experimental SCA UI exists only in the
-diverged and dirty `Startup-main` checkout. It must not be merged or deployed
-until backend SCA acceptance is complete. No frontend change is required for
-this correction batch.
+Frontend revision `1e64b79` is deployed and contains the minimal WarSOC
+Configuration Assessment view. It uses the authenticated WarSOC API and does
+not expose Wazuh as a separate engine or product.
 
 ## 6. Verification result
 
@@ -95,7 +94,7 @@ The final local candidate completed the maintained backend regression campaign:
 
 ```text
 pytest -q
-822 passed, 2 skipped, 28 warnings in 464.62 seconds
+827 passed, 2 skipped, 28 warnings
 ```
 
 The two skips are expected suite skips. The warnings are confined to deprecated
@@ -111,30 +110,26 @@ Additional local checks completed:
 - `pip check` reported no broken requirements.
 - `git diff --check` completed with exit code 0; only Git line-ending notices
   were emitted.
-- `pip-audit` was not run because the tool is not installed in the active Python
-  environment. This is an unexecuted dependency-CVE check, not a passing result.
+- Isolated `pip-audit` checks for the production and Wazuh bridge requirement
+  sets reported no known vulnerabilities.
 
 The tests verify rule-registry truth, SCA parser boundaries, latest-scan posture
 calculation, disabled-route behavior, case-source restrictions, retention-hold
 removal, custody request validation, daily-ledger selection, archive-aware
 integrity status, stable case hashes, and compatibility with the wider backend.
 
-They are not evidence of:
+Runtime acceptance additionally proved manager agent `001` Active, server-owned
+tenant binding, one real scan with 424 accepted check observations, no summary
+rule masquerading as a control, no promoted observation, and zero matching
+WarSOC incidents. Backend `3335112` is live and both Wazuh application
+containers identify that release.
 
-- a live Wazuh SCA scan from another host;
-- an accepted SCA registry in production;
-- a customer-visible SCA frontend;
-- deployment of this local candidate to OCI.
+## 7. Residual boundaries
 
-## 7. Release gates still open
-
-1. Run `pip-audit` against the release's pinned dependency set from a controlled
-   environment before production acceptance.
-2. If SCA is pursued, create and independently review a dedicated SCA registry
-   using official Wazuh check-event semantics.
-3. Prove one real two-host scan, tenant binding, latest-scan replacement,
-   cross-tenant denial, and zero incident pollution.
-4. Only then enable `WAZUH_SCA_ENABLED` and hand a stable API contract to the
-   authoritative frontend checkout.
-5. Deploy through the normal release process and record exact Git/image/runtime
-   identities. Until then, production remains unchanged.
+1. Wazuh remains shadow-only and `WAZUH_PRIMARY_APPROVED=false`.
+2. The accepted runtime sample is one Windows 10 endpoint. Windows Server SCA,
+   customer-fleet scale, high availability, and long-duration soak remain open.
+3. SCA is evidence and posture scoring only. It is not independent
+   certification and it performs no automatic remediation.
+4. Existing SIEM, PECA, FBR, firewall relay, retention, and incident authority
+   remain unchanged.
