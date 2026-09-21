@@ -85,6 +85,95 @@ async def test_source_envelope_is_encrypted_idempotent_and_published(db, redis_c
 
 
 @pytest.mark.asyncio
+async def test_source_outbox_cannot_publish_later_envelope_event_first(db, redis_client):
+    outbox_uids = await persist_source_envelope(
+        db,
+        tenant_id="WARSOC_TEST_ORDERED_SOURCE",
+        source_principal_type="windows_agent",
+        source_principal_id="WARSOC_AGENT_ORDERED_SOURCE",
+        source_channel="windows_endpoint",
+        source_envelope_uid="ordered-envelope",
+        source_payload=b"ordered-source",
+        dispatch_events=[
+            {
+                "event_uid": "fim-delete-intent",
+                "serialized_payload": json.dumps({"event_uid": "fim-delete-intent", "event_id": "4663"}),
+                "target_streams": ["raw_logs_queue"],
+            },
+            {
+                "event_uid": "fim-delete-confirmed",
+                "serialized_payload": json.dumps({"event_uid": "fim-delete-confirmed", "event_id": "4660"}),
+                "target_streams": ["raw_logs_queue"],
+            },
+        ],
+        retention_class="SIEM",
+        auth_metadata={"scheme": "ed25519-v2"},
+    )
+
+    assert await publish_source_outbox(db, redis_client, [outbox_uids[1]], limit=1) == 0
+    assert await redis_client.xlen("raw_logs_queue") == 0
+    assert await publish_source_outbox(db, redis_client, [outbox_uids[0]], limit=1) == 1
+    assert await publish_source_outbox(db, redis_client, [outbox_uids[1]], limit=1) == 1
+
+    entries = await redis_client.xrange("raw_logs_queue")
+    assert [json.loads(fields["payload"])["event_id"] for _, fields in entries] == ["4663", "4660"]
+
+
+@pytest.mark.asyncio
+async def test_source_outbox_preserves_signed_sequence_across_envelopes(db, redis_client):
+    common = {
+        "tenant_id": "WARSOC_TEST_CROSS_ENVELOPE_ORDER",
+        "source_principal_type": "windows_agent",
+        "source_principal_id": "WARSOC_AGENT_CROSS_ENVELOPE_ORDER",
+        "source_channel": "windows_endpoint",
+        "retention_class": "SIEM",
+        "auth_metadata": {"scheme": "ed25519-v2"},
+    }
+    first_payload = {
+        "event_uid": "fim-intent-across-envelope",
+        "event_id": "4663",
+        "source_channel": "Security",
+        "source_channel_epoch": "security-epoch-1",
+        "source_sequence": 100,
+    }
+    second_payload = {
+        "event_uid": "fim-delete-across-envelope",
+        "event_id": "4660",
+        "source_channel": "Security",
+        "source_channel_epoch": "security-epoch-1",
+        "source_sequence": 101,
+    }
+    first = await persist_source_envelope(
+        db,
+        source_envelope_uid="ordered-envelope-one",
+        source_payload=b"ordered-source-one",
+        dispatch_events=[{
+            "event_uid": first_payload["event_uid"],
+            "serialized_payload": json.dumps(first_payload),
+            "target_streams": ["raw_logs_queue"],
+        }],
+        **common,
+    )
+    second = await persist_source_envelope(
+        db,
+        source_envelope_uid="ordered-envelope-two",
+        source_payload=b"ordered-source-two",
+        dispatch_events=[{
+            "event_uid": second_payload["event_uid"],
+            "serialized_payload": json.dumps(second_payload),
+            "target_streams": ["raw_logs_queue"],
+        }],
+        **common,
+    )
+
+    assert await publish_source_outbox(db, redis_client, second, limit=1) == 0
+    assert await publish_source_outbox(db, redis_client, first, limit=1) == 1
+    assert await publish_source_outbox(db, redis_client, second, limit=1) == 1
+    entries = await redis_client.xrange("raw_logs_queue")
+    assert [json.loads(fields["payload"])["source_sequence"] for _, fields in entries] == [100, 101]
+
+
+@pytest.mark.asyncio
 async def test_new_peca_source_envelope_requires_tenant_retention_metadata():
     with pytest.raises(ValueError, match="requires tenant retention metadata"):
         await persist_source_envelope(

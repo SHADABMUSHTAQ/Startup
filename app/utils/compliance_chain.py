@@ -7,6 +7,7 @@ from typing import Any, Iterable
 
 CHAIN_VERSION = "sha256-evidence-chain-v1"
 HASH_ALGORITHM = "SHA-256"
+CASE_EVIDENCE_DIGEST_VERSION = "case-evidence-sha256-v2"
 
 # These fields are Mongo/archive lifecycle mechanics, not evidence content.
 _NON_EVIDENCE_FIELDS = {
@@ -16,6 +17,37 @@ _NON_EVIDENCE_FIELDS = {
     "_archive_blob_name",
     "_archive_collection",
     "_source_collection",
+}
+
+# These fields are mutable workflow state, not the underlying case evidence.
+# This list is collection-specific so similarly named evidentiary fields in
+# PECA/FBR records remain protected by the digest.
+_CASE_WORKFLOW_FIELDS = {
+    "security_alerts": {
+        "status",
+        "assignee_id",
+        "resolution_notes",
+        "updated_at",
+        "updated_by",
+    },
+    "source_envelopes_siem": {
+        "state",
+        "dispatch_complete",
+        "dispatch_completed_at",
+        "updated_at",
+    },
+    "source_envelopes_peca": {
+        "state",
+        "dispatch_complete",
+        "dispatch_completed_at",
+        "updated_at",
+    },
+    "source_envelopes_fbr": {
+        "state",
+        "dispatch_complete",
+        "dispatch_completed_at",
+        "updated_at",
+    },
 }
 
 
@@ -55,6 +87,14 @@ def evidence_record_digest(collection_name: str, document: dict) -> str:
         "document": document,
     }
     return hashlib.sha256(_canonical_bytes(envelope)).hexdigest()
+
+
+def case_evidence_record_digest(collection_name: str, document: dict) -> str:
+    ignored = _CASE_WORKFLOW_FIELDS.get(str(collection_name), set())
+    stable_document = {
+        key: value for key, value in document.items() if str(key) not in ignored
+    }
+    return evidence_record_digest(collection_name, stable_document)
 
 
 def aggregate_evidence_digest(records: Iterable[tuple[str, dict]]) -> tuple[str, int, dict[str, int]]:

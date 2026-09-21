@@ -197,12 +197,26 @@ async def persist_source_envelope(
         event_uid = str(item.get("event_uid") or "").strip()
         if not event_uid or not serialized:
             raise ValueError("Source outbox event identity is incomplete")
+        try:
+            event_payload = json.loads(serialized)
+        except (TypeError, ValueError):
+            event_payload = {}
+        source_sequence = event_payload.get("source_sequence")
+        if isinstance(source_sequence, bool):
+            source_sequence = None
+        try:
+            source_sequence = int(source_sequence) if source_sequence is not None else None
+        except (TypeError, ValueError):
+            source_sequence = None
         normalized_events.append(
             {
                 "event_uid": event_uid,
                 "serialized_payload": serialized,
                 "evidence_hash": _dispatch_evidence_hash(serialized),
                 "target_streams": streams,
+                "event_source_channel": str(event_payload.get("source_channel") or "")[:64] or None,
+                "source_channel_epoch": str(event_payload.get("source_channel_epoch") or "")[:128] or None,
+                "source_sequence": source_sequence,
             }
         )
 
@@ -227,6 +241,9 @@ async def persist_source_envelope(
                 "payload_hash": _sha256(item["serialized_payload"].encode("utf-8")),
                 "evidence_hash": item["evidence_hash"],
                 "target_streams": item["target_streams"],
+                "event_source_channel": item["event_source_channel"],
+                "source_channel_epoch": item["source_channel_epoch"],
+                "source_sequence": item["source_sequence"],
             }
         )
 
@@ -386,6 +403,9 @@ async def persist_source_envelope(
                     "payload_hash": payload_hash,
                     "evidence_hash": descriptor["evidence_hash"],
                     "target_streams": item["target_streams"],
+                    "event_source_channel": descriptor["event_source_channel"],
+                    "source_channel_epoch": descriptor["source_channel_epoch"],
+                    "source_sequence": descriptor["source_sequence"],
                     "status": "pending",
                     "ready": False,
                     "attempts": 0,
@@ -420,20 +440,67 @@ async def _claim_outbox(db, outbox_uid: str | None = None):
     }
     if outbox_uid:
         query["outbox_uid"] = outbox_uid
-    return await db[SOURCE_OUTBOX_COLLECTION].find_one_and_update(
-        query,
-        {
-            "$set": {
-                "status": "in_flight",
-                "lease_id": uuid.uuid4().hex,
-                "lease_until": now + timedelta(seconds=OUTBOX_LEASE_SECONDS),
-                "updated_at": now,
-            },
-            "$inc": {"attempts": 1},
-        },
-        sort=[("created_at", 1)],
-        return_document=ReturnDocument.AFTER,
+
+    # Multiple API/worker publishers can race on rows from the same envelope.
+    # Never claim index N until every lower envelope index is published; FIM and
+    # other correlation pipelines depend on source order being preserved.
+    candidates = (
+        db[SOURCE_OUTBOX_COLLECTION]
+        .find(query)
+        .sort([("created_at", 1), ("envelope_event_index", 1), ("_id", 1)])
+        .limit(1 if outbox_uid else 100)
     )
+    async for candidate in candidates:
+        event_index = int(candidate.get("envelope_event_index") or 0)
+        if event_index > 0:
+            predecessor_pending = await db[SOURCE_OUTBOX_COLLECTION].count_documents(
+                {
+                    "envelope_collection": candidate.get("envelope_collection"),
+                    "envelope_id": candidate.get("envelope_id"),
+                    "envelope_event_index": {"$lt": event_index},
+                    "status": {"$ne": "published"},
+                },
+                limit=1,
+            )
+            if predecessor_pending:
+                continue
+
+        source_sequence = candidate.get("source_sequence")
+        source_epoch = candidate.get("source_channel_epoch")
+        if isinstance(source_sequence, int) and source_epoch:
+            earlier_source_pending = await db[SOURCE_OUTBOX_COLLECTION].count_documents(
+                {
+                    "tenant_id": candidate.get("tenant_id"),
+                    "source_principal_id": candidate.get("source_principal_id"),
+                    "event_source_channel": candidate.get("event_source_channel"),
+                    "source_channel_epoch": source_epoch,
+                    "source_sequence": {"$lt": source_sequence},
+                    "status": {"$ne": "published"},
+                },
+                limit=1,
+            )
+            if earlier_source_pending:
+                continue
+
+        lease_id = uuid.uuid4().hex
+        claim_query = dict(query)
+        claim_query["_id"] = candidate["_id"]
+        claimed = await db[SOURCE_OUTBOX_COLLECTION].find_one_and_update(
+            claim_query,
+            {
+                "$set": {
+                    "status": "in_flight",
+                    "lease_id": lease_id,
+                    "lease_until": now + timedelta(seconds=OUTBOX_LEASE_SECONDS),
+                    "updated_at": now,
+                },
+                "$inc": {"attempts": 1},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if claimed:
+            return claimed
+    return None
 
 
 async def _publish_claimed_outbox(db, redis, record: dict) -> bool:

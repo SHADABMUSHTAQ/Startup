@@ -148,7 +148,7 @@ ensure_drop_rule() {
     fi
 }
 
-for blocked_tcp_port in 6379 27017 8000 8443; do
+for blocked_tcp_port in 1514 1515 6379 9443 27017 8000 8443; do
     ensure_drop_rule iptables tcp "${blocked_tcp_port}"
     if command -v ip6tables >/dev/null 2>&1; then
         ensure_drop_rule ip6tables tcp "${blocked_tcp_port}"

@@ -11,6 +11,8 @@ from app.utils.endpoint_health import (
 )
 from app.utils.security_policy import effective_agent_limit
 from app.utils.collection_profiles import sanitize_profile_report, server_profile_health
+from app.services.sca_service import get_all_agents_sca_postures, _empty_posture
+from app.config.config import get_settings
 
 router = APIRouter()
 RAW_RETENTION_ANCHOR_FIELD = "_retention_ts"
@@ -286,6 +288,12 @@ async def agent_status(
                 for index, (_, agent_id) in enumerate(registered_agents)
             }
 
+        sca_enabled = get_settings().wazuh_sca_enabled
+        sca_postures_by_agent = {}
+        if sca_enabled:
+            sca_postures_by_agent = await get_all_agents_sca_postures(
+                db, tenant_id, agent_ids
+            )
         data = []
         for agent, agent_id in registered_agents:
             live_last_seen = live_status_by_agent.get(agent_id)
@@ -358,8 +366,7 @@ async def agent_status(
             last_seen = live_last_seen if online else agent.get("last_seen")
             if isinstance(last_seen, datetime):
                 last_seen = _coerce_dt(last_seen).isoformat()
-            data.append(
-                {
+            endpoint_status = {
                     "agent_id": agent_id,
                     "endpoint_name": signature_status["endpoint_name"] or agent_id,
                     "last_seen": last_seen,
@@ -425,7 +432,19 @@ async def agent_status(
                         "host_identity_status": agent.get("host_identity_status"),
                     },
                 }
-            )
+            if sca_enabled:
+                sca_posture = sca_postures_by_agent.get(agent_id) or _empty_posture(
+                    tenant_id, agent_id
+                )
+                endpoint_status["sca_posture"] = {
+                    "status": sca_posture.get("status", "NOT_ASSESSED"),
+                    "score": sca_posture.get("compliance_score", 0.0),
+                    "benchmark": sca_posture.get("benchmark"),
+                    "failed_count": sca_posture.get("summary", {}).get("failed", 0),
+                    "passed_count": sca_posture.get("summary", {}).get("passed", 0),
+                    "last_scanned_at": sca_posture.get("last_scanned_at"),
+                }
+            data.append(endpoint_status)
 
         data.sort(key=lambda item: item.get("last_seen") or "", reverse=True)
         online_count = sum(1 for item in data if item["online"])

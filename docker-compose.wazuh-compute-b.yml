@@ -54,6 +54,8 @@ services:
     depends_on:
       wazuh-manager-config-init:
         condition: service_completed_successfully
+    ports:
+      - "${WAZUH_AGENT_BIND_IP:?WAZUH_AGENT_BIND_IP is required}:1514:1514/tcp"
     networks:
       wazuh_compute_b_private:
         ipv4_address: 172.31.40.10
@@ -137,7 +139,7 @@ services:
     volumes:
       - warsoc_wazuh_bridge_spool:/var/lib/warsoc-wazuh
       - warsoc_wazuh_manager_logs:/var/ossec/logs:ro
-      - ./deploy/wazuh/registry/warsoc-projected-shadow-v2.json:/etc/warsoc-wazuh/rule-registry.json:ro
+      - ./deploy/wazuh/registry/warsoc-projected-shadow-v3.json:/etc/warsoc-wazuh/rule-registry.json:ro
       - ${WAZUH_BRIDGE_TLS_DIR:-./keys/wazuh-compute-b}:/run/warsoc-wazuh-tls:ro
     read_only: true
     tmpfs:

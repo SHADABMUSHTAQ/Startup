@@ -17,7 +17,10 @@ from pymongo.errors import DuplicateKeyError
 
 from app.database import get_db
 from app.routes.auth import get_current_user
-from app.utils.compliance_chain import evidence_record_digest
+from app.utils.compliance_chain import (
+    CASE_EVIDENCE_DIGEST_VERSION,
+    case_evidence_record_digest,
+)
 from app.utils.evidence_custody import (
     append_custody_event,
     recover_pending_custody_event,
@@ -378,7 +381,8 @@ async def add_evidence_case_item(
         "collection": body.collection,
         "document_id": str(evidence.get("_id")),
         "event_uid": evidence.get("event_uid"),
-        "evidence_record_hash": evidence_record_digest(body.collection, evidence),
+        "evidence_record_hash": case_evidence_record_digest(body.collection, evidence),
+        "evidence_hash_version": CASE_EVIDENCE_DIGEST_VERSION,
         "source_timestamp": evidence.get("timestamp") or evidence.get("ingested_at"),
         "reason": body.reason,
         "state": "PENDING",

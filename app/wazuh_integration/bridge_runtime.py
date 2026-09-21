@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -43,6 +44,15 @@ from app.wazuh_integration.registry import validate_registry_document
 
 logger = logging.getLogger("warsoc.wazuh-bridge")
 CHECKPOINT_NAME = "wazuh-alerts-json-v1"
+_SCA_COMPLIANCE_KEYS = {
+    "cis": "cis",
+    "cis_csc_v8": "cis_csc_v8",
+    "nist_800_53": "nist_800_53",
+    "nist_sp_800_53": "nist_800_53",
+    "pci_dss": "pci_dss",
+    "pci_dss_v3": "pci_dss_v3",
+    "pci_dss_v4": "pci_dss_v4",
+}
 
 
 def _batch_id() -> str:
@@ -151,6 +161,23 @@ def _extract_dispatch_uid(alert: dict[str, Any]) -> str | None:
     return None
 
 
+def _bounded_sca_compliance_value(value: Any) -> str:
+    """Flatten a small Wazuh compliance value without retaining raw structures."""
+    pending = [value]
+    values: list[str] = []
+    while pending and len(values) < 8:
+        item = pending.pop(0)
+        if isinstance(item, dict):
+            pending.extend(list(item.values())[:8])
+        elif isinstance(item, list):
+            pending.extend(item[:8])
+        elif isinstance(item, (str, int, float, bool)):
+            text = str(item).strip()
+            if text:
+                values.append(text[:64])
+    return ",".join(values)[:256]
+
+
 def _candidate_from_alert(
     alert: dict[str, Any],
     registry: dict[str, dict[str, Any]],
@@ -194,6 +221,48 @@ def _candidate_from_alert(
         for k, v in win_eventdata.items():
             if isinstance(v, (str, int, float, bool)) and len(selected_fields) < 32:
                 selected_fields[str(k)[:64]] = v
+
+    sca_data = (alert.get("data") or {}).get("sca") if isinstance(alert.get("data"), dict) else {}
+    sca_type = str(sca_data.get("type") or "").strip().lower() if isinstance(sca_data, dict) else ""
+    if isinstance(sca_data, dict) and sca_type == "check":
+        check = sca_data.get("check") if isinstance(sca_data.get("check"), dict) else {}
+        selected_fields["sca_type"] = "check"
+        if sca_data.get("policy"):
+            selected_fields["policy"] = str(sca_data.get("policy"))[:128]
+        if sca_data.get("policy_id"):
+            selected_fields["policy_id"] = str(sca_data.get("policy_id"))[:64]
+        if sca_data.get("scan_id"):
+            selected_fields["scan_id"] = str(sca_data.get("scan_id"))[:64]
+        if check.get("id"):
+            selected_fields["check_id"] = str(check.get("id"))[:64]
+        if check.get("title"):
+            selected_fields["check_title"] = str(check.get("title"))[:256]
+        if check.get("result"):
+            selected_fields["result"] = str(check.get("result")).strip().lower()[:32]
+        if check.get("rationale"):
+            selected_fields["rationale"] = str(check.get("rationale"))[:512]
+        if check.get("remediation"):
+            selected_fields["remediation"] = str(check.get("remediation"))[:512]
+        compliance_items = check.get("compliance") or {}
+        if isinstance(compliance_items, dict):
+            for key, value in list(compliance_items.items())[:16]:
+                normalized_key = re.sub(
+                    r"[^a-z0-9_]", "_", str(key).strip().lower()
+                )[:32]
+                output_key = _SCA_COMPLIANCE_KEYS.get(normalized_key)
+                projected = _bounded_sca_compliance_value(value)
+                if output_key and projected:
+                    selected_fields[f"compliance_{output_key}"] = projected
+        elif isinstance(compliance_items, list):
+            for c in compliance_items[:5]:
+                if isinstance(c, dict) and c.get("key") and c.get("value"):
+                    compliance_key = re.sub(
+                        r"[^a-z0-9_]", "_", str(c["key"]).strip().lower()
+                    )[:32]
+                    output_key = _SCA_COMPLIANCE_KEYS.get(compliance_key)
+                    projected = _bounded_sca_compliance_value(c["value"])
+                    if output_key and projected:
+                        selected_fields[f"compliance_{output_key}"] = projected
 
     mitre_list = rule.get("mitre_ids") or []
     if not mitre_list:

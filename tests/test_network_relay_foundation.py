@@ -1791,6 +1791,9 @@ def test_relay_events_encrypt_raw_vendor_evidence_before_queueing(monkeypatch):
     plaintext = json.loads(Fernet(key).decrypt(event["raw_data"].encode("ascii")))
 
     assert event["raw_data_encryption_version"] == "fernet-v1"
+    assert event["display_message"] == (
+        "Fortinet blocked UDP traffic from 10.0.0.4 to 8.8.8.8:53"
+    )
     assert plaintext["raw_message"] == batch.events[0].raw_message
     assert plaintext["raw_message_hash"] == batch.events[0].raw_message_hash
     assert batch.events[0].raw_message not in orjson.dumps(event).decode("utf-8")

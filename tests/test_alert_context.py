@@ -55,3 +55,41 @@ def test_operator_document_strips_raw_evidence_but_keeps_safe_context():
     assert "raw_event_data" not in result
     assert "processed_data" not in result
     assert "_expire_at" not in result
+
+
+def test_operator_context_maps_normalized_firewall_fields_for_readable_views():
+    context = build_alert_context(
+        {
+            "event_id": "NET-CONNECTION-BLOCK",
+            "event_uid": "relay-event-1",
+            "agent_id": "WARSOC_RELAY_1",
+            "source_id": "branch-pfsense-1",
+            "source_type": "network_device",
+            "network_device_id": "branch-pfsense-1",
+            "network_vendor": "pfsense",
+            "processed_data": {
+                "event_type": "network_connection_blocked",
+                "action": "block",
+                "direction": "in",
+                "interface_in": "em0",
+                "rule_id": "96",
+                "protocol": "tcp",
+                "src_ip": "192.0.2.10",
+                "src_port": 50100,
+                "dst_ip": "198.51.100.20",
+                "dst_port": 443,
+            },
+        }
+    )
+
+    assert context["endpoint"] == "branch-pfsense-1"
+    assert context["network_device_id"] == "branch-pfsense-1"
+    assert context["network_vendor"] == "pfsense"
+    assert context["source_address"] == "192.0.2.10"
+    assert context["source_port"] == 50100
+    assert context["destination_address"] == "198.51.100.20"
+    assert context["destination_port"] == 443
+    assert context["protocol"] == "tcp"
+    assert context["direction"] == "in"
+    assert context["action"] == "block"
+    assert context["interface"] == "em0"

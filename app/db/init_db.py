@@ -557,6 +557,40 @@ async def init_compliance_db(db):
             name="ttl_detection_engine_observations",
         )
         await _aggressive_create_index(
+            db.detection_engine_observations,
+            [("tenant_id", 1), ("category", 1), ("engine_detected_at", -1)],
+            name="idx_detection_observation_tenant_category_detected",
+        )
+        await _aggressive_create_index(
+            db.detection_engine_observations,
+            [("tenant_id", 1), ("wazuh_agent_id", 1)],
+            name="idx_detection_observation_tenant_wazuh_agent",
+        )
+        await _aggressive_create_index(
+            db.detection_engine_agent_bindings,
+            [("tenant_id", 1), ("warsoc_agent_id", 1), ("wazuh_agent_id", 1)],
+            name="idx_detection_agent_bindings_tenant_agents",
+        )
+        await _aggressive_create_index(
+            db.detection_engine_agent_bindings,
+            [("engine", 1), ("engine_instance_id", 1), ("wazuh_agent_id", 1)],
+            unique=True,
+            partialFilterExpression={"status": "active"},
+            name="uq_active_detection_binding_engine_agent",
+        )
+        await _aggressive_create_index(
+            db.detection_engine_agent_bindings,
+            [
+                ("engine", 1),
+                ("engine_instance_id", 1),
+                ("tenant_id", 1),
+                ("warsoc_agent_id", 1),
+            ],
+            unique=True,
+            partialFilterExpression={"status": "active"},
+            name="uq_active_detection_binding_warsoc_agent",
+        )
+        await _aggressive_create_index(
             db.detection_candidates_quarantine,
             [
                 ("connector_id", 1),
@@ -766,6 +800,18 @@ async def init_compliance_db(db):
             db.source_evidence_outbox,
             [("ready", 1), ("status", 1), ("next_attempt_at", 1), ("created_at", 1)],
             name="idx_source_outbox_dispatch",
+        )
+        await _aggressive_create_index(
+            db.source_evidence_outbox,
+            [
+                ("tenant_id", 1),
+                ("source_principal_id", 1),
+                ("event_source_channel", 1),
+                ("source_channel_epoch", 1),
+                ("source_sequence", 1),
+                ("status", 1),
+            ],
+            name="idx_source_outbox_source_order",
         )
         await _aggressive_create_index(
             db.source_evidence_outbox,

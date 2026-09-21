@@ -94,6 +94,8 @@ scripts/*
 !scripts/uninstall_warsoc_relay.ps1
 !scripts/prepare_wazuh_lab_integration.ps1
 !scripts/seed_wazuh_shadow_registry.py
+!scripts/bind_wazuh_native_agent.py
+!scripts/configure_wazuh_sca_agent.ps1
 !scripts/verify_evidence_package.py
 !scripts/relay_build_manifest.py
 !scripts/build_relay_setup_kit.ps1

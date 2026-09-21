@@ -1,5 +1,5 @@
 {
-  "policy_version": "2026-09-04.security-stories-v1",
+  "policy_version": "2026-09-20.integrity-sca-gate-v1",
   "default_policy": "DENY_UNLESS_EXPLICITLY_AUTHENTICATED",
   "public_routes": [
     "GET /api/v1/network-relay/contract",
@@ -76,14 +76,20 @@
     "POST /api/v1/compliance/cases/{case_id}/items": ["admin", "auditor"],
     "GET /api/v1/compliance/evidence": ["admin", "auditor"],
     "GET /api/v1/compliance/evidence/{pack_id}": ["admin", "auditor"],
+    "GET /api/v1/compliance/evidence-integrity/report/custody/{case_id}": ["admin", "auditor"],
+    "GET /api/v1/compliance/evidence-integrity/verify/case/{case_id}": ["admin", "auditor"],
+    "GET /api/v1/compliance/evidence-integrity/verify/daily-ledger": ["admin", "auditor"],
     "GET /api/v1/compliance/export": ["admin", "auditor"],
     "GET /api/v1/compliance/holds": ["admin", "auditor"],
     "POST /api/v1/compliance/holds": ["admin"],
     "POST /api/v1/compliance/holds/{hold_id}/release": ["admin"],
     "GET /api/v1/compliance/retention/status": ["admin", "auditor"],
+    "GET /api/v1/compliance/sca/posture/{agent_id}": ["admin", "analyst", "auditor", "manager"],
+    "GET /api/v1/compliance/sca/summary": ["admin", "analyst", "auditor", "manager"],
     "GET /api/v1/logs/{log_id}/evidence": ["admin", "analyst", "auditor", "manager"]
   },
   "feature_gate_requirements": {
+    "/api/v1/compliance/sca": "settings.wazuh_sca_enabled",
     "/api/v1/network-relay": "settings.network_relay_enabled",
     "/auth": "settings.enable_legacy_routes",
     "/firewall": "settings.enable_legacy_routes",

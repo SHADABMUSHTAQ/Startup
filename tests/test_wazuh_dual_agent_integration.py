@@ -336,6 +336,80 @@ async def test_primary_candidate_without_exact_signed_lineage_remains_non_incide
     ) == 0
 
 
+@pytest.mark.asyncio
+async def test_native_sca_check_never_borrows_unrelated_endpoint_event_lineage(
+    db, wazuh_mock_settings, setup_dual_agent_env
+):
+    now = datetime.now(timezone.utc)
+    env = setup_dual_agent_env
+    await db.detection_rule_registry.insert_one(
+        {
+            "engine": "wazuh",
+            "rule_id": "19007",
+            "ruleset_version": wazuh_mock_settings.wazuh_ruleset_version,
+            "registry_sha256": wazuh_mock_settings.wazuh_rule_registry_sha256,
+            "source_family": "windows_endpoint",
+            "category": "system_audit",
+            "family": "configuration_assessment",
+            "family_status": "shadow",
+            "attack_level": False,
+            "severity": "HIGH",
+            "allowed_engine_levels": [7],
+            "mitre_ids": [],
+            "candidate_enabled": True,
+            "status": "approved",
+            "candidate_context_fields": ["wazuh_timestamp", "wazuh_manager"],
+        }
+    )
+    await db.siem_cold_vault.insert_one(
+        {
+            "event_uid": "unrelated-signed-event",
+            "tenant_id": env["tenant_id"],
+            "agent_id": env["warsoc_agent_id"],
+            "event_id": "4625",
+            "event_record_id": "998877",
+            "signature_verified": True,
+            "source_assurance": "agent_signed",
+            "ingested_at": now,
+            "timestamp": now,
+        }
+    )
+    candidate = DetectionCandidate(
+        connector_id=wazuh_mock_settings.wazuh_connector_id,
+        engine_instance_id=wazuh_mock_settings.wazuh_engine_instance_id,
+        engine_version=wazuh_mock_settings.wazuh_engine_version,
+        ruleset_version=wazuh_mock_settings.wazuh_ruleset_version,
+        engine_alert_id=f"sca-{secrets.token_hex(8)}",
+        engine_rule_id="19007",
+        engine_rule_level=7,
+        engine_detected_at=now,
+        wazuh_agent_id=env["wazuh_agent_id"],
+        wazuh_agent_name="warsoc-sca-test",
+        selected_security_fields={
+            "sca_type": "check",
+            "scan_id": "scan-1",
+            "check_id": "10001",
+            "result": "failed",
+        },
+        engine_reported_category="system_audit",
+        engine_reported_mitre_ids=[],
+    )
+
+    outcome = await admit_candidate(db, candidate, wazuh_mock_settings, received_at=now)
+
+    assert outcome.outcome == "accepted"
+    observation = await db.detection_engine_observations.find_one(
+        {"engine_alert_id": candidate.engine_alert_id}
+    )
+    assert observation["event_uid"].startswith("unlinked-")
+    assert observation["event_uid"] != "unrelated-signed-event"
+    assert observation["lineage_complete"] is False
+    assert observation["status"] == "shadow_observation"
+    assert await db.security_incidents.count_documents(
+        {"tenant_id": env["tenant_id"]}
+    ) == 0
+
+
 def test_projector_prevents_duplicate_windows_dispatch_when_native_agent_active():
     """Requirement 3E: Windows endpoint events must not be dual-dispatched to custom-JSON outbox."""
     windows_doc = {

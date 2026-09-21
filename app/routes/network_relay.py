@@ -1368,6 +1368,68 @@ async def recover_relay_key(request: Request, body: RelayRecoverRequest, db=Depe
     }
 
 
+def _network_display_message(normalized: dict[str, Any], vendor: str) -> str:
+    """Build bounded operator text from normalized fields, never raw syslog."""
+
+    def clean(value: Any, limit: int = 96) -> str:
+        return " ".join(str(value or "").split())[:limit]
+
+    def endpoint(address: Any, port: Any) -> str:
+        host = clean(address)
+        service = clean(port, 12)
+        if not host:
+            return ""
+        if not service:
+            return host
+        return f"[{host}]:{service}" if ":" in host else f"{host}:{service}"
+
+    vendor_token = clean(vendor, 32).lower()
+    vendor_label = {
+        "pfsense": "pfSense",
+        "fortinet": "Fortinet",
+        "cisco_asa": "Cisco ASA",
+        "mikrotik": "MikroTik",
+    }.get(vendor_token, clean(vendor, 32) or "Firewall")
+    event_type = clean(normalized.get("event_type"), 64).lower()
+    if event_type not in {
+        "network_connection_blocked",
+        "network_connection_permitted",
+    }:
+        return clean(
+            normalized.get("message")
+            or f"{vendor_label} {event_type.replace('_', ' ')} observed",
+            320,
+        )
+
+    blocked = event_type == "network_connection_blocked"
+    action = "blocked" if blocked else "allowed"
+    protocol = clean(normalized.get("protocol"), 16).upper()
+    source = endpoint(normalized.get("src_ip"), normalized.get("src_port"))
+    destination = endpoint(normalized.get("dst_ip"), normalized.get("dst_port"))
+    traffic = f" {protocol}" if protocol else ""
+    route = f" from {source}" if source else ""
+    if destination:
+        route += f" to {destination}"
+
+    qualifiers = []
+    direction = clean(normalized.get("direction"), 16).lower()
+    if direction:
+        qualifiers.append({"in": "inbound", "out": "outbound"}.get(direction, direction))
+    rule_id = clean(normalized.get("rule_id"), 64)
+    if rule_id:
+        qualifiers.append(f"rule {rule_id}")
+    interface = clean(
+        normalized.get("interface")
+        or normalized.get("interface_in")
+        or normalized.get("interface_out"),
+        64,
+    )
+    if interface:
+        qualifiers.append(f"interface {interface}")
+    suffix = f" ({', '.join(qualifiers)})" if qualifiers else ""
+    return f"{vendor_label} {action}{traffic} traffic{route}{suffix}"[:320]
+
+
 def _queue_event(
     event: RelayEvent,
     relay_context: dict[str, Any],
@@ -1387,6 +1449,7 @@ def _queue_event(
         normalized.get("message")
         or f"{event.vendor} {event_type.replace('_', ' ')} observed"
     )[:1000]
+    display_message = _network_display_message(normalized, event.vendor)
     encrypted_raw_data = _encrypt_relay_raw_data(
         {
             "raw_message": event.raw_message,
@@ -1410,6 +1473,7 @@ def _queue_event(
         "source_ip": source_ip,
         "user": user,
         "message": message,
+        "display_message": display_message,
         "timestamp": relay_time.isoformat(),
         "device_event_time": device_time.isoformat() if device_time else None,
         "relay_receipt_time": relay_time.isoformat(),

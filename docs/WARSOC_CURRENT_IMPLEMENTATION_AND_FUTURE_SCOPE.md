@@ -451,13 +451,17 @@ profile control. The remaining event matrix, backend/Redis interruption and
 | Module | Future purpose | Hard boundary |
 |---|---|---|
 | Expanded FIM | Baseline/checksum and change evidence for explicitly approved paths. | Do not monitor whole disks or broad read activity by default. |
-| SCA/posture | Narrow approved Windows security posture checks, later mapped to customer policies/CIS where licensed and validated. | Evidence and scoring first; no automatic remediation. |
+| SCA/posture | A disabled release-candidate parser, tenant-scoped posture projector and read-only API now exist for real Wazuh SCA check events. Customer activation still requires an accepted SCA registry and live two-host evidence. | `WAZUH_SCA_ENABLED=false` by default; evidence and scoring only, no automatic remediation. |
 | Wazuh projection | Convert canonical WarSOC endpoint evidence into the minimized Wazuh contract. | Wazuh never receives secrets, authoritative tenant IDs, or unrestricted raw evidence. |
 | Coverage telemetry | Per-tenant/per-endpoint proof that required sources and checks are healthy. | Missing telemetry must degrade coverage, not silently produce a green status. |
 
 Current WarSOC protected-path FIM is not a complete Wazuh-style whole-host FIM
 inventory. Current WarSOC audit-policy checks are not a complete SCA/CIS engine.
-Those are future scope and must be introduced as separately tested modules.
+The local SCA candidate accepts only Wazuh `type=check` payloads and deliberately
+does not treat summary rules as individual controls. The active
+`warsoc-projected-shadow-v2` production registry contains no SCA rules, so the
+candidate API and fleet projection remain fail-closed until a separately
+reviewed registry and real-manager acceptance campaign are completed.
 
 ## 10. Multi-Tenant Detection and Reputation Rules
 

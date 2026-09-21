@@ -13,6 +13,8 @@ param(
     [string]$ActivationCode = "",
     [PSCredential]$Credential,
     [int]$WaitSeconds = 180,
+    [ValidateRange(1, 50)]
+    [int]$SoakAgentCount = 50,
     [int]$SoakTimeoutSeconds = 60,
     [switch]$ConfirmProductionDataCreation,
     [switch]$ConfirmDisposableVm,
@@ -490,7 +492,7 @@ function Invoke-NativeVerify {
 
 function Invoke-Soak {
     if (-not $ConfirmProductionDataCreation) {
-        throw "Soak creates one tenant and 50 registered agents. Re-run with -ConfirmProductionDataCreation."
+        throw "Soak creates one tenant and $SoakAgentCount registered agents. Re-run with -ConfirmProductionDataCreation."
     }
     if (-not $AdminKey) {
         throw "Set SUPER_ADMIN_API_KEY or pass -AdminKey."
@@ -502,6 +504,7 @@ function Invoke-Soak {
         (Join-Path $PSScriptRoot "native_50_agent_soak.py")
         "--base-url", $BackendUrl
         "--email-domain", $EmailDomain
+        "--agent-count", [string]$SoakAgentCount
         "--timeout", [string]$SoakTimeoutSeconds
     )
     $previousAdminKey = $env:SUPER_ADMIN_API_KEY
@@ -509,7 +512,7 @@ function Invoke-Soak {
         $env:SUPER_ADMIN_API_KEY = $AdminKey
         & $python.executable @arguments 2>&1 | Tee-Object -LiteralPath $logPath
         if ($LASTEXITCODE -ne 0) {
-            throw "50-agent soak failed. Review $logPath."
+            throw "$SoakAgentCount-agent soak failed. Review $logPath."
         }
     }
     finally {

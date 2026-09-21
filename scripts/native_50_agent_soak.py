@@ -1,4 +1,4 @@
-"""Provision 50 agents and validate the native SIEM/FBR/PECA burst path."""
+"""Provision a bounded agent cohort and validate the native SIEM/FBR/PECA burst path."""
 
 from __future__ import annotations
 
@@ -17,6 +17,11 @@ from datetime import datetime, timezone
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
+from app.utils.agent_crypto import (
+    build_event_signature_string,
+    build_payload_hash,
+    build_signable_event_payload,
+)
 from launch_readiness_validator import ApiClient
 
 
@@ -56,15 +61,58 @@ def deregister_agents(
     )
 
 
-def ingest_agent(base_url: str, agent_jwt: str, events: list[dict]) -> tuple[int, object]:
+def sign_events(
+    agent_id: str,
+    private_key: ed25519.Ed25519PrivateKey,
+    events: list[dict],
+) -> list[dict]:
+    signed_events = []
+    for source_sequence, event in enumerate(events, start=1):
+        signed = dict(event)
+        signed.setdefault("agent_collection_time", signed["timestamp"])
+        signed.setdefault("collection_protocol_version", "warsoc-agent-collection-v4")
+        signed.setdefault("source_channel", "Security")
+        signed.setdefault("source_channel_epoch", "native-soak-v1")
+        signed.setdefault("source_sequence", source_sequence)
+        # Keep the exact signed raw-event shape stable through ingest
+        # normalization. Without this explicit value, the legacy fallback
+        # expands raw_event_data to the whole event before verification.
+        signed.setdefault("raw_event_data", {})
+        signed["signature_version"] = "ed25519-v2"
+        payload_hash = build_payload_hash(build_signable_event_payload(signed))
+        signature_input = build_event_signature_string(
+            agent_id,
+            str(signed["timestamp"]),
+            str(signed["event_uid"]),
+            payload_hash,
+        ).encode("utf-8")
+        signed.update(
+            {
+                "payload_hash": payload_hash,
+                "signature_algorithm": "Ed25519",
+                "agent_signature": private_key.sign(signature_input).hex(),
+            }
+        )
+        signed_events.append(signed)
+    return signed_events
+
+
+def ingest_agent(
+    base_url: str,
+    agent_id: str,
+    agent_jwt: str,
+    private_key: ed25519.Ed25519PrivateKey,
+    events: list[dict],
+) -> tuple[int, object]:
     client = ApiClient(base_url)
+    signed_events = sign_events(agent_id, private_key, events)
     response = client.request(
         "POST",
         "/api/v1/ingest/pulse",
         {
             "nonce": uuid.uuid4().hex,
             "timestamp": int(time.time()),
-            "payload": events,
+            "payload": signed_events,
         },
         headers={"Authorization": f"Bearer {agent_jwt}"},
         timeout=30,
@@ -77,10 +125,15 @@ def main() -> int:
     parser.add_argument("--base-url", default=os.getenv("WARSOC_BASE_URL", "http://127.0.0.1:8000"))
     parser.add_argument("--admin-key", default=os.getenv("SUPER_ADMIN_API_KEY", ""))
     parser.add_argument("--email-domain", default="warsoc.tech")
+    parser.add_argument("--agent-count", type=int, default=50)
     parser.add_argument("--timeout", type=int, default=60)
     args = parser.parse_args()
     if not args.admin_key:
         parser.error("--admin-key or SUPER_ADMIN_API_KEY is required")
+    if not 1 <= args.agent_count <= 50:
+        parser.error("--agent-count must be between 1 and 50")
+
+    target_agents = args.agent_count
 
     run_id = uuid.uuid4().hex[:10]
     admin = ApiClient(args.base_url)
@@ -92,10 +145,10 @@ def main() -> int:
         "POST",
         "/api/v1/admin/provision",
         {
-            "company_name": f"Native 50 Agent Soak {run_id}",
+            "company_name": f"Native {target_agents} Agent Soak {run_id}",
             "plan_type": "Customized",
             "compliance_packs": ["fbr_pos", "peca_forensic"],
-            "max_agents": 50,
+            "max_agents": target_agents,
             "admin_email": admin_email,
             "admin_name": "Soak Admin",
             "admin_password": password,
@@ -110,11 +163,11 @@ def main() -> int:
     if admin.login(admin_email, password).status != 200:
         print("[FAIL] Admin login")
         return 1
-    print(f"[PASS] Provisioned tenant {tenant_id} with 50 seats")
+    print(f"[PASS] Provisioned tenant {tenant_id} with {target_agents} seats")
 
     agents: list[tuple[str, str, ed25519.Ed25519PrivateKey]] = []
     atexit.register(deregister_agents, admin, agents)
-    for index in range(50):
+    for index in range(target_agents):
         activation = admin.request("POST", "/api/v1/agent/generate-activation", {})
         code = activation.body.get("activation_code") if isinstance(activation.body, dict) else None
         if activation.status != 200 or not code:
@@ -133,8 +186,11 @@ def main() -> int:
             (registration.body["agent_id"], registration.body["agent_jwt"], private_key)
         )
 
-    print(f"[{'PASS' if len(agents) == 50 else 'FAIL'}] Registered agents: {len(agents)}/50")
-    if len(agents) != 50:
+    print(
+        f"[{'PASS' if len(agents) == target_agents else 'FAIL'}] "
+        f"Registered agents: {len(agents)}/{target_agents}"
+    )
+    if len(agents) != target_agents:
         return 1
 
     extra_activation = admin.request("POST", "/api/v1/agent/generate-activation", {})
@@ -152,14 +208,14 @@ def main() -> int:
         )
         quota_status = extra_registration.status
     quota_ok = quota_status in {403, 409}
-    print(f"[{'PASS' if quota_ok else 'FAIL'}] 51st agent blocked: HTTP {quota_status}")
+    print(f"[{'PASS' if quota_ok else 'FAIL'}] Next agent blocked: HTTP {quota_status}")
     if not quota_ok:
-        failures.append(f"51st agent was not blocked: HTTP {quota_status}")
+        failures.append(f"next agent was not blocked: HTTP {quota_status}")
 
     expected_4688_uids = set()
     jobs = []
     emitted_at = datetime.now(timezone.utc).isoformat()
-    for index, (_, agent_jwt, _) in enumerate(agents):
+    for index, (agent_id, agent_jwt, private_key) in enumerate(agents):
         process_uid = f"{run_id}-agent-{index:02d}-4688"
         expected_4688_uids.add(process_uid)
         events = [
@@ -211,13 +267,19 @@ def main() -> int:
                     },
                 ]
             )
-        jobs.append((agent_jwt, events))
+        jobs.append((agent_id, agent_jwt, private_key, events))
 
     burst_started = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
         results = list(
             pool.map(
-                lambda item: ingest_agent(args.base_url, item[0], item[1]),
+                lambda item: ingest_agent(
+                    args.base_url,
+                    item[0],
+                    item[1],
+                    item[2],
+                    item[3],
+                ),
                 jobs,
             )
         )
@@ -231,9 +293,12 @@ def main() -> int:
         sample_body = next(body for status, body in results if status == failed_status)
         sample_text = str(sample_body).replace("\r", " ").replace("\n", " ")[:300]
         print(f"[INFO] Burst failure sample HTTP {failed_status}: {sample_text}")
-    print(f"[{'PASS' if accepted == 50 else 'FAIL'}] Burst accepted: {accepted}/50 requests")
-    if accepted != 50:
-        failures.append(f"only {accepted}/50 burst requests accepted")
+    print(
+        f"[{'PASS' if accepted == target_agents else 'FAIL'}] "
+        f"Burst accepted: {accepted}/{target_agents} requests"
+    )
+    if accepted != target_agents:
+        failures.append(f"only {accepted}/{target_agents} burst requests accepted")
 
     alert_seen_at = None
     peca_seen = fbr_seen = False
@@ -256,7 +321,7 @@ def main() -> int:
                 for row in peca.body.get("data", [])
                 if row.get("event_uid") in expected_4688_uids
             }
-            peca_seen = len(observed) == 50
+            peca_seen = len(observed) == target_agents
 
         fbr = admin.request(
             "GET",
@@ -290,7 +355,10 @@ def main() -> int:
         )
 
     print(f"[{'PASS' if alert_seen_at else 'FAIL'}] SIEM canary latency: {detection_in if detection_in is not None else 'timeout'}s")
-    print(f"[{'PASS' if peca_seen else 'FAIL'}] PECA vaulted all 50 native process events")
+    print(
+        f"[{'PASS' if peca_seen else 'FAIL'}] "
+        f"PECA vaulted all {target_agents} native process events"
+    )
     print(f"[{'PASS' if fbr_seen else 'FAIL'}] FBR Redis-correlated deletion visible")
     print(f"[{'PASS' if not false_ransomware_alert else 'FAIL'}] Normal .mdf path caused no ransomware-extension alert")
     print(f"[{'PASS' if completed_in <= args.timeout else 'FAIL'}] Pipeline completion: {completed_in:.2f}s")

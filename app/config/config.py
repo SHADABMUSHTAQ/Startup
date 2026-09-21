@@ -167,6 +167,14 @@ class Settings(BaseSettings):
     wazuh_primary_approved: bool = os.getenv(
         "WAZUH_PRIMARY_APPROVED", "false"
     ).strip().lower() in {"1", "true", "yes"}
+    # SCA is a separate product surface from generic Wazuh detection. Keep it
+    # unavailable until a real Wazuh check-event feed has been accepted.
+    wazuh_sca_enabled: bool = os.getenv(
+        "WAZUH_SCA_ENABLED", "false"
+    ).strip().lower() in {"1", "true", "yes"}
+    wazuh_sca_stale_after_hours: int = int(
+        os.getenv("WAZUH_SCA_STALE_AFTER_HOURS", "36")
+    )
     security_stories_enabled: bool = os.getenv(
         "SECURITY_STORIES_ENABLED", "false"
     ).strip().lower() in {"1", "true", "yes"}
@@ -470,6 +478,14 @@ def get_settings():
         if s.wazuh_detection_mode == "primary" and not s.wazuh_primary_approved:
             raise RuntimeError(
                 "FATAL: WAZUH primary mode requires WAZUH_PRIMARY_APPROVED=true."
+            )
+        if s.wazuh_sca_enabled and s.wazuh_detection_mode == "disabled":
+            raise RuntimeError(
+                "FATAL: WAZUH_SCA_ENABLED requires WAZUH_DETECTION_MODE=shadow or primary."
+            )
+        if not 12 <= s.wazuh_sca_stale_after_hours <= 168:
+            raise RuntimeError(
+                "FATAL: WAZUH_SCA_STALE_AFTER_HOURS must be between 12 and 168."
             )
         if s.wazuh_detection_mode != "disabled":
             from cryptography.fernet import Fernet

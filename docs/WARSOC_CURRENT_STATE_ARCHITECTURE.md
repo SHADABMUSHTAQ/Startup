@@ -709,6 +709,14 @@ shadow candidate, while the permitted comparison event produced no candidate.
 WarSOC created zero Wazuh-derived incidents. `WAZUH_PRIMARY_APPROVED=false`
 remains mandatory; WarSOC-native detection is still authoritative.
 
+A local release candidate can project real Wazuh SCA check events into a
+tenant-scoped posture view, but it is not part of the accepted production
+capability. `WAZUH_SCA_ENABLED=false` is the default and the application refuses
+to enable it when generic Wazuh detection is disabled. Only `type=check` events
+are posture inputs; summary events are not converted into controls. The active
+`warsoc-projected-shadow-v2` registry has no SCA rules, the authoritative
+frontend exposes no SCA screen, and live two-host SCA acceptance is still open.
+
 The colleague's customer-style pfSense relay installation on `alphabay` is
 accepted and certified end-to-end through package configuration, one-time
 activation, Automatic Windows service state, source-restricted UDP listener, backend

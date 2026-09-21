@@ -166,20 +166,18 @@ async def admit_candidate(
                 db, candidate, reason_code="INVALID_AGENT_BINDING", received_at=received_at
             )
 
-        # Link to canonical WarSOC evidence in siem_cold_vault (Requirement 3C)
-        # EventRecordID can repeat after log clear, so we also match event_id
-        # (which acts as a channel/provider proxy) and bound by recency.
-        recency_cutoff = received_at - timedelta(hours=24)
-        evidence_conditions: list[dict[str, Any]] = [
-            {
-                "$or": [
-                    {"agent_id": warsoc_agent_id},
-                    {"source_id": warsoc_agent_id},
-                ]
-            }
-        ]
-        if candidate.windows_event_record_id:
-            evidence_conditions.append(
+        # Native candidates may link to canonical WarSOC evidence only when the
+        # alert carries a complete Windows event identity. SCA checks do not,
+        # and must not borrow the endpoint's latest unrelated event as lineage.
+        if candidate.windows_event_id and candidate.windows_event_record_id:
+            recency_cutoff = received_at - timedelta(hours=24)
+            evidence_conditions: list[dict[str, Any]] = [
+                {
+                    "$or": [
+                        {"agent_id": warsoc_agent_id},
+                        {"source_id": warsoc_agent_id},
+                    ]
+                },
                 {
                     "$or": [
                         {"event_record_id": candidate.windows_event_record_id},
@@ -188,39 +186,37 @@ async def admit_candidate(
                         },
                         {"record_id": candidate.windows_event_record_id},
                     ]
-                }
-            )
+                },
+            ]
+            evidence_query: dict[str, Any] = {
+                "tenant_id": tenant_id,
+                "event_id": candidate.windows_event_id,
+                "signature_verified": True,
+                "source_assurance": "agent_signed",
+                "$and": evidence_conditions,
+            }
+            if candidate.windows_channel:
+                evidence_conditions.append(
+                    {
+                        "$or": [
+                            {"channel": candidate.windows_channel},
+                            {"processed_data.channel": candidate.windows_channel},
+                            {"raw_event_data.system.channel": candidate.windows_channel},
+                            {"raw_data.system.channel": candidate.windows_channel},
+                        ]
+                    }
+                )
 
-        evidence_query: dict[str, Any] = {
-            "tenant_id": tenant_id,
-            "signature_verified": True,
-            "source_assurance": "agent_signed",
-            "$and": evidence_conditions,
-        }
-        if candidate.windows_event_id:
-            evidence_query["event_id"] = candidate.windows_event_id
-        if candidate.windows_channel:
-            evidence_conditions.append(
-                {
-                    "$or": [
-                        {"channel": candidate.windows_channel},
-                        {"processed_data.channel": candidate.windows_channel},
-                        {"raw_event_data.system.channel": candidate.windows_channel},
-                        {"raw_data.system.channel": candidate.windows_channel},
-                    ]
-                }
+            canonical_event = await db.siem_cold_vault.find_one(
+                evidence_query, sort=[("_id", -1)]
             )
-
-        canonical_event = await db.siem_cold_vault.find_one(
-            evidence_query, sort=[("_id", -1)]
-        )
-        if canonical_event:
-            evidence_time = _utc_datetime(
-                canonical_event.get("ingested_at")
-                or canonical_event.get("timestamp")
-            )
-            if evidence_time is None or evidence_time < recency_cutoff:
-                canonical_event = None
+            if canonical_event:
+                evidence_time = _utc_datetime(
+                    canonical_event.get("ingested_at")
+                    or canonical_event.get("timestamp")
+                )
+                if evidence_time is None or evidence_time < recency_cutoff:
+                    canonical_event = None
         if canonical_event:
             event_uid = str(canonical_event.get("event_uid") or "")
             lineage_complete = bool(event_uid)

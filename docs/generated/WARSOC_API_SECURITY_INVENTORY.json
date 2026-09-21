@@ -7,9 +7,9 @@
     "Runtime middleware and nested dependency behavior require test evidence in addition to this artifact."
   ],
   "summary": {
-    "route_count": 133,
+    "route_count": 138,
     "manual_review_required": 0,
-    "feature_gated_routes": 32
+    "feature_gated_routes": 34
   },
   "routes": [
     {
@@ -899,7 +899,7 @@
       "method": "GET",
       "route": "/api/v1/compliance/cases",
       "source_file": "app/routes/evidence_cases.py",
-      "source_line": 298,
+      "source_line": 301,
       "handler": "list_evidence_cases",
       "router_module": "evidence_cases",
       "feature_condition": null,
@@ -927,7 +927,7 @@
       "method": "POST",
       "route": "/api/v1/compliance/cases",
       "source_file": "app/routes/evidence_cases.py",
-      "source_line": 238,
+      "source_line": 241,
       "handler": "create_evidence_case",
       "router_module": "evidence_cases",
       "feature_condition": null,
@@ -955,7 +955,7 @@
       "method": "GET",
       "route": "/api/v1/compliance/cases/{case_id}",
       "source_file": "app/routes/evidence_cases.py",
-      "source_line": 315,
+      "source_line": 318,
       "handler": "get_evidence_case",
       "router_module": "evidence_cases",
       "feature_condition": null,
@@ -979,7 +979,7 @@
       "method": "POST",
       "route": "/api/v1/compliance/cases/{case_id}/close",
       "source_file": "app/routes/evidence_cases.py",
-      "source_line": 462,
+      "source_line": 466,
       "handler": "close_evidence_case",
       "router_module": "evidence_cases",
       "feature_condition": null,
@@ -1006,7 +1006,7 @@
       "method": "POST",
       "route": "/api/v1/compliance/cases/{case_id}/custody",
       "source_file": "app/routes/evidence_cases.py",
-      "source_line": 429,
+      "source_line": 433,
       "handler": "record_custody_action",
       "router_module": "evidence_cases",
       "feature_condition": null,
@@ -1034,7 +1034,7 @@
       "method": "GET",
       "route": "/api/v1/compliance/cases/{case_id}/exports",
       "source_file": "app/routes/evidence_cases.py",
-      "source_line": 598,
+      "source_line": 602,
       "handler": "list_evidence_exports",
       "router_module": "evidence_cases",
       "feature_condition": null,
@@ -1060,7 +1060,7 @@
       "method": "POST",
       "route": "/api/v1/compliance/cases/{case_id}/exports",
       "source_file": "app/routes/evidence_cases.py",
-      "source_line": 558,
+      "source_line": 562,
       "handler": "request_evidence_export",
       "router_module": "evidence_cases",
       "feature_condition": null,
@@ -1088,7 +1088,7 @@
       "method": "GET",
       "route": "/api/v1/compliance/cases/{case_id}/exports/{export_id}",
       "source_file": "app/routes/evidence_cases.py",
-      "source_line": 614,
+      "source_line": 618,
       "handler": "get_evidence_export",
       "router_module": "evidence_cases",
       "feature_condition": null,
@@ -1112,7 +1112,7 @@
       "method": "POST",
       "route": "/api/v1/compliance/cases/{case_id}/exports/{export_id}/download-link",
       "source_file": "app/routes/evidence_cases.py",
-      "source_line": 697,
+      "source_line": 701,
       "handler": "issue_evidence_export_download_link",
       "router_module": "evidence_cases",
       "feature_condition": null,
@@ -1138,7 +1138,7 @@
       "method": "POST",
       "route": "/api/v1/compliance/cases/{case_id}/items",
       "source_file": "app/routes/evidence_cases.py",
-      "source_line": 345,
+      "source_line": 348,
       "handler": "add_evidence_case_item",
       "router_module": "evidence_cases",
       "feature_condition": null,
@@ -1211,6 +1211,84 @@
       "rate_size_boundary_evidence": [
         "Query(ge=0)",
         "Query(ge=1, le=500)"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/evidence-integrity/report/custody/{case_id}",
+      "source_file": "app/routes/evidence_integrity.py",
+      "source_line": 223,
+      "handler": "report_custody",
+      "router_module": "evidence_integrity",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "rate_limit:10/minute"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/evidence-integrity/verify/case/{case_id}",
+      "source_file": "app/routes/evidence_integrity.py",
+      "source_line": 79,
+      "handler": "verify_case",
+      "router_module": "evidence_integrity",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "rate_limit:10/minute"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/evidence-integrity/verify/daily-ledger",
+      "source_file": "app/routes/evidence_integrity.py",
+      "source_line": 33,
+      "handler": "verify_daily_ledger",
+      "router_module": "evidence_integrity",
+      "feature_condition": null,
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db"
+      ],
+      "allowed_roles": [
+        "admin",
+        "auditor"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "rate_limit:10/minute"
       ],
       "review_state": "STATICALLY_CLASSIFIED"
     },
@@ -1413,9 +1491,68 @@
     },
     {
       "method": "GET",
+      "route": "/api/v1/compliance/sca/posture/{agent_id}",
+      "source_file": "app/routes/sca.py",
+      "source_line": 56,
+      "handler": "get_agent_posture",
+      "router_module": "sca",
+      "feature_condition": "settings.wazuh_sca_enabled",
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db",
+        "require_sca_enabled"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "auditor",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "Path(min_length=3, max_length=128)",
+        "rate_limit:60/minute"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
+      "route": "/api/v1/compliance/sca/summary",
+      "source_file": "app/routes/sca.py",
+      "source_line": 35,
+      "handler": "get_sca_summary",
+      "router_module": "sca",
+      "feature_condition": "settings.wazuh_sca_enabled",
+      "auth_type": "USER_JWT_RBAC",
+      "auth_evidence": [
+        "RoleChecker",
+        "get_current_user",
+        "get_db",
+        "require_sca_enabled"
+      ],
+      "allowed_roles": [
+        "admin",
+        "analyst",
+        "auditor",
+        "manager"
+      ],
+      "tenant_scope": "AUTHENTICATED_TENANT_CONTEXT",
+      "request_schemas": [],
+      "response_schema": null,
+      "rate_size_boundary_evidence": [
+        "rate_limit:60/minute"
+      ],
+      "review_state": "STATICALLY_CLASSIFIED"
+    },
+    {
+      "method": "GET",
       "route": "/api/v1/data/search",
       "source_file": "app/routes/data.py",
-      "source_line": 464,
+      "source_line": 483,
       "handler": "global_search",
       "router_module": "data",
       "feature_condition": null,
@@ -1443,7 +1580,7 @@
       "method": "GET",
       "route": "/api/v1/data/status",
       "source_file": "app/routes/data.py",
-      "source_line": 171,
+      "source_line": 173,
       "handler": "agent_status",
       "router_module": "data",
       "feature_condition": null,
@@ -2002,7 +2139,7 @@
       "method": "POST",
       "route": "/api/v1/network-relay/ingest",
       "source_file": "app/routes/network_relay.py",
-      "source_line": 1694,
+      "source_line": 1758,
       "handler": "ingest_relay_batch",
       "router_module": "network_relay",
       "feature_condition": "settings.network_relay_enabled",
@@ -2570,7 +2707,7 @@
       "method": "POST",
       "route": "/api/v1/ws/ticket",
       "source_file": "app/main.py",
-      "source_line": 649,
+      "source_line": 659,
       "handler": "create_ws_ticket",
       "router_module": "main",
       "feature_condition": null,
@@ -2974,7 +3111,7 @@
       "method": "GET",
       "route": "/health",
       "source_file": "app/main.py",
-      "source_line": 623,
+      "source_line": 633,
       "handler": "health_check",
       "router_module": "main",
       "feature_condition": null,
@@ -3130,7 +3267,7 @@
       "method": "WEBSOCKET",
       "route": "/ws/alerts",
       "source_file": "app/main.py",
-      "source_line": 676,
+      "source_line": 686,
       "handler": "websocket_endpoint",
       "router_module": "main",
       "feature_condition": null,
