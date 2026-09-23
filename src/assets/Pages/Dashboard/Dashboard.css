@@ -3697,6 +3697,36 @@ select.global-search option {
   -webkit-text-fill-color: #ffffff !important;
 }
 
+/* Final transparent module-tab override: only blue text and blue icons remain. */
+.siem-layout .workspace-page-actions .workspace-action-segment {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.siem-layout .workspace-page-actions .workspace-action-segment .workspace-action-item,
+.siem-layout .workspace-page-actions .workspace-action-segment .workspace-action-item:hover:not(:disabled),
+.siem-layout .workspace-page-actions .workspace-action-segment .workspace-action-item.active {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: #2563eb !important;
+  -webkit-text-fill-color: #2563eb !important;
+}
+.siem-layout .workspace-page-actions .workspace-action-segment .workspace-action-item > span,
+.siem-layout .workspace-page-actions .workspace-action-segment .workspace-action-item > svg,
+.siem-layout .workspace-page-actions .workspace-action-segment .workspace-action-item > svg :where(path, line, polyline, rect, circle) {
+  color: #2563eb !important;
+  stroke: #2563eb !important;
+  fill: none !important;
+  opacity: 1 !important;
+  -webkit-text-fill-color: #2563eb !important;
+}
+
 /* Module tabs: transparent links with aligned, high-contrast blue icon and label. */
 .siem-layout .workspace-action-segment .workspace-action-item,
 .siem-layout .workspace-action-segment .workspace-action-item:hover:not(:disabled),
@@ -4289,4 +4319,34 @@ select.global-search option {
   fill: none !important;
   opacity: 1 !important;
   -webkit-text-fill-color: #ffffff !important;
+}
+
+/* Final transparent module-tab override: only blue text and blue icons remain. */
+.siem-layout .workspace-page-actions .workspace-action-segment {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.siem-layout .workspace-page-actions .workspace-action-segment .workspace-action-item,
+.siem-layout .workspace-page-actions .workspace-action-segment .workspace-action-item:hover:not(:disabled),
+.siem-layout .workspace-page-actions .workspace-action-segment .workspace-action-item.active {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: #2563eb !important;
+  -webkit-text-fill-color: #2563eb !important;
+}
+.siem-layout .workspace-page-actions .workspace-action-segment .workspace-action-item > span,
+.siem-layout .workspace-page-actions .workspace-action-segment .workspace-action-item > svg,
+.siem-layout .workspace-page-actions .workspace-action-segment .workspace-action-item > svg :where(path, line, polyline, rect, circle) {
+  color: #2563eb !important;
+  stroke: #2563eb !important;
+  fill: none !important;
+  opacity: 1 !important;
+  -webkit-text-fill-color: #2563eb !important;
 }
