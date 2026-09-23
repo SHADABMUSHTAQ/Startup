@@ -1,0 +1,352 @@
+import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import test from "node:test";
+
+import {
+  API_ROUTES,
+  archiveActionErrorMessage,
+  archiveSourceOptions,
+  archiveStatusInfo,
+  buildArchiveAvailabilityParams,
+  buildArchiveRetrievalPayload,
+  buildCaseClosurePayload,
+  buildCustodyActionPayload,
+  buildEvidenceCasePayload,
+  buildEvidenceCaseItemPayload,
+  buildEvidenceExportPayload,
+  buildLegalHoldPayload,
+  buildLegalHoldReleasePayload,
+  buildServerProfilePayload,
+  formatArchiveBytes,
+  formatArchiveDateRange,
+  formatArchiveSources,
+  formatArchiveTimestamp,
+  formatPackRetention,
+  normalizeEndpointStatus,
+  normalizeEvidenceCaseDetail,
+  safeDownloadUrl,
+} from "../src/contracts/backendContracts.js";
+import { ROLE_PERMISSIONS, hasPermission } from "../src/utils/roleContract.js";
+import { shouldDisplayLog } from "../src/utils/logSearch.js";
+import { parseBackendTime } from "../src/utils/backendTime.js";
+import { formatSecurityEvent } from "../src/utils/securityEventDisplay.js";
+
+test("server monitoring routes and update payload match the backend contract", () => {
+  assert.equal(API_ROUTES.serverProfiles, "/agent/server-profiles");
+  assert.equal(API_ROUTES.serverProfile("SERVER/A"), "/agent/SERVER%2FA/server-profile");
+  assert.deepEqual(
+    buildServerProfilePayload({
+      expectedRevision: "1",
+      enabled: true,
+      environment: " Production ",
+      criticality: "HIGH",
+    }),
+    {
+      expected_revision: 1,
+      enabled: true,
+      environment: "production",
+      criticality: "high",
+    },
+  );
+  assert.throws(() => buildServerProfilePayload({ expectedRevision: -1, enabled: true }));
+  assert.throws(() => buildServerProfilePayload({ expectedRevision: 1, enabled: "true" }));
+  assert.throws(() => buildServerProfilePayload({ expectedRevision: 1, enabled: true, environment: "qa" }));
+  assert.throws(() => buildServerProfilePayload({ expectedRevision: 1, enabled: true, criticality: "urgent" }));
+});
+
+test("endpoint status normalization prefers authoritative server, POS, spool, and audit fields", () => {
+  const normalized = normalizeEndpointStatus({
+    asset_class: "server",
+    environment: "production",
+    criticality: "critical",
+    response_mode: "MONITOR_ONLY",
+    audit_coverage: { status: "READY" },
+    pos_coverage: { status: "READY" },
+    spool_health: { status: "HEALTHY", blocked: false },
+    sensor_status: {
+      audit_policy_status: "DEGRADED",
+      pos: { status: "NOT_CONFIGURED" },
+      spool: { status: "BLOCKED", blocked: true },
+    },
+    server_monitoring: {
+      required: true,
+      health: "READY",
+      host_identity_status: "verified",
+      host: { product_type: 3 },
+      desired: { revision: 4, profile: { enabled: true } },
+      reported: { applied_revision: 4 },
+    },
+  });
+
+  assert.equal(normalized.isServer, true);
+  assert.equal(normalized.auditStatus, "READY");
+  assert.equal(normalized.posStatus, "READY");
+  assert.equal(normalized.spoolStatus, "HEALTHY");
+  assert.equal(normalized.spoolBlocked, false);
+  assert.equal(normalized.serverHealth, "READY");
+  assert.equal(normalized.hostIdentityStatus, "verified");
+  assert.equal(normalized.desiredRevision, 4);
+  assert.equal(normalized.reportedRevision, 4);
+  assert.equal(normalized.profileEnabled, true);
+  assert.equal(normalized.environment, "production");
+  assert.equal(normalized.criticality, "critical");
+  assert.equal(normalized.responseMode, "MONITOR_ONLY");
+});
+
+test("legacy pfSense telemetry is rendered as readable firewall activity", () => {
+  const display = formatSecurityEvent({
+    event_id: "NET-CONNECTION-BLOCK",
+    event_type: "network_connection_blocked",
+    source_type: "network_device",
+    network_device_id: "host-pfsense-relay-01",
+    network_vendor: "pfsense",
+    source_ip: "192.168.56.1",
+    message: "Security telemetry event NET-CONNECTION-BLOCK observed",
+    context: {
+      direction: "in",
+      protocol: "tcp",
+      rule_id: "96",
+      source_address: "192.168.56.1",
+    },
+  });
+
+  assert.equal(display.message, "pfSense blocked TCP traffic from 192.168.56.1 (inbound, rule 96)");
+  assert.equal(display.host, "host-pfsense-relay-01");
+  assert.equal(display.sourceType, "PFSENSE");
+});
+
+test("current pfSense telemetry includes source, destination, rule, and interface", () => {
+  const display = formatSecurityEvent({
+    event_id: "NET-CONNECTION-BLOCK",
+    source_type: "network_device",
+    network_vendor: "pfsense",
+    display_message: "Security telemetry event NET-CONNECTION-BLOCK observed",
+    context: {
+      action: "block",
+      direction: "in",
+      protocol: "tcp",
+      source_address: "192.168.56.1",
+      source_port: 49152,
+      destination_address: "192.168.56.254",
+      destination_port: 9999,
+      rule_id: "96",
+      interface: "em0",
+    },
+  });
+
+  assert.equal(
+    display.message,
+    "pfSense blocked TCP traffic from 192.168.56.1:49152 to 192.168.56.254:9999 (inbound, rule 96, interface em0)",
+  );
+});
+
+test("Mongo UTC timestamps do not silently become browser-local times", () => {
+  assert.equal(parseBackendTime("2026-09-02T19:21:10").toISOString(), "2026-09-02T19:21:10.000Z");
+  assert.equal(parseBackendTime("2026-09-03T00:21:10+05:00").toISOString(), "2026-09-02T19:21:10.000Z");
+  assert.equal(parseBackendTime("invalid"), null);
+});
+
+test("pack retention labels do not invent a fixed compliance duration", () => {
+  assert.equal(formatPackRetention({ inherits_tenant_retention_days: true, vault_days: null }), "Tenant entitlement");
+  assert.equal(formatPackRetention({ vault_days: 180 }), "180 days");
+  assert.equal(formatPackRetention({}), "Not recorded");
+});
+
+test("historical exact-field matches are not hidden by a second message filter", () => {
+  const row = { event_id: 4625, source_ip: "192.0.2.25", message: "Synthetic authentication failure", level: "INFO" };
+  assert.equal(shouldDisplayLog(row, "4625", false), true);
+  assert.equal(shouldDisplayLog(row, "192.0.2.25", false), true);
+  assert.equal(shouldDisplayLog(row, "", true), false);
+  assert.equal(shouldDisplayLog({ ...row, level: "HIGH" }, "authentication", true), true);
+});
+
+test("evidence and retention routes match the FastAPI contract", () => {
+  assert.equal(API_ROUTES.endpointStatus, "/data/status");
+  assert.equal(API_ROUTES.scaSummary, "/compliance/sca/summary");
+  assert.equal(API_ROUTES.scaPosture("AGENT/A"), "/compliance/sca/posture/AGENT%2FA");
+  assert.equal(API_ROUTES.evidenceCases, "/compliance/cases");
+  assert.equal(API_ROUTES.evidenceCase("CASE/A"), "/compliance/cases/CASE%2FA");
+  assert.equal(API_ROUTES.evidenceCaseItems("CASE/A"), "/compliance/cases/CASE%2FA/items");
+  assert.equal(API_ROUTES.evidenceCaseCustody("CASE/A"), "/compliance/cases/CASE%2FA/custody");
+  assert.equal(API_ROUTES.evidenceCaseClose("CASE/A"), "/compliance/cases/CASE%2FA/close");
+  assert.equal(API_ROUTES.evidenceExports("CASE/A"), "/compliance/cases/CASE%2FA/exports");
+  assert.equal(API_ROUTES.evidenceExport("CASE/A", "EXPORT/B"), "/compliance/cases/CASE%2FA/exports/EXPORT%2FB");
+  assert.equal(API_ROUTES.evidenceExportDownload("CASE/A", "EXPORT/B"), "/compliance/cases/CASE%2FA/exports/EXPORT%2FB/download-link");
+  assert.equal(API_ROUTES.legalHolds, "/compliance/holds");
+  assert.equal(API_ROUTES.legalHoldRelease("HOLD/A"), "/compliance/holds/HOLD%2FA/release");
+  assert.equal(API_ROUTES.retentionStatus, "/compliance/retention/status");
+  assert.equal(API_ROUTES.archiveRetrievals, "/archive-retrievals");
+  assert.equal(API_ROUTES.archiveRetrievalAvailability, "/archive-retrievals/availability");
+  assert.equal(API_ROUTES.archiveRetrievalDownloads("ARR/A"), "/archive-retrievals/ARR%2FA/download-links");
+});
+
+test("request builders produce only backend-accepted fields", () => {
+  assert.deepEqual(buildEvidenceCasePayload({ title: " Case ", description: " Description ", externalReference: " REF " }), {
+    title: "Case",
+    description: "Description",
+    external_reference: "REF",
+  });
+  assert.deepEqual(buildCaseClosurePayload(" Verified evidence "), { action: "VERIFY", reason: "Verified evidence" });
+  assert.deepEqual(buildEvidenceCaseItemPayload({ collection: " security_alerts ", referenceType: "event_uid", reference: " EV-1 ", reason: " Attach evidence " }), {
+    collection: "security_alerts", document_id: null, event_uid: "EV-1", reason: "Attach evidence",
+  });
+  assert.deepEqual(buildCustodyActionPayload({ action: "transfer", reason: " Transfer evidence ", caseItemId: " ITEM-1 ", transferTo: " Legal team " }), {
+    action: "TRANSFER", reason: "Transfer evidence", case_item_id: "ITEM-1", transfer_to: "Legal team",
+  });
+  assert.deepEqual(buildEvidenceExportPayload(" Authorized export "), { reason: "Authorized export" });
+  assert.deepEqual(buildLegalHoldPayload({ scopeType: "tenant", collection: "security_alerts", eventUid: "EV-1", reason: " Preserve ", authority: " CEO ", proceedingReference: " CASE-9 " }), {
+    scope_type: "TENANT",
+    collection: null,
+    event_uid: null,
+    reason: "Preserve",
+    authority: "CEO",
+    proceeding_reference: "CASE-9",
+  });
+  assert.deepEqual(buildLegalHoldPayload({ scopeType: "event", collection: "security_alerts", eventUid: " EV-1 ", reason: " Preserve ", authority: " CEO " }), {
+    scope_type: "EVENT",
+    collection: "security_alerts",
+    event_uid: "EV-1",
+    reason: "Preserve",
+    authority: "CEO",
+    proceeding_reference: null,
+  });
+  assert.deepEqual(buildLegalHoldReleasePayload({ reason: " Released ", authority: " Legal " }), { reason: "Released", authority: "Legal" });
+});
+
+test("case detail keeps case, item, and custody response sections together", () => {
+  const result = normalizeEvidenceCaseDetail({
+    case: { case_id: "CASE-1", title: "Investigation" },
+    items: [{ case_item_id: "ITEM-1" }],
+    custody: { status: "VERIFIED" },
+    custody_events: [{ custody_event_id: "EVENT-1" }],
+  });
+  assert.equal(result.case_id, "CASE-1");
+  assert.equal(result.evidence[0].case_item_id, "ITEM-1");
+  assert.equal(result.custody_history[0].custody_event_id, "EVENT-1");
+  assert.equal(result.custody_verification.status, "VERIFIED");
+});
+
+test("frontend role names match provisionable backend roles", () => {
+  assert.deepEqual(Object.keys(ROLE_PERMISSIONS).sort(), ["admin", "analyst", "auditor", "manager"]);
+  assert.equal(hasPermission("manager", "endpoint.trust.read"), true);
+  assert.equal(hasPermission("auditor", "retention.read"), true);
+  assert.equal(hasPermission("admin", "archive.retrieve"), true);
+  assert.equal(hasPermission("manager", "archive.retrieve"), true);
+  assert.equal(hasPermission("auditor", "archive.retrieve"), true);
+  assert.equal(hasPermission("analyst", "archive.retrieve"), false);
+  assert.equal(hasPermission("viewer", "operations.read"), false);
+});
+
+test("archive inputs use UTC and reject inverted windows", () => {
+  const now = new Date("2026-08-03T00:00:00Z");
+  const body = buildArchiveRetrievalPayload({ source: "security_alerts", start: "2026-08-01T10:00:00+05:00", end: "2026-08-02T10:00:00+05:00", reason: " Authorized review " }, now);
+  assert.deepEqual(body, { collections: ["security_alerts"], start_at: "2026-08-01T05:00:00.000Z", end_at: "2026-08-02T05:00:00.000Z", reason: "Authorized review" });
+  assert.throws(() => buildArchiveRetrievalPayload({ start: "invalid", end: "invalid" }));
+  assert.throws(() => buildArchiveRetrievalPayload({ source: "logs", start: "2026-08-02", end: "2026-08-01", reason: "Authorized review" }, now), /valid archive date range/);
+  assert.throws(() => buildArchiveRetrievalPayload({ source: "unknown", start: "2026-08-01", end: "2026-08-02", reason: "Authorized review" }, now), /authorized evidence source/);
+  assert.throws(() => buildArchiveRetrievalPayload({ source: "logs", start: "2026-08-01", end: "2026-08-04", reason: "Authorized review" }, now), /cannot be in the future/);
+  assert.throws(() => buildArchiveRetrievalPayload({ source: "logs", start: "2020-01-01", end: "2026-01-01", reason: "Authorized review" }, now), /2,190 days/);
+  assert.throws(() => buildArchiveRetrievalPayload({ source: "logs", start: "2026-08-01", end: "2026-08-02", reason: "short" }, now), /8 and 500/);
+  assert.throws(() => buildArchiveRetrievalPayload({ source: "logs", start: "2026-08-01", end: "2026-08-02", reason: "x".repeat(501) }, now), /8 and 500/);
+});
+
+test("archive availability parameters use the source and UTC window contract", () => {
+  assert.deepEqual(buildArchiveAvailabilityParams(), {});
+  assert.deepEqual(buildArchiveAvailabilityParams({ source: " security_alerts " }), { collection: "security_alerts" });
+  assert.deepEqual(
+    buildArchiveAvailabilityParams({
+      source: "siem_cold_vault",
+      start: "2026-09-01T10:00:00+05:00",
+      end: "2026-09-01T11:00:00+05:00",
+    }),
+    {
+      collection: "siem_cold_vault",
+      start_at: "2026-09-01T05:00:00.000Z",
+      end_at: "2026-09-01T06:00:00.000Z",
+    },
+  );
+  assert.throws(() => buildArchiveAvailabilityParams({ source: "logs", start: "2026-09-01" }));
+});
+
+test("archive lifecycle, source, date, and byte labels are deterministic", () => {
+  const expected = {
+    PENDING_APPROVAL: ["Waiting for approval", "pending"],
+    APPROVED: ["Accepted and queued", "queued"],
+    PENDING_REHYDRATION: ["Preparing secure archive", "preparing"],
+    READY: ["Download available", "ready"],
+    FAILED: ["Retrieval failed", "failed"],
+    REJECTED: ["Request rejected", "failed"],
+    CANCELLED: ["Request cancelled", "closed"],
+    EXPIRED: ["Download period ended", "closed"],
+  };
+  for (const [key, [label, className]] of Object.entries(expected)) {
+    assert.deepEqual(archiveStatusInfo(key), { label, className });
+  }
+  assert.deepEqual(archiveStatusInfo("new_worker_state"), { label: "New Worker State", className: "unknown" });
+  assert.equal(formatArchiveSources(["siem_cold_vault", "fbr_pos_logs"]), "Endpoint evidence, FBR evidence");
+  assert.equal(formatArchiveSources([]), "Not recorded");
+  assert.equal(formatArchiveBytes(458752), "448 KB");
+  assert.equal(formatArchiveBytes(10 * 1024 * 1024), "10 MB");
+  assert.equal(formatArchiveBytes(-1), "Not recorded");
+  assert.equal(formatArchiveBytes(null), "Not recorded");
+  assert.equal(formatArchiveDateRange("2026-07-26T15:39:21Z", "2026-08-02T15:39:21Z"), "2026-07-26 15:39:21Z to 2026-08-02 15:39:21Z");
+  assert.equal(formatArchiveDateRange("invalid", "2026-08-02T15:39:21Z"), "Not recorded");
+  assert.equal(formatArchiveTimestamp(null), "Not recorded");
+});
+
+test("archive API failures are translated without exposing backend details", () => {
+  const failure = (status) => ({ response: { status, data: { detail: "internal storage path" } } });
+  assert.equal(archiveActionErrorMessage(failure(403)), "Your role cannot request the selected evidence source.");
+  assert.equal(archiveActionErrorMessage(failure(404)), "No retained evidence matches that source and date range.");
+  assert.equal(archiveActionErrorMessage(failure(413)), "The request is too broad. Select a smaller date range.");
+  assert.equal(archiveActionErrorMessage(failure(410), "download"), "The download period for this archive has ended.");
+  assert.equal(archiveActionErrorMessage(failure(409), "download"), "This archive is not ready for download.");
+  assert.equal(archiveActionErrorMessage(new Error("connection refused"), "download"), "Secure download links are temporarily unavailable. Please retry.");
+});
+
+test("archive source choices respect role and pack entitlement", () => {
+  assert.equal(archiveSourceOptions("manager", ["fbr_pos"]).length, 4);
+  assert.equal(archiveSourceOptions("manager", ["fbr_pos"]).some(([name]) => name === "fbr_pos_logs"), false);
+  assert.deepEqual(archiveSourceOptions("auditor", ["peca_forensic"]), [["peca_forensic_logs", "PECA evidence"]]);
+  assert.deepEqual(archiveSourceOptions("analyst", ["peca_forensic", "fbr_pos"]), []);
+  assert.equal(archiveSourceOptions("admin", ["peca_forensic", "fbr_pos"]).length, 6);
+  assert.deepEqual(archiveSourceOptions("auditor", []), []);
+});
+
+test("download links reject script, cleartext, relative and credential URLs", () => {
+  for (const value of ["javascript:alert(1)", "data:text/html,unsafe", "http://example.com/file", "/file", "https://user:secret@example.com/file", null]) assert.equal(safeDownloadUrl(value), null);
+  assert.equal(safeDownloadUrl("https://example.com/evidence.zip?sig=test"), "https://example.com/evidence.zip?sig=test");
+});
+
+const sourceFiles = (directory) => readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+  const path = join(directory, entry.name);
+  if (entry.isDirectory()) return sourceFiles(path);
+  return /\.(js|jsx)$/.test(entry.name) ? [path] : [];
+});
+
+test("removed placeholder API paths cannot return to application source", () => {
+  const source = sourceFiles(join(process.cwd(), "src")).map((path) => readFileSync(path, "utf8")).join("\n");
+  for (const stalePath of ["/evidence/cases", "/evidence/package-jobs", "/legal-holds", "/retention/status", "/endpoint-trust", "/archive-retrieval"]) {
+    assert.equal(source.includes(`"${stalePath}"`), false, `stale API path found: ${stalePath}`);
+  }
+});
+
+test("accepted historical retrieval and package exports are enabled only in production", () => {
+  assert.match(readFileSync(join(process.cwd(), ".env.local.example"), "utf8"), /^VITE_ARCHIVE_RETRIEVAL_ENABLED=false$/m);
+  assert.match(readFileSync(join(process.cwd(), ".env.local.example"), "utf8"), /^VITE_EVIDENCE_EXPORT_ENABLED=false$/m);
+  for (const file of [".env.production", ".env.production.example"]) {
+    assert.match(readFileSync(join(process.cwd(), file), "utf8"), /^VITE_ARCHIVE_RETRIEVAL_ENABLED=true$/m);
+    assert.match(readFileSync(join(process.cwd(), file), "utf8"), /^VITE_EVIDENCE_EXPORT_ENABLED=true$/m);
+    assert.match(readFileSync(join(process.cwd(), file), "utf8"), /^VITE_SCA_ENABLED=true$/m);
+  }
+  assert.match(readFileSync(join(process.cwd(), ".env.local.example"), "utf8"), /^VITE_SCA_ENABLED=false$/m);
+});
+
+test("public copy does not promise obsolete infrastructure or six-year FBR storage", () => {
+  const legal = readFileSync(join(process.cwd(), "src/assets/Pages/Legal/LegalPage.jsx"), "utf8");
+  const pricing = readFileSync(join(process.cwd(), "src/assets/Pages/Pricing/Pricing.jsx"), "utf8");
+  for (const obsolete of ["Digital Ocean", "Nexus Cloud VPS", "FBR POS Integrity Logs: Mandatory 6 years", "Azure Cold Storage for 6-year compliance"]) {
+    assert.equal(`${legal}\n${pricing}`.includes(obsolete), false, `obsolete public claim found: ${obsolete}`);
+  }
+});

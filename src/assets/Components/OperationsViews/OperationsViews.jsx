@@ -1,0 +1,531 @@
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { AlertCircle, CheckCircle2, Clock3, Copy, Database, Download, FileSpreadsheet, KeyRound, RadioTower, RefreshCw, ServerCog, ShieldCheck, Upload, X } from "lucide-react";
+import apiClient from "../../../api/apiClient";
+import AsyncState from "../../../components/AsyncState";
+import {
+  API_ROUTES,
+  archiveActionErrorMessage,
+  archiveSourceOptions,
+  archiveStatusInfo,
+  buildArchiveAvailabilityParams,
+  buildArchiveRetrievalPayload,
+  buildServerProfilePayload,
+  formatArchiveBytes,
+  formatArchiveDateRange,
+  formatArchiveSources,
+  formatArchiveTimestamp,
+  normalizeEndpointStatus,
+  safeDownloadUrl,
+} from "../../../contracts/backendContracts";
+import useRole from "../../../hooks/useRole";
+import EndpointTrust from "./EndpointTrust";
+import "./OperationsViews.css";
+
+const display = (value, fallback = "Not recorded") => value === undefined || value === null || value === "" ? fallback : String(value);
+const healthLabel = (value) => ({ active: "Online", degraded: "Degraded", offline: "Offline", revoked: "Revoked" }[String(value).toLowerCase()] || "Not recorded");
+
+function Fleet({ onDownloadAgent }) {
+  const { is } = useRole();
+  const canManageServerProfiles = is("admin");
+  const [state, setState] = useState("loading");
+  const [fleet, setFleet] = useState(null);
+  const [message, setMessage] = useState("");
+  const [serverCatalog, setServerCatalog] = useState(null);
+  const [profileTarget, setProfileTarget] = useState(null);
+  const [profileDraft, setProfileDraft] = useState({ enabled: true, environment: "unknown", criticality: "medium" });
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileNotice, setProfileNotice] = useState("");
+  const load = useCallback(async () => {
+    setState((current) => current === "ready" ? "refreshing" : "loading");
+    try {
+      const { data } = await apiClient.get(API_ROUTES.endpointStatus);
+      setFleet(data);
+      if (canManageServerProfiles) {
+        try {
+          const { data: catalog } = await apiClient.get(API_ROUTES.serverProfiles);
+          setServerCatalog(catalog);
+        } catch {
+          setServerCatalog(null);
+        }
+      }
+      setState("ready");
+      setMessage("");
+    } catch (error) {
+      setState("degraded");
+      setMessage(error.response?.status === 403 ? "Access denied. Your role cannot view endpoint fleet status." : "Endpoint fleet status is temporarily unavailable. Last known information is kept when available.");
+    }
+  }, [canManageServerProfiles]);
+  useEffect(() => { load(); }, [load]);
+  const rows = fleet?.data || [];
+  const summary = [
+    ["Seats purchased", fleet?.max_agents], ["Enrolled", fleet?.registered_agents], ["Remaining", Math.max(0, Number(fleet?.max_agents || 0) - Number(fleet?.registered_agents || 0))],
+    ["Online", fleet?.agents_online], ["Degraded", fleet?.agents_degraded], ["Offline", fleet?.agents_offline],
+  ];
+  const profileDefinition = serverCatalog?.profiles?.find((profile) => profile.profile_id === "general_server") || null;
+  const profileControlsAvailable = serverCatalog?.engineering_enabled === true && Boolean(profileDefinition);
+
+  const openProfile = (endpoint) => {
+    const view = normalizeEndpointStatus(endpoint);
+    setProfileDraft({
+      enabled: endpoint.server_monitoring?.desired ? view.profileEnabled : true,
+      environment: view.environment,
+      criticality: view.criticality,
+    });
+    setProfileTarget({ endpoint, view });
+    setProfileNotice("");
+  };
+
+  const saveProfile = async (event) => {
+    event.preventDefault();
+    if (!profileTarget || !profileControlsAvailable) return;
+    setProfileBusy(true);
+    setProfileNotice("");
+    try {
+      const payload = buildServerProfilePayload({
+        expectedRevision: profileTarget.view.desiredRevision,
+        ...profileDraft,
+      });
+      await apiClient.put(API_ROUTES.serverProfile(profileTarget.endpoint.agent_id), payload);
+      setProfileTarget(null);
+      setProfileNotice("Server profile update accepted. Health will refresh after the next signed heartbeat.");
+      await load();
+    } catch (error) {
+      const status = error.response?.status;
+      setProfileNotice(
+        status === 409
+          ? "The profile or host state changed. Refresh the fleet and retry."
+          : status === 403
+            ? "Only a tenant administrator can change a server profile."
+            : status === 503
+              ? "Server profile management is currently disabled."
+              : "The server profile could not be updated.",
+      );
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  return <section className="ops-view">
+    <div className="ops-heading"><div><p className="ops-eyebrow">Endpoint operations</p><h2>Endpoint Fleet</h2><p>Current fleet status is based on agent health, not log rows.</p></div><div className="ops-actions"><button className="ops-secondary" onClick={load} disabled={state === "loading" || state === "refreshing"}><RefreshCw size={16} className={state === "refreshing" ? "ops-spin" : ""} /> Refresh</button>{onDownloadAgent && <button onClick={onDownloadAgent}><Download size={16} /> Download Agent</button>}</div></div>
+    {message && <div className="ops-notice"><AlertCircle size={17} />{message}<button onClick={load}>Retry</button></div>}
+    {profileNotice && <div className="ops-notice" role="status"><ServerCog size={17} />{profileNotice}</div>}
+    <div className="ops-stats">{summary.map(([label, value]) => <div className="ops-stat" key={label}><span>{label}</span><strong>{state === "loading" ? "—" : display(value, "0")}</strong></div>)}</div>
+    <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Endpoint</th><th>Agent ID</th><th>Version</th><th>Last seen</th><th>Health</th><th>Signing</th><th>Audit / sensor</th><th>POS feed</th><th>Spool</th><th>Profile / reason</th></tr></thead><tbody>{state === "loading" ? <tr><td colSpan="10" className="ops-empty">Loading endpoint fleet…</td></tr> : rows.length ? rows.map((endpoint) => {
+      const sensor = endpoint.sensor_status || {};
+      const channels = sensor.channels || {};
+      const view = normalizeEndpointStatus(endpoint);
+      return <tr key={endpoint.agent_id}>
+        <td><div className="endpoint-name-cell"><span>{display(endpoint.endpoint_name)}</span>{view.isServer && <span className="endpoint-type-badge">Server</span>}</div></td>
+        <td className="ops-code">{display(endpoint.agent_id)}</td>
+        <td>{display(endpoint.version)}</td>
+        <td>{endpoint.last_seen ? new Date(endpoint.last_seen).toLocaleString() : "Not recorded"}</td>
+        <td><span className={`ops-status ${String(endpoint.health || "offline").toLowerCase()}`}>{healthLabel(endpoint.health)}</span></td>
+        <td>{display(endpoint.event_signing?.status)}</td>
+        <td>{display(view.auditStatus)} / {display(channels.Security?.status)}</td>
+        <td>{display(view.posStatus)}</td>
+        <td>{view.spoolBlocked ? "BLOCKED" : display(view.spoolStatus)}</td>
+        <td>{view.isServer ? <div className="server-profile-cell"><strong>{display(view.serverHealth)}</strong>{canManageServerProfiles && <button type="button" className="ops-secondary server-profile-button" onClick={() => openProfile(endpoint)} disabled={!profileControlsAvailable}><ServerCog size={14} /> Configure</button>}</div> : display(view.degradationReason)}</td>
+      </tr>;
+    }) : <tr><td colSpan="10" className="ops-empty">No endpoint fleet records have been received yet.</td></tr>}</tbody></table></div>
+    <EndpointTrust endpoints={rows} loading={state === "loading"} />
+    {profileTarget && <div className="relay-modal-overlay">
+      <form className="relay-modal server-profile-modal" onSubmit={saveProfile} role="dialog" aria-modal="true" aria-labelledby="server-profile-title">
+        <button type="button" className="relay-modal-close" onClick={() => setProfileTarget(null)} aria-label="Close server profile"><X size={18} /></button>
+        <div><span className="ops-eyebrow">Server monitoring</span><h3 id="server-profile-title">General Server V1</h3></div>
+        <p>{display(profileTarget.endpoint.endpoint_name || profileTarget.endpoint.agent_id)} · revision {profileTarget.view.desiredRevision}</p>
+        <div className={`server-support-state ${profileDefinition?.customer_supported ? "supported" : "pilot"}`}>
+          <ShieldCheck size={16} />
+          <span>{profileDefinition?.customer_supported ? "Customer-supported profile" : "Engineering-qualified pilot profile"}</span>
+        </div>
+        <p>{display(profileDefinition?.qualification_target)}</p>
+        <label className="server-profile-toggle"><input type="checkbox" checked={profileDraft.enabled} onChange={(event) => setProfileDraft((current) => ({ ...current, enabled: event.target.checked }))} /><span>Enable monitor-only server profile</span></label>
+        <div className="server-profile-fields">
+          <label>Environment<select value={profileDraft.environment} onChange={(event) => setProfileDraft((current) => ({ ...current, environment: event.target.value }))}><option value="production">Production</option><option value="staging">Staging</option><option value="development">Development</option><option value="unknown">Unknown</option></select></label>
+          <label>Criticality<select value={profileDraft.criticality} onChange={(event) => setProfileDraft((current) => ({ ...current, criticality: event.target.value }))}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></select></label>
+        </div>
+        <div className="server-profile-facts"><span>Host identity: {display(profileTarget.view.hostIdentityStatus)}</span><span>Response mode: MONITOR_ONLY</span><span>Reported revision: {profileTarget.view.reportedRevision ?? "Pending"}</span></div>
+        <div><button type="button" className="ops-secondary" onClick={() => setProfileTarget(null)}>Cancel</button><button type="submit" disabled={profileBusy}>{profileBusy ? "Applying..." : "Apply profile"}</button></div>
+      </form>
+    </div>}
+  </section>;
+}
+
+function LegacyOfflineAnalysis() {
+  const inputRef = useRef(null); const [file, setFile] = useState(null); const [state, setState] = useState("empty"); const [results, setResults] = useState([]); const [message, setMessage] = useState("");
+  const upload = async () => { if (!file) { setMessage("Choose a CSV file before starting analysis."); setState("validation"); return; } setState("uploading"); setMessage(""); const form = new FormData(); form.append("file", file); try { const { data } = await apiClient.post("/upload/analyze", form, { headers: { "Content-Type": "multipart/form-data" }, timeout: 120000 }); setResults(Array.isArray(data?.findings) ? data.findings.slice(0, 100) : []); setState("ready"); } catch { setState("error"); setMessage("The CSV could not be analyzed. Check the file format and try again."); } };
+  const clear = () => { setFile(null); setResults([]); setMessage(""); setState("empty"); if (inputRef.current) inputRef.current.value = ""; };
+  return <section className="ops-view"><div className="ops-heading"><div><p className="ops-eyebrow">Separate from live collection</p><h2>Offline Log Analysis</h2><p>Upload a CSV for bounded, on-demand analysis. This does not affect endpoint collection.</p></div></div><div className="offline-upload"><Upload size={24}/><strong>CSV log file</strong><span>{file ? file.name : "No file selected"}</span><input ref={inputRef} type="file" accept=".csv,text/csv" onChange={(event) => { setFile(event.target.files?.[0] || null); setState("empty"); }}/><div><button onClick={upload} disabled={state === "uploading"}>{state === "uploading" ? "Analyzing…" : "Analyze CSV"}</button>{file && <button className="ops-secondary" onClick={clear}>Clear</button>}</div></div>{message && <div className="ops-notice"><AlertCircle size={17}/>{message}{state === "error" && <button onClick={upload}>Retry</button>}</div>}{state === "ready" && <div className="ops-table-wrap"><div className="ops-results-head"><strong>Analysis results</strong><span>Showing up to 100 records</span></div><table className="ops-table"><thead><tr><th>Time</th><th>Event ID</th><th>Source</th><th>Summary</th></tr></thead><tbody>{results.length ? results.map((row, index) => <tr key={row.id || index}><td>{display(row.timestamp || row.time)}</td><td>{display(row.event_id || row.eventId)}</td><td>{display(row.source || row.host || row.ip)}</td><td>{display(row.summary || row.message)}</td></tr>) : <tr><td colSpan="4" className="ops-empty">No matching records were found in this file.</td></tr>}</tbody></table></div>}</section>;
+}
+
+function OfflineAnalysis() {
+  const inputRef = useRef(null);
+  const [file, setFile] = useState(null);
+  const [state, setState] = useState("empty");
+  const [results, setResults] = useState([]);
+  const [message, setMessage] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
+
+  const selectFile = (selected) => {
+    if (!selected) return;
+    if (!selected.name.toLowerCase().endsWith(".csv")) {
+      setFile(null);
+      setState("validation");
+      setMessage("Select a valid CSV file to continue.");
+      return;
+    }
+    setFile(selected);
+    setState("empty");
+    setMessage("");
+  };
+
+  const upload = async () => {
+    if (!file) {
+      setState("validation");
+      setMessage("Choose a CSV file before starting analysis.");
+      return;
+    }
+    setState("uploading");
+    setMessage("");
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const { data } = await apiClient.post("/upload/analyze", form, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 120000,
+      });
+      setResults(Array.isArray(data?.findings) ? data.findings.slice(0, 100) : []);
+      setState("ready");
+    } catch {
+      setState("error");
+      setMessage("The CSV could not be analyzed. Check the file format and try again.");
+    }
+  };
+
+  const clear = () => {
+    setFile(null);
+    setResults([]);
+    setMessage("");
+    setState("empty");
+    if (inputRef.current) inputRef.current.value = "";
+  };
+
+  return (
+    <section className="ops-view offline-analysis-view">
+      <header className="offline-hero">
+        <div>
+          <p className="ops-eyebrow">Separate from live collection</p>
+          <h2>Offline Log Analysis</h2>
+          <p>Review exported security logs without interrupting endpoint collection or the live operations feed.</p>
+        </div>
+        <div className="offline-hero-badge"><ShieldCheck size={17} /> Isolated analysis workspace</div>
+      </header>
+
+      <div className="offline-workspace-grid">
+        <section className="offline-upload-card" aria-labelledby="offline-upload-title">
+          <div className="offline-card-heading">
+            <div className="offline-icon-box"><FileSpreadsheet size={23} /></div>
+            <div><span>Step 1</span><h3 id="offline-upload-title">Select a CSV log file</h3></div>
+          </div>
+          <input ref={inputRef} id="offline-file-input" className="offline-file-input" type="file" accept=".csv,text/csv" onChange={(event) => selectFile(event.target.files?.[0])} />
+          <label
+            htmlFor="offline-file-input"
+            className={`offline-dropzone ${isDragging ? "is-dragging" : ""} ${file ? "has-file" : ""}`}
+            onDragEnter={(event) => { event.preventDefault(); setIsDragging(true); }}
+            onDragOver={(event) => event.preventDefault()}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={(event) => { event.preventDefault(); setIsDragging(false); selectFile(event.dataTransfer.files?.[0]); }}
+          >
+            {file ? <CheckCircle2 size={34} /> : <Upload size={34} />}
+            <strong>{file ? "File ready for analysis" : "Drop your CSV file here"}</strong>
+            <span>{file ? file.name : "or click to browse from your device"}</span>
+            {!file && <em>CSV format only</em>}
+          </label>
+          {file && (
+            <div className="offline-selected-file">
+              <FileSpreadsheet size={18} />
+              <div><strong>{file.name}</strong><span>{(file.size / 1024).toFixed(1)} KB</span></div>
+              <button type="button" onClick={clear} aria-label="Remove selected file"><X size={16} /></button>
+            </div>
+          )}
+          <div className="offline-primary-actions">
+            <button type="button" onClick={upload} disabled={state === "uploading" || !file}>
+              {state === "uploading" ? <><RefreshCw size={17} className="ops-spin" /> Analyzing file...</> : <><ShieldCheck size={17} /> Start Analysis</>}
+            </button>
+            <span>Results are limited to the first 100 matching records.</span>
+          </div>
+        </section>
+
+        <aside className="offline-context-panel">
+          <div className="offline-card-heading">
+            <div className="offline-icon-box"><Database size={23} /></div>
+            <div><span>Workflow</span><h3>What happens next</h3></div>
+          </div>
+          <ol className="offline-steps">
+            <li><span>1</span><div><strong>Validate file</strong><p>The selected CSV is checked before analysis begins.</p></div></li>
+            <li><span>2</span><div><strong>Analyze records</strong><p>WarSOC reviews the upload as a separate offline dataset.</p></div></li>
+            <li><span>3</span><div><strong>Review findings</strong><p>Matching records appear in a bounded results table below.</p></div></li>
+          </ol>
+          <div className="offline-assurance"><Clock3 size={18} /><div><strong>Live collection stays active</strong><span>This workflow does not pause or modify endpoint telemetry.</span></div></div>
+        </aside>
+      </div>
+
+      {message && <div className="ops-notice offline-message"><AlertCircle size={17}/>{message}{state === "error" && <button onClick={upload}>Retry</button>}</div>}
+      {state === "ready" && <div className="ops-table-wrap offline-results"><div className="ops-results-head"><strong>Analysis results</strong><span>Showing up to 100 records</span></div><table className="ops-table"><thead><tr><th>Time</th><th>Event ID</th><th>Source</th><th>Summary</th></tr></thead><tbody>{results.length ? results.map((row, index) => <tr key={row.id || index}><td>{display(row.timestamp || row.time)}</td><td>{display(row.event_id || row.eventId)}</td><td>{display(row.source || row.host || row.ip)}</td><td>{display(row.summary || row.message)}</td></tr>) : <tr><td colSpan="4" className="ops-empty">No matching records were found in this file.</td></tr>}</tbody></table></div>}
+    </section>
+  );
+}
+
+function RelayView() {
+  const [state, setState] = useState("loading");
+  const [capability, setCapability] = useState(null);
+  const [relays, setRelays] = useState([]);
+  const [message, setMessage] = useState("");
+  const [requestId, setRequestId] = useState("");
+  const [showSetup, setShowSetup] = useState(false);
+  const [activation, setActivation] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState(null);
+  const [recoveryTarget, setRecoveryTarget] = useState(null);
+  const relaysRef = useRef([]);
+  const [setup, setSetup] = useState({ relay_name: "", device_id: "", model: "pfSense", source_address: "", relay_bind_host: "", relay_port: "5514", timezone: "UTC", expected_eps: "100" });
+
+  const load = useCallback(async () => {
+    setState((current) => current === "ready" ? "refreshing" : "loading");
+    try {
+      const { data } = await apiClient.get("/network-relay/status");
+      setRequestId(data?.request_id || "");
+      const nextCapability = data?.capability || {};
+      setCapability(nextCapability);
+      const nextRelays = Array.isArray(data?.relays) ? data.relays : [];
+      relaysRef.current = nextRelays;
+      setRelays(nextRelays);
+      setState(nextCapability.enabled === false || nextCapability.entitled === false ? "unavailable" : (nextRelays.length ? "ready" : "empty"));
+      setMessage("");
+    } catch (error) {
+      const status = error.response?.status;
+      setRequestId(error.response?.data?.request_id || "");
+      setState(status === 404 ? "unavailable" : status === 403 ? "forbidden" : relaysRef.current.length ? "degraded" : "error");
+      setMessage(status === 404 || status === 403 ? "Firewall metadata is not available for this workspace." : "Firewall relay status is temporarily unavailable. Last known information is kept when available.");
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const updateSetup = (field, value) => setSetup((current) => ({ ...current, [field]: value }));
+  const downloadConfiguration = () => {
+    if (!activation?.configuration) return;
+    const blob = new Blob([`${JSON.stringify(activation.configuration, null, 2)}\n`], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = activation.configurationFilename || "relay-config.json";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+  const openSetupPackage = () => {
+    const endpoint = activation?.packageEndpoint || capability?.setup_package_endpoint;
+    if (!endpoint) return;
+    const apiRoot = String(apiClient.defaults.baseURL || "/api/v1").replace(/\/api\/v1\/?$/, "");
+    window.open(`${apiRoot}${endpoint}`, "_blank", "noopener,noreferrer");
+  };
+  const generate = async (event) => {
+    event.preventDefault();
+    if (!setup.relay_name || !setup.device_id || !setup.model || !setup.source_address || !setup.relay_bind_host || !setup.relay_port || !setup.timezone || !setup.expected_eps) {
+      setMessage("Complete every relay and device field before generating activation.");
+      return;
+    }
+    setBusy(true); setMessage(""); setActivation(null);
+    try {
+      const sourceAddress = setup.source_address.trim();
+      const { data } = await apiClient.post("/network-relay/generate-activation", {
+        relay_name: setup.relay_name.trim(),
+        devices: [{ device_id: setup.device_id.trim(), vendor: "pfsense", model: setup.model.trim(), source_addresses: [sourceAddress.includes("/") ? sourceAddress : `${sourceAddress}/${sourceAddress.includes(":") ? "128" : "32"}`], transport: "udp", timezone: setup.timezone.trim(), expected_eps: Number(setup.expected_eps) }],
+        listeners: [{ transport: "udp", bind_host: setup.relay_bind_host.trim(), port: Number(setup.relay_port) }],
+      });
+      setActivation({
+        code: data?.activation_code || "",
+        expires: Number(data?.expires_in_seconds || 0),
+        configuration: data?.setup?.configuration || null,
+        configurationFilename: data?.setup?.configuration_filename || "relay-config.json",
+        packageAvailable: data?.setup?.package_available === true,
+        packageEndpoint: data?.setup?.package_endpoint || capability?.setup_package_endpoint || "",
+        packageSha256: data?.setup?.package_sha256 || capability?.setup_package_sha256 || "",
+        publisherTrust: data?.setup?.publisher_trust || capability?.publisher_trust || "",
+      });
+      setMessage("Relay setup created. Download the configuration and copy the one-time activation code before leaving this page.");
+    } catch { setMessage("Activation could not be generated. Please review the fields and retry."); }
+    finally { setBusy(false); }
+  };
+
+  const revoke = async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    if (!String(form.get("reason") || "").trim()) return;
+    setBusy(true);
+    try { await apiClient.post(`/network-relay/${encodeURIComponent(revokeTarget.relay_id)}/revoke`, { reason: String(form.get("reason")).trim() }); setRevokeTarget(null); await load(); }
+    catch { setMessage("The relay could not be revoked. Please retry."); }
+    finally { setBusy(false); }
+  };
+
+  const authorizeRecovery = async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const reason = String(form.get("reason") || "").trim(); const totp_code = String(form.get("totp_code") || "").trim();
+    if (!reason || !/^\d{6}$/.test(totp_code)) return;
+    setBusy(true);
+    try { await apiClient.post(`/network-relay/${encodeURIComponent(recoveryTarget.relay_id)}/authorize-key-recovery`, { reason, totp_code }); setRecoveryTarget(null); setMessage("Key recovery authorization was recorded. The relay performs the next handshake."); }
+    catch { setMessage("Key recovery authorization could not be completed. Please retry."); }
+    finally { setBusy(false); }
+  };
+
+  const formatAge = (seconds) => seconds === undefined || seconds === null ? "Not recorded" : `${Math.max(0, Math.round(Number(seconds)))}s ago`;
+  const statusClass = (value) => String(value || "inactive").toLowerCase().replace(/\s+/g, "-");
+  const canManage = capability?.can_manage === true;
+
+  return <section className="ops-view relay-workspace">
+    <div className="ops-heading"><div><p className="ops-eyebrow">Firewall metadata</p><h2>Firewall Relays</h2><p>Monitor relay and device health without exposing packet payloads, credentials, raw syslog, or policy controls.</p></div><div className="ops-actions"><button className="ops-secondary" onClick={load} disabled={state === "loading" || state === "refreshing"}><RefreshCw size={16} className={state === "refreshing" ? "ops-spin" : ""} /> Refresh</button>{canManage && <button onClick={() => setShowSetup((current) => !current)}><KeyRound size={16} /> {showSetup ? "Hide setup" : "Set up relay"}</button>}</div></div>
+    {message && <div className={`ops-notice relay-notice ${state === "error" || state === "degraded" ? "is-error" : ""}`}><AlertCircle size={17} />{message}{["error", "degraded"].includes(state) && <button onClick={load}>Retry</button>}</div>}
+    {state === "loading" && <AsyncState status="loading" />}
+    {state === "unavailable" && <AsyncState status="unavailable" requestId={requestId} onRetry={load} title="Firewall relays unavailable" description="Firewall relay metadata is not enabled or is not available for this workspace." />}
+    {state === "forbidden" && <AsyncState status="forbidden" requestId={requestId} />}
+    {state === "degraded" && <AsyncState status="degraded" requestId={requestId} onRetry={load} />}
+    {state === "error" && <AsyncState status="unavailable" requestId={requestId} onRetry={load} />}
+    {state !== "loading" && !["unavailable", "forbidden", "degraded", "error"].includes(state) && <>
+      <div className="relay-capability-grid"><div><span>Relay entitlement</span><strong>{capability?.entitled ? "Included" : "Not included"}</strong></div><div><span>Active relays</span><strong>{display(capability?.active_relays, "0")} / {display(capability?.max_relays, "0")}</strong></div><div><span>Remaining</span><strong>{display(capability?.remaining_relays, "0")}</strong></div><div><span>Collection mode</span><strong>Metadata only</strong></div></div>
+      {state === "empty" && <div className="relay-state-card relay-empty"><RadioTower size={26} /><div><strong>No firewall relay registered</strong><p>{canManage ? "Use the setup form to register an approved relay and device." : "No relay has been registered for this workspace yet."}</p></div></div>}
+      {relays.map((relay) => <article className="relay-card" key={relay.relay_id}><div className="relay-card-heading"><div><span className="relay-kicker">Relay metadata</span><h3>{display(relay.relay_name, relay.relay_id)}</h3><p>{display(relay.hostname)} · v{display(relay.version)}</p></div><span className={`relay-health ${statusClass(relay.health || relay.status)}`}>{display(relay.health || relay.status)}</span></div><div className="relay-detail-grid"><div><span>Last seen</span><strong>{relay.last_seen ? new Date(relay.last_seen).toLocaleString() : "Not recorded"}</strong><small>{formatAge(relay.last_seen_age_seconds)}</small></div><div><span>Health reason</span><strong>{display(relay.last_health_reason, "No active degradation")}</strong></div><div><span>Last sequence</span><strong>{display(relay.last_sequence)}</strong></div><div><span>Devices</span><strong>{display(relay.device_count, "0")}</strong></div></div><div className="relay-device-heading"><h4>Registered devices</h4><small>Firewall metadata only</small></div><div className="relay-device-list">{Array.isArray(relay.devices) && relay.devices.length ? relay.devices.map((device) => { const deviceName = device.display_name || device.device_id; return <div className="relay-device-row" key={device.device_id || device.display_name}><div className="relay-device-name"><ShieldCheck size={17} /><strong>{display(deviceName)}</strong><span className={`relay-health-dot ${statusClass(device.health)}`} />{display(device.health)}</div><div><span>Vendor / model</span><strong>{display(device.vendor)} / {display(device.model)}</strong></div><div><span>Transport</span><strong>{display(device.transport)}</strong></div><div><span>Last event</span><strong>{device.last_event_at ? new Date(device.last_event_at).toLocaleString() : "Not recorded"}</strong><small>{formatAge(device.last_event_age_seconds)}</small></div><div><span>Event type</span><strong>{display(device.last_event_type)}</strong></div><div><span>Clock confidence</span><strong>{display(device.time_confidence)}</strong></div><div><span>Drops / bytes</span><strong>{display(device.last_reported_drops, "0")} / {display(device.last_reported_dropped_bytes, "0")}</strong></div></div> }) : <p className="relay-inline-empty">No device metadata has been received yet.</p>}</div>{canManage && <div className="relay-card-actions"><button className="ops-secondary" onClick={() => setRevokeTarget(relay)} disabled={String(relay.status).toLowerCase() === "revoked"}>Revoke relay</button><button className="ops-secondary" onClick={() => setRecoveryTarget(relay)}>Authorize key recovery</button></div>}</article>)}
+      {canManage && showSetup && <form className="relay-setup-card" onSubmit={generate}><div className="relay-setup-heading"><div><span className="relay-kicker">Admin controls</span><h3>Register pfSense relay</h3><p>The relay runs on an always-on Windows host in the customer network. Activation details are not written to browser storage.</p></div><ShieldCheck size={24} /></div><div className="relay-form-grid"><label>Relay name<input value={setup.relay_name} onChange={(event) => updateSetup("relay_name", event.target.value)} required placeholder="Branch firewall relay" /></label><label>Device ID<input value={setup.device_id} onChange={(event) => updateSetup("device_id", event.target.value)} required pattern="[A-Za-z0-9_.-]+" placeholder="branch-pfsense-01" /></label><label>Firewall model<input value={setup.model} onChange={(event) => updateSetup("model", event.target.value)} required placeholder="pfSense" /></label><label>pfSense source IP<input value={setup.source_address} onChange={(event) => updateSetup("source_address", event.target.value)} required placeholder="192.0.2.1" /></label><label>Relay LAN IP<input value={setup.relay_bind_host} onChange={(event) => updateSetup("relay_bind_host", event.target.value)} required placeholder="192.0.2.10" /></label><label>Relay UDP port<input type="number" min="1" max="65535" value={setup.relay_port} onChange={(event) => updateSetup("relay_port", event.target.value)} required /></label><label>Device timezone<input value={setup.timezone} onChange={(event) => updateSetup("timezone", event.target.value)} required placeholder="UTC" /></label><label>Expected events / second<input type="number" min="1" max="5000" value={setup.expected_eps} onChange={(event) => updateSetup("expected_eps", event.target.value)} required /></label></div><button type="submit" disabled={busy}><KeyRound size={16} /> {busy ? "Generating..." : "Generate relay setup"}</button>{activation && <div className="relay-activation-workflow"><div className="relay-activation"><div><span>One-time activation code</span><code>{activation.code || "Activation unavailable"}</code><small>Expires in {activation.expires ? `${Math.ceil(activation.expires / 60)} minutes` : "a limited time"}. Copy it now; it will not be shown again.</small></div>{activation.code && <button type="button" className="ops-secondary" onClick={() => navigator.clipboard.writeText(activation.code)}><Copy size={15} /> Copy code</button>}</div><div className="relay-setup-actions">{activation.packageAvailable && <button type="button" className="ops-secondary" onClick={openSetupPackage}><Download size={15} /> Download relay kit</button>}<button type="button" className="ops-secondary" onClick={downloadConfiguration} disabled={!activation.configuration}><Download size={15} /> Download configuration</button></div>{activation.packageAvailable && activation.packageSha256 && <div className="relay-hash-warning"><AlertCircle size={18} /><div><strong>Unsigned pilot package</strong><span>Windows may show Unknown publisher. Verify this SHA-256 before selecting Run anyway.</span><code>{activation.packageSha256}</code></div><button type="button" className="ops-secondary" onClick={() => navigator.clipboard.writeText(activation.packageSha256)}><Copy size={15} /> Copy hash</button></div>}<ol className="relay-install-steps"><li>Download the kit and verify its SHA-256 before extracting it.</li><li>Run the included installer as Administrator and select the downloaded configuration.</li><li>Enter the one-time activation code when the installer requests it.</li><li>In pfSense remote logging, send firewall events by UDP to {setup.relay_bind_host}:{setup.relay_port}.</li><li>Return here and refresh after the relay heartbeat arrives.</li></ol></div>}</form>}
+    </>}
+    {revokeTarget && <div className="relay-modal-overlay"><form className="relay-modal" onSubmit={revoke}><button type="button" className="relay-modal-close" onClick={() => setRevokeTarget(null)} aria-label="Close revoke confirmation"><X size={18} /></button><h3>Revoke relay?</h3><p>Revocation is a permanent management action for <strong>{display(revokeTarget.relay_name, revokeTarget.relay_id)}</strong>.</p><label>Reason<textarea name="reason" required maxLength="500" placeholder="Explain why this relay is being decommissioned" /></label><div><button type="button" className="ops-secondary" onClick={() => setRevokeTarget(null)}>Cancel</button><button type="submit" disabled={busy}>Confirm revoke</button></div></form></div>}
+    {recoveryTarget && <div className="relay-modal-overlay"><form className="relay-modal" onSubmit={authorizeRecovery}><button type="button" className="relay-modal-close" onClick={() => setRecoveryTarget(null)} aria-label="Close key recovery authorization"><X size={18} /></button><h3>Authorize key recovery</h3><p>This high-risk action authorizes the relay host rebuild handshake. The browser never performs key recovery.</p><label>Reason<textarea name="reason" required maxLength="500" placeholder="Approved relay host rebuild" /></label><label>Authenticator code<input name="totp_code" inputMode="numeric" pattern="[0-9]{6}" maxLength="6" required placeholder="6-digit code" /></label><div><button type="button" className="ops-secondary" onClick={() => setRecoveryTarget(null)}>Cancel</button><button type="submit" disabled={busy}>Authorize recovery</button></div></form></div>}
+  </section>;
+}
+
+export function ArchiveView() {
+  const { role } = useRole();
+  const [items, setItems] = useState([]);
+  const [sources, setSources] = useState([]);
+  const [availability, setAvailability] = useState(null);
+  const [selectedSource, setSelectedSource] = useState("");
+  const [state, setState] = useState("loading");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [links, setLinks] = useState([]);
+  const busyRef = useRef(false);
+  const load = useCallback(async () => {
+    setState("loading");
+    try {
+      const [{ data: packs }, { data: requests }] = await Promise.all([
+        apiClient.get("/auth/my-packs"),
+        apiClient.get(API_ROUTES.archiveRetrievals),
+      ]);
+      const nextSources = archiveSourceOptions(role, packs?.compliance_packs || []);
+      let nextAvailability = null;
+      try {
+        const { data } = await apiClient.get(API_ROUTES.archiveRetrievalAvailability);
+        nextAvailability = Object.fromEntries(
+          (data?.sources || []).map((source) => [source.collection, source]),
+        );
+      } catch (availabilityError) {
+        if (availabilityError?.response?.status !== 404) throw availabilityError;
+      }
+      setSources(nextSources);
+      setAvailability(nextAvailability);
+      setSelectedSource((current) => (
+        nextSources.some(([value]) => value === current && nextAvailability?.[value]?.available !== false)
+          ? current
+          : ""
+      ));
+      setItems(requests?.items || []);
+      setState("ready");
+    } catch {
+      setState("error");
+      setMessage("Archive requests are temporarily unavailable.");
+    }
+  }, [role]);
+  useEffect(() => { load(); }, [load]);
+
+  const request = async (event) => {
+    event.preventDefault();
+    if (busyRef.current) return;
+    busyRef.current = true;
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    setBusy(true);
+    setMessage("");
+    try {
+      const source = form.get("source");
+      const start = form.get("start");
+      const end = form.get("end");
+      const payload = buildArchiveRetrievalPayload({
+        source, start, end, reason: form.get("reason"),
+      });
+      try {
+        const { data: preview } = await apiClient.get(
+          API_ROUTES.archiveRetrievalAvailability,
+          { params: buildArchiveAvailabilityParams({ source, start, end }) },
+        );
+        const sourcePreview = (preview?.sources || []).find((item) => item.collection === source);
+        if (!sourcePreview?.available) {
+          setMessage("No retained evidence matches that source and date range.");
+          return;
+        }
+        if (!sourcePreview.within_request_limit) {
+          setMessage(
+            `This range matches ${Number(sourcePreview.blob_count).toLocaleString()} archive files; `
+            + `the maximum per request is ${Number(preview.max_blobs_per_request).toLocaleString()}.`,
+          );
+          return;
+        }
+      } catch (previewError) {
+        if (previewError?.response?.status !== 404) throw previewError;
+      }
+      await apiClient.post(API_ROUTES.archiveRetrievals, payload);
+      formElement.reset();
+      setSelectedSource("");
+      setMessage("Archive request submitted.");
+      await load();
+    } catch (error) {
+      setMessage(error?.response ? archiveActionErrorMessage(error) : error?.message || archiveActionErrorMessage(error));
+    } finally { busyRef.current = false; setBusy(false); }
+  };
+  const download = async (id) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setLinks([]);
+    try {
+      const { data } = await apiClient.post(API_ROUTES.archiveRetrievalDownloads(id));
+      const next = (data?.items || []).map((item) => ({
+        ...item,
+        expires_at: data?.expires_at,
+        url: safeDownloadUrl(item.url),
+      }));
+      if (!next.length || next.some((item) => !item.url)) throw new Error("No valid download links");
+      setLinks(next);
+      setMessage("");
+    } catch (error) {
+      setMessage(archiveActionErrorMessage(error, "download"));
+    } finally { busyRef.current = false; setBusy(false); }
+  };
+
+  return <section className="ops-view">
+    <div className="ops-heading"><div><p className="ops-eyebrow">Historical evidence</p><h2>Archive Requests</h2></div><button type="button" className="ops-secondary" onClick={load} disabled={busy || state === "loading"}><RefreshCw size={16} /> Refresh</button></div>
+    {message && <div className="ops-notice" role="status"><AlertCircle size={16}/>{message}</div>}
+    <form className="archive-form" onSubmit={request}>
+      <label htmlFor="archive-source">Evidence source<span className="ops-select-wrap"><select id="archive-source" name="source" required disabled={!sources.length} value={selectedSource} onChange={(event) => setSelectedSource(event.target.value)}><option value="">{sources.length ? "Select evidence source" : "No authorized sources"}</option>{sources.map(([value, label]) => { const sourceAvailability = availability?.[value]; const unavailable = sourceAvailability?.available === false; return <option key={value} value={value} disabled={unavailable}>{label}{unavailable ? " - no archived data" : ""}</option>; })}</select></span>{selectedSource && availability?.[selectedSource] && <span className="archive-source-availability">{Number(availability[selectedSource].document_count).toLocaleString()} records across {Number(availability[selectedSource].blob_count).toLocaleString()} archive files{availability[selectedSource].earliest_at && availability[selectedSource].latest_at ? ` · ${formatArchiveDateRange(availability[selectedSource].earliest_at, availability[selectedSource].latest_at)}` : ""}</span>}</label>
+      <label htmlFor="archive-start">Start date<input id="archive-start" type="datetime-local" name="start" required/></label>
+      <label htmlFor="archive-end">End date<input id="archive-end" type="datetime-local" name="end" required/></label>
+      <label className="archive-reason" htmlFor="archive-reason">Business reason<textarea id="archive-reason" name="reason" required minLength={8} maxLength={500}/></label>
+      <button type="submit" disabled={busy || state !== "ready" || !sources.length}>{busy ? "Working..." : "Request archive retrieval"}</button>
+    </form>
+    {links.length > 0 && <section className="archive-downloads" aria-label="Available archive downloads"><div><strong>Secure downloads are ready</strong><span>Links expire automatically. Download the files before the time shown.</span></div>{links.map((item, index) => <a key={item.archive_key || index} href={item.url} target="_blank" rel="noopener noreferrer"><Download size={15}/><span>Download {formatArchiveSources([item.collection])}{item.bytes != null ? ` (${formatArchiveBytes(item.bytes)})` : ""}</span>{item.expires_at && <small>Expires {formatArchiveTimestamp(item.expires_at)}</small>}</a>)}</section>}
+    <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Request</th><th>Source</th><th>Date range</th><th>Estimated size</th><th>Status</th><th>Action</th></tr></thead><tbody>
+      {state === "loading" ? <tr><td colSpan="6" className="ops-empty">Loading archive requests...</td></tr> : items.length ? items.map((item) => { const status = archiveStatusInfo(item.status); return <tr key={item.request_id}><td className="ops-code" title={item.request_id}>{item.request_id}</td><td>{formatArchiveSources(item.collections)}</td><td>{formatArchiveDateRange(item.start_at, item.end_at)}</td><td>{formatArchiveBytes(item.estimated_bytes)}</td><td><span className={`ops-status archive-status-${status.className}`}>{status.label}</span></td><td>{item.status === "READY" ? <button type="button" className="ops-primary-action" onClick={() => download(item.request_id)} disabled={busy}><Download size={15}/>Get download links</button> : <span className="archive-no-action">Not available</span>}</td></tr>; }) : <tr><td colSpan="6" className="ops-empty">{state === "error" ? <><span>Archive requests could not be loaded.</span><button type="button" className="ops-secondary archive-retry" onClick={load}>Try again</button></> : "No archive requests have been recorded."}</td></tr>}
+    </tbody></table></div>
+  </section>;
+}
+
+export default function OperationsViews({ mode, onDownloadAgent }) { if (mode === "fleet") return <Fleet onDownloadAgent={onDownloadAgent} />; if (mode === "relay") return <RelayView />; if (mode === "archive") return <ArchiveView />; if (mode === "offline-legacy") return <LegacyOfflineAnalysis />; return <OfflineAnalysis />; }

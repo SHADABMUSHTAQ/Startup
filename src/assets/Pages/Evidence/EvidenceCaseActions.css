@@ -1,0 +1,27 @@
+.evidence-form select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--dash-border-strong, rgba(148, 163, 184, 0.25));
+  border-radius: 8px;
+  background: var(--dash-panel-strong, rgba(2, 6, 23, 0.28));
+  color: var(--dash-text, var(--text-primary));
+  padding: 11px 12px;
+  font: inherit;
+  font-size: 13px;
+  text-transform: none;
+}
+
+.evidence-detail-actions {
+  flex-wrap: wrap;
+}
+
+.evidence-action-form {
+  margin-top: 18px;
+}
+
+@media (max-width: 800px) {
+  .evidence-detail-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}

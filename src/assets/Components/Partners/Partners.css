@@ -1,0 +1,79 @@
+.partners-section {
+  padding: 60px 20px;
+  background: transparent;
+  text-align: center;
+  overflow: hidden;
+}
+
+.partners-header {
+  margin-bottom: 50px;
+}
+
+.partners-header p {
+  color: #94a3b8;
+  max-width: 600px;
+  margin: 10px auto 0;
+}
+
+/* --- THE INFINITE MARQUEE --- */
+.marquee-wrapper {
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+  padding: 4px 0;
+  /* Yeh gradient edges ko blur karega taake logos smooth enter/exit hon */
+  mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+}
+
+.marquee-track {
+  display: flex;
+  gap: 120px;
+  width: max-content;
+  /* 20 seconds mein ek chakar. Speed change karni ho toh isko adjust karo */
+  animation: scrollX 20s linear infinite; 
+  will-change: transform;
+}
+
+.marquee-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 105px;
+}
+
+.partner-logo-frame {
+  width: 76px;
+  height: 76px;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  background: #ffffff;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.03);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.partner-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.partner-logo-frame:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 0 6px rgba(183, 234, 72, 0.08);
+}
+
+/* THE CSS MATH: Kyunke humne array ko 3 dafa map kiya hai, hum track ko exactly 33.33% shift karenge */
+@keyframes scrollX {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-33.33%);
+  }
+}

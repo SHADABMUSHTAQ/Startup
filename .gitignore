@@ -1,0 +1,72 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies and package-manager caches
+node_modules
+.pnpm-store/
+.npm/
+
+# Build and framework output
+dist
+dist-ssr
+.vite/
+.vercel/
+.cache/
+.eslintcache
+
+# Local environments. VITE_API_BASE_URL in .env.production is public and
+# intentionally versioned so Vercel builds cannot fall back to localhost.
+.env
+.env.*
+!.env.production
+!.env.*.example
+*.local
+
+# Test and coverage output
+coverage/
+playwright-report/
+test-results/
+
+# Accidental Python tooling in this npm-only frontend
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+/requirements.txt
+
+# Generated agent downloads may contain tenant credentials.
+tmp_agent_extract/
+tmp_agent_download.zip
+
+# Local AI/editor working data and scratch output
+.agents/
+tmp/
+temp/
+*.tmp
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Obsolete local deployment audit; maintained runbooks live in the backend.
+/warsoc_deployment_audit.md
+
+# Removed root-level duplicates; canonical implementations live under src/.
+/ProtectedRoute.jsx
+/PublicRoute.jsx
+/apiClient.js
+/authStore.js

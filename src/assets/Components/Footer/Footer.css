@@ -1,0 +1,549 @@
+/* --- WARSOC BRAND VARIABLES --- */
+:root {
+  --footer-border: rgba(71, 165, 239, 0.15); /* Subtle Blue Border */
+  --text-primary: #ffffff;
+  --text-secondary: #94a3b8;
+  
+  /* Logo Exact Colors */
+  --accent-blue: #47A5EF;
+  --accent-lime: #B7EA48;
+}
+
+/* --- FOOTER BASE --- */
+.footer {
+  /* 🚀 Background transparent kar diya taake index.css wala chale */
+  position: relative;
+  overflow: hidden;
+  background: #02070d;
+  color: var(--text-secondary);
+  padding: 5rem 2rem 2rem;
+  font-size: 0.9rem;
+  border-top: 1px solid rgba(71, 165, 239, 0.18);
+}
+
+.footer::before {
+  display: none;
+}
+
+[data-theme="light"] .footer {
+  background: #eef3f8;
+  border-top-color: #d7e0ea;
+  color: #334155;
+}
+
+.footer-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
+/* --- TOP SECTION --- */
+.footer-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4rem;
+  margin-bottom: 4rem;
+}
+
+/* Brand Column */
+.footer-brand-section {
+  flex: 1;
+  min-width: 280px;
+  max-width: 400px;
+}
+.fot-logo{
+  width: auto;
+  height: 112px;
+  object-fit: contain;
+  display: block;
+}
+.brand-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 1rem;
+  color: var(--text-primary);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.brand-logo h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.brand-desc {
+  line-height: 1.6;
+  margin-bottom: 1.5rem;
+  text-align: left;
+  color: var(--text-secondary);
+}
+
+/* Social Icons */
+.social-links {
+  display: flex;
+  gap: 1rem;
+}
+
+.social-links a {
+  color: var(--text-secondary);
+  transition: all 0.3s ease;
+  width: 40px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+}
+
+/* 🚀 Hover updated to Brand Blue */
+.social-links a:hover {
+  color: #ffffff;
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  transform: translateY(-3px);
+  box-shadow: 0 5px 15px rgba(71, 165, 239, 0.3);
+}
+
+[data-theme="light"] .footer .brand-desc,
+[data-theme="light"] .footer-bottom p,
+[data-theme="light"] .footer .link-column ul li a,
+[data-theme="light"] .footer .legal-links a {
+  color: #334155;
+}
+
+[data-theme="light"] .footer .link-column h4 {
+  color: #0f172a;
+}
+
+[data-theme="light"] .footer .social-links a {
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.68);
+  border-color: #cbd9ea;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+}
+
+[data-theme="light"] .footer .social-links a svg,
+[data-theme="light"] .footer .social-links a svg :where(path, line, polyline, rect, circle) {
+  color: #0f172a;
+  stroke: #0f172a;
+  opacity: 1;
+}
+
+[data-theme="light"] .footer .social-links a:hover {
+  color: #ffffff;
+  background: #0f62fe;
+  border-color: #0f62fe;
+  box-shadow: 0 12px 24px rgba(15, 98, 254, 0.22);
+}
+
+[data-theme="light"] .footer .social-links a:hover svg,
+[data-theme="light"] .footer .social-links a:hover svg :where(path, line, polyline, rect, circle) {
+  color: #ffffff;
+  stroke: #ffffff;
+}
+
+[data-theme="light"] .footer .link-column ul li a:hover,
+[data-theme="light"] .footer .legal-links a:hover {
+  color: #0f62fe;
+}
+
+[data-theme="light"] .footer-bottom {
+  border-top-color: #d7e0ea;
+}
+
+/* --- LINKS GRID --- */
+.footer-links-grid {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end; 
+  flex-wrap: wrap;
+  gap: 6rem; 
+}
+
+.link-column h4 {
+  color: var(--text-primary);
+  font-size: 1.1rem;
+  margin-bottom: 1.2rem;
+  font-weight: 600;
+}
+
+.link-column ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.link-column ul li {
+  margin-bottom: 0.8rem;
+}
+
+.link-column ul li a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+/* 🚀 Link Hover updated to Brand Lime */
+.link-column ul li a:hover {
+  color: var(--accent-lime);
+}
+
+/* --- BOTTOM SECTION --- */
+.footer-bottom {
+  /* 🚀 Border updated to Brand Blue */
+  border-top: 1px solid rgba(71, 165, 239, 0.1);
+  padding-top: 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.legal-links {
+  display: flex;
+  gap: 2rem;
+}
+
+.legal-links a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.85rem;
+  transition: color 0.2s;
+}
+
+/* 🚀 Legal Link Hover updated to Brand Lime */
+.legal-links a:hover {
+  color: var(--accent-lime);
+}
+
+/* --- RESPONSIVE --- */
+@media (max-width: 768px) {
+  .footer-top {
+    flex-direction: column;
+    gap: 3rem;
+  }
+  
+  .footer-links-grid {
+    justify-content: flex-start;
+    gap: 3rem;
+  }
+  
+  .footer-bottom {
+    flex-direction: column;
+    text-align: center;
+  }
+  
+  .legal-links {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 1.5rem;
+  }
+}
+
+/* --- MOTION FOOTER LAYER --- */
+.footer {
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 14% 18%, rgba(71, 165, 239, 0.16), transparent 28rem),
+    radial-gradient(circle at 84% 22%, rgba(183, 234, 72, 0.1), transparent 25rem),
+    linear-gradient(145deg, #02070d 0%, #071525 55%, #06101c 100%);
+}
+
+.footer::before {
+  content: "";
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image:
+    linear-gradient(rgba(71, 165, 239, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(71, 165, 239, 0.08) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: linear-gradient(to bottom, transparent, black 18%, black 82%, transparent);
+  animation: footer-grid-drift 18s linear infinite;
+}
+
+.footer::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  top: -10rem;
+  right: 8%;
+  width: 32rem;
+  height: 32rem;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(71, 165, 239, 0.2), rgba(183, 234, 72, 0.06) 42%, transparent 70%);
+  filter: blur(18px);
+  animation: footer-aurora-float 9s ease-in-out infinite alternate;
+}
+
+.footer-ambient {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.footer-orbit {
+  position: absolute;
+  display: block;
+  border: 1px solid rgba(71, 165, 239, 0.18);
+  border-radius: 50%;
+  transform: rotate(-18deg);
+  animation: footer-orbit-drift 12s ease-in-out infinite alternate;
+}
+
+.footer-orbit-one {
+  width: 42rem;
+  height: 13rem;
+  left: -9rem;
+  bottom: 2rem;
+}
+
+.footer-orbit-two {
+  width: 34rem;
+  height: 10rem;
+  right: -8rem;
+  top: 8rem;
+  border-color: rgba(183, 234, 72, 0.16);
+  animation-delay: -4s;
+}
+
+.footer-scanline {
+  position: absolute;
+  top: -20%;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(106, 213, 255, 0.55), transparent);
+  box-shadow: 0 0 18px rgba(106, 213, 255, 0.35);
+  animation: footer-scan 8s ease-in-out infinite;
+}
+
+.footer-top {
+  animation: footer-content-rise 0.8s ease-out both;
+}
+
+.social-links a {
+  will-change: transform;
+}
+
+.social-links a:focus-visible,
+.link-column ul li a:focus-visible,
+.legal-links a:focus-visible {
+  outline: 3px solid rgba(71, 165, 239, 0.35);
+  outline-offset: 3px;
+}
+
+@keyframes footer-grid-drift {
+  from { background-position: 0 0; }
+  to { background-position: 44px 44px; }
+}
+
+@keyframes footer-aurora-float {
+  from { transform: translate3d(-5%, 0, 0) scale(0.92); opacity: 0.55; }
+  to { transform: translate3d(8%, 8%, 0) scale(1.08); opacity: 0.95; }
+}
+
+@keyframes footer-orbit-drift {
+  from { transform: translate3d(-2%, 4%, 0) rotate(-18deg); opacity: 0.45; }
+  to { transform: translate3d(3%, -4%, 0) rotate(-12deg); opacity: 0.95; }
+}
+
+@keyframes footer-scan {
+  0%, 100% { transform: translateY(0); opacity: 0; }
+  15%, 75% { opacity: 0.8; }
+  85% { transform: translateY(750px); opacity: 0; }
+}
+
+@keyframes footer-content-rise {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+[data-theme="light"] .footer {
+  background:
+    radial-gradient(circle at 12% 12%, rgba(71, 165, 239, 0.16), transparent 27rem),
+    radial-gradient(circle at 88% 20%, rgba(183, 234, 72, 0.14), transparent 25rem),
+    linear-gradient(145deg, #f7fbff 0%, #ffffff 54%, #eef6ff 100%);
+}
+
+[data-theme="light"] .footer::before {
+  opacity: 0.8;
+  background-image:
+    linear-gradient(rgba(15, 98, 254, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 98, 254, 0.07) 1px, transparent 1px);
+}
+
+[data-theme="light"] .footer::after {
+  background: radial-gradient(circle, rgba(71, 165, 239, 0.14), rgba(183, 234, 72, 0.1) 42%, transparent 70%);
+}
+
+[data-theme="light"] .footer-orbit {
+  border-color: rgba(15, 98, 254, 0.18);
+}
+
+[data-theme="light"] .footer-orbit-two {
+  border-color: rgba(94, 151, 0, 0.2);
+}
+
+[data-theme="light"] .footer-scanline {
+  background: linear-gradient(90deg, transparent, rgba(15, 98, 254, 0.48), transparent);
+}
+
+[data-theme="light"] .footer .brand-desc,
+[data-theme="light"] .footer .footer-bottom p,
+[data-theme="light"] .footer .link-column ul li a,
+[data-theme="light"] .footer .legal-links a {
+  color: #334155 !important;
+}
+
+[data-theme="light"] .footer .link-column h4 {
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .footer .social-links a {
+  color: #0f172a !important;
+  background: rgba(255, 255, 255, 0.82);
+  border-color: #b9cce4;
+}
+
+[data-theme="light"] .footer .social-links a svg,
+[data-theme="light"] .footer .social-links a svg :where(path, line, polyline, rect, circle) {
+  color: #0f172a !important;
+  stroke: #0f172a !important;
+  opacity: 1 !important;
+}
+
+[data-theme="light"] .footer .social-links a:hover {
+  color: #ffffff !important;
+  background: #0f62fe;
+  border-color: #0f62fe;
+}
+
+[data-theme="light"] .footer .social-links a:hover svg,
+[data-theme="light"] .footer .social-links a:hover svg :where(path, line, polyline, rect, circle) {
+  color: #ffffff !important;
+  stroke: #ffffff !important;
+}
+
+[data-theme="light"] .footer .link-column ul li a:hover,
+[data-theme="light"] .footer .legal-links a:hover {
+  color: #0f62fe !important;
+}
+
+@media (max-width: 768px) {
+  .footer {
+    padding: 4rem 1.25rem 1.5rem;
+  }
+
+  .footer-orbit-one { left: -18rem; }
+  .footer-orbit-two { right: -18rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .footer::before,
+  .footer::after,
+  .footer-orbit,
+  .footer-scanline,
+  .footer-top,
+  .social-links a {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* Footer alignment pass: crop the transparent logo canvas so the visible mark
+   has a deliberate scale and lines up with the brand copy. */
+.footer {
+  padding: 4.5rem 2rem 1.75rem;
+}
+
+.footer-container {
+  width: min(1200px, 100%);
+}
+
+.footer-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: clamp(3.5rem, 10vw, 9rem);
+  margin-bottom: 3.25rem;
+}
+
+.footer-brand-section {
+  display: grid;
+  justify-items: start;
+  min-width: 0;
+  max-width: 440px;
+}
+
+.brand-logo {
+  width: 180px;
+  height: 130px;
+  margin: 0 0 1rem;
+  overflow: visible;
+}
+
+.fot-logo {
+  width: 180px;
+  height: 180px;
+  max-width: none;
+  transform: translateY(-10px);
+}
+
+.brand-desc {
+  max-width: 360px;
+  margin: 0 0 1.5rem;
+}
+
+.footer-links-grid {
+  align-items: start;
+  justify-content: end;
+  gap: clamp(3rem, 7vw, 6rem);
+  padding-top: 0.4rem;
+}
+
+.link-column {
+  min-width: 120px;
+}
+
+.footer-bottom {
+  padding-top: 1.5rem;
+}
+
+@media (max-width: 768px) {
+  .footer {
+    padding: 3.5rem 1.25rem 1.5rem;
+  }
+
+  .footer-top {
+    display: flex;
+    gap: 2.5rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .brand-logo {
+    width: 160px;
+    height: 120px;
+  }
+
+  .fot-logo {
+    width: 160px;
+    height: 160px;
+    transform: translateY(-8px);
+  }
+}

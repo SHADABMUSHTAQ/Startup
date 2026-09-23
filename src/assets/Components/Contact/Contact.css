@@ -1,0 +1,255 @@
+/* --- WARSOC BRAND VARIABLES --- */
+:root {
+  --contact-card-bg: #131F43; /* Matches Features/Pricing Card Surface */
+  --contact-input-bg: rgba(0, 0, 0, 0.2); /* Deep dark inputs */
+  --contact-border: rgba(71, 165, 239, 0.15); /* Subtle Blue Border */
+  
+  --text-primary: #ffffff;
+  --text-secondary: #94a3b8;
+  
+  /* Logo Exact Colors */
+  --accent-lime: #B7EA48;
+  --accent-blue: #47A5EF;
+  --alert-red: #ef4444;
+}
+
+/* --- SECTION LAYOUT --- */
+.contact-section {
+  position: relative;
+  padding: 5rem 2rem; 
+  /* 🚀 Background hata kar transparent kar diya */
+  background-color: transparent; 
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+.contact-glow {
+  position: absolute;
+  top: 20%;
+  right: 10%;
+  width: 60%;
+  height: 60%;
+  /* 🚀 Glow updated to Brand Blue */
+  background: radial-gradient(circle, rgba(71, 165, 239, 0.05) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.contact-container {
+  max-width: 1050px; 
+  margin: 0 auto;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 3rem; 
+  align-items: flex-start;
+}
+
+/* --- LEFT SIDE - INFO --- */
+.contact-info {
+  flex: 1;
+}
+
+.contact-info h2 {
+  font-size: 2.1rem; 
+  font-weight: 700;
+  margin-bottom: 1rem;
+  color: var(--text-primary);
+}
+
+.contact-description {
+  color: var(--text-secondary);
+  font-size: 0.95rem; 
+  line-height: 1.6;
+  margin-bottom: 2.5rem;
+}
+
+.contact-details {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem; 
+}
+
+.contact-item {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+}
+
+.icon-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px; 
+  height: 40px;
+  background: rgba(71, 165, 239, 0.1);
+  color: var(--accent-blue);
+  border-radius: 10px;
+  transition: all 0.3s ease;
+}
+
+/* 🚀 Hover karne par ab Lime ya Solid Blue aayega */
+.contact-item:hover .icon-box {
+  background: var(--accent-blue);
+  color: white;
+  transform: scale(1.05);
+}
+
+/* Special Alert Box for SOC */
+.alert-box {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--alert-red);
+}
+.contact-item:hover .alert-box {
+  background: var(--alert-red);
+  color: white;
+}
+
+.contact-item h4 {
+  font-size: 1rem; 
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+  color: var(--text-primary);
+}
+
+.contact-item p {
+  color: var(--text-secondary);
+  font-size: 0.85rem; 
+}
+
+/* --- RIGHT SIDE - FORM --- */
+.contact-form-wrapper {
+  flex: 1;
+  /* 🚀 Match Pricing/Features Card */
+  background: var(--contact-card-bg);
+  padding: 2.5rem; 
+  border-radius: 12px;
+  border: 1px solid var(--contact-border);
+  box-shadow: 0 10px 30px -15px rgba(0, 0, 0, 0.5);
+}
+
+.contact-form h3 {
+  font-size: 1.3rem; 
+  font-weight: 600;
+  margin-bottom: 1.5rem;
+  color: var(--text-primary);
+}
+
+.form-row {
+  display: flex;
+  gap: 1rem;
+}
+
+.half-width {
+  flex: 1;
+}
+
+.form-group {
+  margin-bottom: 1.2rem;
+  position: relative;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 0.85rem; 
+}
+
+/* 🚀 Inputs updated for Enterprise Dark Theme */
+.form-group input,
+.form-group select,
+.form-group textarea {
+  width: 100%;
+  padding: 0.8rem; 
+  background-color: var(--contact-input-bg);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 0.9rem; 
+  font-family: inherit;
+  transition: border-color 0.3s ease;
+}
+
+/* Dropdown Styling */
+.form-group select {
+  appearance: none;
+  cursor: pointer;
+}
+
+.form-group select option {
+  background-color: var(--contact-card-bg);
+  color: var(--text-primary);
+}
+
+/* 🚀 Focus effect updated to Brand Blue */
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 10px rgba(71, 165, 239, 0.1);
+}
+
+.form-group textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+.input-with-icon {
+  position: relative;
+}
+
+.input-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-secondary);
+}
+
+/* 🚀 Submit Button matched with Brand Blue */
+.submit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0.8rem 1.5rem;
+  background-color: var(--accent-blue);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.submit-btn:hover {
+  background-color: #398bd1;
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(71, 165, 239, 0.3);
+}
+
+.privacy-note {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-top: 1.2rem;
+}
+
+/* --- RESPONSIVE --- */
+@media (max-width: 992px) {
+  .contact-container {
+    flex-direction: column;
+    gap: 3rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .form-row {
+    flex-direction: column;
+    gap: 0;
+  }
+}

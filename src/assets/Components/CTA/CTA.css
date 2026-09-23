@@ -1,0 +1,274 @@
+/* --- WARSOC BRAND VARIABLES --- */
+:root {
+  --cta-card-bg: var(--card-bg); /* Use shared card surface */
+  --cta-border: rgba(71, 165, 239, 0.12);
+  --accent-blue: #47a5ef;
+  --accent-lime: #b7ea48;
+  --text-primary: #ffffff;
+  --text-secondary: #94a3b8;
+}
+
+/* --- SECTION LAYOUT --- */
+.cta-section {
+  padding: 4rem 2rem;
+  /* 🚀 Background hata kar transparent kar diya */
+  background-color: transparent;
+  display: flex;
+  justify-content: center;
+}
+
+/* --- WRAPPER (The Card) --- */
+.cta-wrapper {
+  position: relative;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.02),
+    var(--cta-card-bg)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 20px;
+  padding: 3.25rem 2.25rem;
+  text-align: center;
+  max-width: 1000px;
+  width: 100%;
+  overflow: hidden;
+  box-shadow: 0 10px 30px -8px rgba(0, 0, 0, 0.55);
+  isolation: isolate; /* Z-index fix for pseudo elements */
+}
+
+/* Background Effects */
+.cta-glow {
+  position: absolute;
+  top: -50%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 600px;
+  height: 600px;
+  /* 🚀 Glow updated to Brand Blue (subtle) */
+  background: radial-gradient(
+    circle,
+    rgba(71, 165, 239, 0.06) 0%,
+    transparent 60%
+  );
+  z-index: -1;
+  pointer-events: none;
+}
+
+.cta-grid-pattern {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 30px 30px;
+  z-index: -1;
+  opacity: 0.5;
+  mask-image: radial-gradient(circle at center, black 40%, transparent 80%);
+}
+
+/* --- CONTENT --- */
+.cta-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Badge Icon */
+.icon-badge {
+  /* 🚀 Badge updated to Lime Green */
+  background: rgba(183, 234, 72, 0.1);
+  color: var(--accent-lime);
+  padding: 12px;
+  border-radius: 50%;
+  margin-bottom: 1.5rem;
+  border: 1px solid rgba(183, 234, 72, 0.2);
+  box-shadow: 0 0 20px rgba(183, 234, 72, 0.15);
+  transition:
+    transform 280ms ease,
+    color 280ms ease,
+    background 280ms ease,
+    border-color 280ms ease,
+    box-shadow 280ms ease;
+}
+
+.icon-badge svg,
+.icon-badge svg :where(path, line, polyline, rect, circle) {
+  color: currentColor;
+  stroke: currentColor;
+  opacity: 1;
+}
+
+[data-theme="light"] .icon-badge {
+  color: #0b74e5 !important;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(219, 234, 254, 0.96)) !important;
+  border-color: rgba(11, 116, 229, 0.32) !important;
+  box-shadow:
+    0 10px 24px rgba(11, 116, 229, 0.16),
+    0 0 0 6px rgba(183, 234, 72, 0.13) !important;
+}
+
+[data-theme="light"] .icon-badge svg,
+[data-theme="light"] .icon-badge svg :where(path, line, polyline, rect, circle) {
+  color: #0b74e5 !important;
+  stroke: #0b74e5 !important;
+  opacity: 1 !important;
+}
+
+/* Typography */
+.cta-content h2 {
+  font-size: 2.5rem;
+  color: var(--text-primary);
+  margin-bottom: 1rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.cta-content p {
+  font-size: 1.1rem;
+  color: var(--text-secondary);
+  margin-bottom: 2.5rem;
+  line-height: 1.6;
+  max-width: 600px;
+}
+
+/* --- BUTTONS --- */
+.cta-actions {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.cta-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 32px;
+  border-radius: 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  text-decoration: none;
+  overflow: hidden;
+  isolation: isolate;
+  will-change: transform, box-shadow;
+  transition:
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 260ms ease,
+    background-position 320ms ease,
+    border-color 260ms ease,
+    color 260ms ease;
+}
+
+.cta-btn > * {
+  position: relative;
+  z-index: 1;
+}
+
+.cta-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity 320ms ease;
+  display: none;
+}
+
+.cta-btn svg {
+  position: relative;
+  z-index: 1;
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Primary Button (Blue) */
+.cta-section .cta-btn.primary {
+  background: linear-gradient(135deg, #1683f4 0%, #149f8b 100%) !important;
+  background-size: 180% 100% !important;
+  background-position: 0% 50% !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(71, 165, 239, 0.72);
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.2);
+}
+
+.cta-section .cta-btn.primary,
+.cta-section .cta-btn.primary * {
+  color: #ffffff !important;
+}
+
+.cta-section .cta-btn.primary:hover {
+  background-position: 100% 50% !important;
+  border-color: rgba(11, 116, 229, 0.88);
+  transform: translateY(-3px);
+  box-shadow: 0 16px 36px rgba(37, 99, 235, 0.28);
+}
+
+.cta-btn.primary:hover svg,
+.cta-btn.secondary:hover svg {
+  transform: translateX(4px);
+}
+
+.cta-btn:active {
+  transform: translateY(-1px) scale(0.985);
+  transition-duration: 120ms;
+}
+
+/* Secondary Button (Outline Lime) */
+.cta-btn.secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.cta-btn.secondary:hover {
+  border-color: var(--accent-lime);
+  color: var(--accent-lime);
+  background: rgba(183, 234, 72, 0.05);
+}
+
+@media (hover: hover) {
+  .cta-wrapper:hover .icon-badge {
+    transform: translateY(-2px) scale(1.03);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-badge,
+  .cta-btn,
+  .cta-btn svg {
+    transition: none;
+  }
+
+  .cta-btn.primary:hover,
+  .cta-wrapper:hover .icon-badge,
+  .cta-btn:active {
+    transform: none;
+  }
+}
+
+/* --- RESPONSIVE --- */
+@media (max-width: 768px) {
+  .cta-wrapper {
+    padding: 3rem 1.5rem;
+  }
+
+  .cta-content h2 {
+    font-size: 1.8rem;
+  }
+
+  .cta-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .cta-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}

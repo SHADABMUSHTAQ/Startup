@@ -1,0 +1,70 @@
+.session-gate {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(
+      ellipse 120% 80% at 50% -20%,
+      color-mix(in srgb, var(--accent-primary) 12%, transparent),
+      transparent 55%
+    ),
+    linear-gradient(180deg, var(--bg-deep) 0%, #07111f 45%, var(--bg-deep) 100%);
+  color: var(--text-primary);
+}
+
+.session-gate__inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 2rem;
+}
+
+.session-gate__mark {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.session-gate__shield {
+  color: var(--accent-primary);
+  filter: drop-shadow(0 0 12px color-mix(in srgb, var(--accent-primary) 40%, transparent));
+  position: relative;
+  z-index: 1;
+}
+
+.session-gate__ring {
+  position: absolute;
+  inset: -10px;
+  border: 2px solid color-mix(in srgb, var(--accent-secondary) 22%, transparent);
+  border-top-color: var(--accent-secondary);
+  border-radius: 50%;
+  animation: session-gate-spin 0.85s linear infinite;
+}
+
+.session-gate__label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary, #a6b8c8);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  margin: 0;
+}
+
+@keyframes session-gate-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-gate__ring {
+    animation: none;
+    border-top-color: color-mix(in srgb, var(--accent-secondary) 55%, transparent);
+  }
+}
