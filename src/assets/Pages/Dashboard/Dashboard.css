@@ -3697,6 +3697,52 @@ select.global-search option {
   -webkit-text-fill-color: #ffffff !important;
 }
 
+/* Final workspace action layout: module links sit left; Download Agent stays right. */
+.siem-layout .workspace-page-actions {
+  width: 100%;
+  justify-content: flex-start;
+}
+.siem-layout .workspace-action-segment {
+  order: 1;
+  gap: 26px;
+  margin-right: auto;
+  border: 0 !important;
+  background: transparent !important;
+}
+.siem-layout .workspace-action-segment .workspace-action-item {
+  min-height: 36px;
+  padding: 0 2px;
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent !important;
+  color: #2563eb !important;
+  font-weight: 600;
+}
+.siem-layout .workspace-action-segment .workspace-action-item:hover:not(:disabled),
+.siem-layout .workspace-action-segment .workspace-action-item.active {
+  border: 0 !important;
+  background: transparent !important;
+  color: #1d4ed8 !important;
+}
+.siem-layout .workspace-action-segment .workspace-action-item svg,
+.siem-layout .workspace-action-segment .workspace-action-item svg :where(path, line, polyline, rect, circle) {
+  color: currentColor !important;
+  stroke: currentColor !important;
+  opacity: 1 !important;
+}
+[data-theme="dark"] .siem-layout .workspace-action-segment .workspace-action-item {
+  color: #60a5fa !important;
+}
+[data-theme="dark"] .siem-layout .workspace-action-segment .workspace-action-item:hover:not(:disabled),
+[data-theme="dark"] .siem-layout .workspace-action-segment .workspace-action-item.active {
+  color: #93c5fd !important;
+}
+
+@media (max-width: 767px) {
+  .siem-layout .workspace-page-actions { width: 100%; }
+  .siem-layout .workspace-action-segment { margin-right: 0; }
+}
+
 /* Keep the tab label itself white when the blue hover/active state is shown. */
 .siem-layout .workspace-top-nav-item:hover:not(:disabled) > span,
 .siem-layout .workspace-top-nav-item.active > span {

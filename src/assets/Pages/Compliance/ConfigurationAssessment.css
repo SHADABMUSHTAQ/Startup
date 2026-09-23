@@ -283,6 +283,36 @@
 [data-theme="light"] .siem-layout .sca-finding dd { color: #334155; }
 [data-theme="light"] .siem-layout .sca-posture-heading > div:last-child span { color: #64748b; }
 
+/* Severity badges stay readable against their light-theme fills. */
+[data-theme="light"] .siem-layout .sca-severity.high,
+[data-theme="light"] .siem-layout .sca-severity.critical {
+  color: #b91c1c !important;
+  background: #fee2e2 !important;
+  border-color: #fca5a5 !important;
+}
+[data-theme="light"] .siem-layout .sca-severity.medium {
+  color: #92400e !important;
+  background: #fef3c7 !important;
+  border-color: #fbbf24 !important;
+}
+[data-theme="light"] .siem-layout .sca-severity.low,
+[data-theme="light"] .siem-layout .sca-severity.info {
+  color: #1d4ed8 !important;
+  background: #dbeafe !important;
+  border-color: #93c5fd !important;
+}
+[data-theme="dark"] .siem-layout .sca-severity.high,
+[data-theme="dark"] .siem-layout .sca-severity.critical {
+  color: #fca5a5 !important;
+}
+[data-theme="dark"] .siem-layout .sca-severity.medium {
+  color: #fbbf24 !important;
+}
+[data-theme="dark"] .siem-layout .sca-severity.low,
+[data-theme="dark"] .siem-layout .sca-severity.info {
+  color: #93c5fd !important;
+}
+
 /* Refresh action keeps a high-contrast blue/white hover treatment in both themes. */
 .siem-layout .sca-refresh:hover:not(:disabled) {
   background: #2563eb !important;
