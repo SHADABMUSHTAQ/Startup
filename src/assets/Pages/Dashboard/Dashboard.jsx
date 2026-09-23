@@ -5,6 +5,7 @@ import React, {
   useRef,
   useMemo,
 } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import apiClient from "../../../api/apiClient";
 import { useAuthStore } from "../../../store/authStore";
@@ -166,21 +167,15 @@ const readChartPreferences = () => {
   }
 };
 
-const ChartTitle = ({ title, meta, onRemove }) => (
+const ChartTitle = ({ title, meta, onRemove, isCustomizing }) => (
   <div className="chart-title-row">
     <div><h4>{title}</h4><span>{meta}</span></div>
-    <div className="chart-controls">
-      <span className="chart-drag-handle" title="Drag to reorder chart" aria-label="Drag to reorder chart"><GripVertical size={16} /></span>
-      <button
-        type="button"
-        className="chart-remove-button"
-        title={`Hide ${title}`}
-        aria-label={`Hide ${title}`}
-        onClick={(event) => { event.stopPropagation(); onRemove?.(); }}
-      >
+    {isCustomizing && <div className="chart-controls">
+      <span className="chart-drag-handle" title="Drag to reorder chart" aria-label="Drag to reorder chart" role="button" tabIndex={0}><GripVertical size={16} /></span>
+      <button type="button" className="chart-remove-button" title={`Hide ${title}`} aria-label={`Hide ${title}`} onClick={(event) => { event.stopPropagation(); onRemove?.(); }}>
         <X size={14} />
       </button>
-    </div>
+    </div>}
   </div>
 );
 
@@ -301,23 +296,134 @@ const UserMenu = ({ user, onProfile, onLogout }) => {
   );
 };
 
-const WorkspaceTopNav = ({ items }) => (
-  <nav className="workspace-top-nav" aria-label="Workspace tools">
-    {items.map((item) => (
+const WorkspacePageHeader = ({ items, showCustomize, onToggleCustomize, isCustomizePanelOpen, isDashboardEditMode, widgetPicker, downloadPrimary }) => {
+  const secondaryItems = items.filter((item) => item.label !== "Download Agent" && item.label !== "Generating...");
+  const downloadItem = items.find((item) => item.label === "Download Agent" || item.label === "Generating...");
+  const [manageOpen, setManageOpen] = useState(false);
+  const [widgetPickerPosition, setWidgetPickerPosition] = useState({ top: 0, right: 16 });
+  const customizeButtonRef = useRef(null);
+  const widgetPickerRef = useRef(null);
+  const manageRef = useRef(null);
+
+  const updateWidgetPickerPosition = useCallback(() => {
+    if (typeof window === "undefined" || !customizeButtonRef.current) return;
+    const rect = customizeButtonRef.current.getBoundingClientRect();
+    setWidgetPickerPosition({
+      top: rect.bottom + 8,
+      right: Math.max(16, window.innerWidth - rect.right),
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isCustomizePanelOpen) return undefined;
+    updateWidgetPickerPosition();
+    const handleViewportChange = () => updateWidgetPickerPosition();
+    const handlePointerDown = (event) => {
+      if (!customizeButtonRef.current?.contains(event.target) && !widgetPickerRef.current?.contains(event.target)) onToggleCustomize(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onToggleCustomize(false);
+        customizeButtonRef.current?.focus();
+      }
+    };
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isCustomizePanelOpen, onToggleCustomize, updateWidgetPickerPosition]);
+
+  useEffect(() => {
+    if (!manageOpen) return undefined;
+    const handlePointerDown = (event) => {
+      if (!manageRef.current?.contains(event.target)) setManageOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setManageOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [manageOpen]);
+
+  const portalTarget = typeof document !== "undefined"
+    ? document.querySelector(".siem-layout") || document.body
+    : null;
+
+  const renderItem = (item, compact = false) => {
+    const Icon = item.icon;
+    return (
       <button
         type="button"
-        className={`workspace-top-nav-item ${item.active ? "active" : ""}`}
+        className={`workspace-action-item ${item.active ? "active" : ""} ${compact ? "workspace-action-compact" : ""}`}
         key={item.label}
-        onClick={item.onClick}
+        onClick={() => { item.onClick(); setManageOpen(false); }}
         disabled={item.disabled}
+        role={compact ? "menuitem" : undefined}
         aria-current={item.active ? "page" : undefined}
+        aria-label={item.label}
+        title={item.label}
       >
-        <item.icon size={16} />
+        <Icon size={16} aria-hidden="true" />
         <span>{item.label}</span>
       </button>
-    ))}
-  </nav>
-);
+    );
+  };
+
+  return (
+    <nav className="workspace-page-header" aria-label="Workspace">
+      <h1 className="sr-only">Security Overview</h1>
+      <div className="workspace-page-actions">
+        <div className="workspace-action-segment" role="group" aria-label="Workspace modules">
+          {secondaryItems.map((item) => renderItem(item))}
+        </div>
+        <div ref={manageRef} className="workspace-manage">
+        <button type="button" className="workspace-manage-button" aria-label="Manage workspace modules" aria-haspopup="menu" aria-expanded={manageOpen} onClick={() => setManageOpen((current) => !current)}>
+            <Settings2 size={16} aria-hidden="true" /><span>Manage</span>
+          </button>
+          {manageOpen && <div className="workspace-manage-menu" role="menu" aria-label="Workspace modules">{secondaryItems.map((item) => renderItem(item, true))}</div>}
+        </div>
+        {downloadItem && <>
+          <div className="workspace-action-divider" aria-hidden="true" />
+          <button type="button" className={`workspace-download-action ${downloadPrimary ? "is-primary" : "is-secondary"}`} onClick={downloadItem.onClick} disabled={downloadItem.disabled} aria-label={downloadItem.label} title={downloadItem.label}>
+            <downloadItem.icon size={16} aria-hidden="true" /><span>{downloadItem.label}</span>
+          </button>
+        </>}
+        {showCustomize && <div className="workspace-customize-anchor">
+          <button ref={customizeButtonRef} type="button" className={`workspace-customize-action ${isCustomizePanelOpen ? "active" : ""}`} onClick={onToggleCustomize} aria-label="Customize dashboard" title="Customize dashboard" aria-haspopup="dialog" aria-controls="dashboard-widget-picker" aria-expanded={isCustomizePanelOpen} aria-pressed={isDashboardEditMode}>
+            <Settings2 size={17} aria-hidden="true" />
+          </button>
+        </div>}
+      </div>
+      {showCustomize && isCustomizePanelOpen && widgetPicker && createPortal(
+        React.cloneElement(widgetPicker, {
+          id: "dashboard-widget-picker",
+          ref: widgetPickerRef,
+          style: {
+            position: "fixed",
+            top: `${widgetPickerPosition.top}px`,
+            right: `${widgetPickerPosition.right}px`,
+            width: "min(320px, calc(100vw - 32px))",
+            maxHeight: "70vh",
+            overflowY: "auto",
+            zIndex: 1000,
+          },
+        }),
+        portalTarget,
+      )}
+    </nav>
+  );
+};
 
 function Dashboard() {
   const { user: currentUser, role, logout } = useAuthStore();
@@ -374,7 +480,8 @@ function Dashboard() {
   const [chartOrder, setChartOrder] = useState(initialChartPreferences.order);
   const [hiddenChartIds, setHiddenChartIds] = useState(initialChartPreferences.hidden);
   const [removingChartIds, setRemovingChartIds] = useState([]);
-  const [showWidgetPicker, setShowWidgetPicker] = useState(false);
+  const [isCustomizePanelOpen, setIsCustomizePanelOpen] = useState(false);
+  const [isDashboardEditMode, setIsDashboardEditMode] = useState(false);
   const [draggedChart, setDraggedChart] = useState(null);
 
   const [isLiveMode, setIsLiveMode] = useState(true);
@@ -1422,7 +1529,7 @@ function Dashboard() {
   };
   const visibleChartCount = DEFAULT_CHART_ORDER.length - hiddenChartIds.length;
   const chartDragProps = (id) => ({
-    draggable: true,
+    draggable: isDashboardEditMode,
     style: { order: chartOrder.indexOf(id) },
     onDragStart: (event) => {
       setDraggedChart(id);
@@ -1703,13 +1810,46 @@ function Dashboard() {
           </div>
         </header>
 
-        <WorkspaceTopNav
+        <WorkspacePageHeader
           items={[
             ...(canViewCompliance ? [{ label: "Compliance & Audit", icon: ShieldCheck, active: activeTab === "compliance", onClick: () => setActiveTab("compliance") }] : []),
             ...(canViewSca ? [{ label: "Configuration", icon: ListChecks, active: activeTab === "configuration", onClick: () => setActiveTab("configuration") }] : []),
             ...(canManageTeam ? [{ label: "Team & Access", icon: Users, active: activeTab === "team", onClick: () => setActiveTab("team") }] : []),
             ...(canDownloadAgent ? [{ label: generatingActivation ? "Generating..." : "Download Agent", icon: generatingActivation ? RefreshCw : Download, active: false, onClick: handlePrepareAgentDownload, disabled: generatingActivation }] : []),
           ]}
+          showCustomize={activeTab === "dashboard"}
+          onToggleCustomize={(nextState) => {
+            if (nextState === false) {
+              setIsCustomizePanelOpen(false);
+              setIsDashboardEditMode(false);
+              return;
+            }
+            if (isCustomizePanelOpen) {
+              setIsCustomizePanelOpen(false);
+              setIsDashboardEditMode(false);
+              return;
+            }
+            setIsDashboardEditMode(true);
+            setIsCustomizePanelOpen(true);
+          }}
+          isCustomizePanelOpen={isCustomizePanelOpen}
+          isDashboardEditMode={isDashboardEditMode}
+          downloadPrimary={!Array.isArray(fleetStatus?.data) || fleetStatus.data.length === 0}
+          widgetPicker={(
+            <div className="widget-picker" role="dialog" aria-label="Customize dashboard widgets">
+              <div className="widget-picker-header"><strong>Dashboard widgets</strong><button type="button" className="widget-picker-close" onClick={() => setIsCustomizePanelOpen(false)} aria-label="Close dashboard widgets"><X size={14} /></button></div>
+              <p>Select the widgets you want visible.</p>
+              <div className="widget-picker-list">
+                {DASHBOARD_WIDGETS.map((widget) => {
+                  const visible = !hiddenChartIds.includes(widget.id);
+                  return <label className="widget-picker-option" key={widget.id}>
+                    <input type="checkbox" checked={visible} onChange={() => toggleChartVisibility(widget.id)} />
+                    <span>{widget.title}</span>
+                  </label>;
+                })}
+              </div>
+            </div>
+          )}
         />
 
         {canViewOperations && activeTab === "dashboard" && (
@@ -1748,36 +1888,9 @@ function Dashboard() {
                   />
                 </div>
 
-                <div className="dashboard-widget-toolbar">
-                  <div>
-                    <span className="dashboard-widget-eyebrow">Dashboard layout</span>
-                    <span className="dashboard-widget-hint">Drag widgets to reorder them, or hide the ones you do not need.</span>
-                  </div>
-                  <div className="dashboard-widget-customize">
-                    <button type="button" className="widget-customize-button" onClick={() => setShowWidgetPicker((current) => !current)} aria-expanded={showWidgetPicker}>
-                      <Settings2 size={15} /> Customize dashboard
-                    </button>
-                    {showWidgetPicker && (
-                      <div className="widget-picker" role="dialog" aria-label="Customize dashboard widgets">
-                        <div className="widget-picker-header"><strong>Dashboard widgets</strong><button type="button" className="widget-picker-close" onClick={() => setShowWidgetPicker(false)} aria-label="Close widget picker"><X size={14} /></button></div>
-                        <p>Select the widgets you want visible.</p>
-                        <div className="widget-picker-list">
-                          {DASHBOARD_WIDGETS.map((widget) => {
-                            const visible = !hiddenChartIds.includes(widget.id);
-                            return <label className="widget-picker-option" key={widget.id}>
-                              <input type="checkbox" checked={visible} onChange={() => toggleChartVisibility(widget.id)} />
-                              <span>{widget.title}</span>
-                            </label>;
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
                 <div className={`soc-analytics-grid widget-count-${visibleChartCount}`}>
                   {!hiddenChartIds.includes("incident-trend") && <div className={chartClass("incident-trend", "chart-box-wide")} {...chartDragProps("incident-trend")}>
-                    <ChartTitle title="Incident Volume Trend" meta={timeFilter === "7" ? "Last 7 days" : "Last 24 hours"} onRemove={() => removeChart("incident-trend")} />
+                    <ChartTitle title="Incident Volume Trend" meta={timeFilter === "7" ? "Last 7 days" : "Last 24 hours"} onRemove={() => removeChart("incident-trend")} isCustomizing={isDashboardEditMode} />
                     <ResponsiveContainer width="100%" height={250}>
                       <AreaChart
                         data={volumeData}
@@ -1843,7 +1956,7 @@ function Dashboard() {
                   </div>}
 
                   {!hiddenChartIds.includes("source-locations") && <div className={chartClass("source-locations", "origin-map-card")} {...chartDragProps("source-locations")}>
-                    <ChartTitle title="Observed Source Locations" meta={`${originData.reduce((sum, item) => sum + item.value, 0)} signals`} onRemove={() => removeChart("source-locations")} />
+                    <ChartTitle title="Observed Source Locations" meta={`${originData.reduce((sum, item) => sum + item.value, 0)} signals`} onRemove={() => removeChart("source-locations")} isCustomizing={isDashboardEditMode} />
                     <ResponsiveContainer width="100%" height={250}>
                       <BarChart data={originData} layout="vertical" margin={{ top: 8, right: 18, left: 6, bottom: 6 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
@@ -1856,7 +1969,7 @@ function Dashboard() {
                   </div>}
 
                   {!hiddenChartIds.includes("severity") && <div className={chartClass("severity", "chart-box-compact")} {...chartDragProps("severity")}>
-                    <ChartTitle title="Threat Severity" meta="Open queue" onRemove={() => removeChart("severity")} />
+                    <ChartTitle title="Threat Severity" meta="Open queue" onRemove={() => removeChart("severity")} isCustomizing={isDashboardEditMode} />
                     <ResponsiveContainer width="100%" height={220}>
                       <PieChart>
                         <Pie
@@ -1892,7 +2005,7 @@ function Dashboard() {
                   </div>}
 
                   {!hiddenChartIds.includes("telemetry-sources") && <div className={chartClass("telemetry-sources", "chart-box-compact")} {...chartDragProps("telemetry-sources")}>
-                    <ChartTitle title="Telemetry Source Breakdown" meta="Top sources" onRemove={() => removeChart("telemetry-sources")} />
+                    <ChartTitle title="Telemetry Source Breakdown" meta="Top sources" onRemove={() => removeChart("telemetry-sources")} isCustomizing={isDashboardEditMode} />
                     <ResponsiveContainer width="100%" height={220}>
                       <PieChart>
                         <Pie
@@ -1928,7 +2041,7 @@ function Dashboard() {
                   </div>}
 
                   {!hiddenChartIds.includes("detection-rules") && <div className={chartClass("detection-rules", "chart-box-compact")} {...chartDragProps("detection-rules")}>
-                    <ChartTitle title="Detection Rule Frequency" meta="WarSOC detections" onRemove={() => removeChart("detection-rules")} />
+                    <ChartTitle title="Detection Rule Frequency" meta="WarSOC detections" onRemove={() => removeChart("detection-rules")} isCustomizing={isDashboardEditMode} />
                     {ruleData.length ? <ResponsiveContainer width="100%" height={250}>
                       <BarChart data={ruleData} layout="vertical" margin={{ top: 5, right: 18, left: 4, bottom: 4 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
@@ -1941,7 +2054,7 @@ function Dashboard() {
                   </div>}
 
                   {!hiddenChartIds.includes("mitre") && <div className={chartClass("mitre", "chart-box-compact")} {...chartDragProps("mitre")}>
-                    <ChartTitle title="MITRE ATT&CK Coverage" meta="Observed techniques" onRemove={() => removeChart("mitre")} />
+                    <ChartTitle title="MITRE ATT&CK Coverage" meta="Observed techniques" onRemove={() => removeChart("mitre")} isCustomizing={isDashboardEditMode} />
                     {mitreData.length ? <ResponsiveContainer width="100%" height={250}>
                       <BarChart data={mitreData} layout="vertical" margin={{ top: 5, right: 18, left: 4, bottom: 4 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
@@ -1954,7 +2067,7 @@ function Dashboard() {
                   </div>}
 
                   {!hiddenChartIds.includes("endpoint-load") && <div className={chartClass("endpoint-load", "chart-box-compact")} {...chartDragProps("endpoint-load")}>
-                    <ChartTitle title="Endpoint Event Load" meta="Top assets" onRemove={() => removeChart("endpoint-load")} />
+                    <ChartTitle title="Endpoint Event Load" meta="Top assets" onRemove={() => removeChart("endpoint-load")} isCustomizing={isDashboardEditMode} />
                     <ResponsiveContainer width="100%" height={220}>
                       <BarChart
                         data={endpointData}
@@ -1986,7 +2099,7 @@ function Dashboard() {
                   </div>}
 
                   {!hiddenChartIds.includes("operations") && <div className={chartClass("operations", "chart-box-compact operations-card")} {...chartDragProps("operations")}>
-                    <ChartTitle title="Operations Snapshot" meta="Now" onRemove={() => removeChart("operations")} />
+                    <ChartTitle title="Operations Snapshot" meta="Now" onRemove={() => removeChart("operations")} isCustomizing={isDashboardEditMode} />
                     <div className="ops-scoreboard">
                       {triageStats.map((item) => (
                         <div className="ops-tile" key={item.label}>
