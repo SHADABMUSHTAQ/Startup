@@ -3697,6 +3697,46 @@ select.global-search option {
   -webkit-text-fill-color: #ffffff !important;
 }
 
+/* Module tabs: transparent links with aligned, high-contrast blue icon and label. */
+.siem-layout .workspace-action-segment .workspace-action-item,
+.siem-layout .workspace-action-segment .workspace-action-item:hover:not(:disabled),
+.siem-layout .workspace-action-segment .workspace-action-item.active {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 2px;
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent !important;
+  color: #2563eb !important;
+  -webkit-text-fill-color: #2563eb !important;
+}
+.siem-layout .workspace-action-segment .workspace-action-item > span {
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
+}
+.siem-layout .workspace-action-segment .workspace-action-item > svg,
+.siem-layout .workspace-action-segment .workspace-action-item > svg :where(path, line, polyline, rect, circle) {
+  color: #2563eb !important;
+  stroke: #2563eb !important;
+  fill: none !important;
+  opacity: 1 !important;
+}
+.siem-layout .workspace-action-segment .workspace-action-item:hover:not(:disabled),
+.siem-layout .workspace-action-segment .workspace-action-item.active {
+  color: #1d4ed8 !important;
+  -webkit-text-fill-color: #1d4ed8 !important;
+}
+.siem-layout .workspace-action-segment .workspace-action-item:hover:not(:disabled) > svg,
+.siem-layout .workspace-action-segment .workspace-action-item:hover:not(:disabled) > svg :where(path, line, polyline, rect, circle),
+.siem-layout .workspace-action-segment .workspace-action-item.active > svg,
+.siem-layout .workspace-action-segment .workspace-action-item.active > svg :where(path, line, polyline, rect, circle) {
+  color: #1d4ed8 !important;
+  stroke: #1d4ed8 !important;
+}
+
 /* Final workspace action layout: module links sit left; Download Agent stays right. */
 .siem-layout .workspace-page-actions {
   width: 100%;
