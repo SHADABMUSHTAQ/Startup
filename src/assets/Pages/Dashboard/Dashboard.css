@@ -3703,7 +3703,7 @@ select.global-search option {
   justify-content: flex-start;
 }
 .siem-layout .workspace-action-segment {
-  order: 1;
+  order: 0;
   gap: 26px;
   margin-right: 0;
   flex: 0 0 auto;
