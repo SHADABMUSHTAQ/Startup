@@ -3676,6 +3676,27 @@ select.global-search option {
   .siem-layout .endpoint-context-strip + .content-scrollable { padding-top: 16px; }
 }
 
+/* Live primary Download Agent state: preserve the blue fill and white label/icon after theme/cascade changes. */
+.siem-layout .workspace-download-action.is-primary,
+.siem-layout .workspace-download-action.is-primary:hover:not(:disabled),
+.siem-layout .workspace-download-action.is-primary:focus-visible,
+.siem-layout .workspace-download-action.is-primary:active {
+  background: #2563eb !important;
+  border-color: #2563eb !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+.siem-layout .workspace-download-action.is-primary:hover:not(:disabled) { background: #1d4ed8 !important; border-color: #1d4ed8 !important; }
+.siem-layout .workspace-download-action.is-primary > span,
+.siem-layout .workspace-download-action.is-primary > svg,
+.siem-layout .workspace-download-action.is-primary > svg :where(path, line, polyline, rect, circle) {
+  color: #ffffff !important;
+  stroke: #ffffff !important;
+  fill: none !important;
+  opacity: 1 !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+
 /* Keep the tab label itself white when the blue hover/active state is shown. */
 .siem-layout .workspace-top-nav-item:hover:not(:disabled) > span,
 .siem-layout .workspace-top-nav-item.active > span {
@@ -4152,4 +4173,25 @@ select.global-search option {
     padding: 0 12px;
     font-size: 11px;
   }
+}
+
+/* Final live primary Download Agent contrast guarantee. */
+.siem-layout .workspace-download-action.is-primary,
+.siem-layout .workspace-download-action.is-primary:hover:not(:disabled),
+.siem-layout .workspace-download-action.is-primary:focus-visible,
+.siem-layout .workspace-download-action.is-primary:active {
+  background: #2563eb !important;
+  border-color: #2563eb !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+.siem-layout .workspace-download-action.is-primary:hover:not(:disabled) { background: #1d4ed8 !important; border-color: #1d4ed8 !important; }
+.siem-layout .workspace-download-action.is-primary > span,
+.siem-layout .workspace-download-action.is-primary > svg,
+.siem-layout .workspace-download-action.is-primary > svg :where(path, line, polyline, rect, circle) {
+  color: #ffffff !important;
+  stroke: #ffffff !important;
+  fill: none !important;
+  opacity: 1 !important;
+  -webkit-text-fill-color: #ffffff !important;
 }

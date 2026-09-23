@@ -481,7 +481,7 @@ function Dashboard() {
   const [hiddenChartIds, setHiddenChartIds] = useState(initialChartPreferences.hidden);
   const [removingChartIds, setRemovingChartIds] = useState([]);
   const [isCustomizePanelOpen, setIsCustomizePanelOpen] = useState(false);
-  const [isDashboardEditMode, setIsDashboardEditMode] = useState(false);
+  const [isDashboardEditMode, setIsDashboardEditMode] = useState(true);
   const [draggedChart, setDraggedChart] = useState(null);
 
   const [isLiveMode, setIsLiveMode] = useState(true);
@@ -1821,12 +1821,10 @@ function Dashboard() {
           onToggleCustomize={(nextState) => {
             if (nextState === false) {
               setIsCustomizePanelOpen(false);
-              setIsDashboardEditMode(false);
               return;
             }
             if (isCustomizePanelOpen) {
               setIsCustomizePanelOpen(false);
-              setIsDashboardEditMode(false);
               return;
             }
             setIsDashboardEditMode(true);
