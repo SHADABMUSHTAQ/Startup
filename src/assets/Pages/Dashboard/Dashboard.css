@@ -3705,9 +3705,18 @@ select.global-search option {
 .siem-layout .workspace-action-segment {
   order: 1;
   gap: 26px;
-  margin-right: auto;
+  margin-right: 0;
+  flex: 0 0 auto;
   border: 0 !important;
   background: transparent !important;
+}
+.siem-layout .workspace-action-divider {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.siem-layout .workspace-download-action,
+.siem-layout .workspace-customize-anchor {
+  flex: 0 0 auto;
 }
 .siem-layout .workspace-action-segment .workspace-action-item {
   min-height: 36px;
