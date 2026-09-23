@@ -296,7 +296,7 @@ const UserMenu = ({ user, onProfile, onLogout }) => {
   );
 };
 
-const WorkspacePageHeader = ({ items, showCustomize, onToggleCustomize, isCustomizePanelOpen, isDashboardEditMode, widgetPicker, downloadPrimary }) => {
+const WorkspacePageHeader = ({ items, showCustomize, onToggleCustomize, isCustomizePanelOpen, isDashboardEditMode, widgetPicker }) => {
   const secondaryItems = items.filter((item) => item.label !== "Download Agent" && item.label !== "Generating...");
   const downloadItem = items.find((item) => item.label === "Download Agent" || item.label === "Generating...");
   const [manageOpen, setManageOpen] = useState(false);
@@ -395,7 +395,7 @@ const WorkspacePageHeader = ({ items, showCustomize, onToggleCustomize, isCustom
         </div>
         {downloadItem && <>
           <div className="workspace-action-divider" aria-hidden="true" />
-          <button type="button" className={`workspace-download-action ${downloadPrimary ? "is-primary" : "is-secondary"}`} onClick={downloadItem.onClick} disabled={downloadItem.disabled} aria-label={downloadItem.label} title={downloadItem.label}>
+          <button type="button" className="workspace-download-action is-primary" onClick={downloadItem.onClick} disabled={downloadItem.disabled} aria-label={downloadItem.label} title={downloadItem.label}>
             <downloadItem.icon size={16} aria-hidden="true" /><span>{downloadItem.label}</span>
           </button>
         </>}
@@ -1832,7 +1832,6 @@ function Dashboard() {
           }}
           isCustomizePanelOpen={isCustomizePanelOpen}
           isDashboardEditMode={isDashboardEditMode}
-          downloadPrimary={!Array.isArray(fleetStatus?.data) || fleetStatus.data.length === 0}
           widgetPicker={(
             <div className="widget-picker" role="dialog" aria-label="Customize dashboard widgets">
               <div className="widget-picker-header"><strong>Dashboard widgets</strong><button type="button" className="widget-picker-close" onClick={() => setIsCustomizePanelOpen(false)} aria-label="Close dashboard widgets"><X size={14} /></button></div>
