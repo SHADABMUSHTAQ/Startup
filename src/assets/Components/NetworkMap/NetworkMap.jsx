@@ -7,6 +7,7 @@ const severityRank = { INFO: 0, LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
 
 const NetworkMap = ({ logs = [], blockedList = [], canManage = false, onBlockIP }) => {
   const [selectedNode, setSelectedNode] = useState(null);
+  const isLightTheme = typeof document !== "undefined" && document.documentElement.dataset.theme === "light";
 
   const { elements, nodeLogs } = useMemo(() => {
     const graphElements = [
@@ -84,7 +85,7 @@ const NetworkMap = ({ logs = [], blockedList = [], canManage = false, onBlockIP 
       selector: "node",
       style: {
         label: "data(label)",
-        color: "#94a3b8",
+        color: isLightTheme ? "#475569" : "#94a3b8",
         "font-size": "10px",
         "text-valign": "bottom",
         "text-margin-y": "5px",
@@ -104,6 +105,12 @@ const NetworkMap = ({ logs = [], blockedList = [], canManage = false, onBlockIP 
         color: "#fff",
         "font-weight": "bold",
         "font-size": "12px",
+        ...(isLightTheme ? {
+          "text-valign": "center",
+          "text-margin-y": "0px",
+          "text-outline-color": "#2563eb",
+          "text-outline-width": 2,
+        } : {}),
       },
     },
     {
@@ -159,7 +166,7 @@ const NetworkMap = ({ logs = [], blockedList = [], canManage = false, onBlockIP 
 
   return (
     <div className="network-map-container">
-      <div className="cy-wrapper">
+      <div className={`cy-wrapper ${isLightTheme ? "is-light" : "is-dark"}`}>
         <CytoscapeComponent
           elements={elements}
           stylesheet={stylesheet}

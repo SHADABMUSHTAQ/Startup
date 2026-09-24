@@ -362,3 +362,26 @@
 .cy-wrapper { flex: none; width: 100%; height: 550px; }
 .node-details-panel { width: 100%; min-width: 0; max-width: none; flex-shrink: 1; animation: mapDetailBelow .35s ease-out forwards; }
 @keyframes mapDetailBelow { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Refined map surface for a clearer, more inviting activity view. */
+.network-map-container {
+  gap: 16px;
+}
+.cy-wrapper {
+  border-radius: 14px;
+  background-image:
+    radial-gradient(circle at 50% 18%, rgba(59, 130, 246, .08), transparent 34%),
+    linear-gradient(145deg, rgba(15, 23, 42, .98), rgba(3, 7, 18, .99));
+  box-shadow: inset 0 0 48px rgba(2, 6, 23, .45), 0 18px 40px -34px rgba(15, 23, 42, .8);
+}
+.cy-wrapper.is-light {
+  background-image:
+    radial-gradient(circle at 50% 18%, rgba(37, 99, 235, .08), transparent 36%),
+    linear-gradient(145deg, #ffffff, #f1f5f9);
+  border-color: #cbd5e1;
+  box-shadow: inset 0 0 48px rgba(15, 23, 42, .06), 0 18px 40px -34px rgba(37, 99, 235, .32);
+}
+.cy-wrapper.is-light:hover {
+  border-color: rgba(37, 99, 235, .48);
+  box-shadow: inset 0 0 48px rgba(15, 23, 42, .06), 0 20px 42px -32px rgba(37, 99, 235, .42);
+}
