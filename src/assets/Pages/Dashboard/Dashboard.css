@@ -5132,6 +5132,11 @@ select.global-search option {
   -webkit-text-fill-color: #ffffff !important;
 }
 
+/* Keep the hover bridge continuous while moving from More into its menu. */
+.siem-layout .search-more-menu {
+  top: calc(100% + 1px);
+}
+
 /* Endpoint fleet: restrained card elevation and cleaner row separation. */
 .siem-layout .ops-view .ops-table-wrap {
   border-color: var(--dash-border-strong);
