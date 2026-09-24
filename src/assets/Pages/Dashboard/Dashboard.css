@@ -4918,6 +4918,44 @@ select.global-search option {
   opacity: 1 !important;
 }
 
+/* More is neutral at rest; the blue/white treatment is interaction-only. */
+.search-more-button,
+[data-theme="dark"] .search-more-button {
+  border-color: var(--dash-border-strong) !important;
+  background: var(--dash-panel-strong) !important;
+  color: var(--dash-text) !important;
+  box-shadow: none;
+  transform: none;
+}
+.search-more-button svg,
+.search-more-button svg :where(path, line, polyline, circle),
+[data-theme="dark"] .search-more-button svg,
+[data-theme="dark"] .search-more-button svg :where(path, line, polyline, circle) {
+  color: currentColor !important;
+  stroke: currentColor !important;
+}
+.search-more-button:hover,
+.search-more-button:focus-visible,
+.search-more-button.is-open,
+[data-theme="dark"] .search-more-button:hover,
+[data-theme="dark"] .search-more-button:focus-visible,
+[data-theme="dark"] .search-more-button.is-open {
+  border-color: #2563eb !important;
+  background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
+  color: #ffffff !important;
+  box-shadow: 0 8px 20px -6px rgba(37, 99, 235, .4);
+  transform: translateY(-1px);
+}
+.search-more-button:hover svg,
+.search-more-button:focus-visible svg,
+.search-more-button.is-open svg,
+.search-more-button:hover svg :where(path, line, polyline, circle),
+.search-more-button:focus-visible svg :where(path, line, polyline, circle),
+.search-more-button.is-open svg :where(path, line, polyline, circle) {
+  color: #ffffff !important;
+  stroke: #ffffff !important;
+}
+
 /* Endpoint summary cards: subtle motion and clear status hierarchy. */
 .siem-layout .ops-stats .ops-stat {
   position: relative;
