@@ -68,3 +68,12 @@
     border-top-color: color-mix(in srgb, var(--accent-secondary) 55%, transparent);
   }
 }
+
+/* Keep the session gate legible when the app is in light theme. */
+[data-theme="light"] .session-gate {
+  background: radial-gradient(ellipse 120% 80% at 50% -20%, rgba(37, 99, 235, .08), transparent 55%), #f8fafc;
+  color: #0f172a;
+}
+[data-theme="light"] .session-gate__shield { color: #2563eb; filter: drop-shadow(0 0 12px rgba(37, 99, 235, .22)); }
+[data-theme="light"] .session-gate__ring { border-color: rgba(37, 99, 235, .18); border-top-color: #84cc16; }
+[data-theme="light"] .session-gate__label { color: #475569; }

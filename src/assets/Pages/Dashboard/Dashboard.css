@@ -4852,6 +4852,74 @@ select.global-search option {
 .search-more-button:focus-visible svg,
 .search-more-button.is-open svg { color: #1e3a8a; stroke: #1e3a8a; }
 
+/* Stronger contrast for the More affordance while keeping the light-blue treatment. */
+.search-more-button:hover,
+.search-more-button:focus-visible,
+.search-more-button.is-open,
+[data-theme="dark"] .search-more-button:hover,
+[data-theme="dark"] .search-more-button:focus-visible,
+[data-theme="dark"] .search-more-button.is-open {
+  background: #93c5fd;
+  border-color: #60a5fa;
+  color: #0f172a;
+}
+.search-more-button:hover svg,
+.search-more-button:focus-visible svg,
+.search-more-button.is-open svg { color: #0f172a; stroke: #0f172a; }
+
+/* Endpoint summary cards: subtle motion and clear status hierarchy. */
+.siem-layout .ops-stats .ops-stat {
+  position: relative;
+  overflow: hidden;
+  min-height: 112px;
+  border-color: #dbe3ee;
+  box-shadow: 0 8px 20px -18px rgba(15, 23, 42, .55);
+  animation: endpoint-stat-in .42s ease both;
+  transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
+}
+.siem-layout .ops-stats .ops-stat::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: #2563eb;
+  opacity: .78;
+}
+.siem-layout .ops-stats .ops-stat:nth-child(2)::before { background: #0ea5e9; }
+.siem-layout .ops-stats .ops-stat:nth-child(3)::before { background: #f59e0b; }
+.siem-layout .ops-stats .ops-stat:nth-child(4)::before { background: #10b981; }
+.siem-layout .ops-stats .ops-stat:nth-child(5)::before { background: #f59e0b; }
+.siem-layout .ops-stats .ops-stat:nth-child(6)::before { background: #64748b; }
+.siem-layout .ops-stats .ops-stat:hover {
+  transform: translateY(-4px);
+  border-color: #93c5fd;
+  box-shadow: 0 16px 28px -18px rgba(37, 99, 235, .34);
+}
+.siem-layout .ops-stats .ops-stat strong {
+  position: relative;
+  z-index: 1;
+  font-size: 27px;
+  font-weight: 750;
+  letter-spacing: -.03em;
+}
+[data-theme="dark"] .siem-layout .ops-stats .ops-stat {
+  border-color: rgba(148, 163, 184, .2);
+  box-shadow: 0 12px 26px -20px rgba(0, 0, 0, .9);
+}
+[data-theme="dark"] .siem-layout .ops-stats .ops-stat:hover { border-color: rgba(96, 165, 250, .65); }
+@keyframes endpoint-stat-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.siem-layout .ops-stats .ops-stat:nth-child(2) { animation-delay: .04s; }
+.siem-layout .ops-stats .ops-stat:nth-child(3) { animation-delay: .08s; }
+.siem-layout .ops-stats .ops-stat:nth-child(4) { animation-delay: .12s; }
+.siem-layout .ops-stats .ops-stat:nth-child(5) { animation-delay: .16s; }
+.siem-layout .ops-stats .ops-stat:nth-child(6) { animation-delay: .20s; }
+@media (prefers-reduced-motion: reduce) {
+  .siem-layout .ops-stats .ops-stat { animation: none; transition: none; }
+}
+
 /* Keep the menu closer to the center/right action area on desktop. */
 @media (min-width: 901px) {
   .search-more-menu { right: -100px; }
