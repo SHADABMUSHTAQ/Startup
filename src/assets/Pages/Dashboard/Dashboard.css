@@ -4696,6 +4696,9 @@ select.global-search option {
 .siem-layout {
   --main-content-gutter: clamp(16px, 1.25vw, 20px);
 }
+.siem-layout .search-wrapper {
+  gap: 6px;
+}
 .siem-layout .content-scrollable {
   padding-left: var(--main-content-gutter);
   padding-right: var(--main-content-gutter);
