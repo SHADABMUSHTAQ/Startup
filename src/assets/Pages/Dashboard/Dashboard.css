@@ -4692,6 +4692,26 @@ select.global-search option {
   max-width: none;
 }
 
+/* Keep the shell tight and aligned beside the sidebar at every zoom level. */
+.siem-layout {
+  --main-content-gutter: clamp(16px, 1.25vw, 20px);
+}
+.siem-layout .content-scrollable {
+  padding-left: var(--main-content-gutter);
+  padding-right: var(--main-content-gutter);
+}
+.siem-layout .workspace-page-header,
+.siem-layout .endpoint-context-strip {
+  margin-left: var(--main-content-gutter);
+  margin-right: var(--main-content-gutter);
+}
+
+@media (max-width: 720px) {
+  .siem-layout {
+    --main-content-gutter: 14px;
+  }
+}
+
 /* Keep operational page copy readable in the light theme. */
 [data-theme="light"] .siem-layout .ops-view,
 [data-theme="light"] .siem-layout .case-workspace,
