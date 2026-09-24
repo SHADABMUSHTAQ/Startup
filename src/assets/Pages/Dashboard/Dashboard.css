@@ -4699,6 +4699,32 @@ select.global-search option {
 .siem-layout .search-wrapper {
   gap: 6px;
 }
+
+/* Let the search controls use available desktop width instead of leaving a large dead gap. */
+@media (min-width: 1200px) {
+  .siem-layout .search-wrapper {
+    flex: 1 1 clamp(620px, 44vw, 1080px);
+    max-width: min(62vw, 1080px);
+    gap: clamp(6px, .45vw, 10px);
+  }
+  .siem-layout .search-field {
+    flex: 1 1 clamp(360px, 27vw, 700px);
+  }
+  .siem-layout .search-wrapper > select.global-search {
+    width: clamp(150px, 10vw, 220px);
+    flex-basis: clamp(150px, 10vw, 220px);
+  }
+  .siem-layout .search-wrapper > .btn-primary {
+    min-width: clamp(92px, 6vw, 132px);
+    padding-left: clamp(16px, 1.1vw, 22px);
+    padding-right: clamp(16px, 1.1vw, 22px);
+  }
+  .siem-layout .search-more-button {
+    min-width: clamp(76px, 5vw, 108px);
+    padding-left: clamp(12px, .9vw, 18px);
+    padding-right: clamp(12px, .9vw, 18px);
+  }
+}
 .siem-layout .content-scrollable {
   padding-left: var(--main-content-gutter);
   padding-right: var(--main-content-gutter);
