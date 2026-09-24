@@ -25,7 +25,7 @@ const display = (value, fallback = "Not recorded") => value === undefined || val
 const formatVersion = (value) => display(value).split("-")[0];
 const healthLabel = (value) => ({ active: "Online", degraded: "Degraded", offline: "Offline", revoked: "Revoked" }[String(value).toLowerCase()] || "Not recorded");
 
-function Fleet({ onDownloadAgent }) {
+function Fleet() {
   const { is } = useRole();
   const canManageServerProfiles = is("admin");
   const [state, setState] = useState("loading");
@@ -107,7 +107,7 @@ function Fleet({ onDownloadAgent }) {
   };
 
   return <section className="ops-view">
-    <div className="ops-heading"><div><p className="ops-eyebrow">Endpoint operations</p><h2>Endpoint Fleet</h2><p>Current fleet status is based on agent health, not log rows.</p></div><div className="ops-actions"><button className="ops-secondary" onClick={load} disabled={state === "loading" || state === "refreshing"}><RefreshCw size={16} className={state === "refreshing" ? "ops-spin" : ""} /> Refresh</button>{onDownloadAgent && <button onClick={onDownloadAgent}><Download size={16} /> Download Agent</button>}</div></div>
+    <div className="ops-heading"><div><p className="ops-eyebrow">Endpoint operations</p><h2>Endpoint Fleet</h2><p>Current fleet status is based on agent health, not log rows.</p></div><div className="ops-actions"><button className="ops-secondary" onClick={load} disabled={state === "loading" || state === "refreshing"}><RefreshCw size={16} className={state === "refreshing" ? "ops-spin" : ""} /> Refresh</button></div></div>
     {message && <div className="ops-notice"><AlertCircle size={17} />{message}<button onClick={load}>Retry</button></div>}
     {profileNotice && <div className="ops-notice" role="status"><ServerCog size={17} />{profileNotice}</div>}
     <div className="ops-stats">{summary.map(([label, value]) => <div className="ops-stat" key={label}><span>{label}</span><strong>{state === "loading" ? "—" : display(value, "0")}</strong></div>)}</div>
@@ -529,4 +529,4 @@ export function ArchiveView() {
   </section>;
 }
 
-export default function OperationsViews({ mode, onDownloadAgent }) { if (mode === "fleet") return <Fleet onDownloadAgent={onDownloadAgent} />; if (mode === "relay") return <RelayView />; if (mode === "archive") return <ArchiveView />; if (mode === "offline-legacy") return <LegacyOfflineAnalysis />; return <OfflineAnalysis />; }
+export default function OperationsViews({ mode }) { if (mode === "fleet") return <Fleet />; if (mode === "relay") return <RelayView />; if (mode === "archive") return <ArchiveView />; if (mode === "offline-legacy") return <LegacyOfflineAnalysis />; return <OfflineAnalysis />; }

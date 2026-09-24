@@ -2506,7 +2506,7 @@ function Dashboard() {
             )}
 
             {activeTab === "endpoints" && (
-              <OperationsViews mode="fleet" onDownloadAgent={canDownloadAgent ? handlePrepareAgentDownload : undefined} />
+              <OperationsViews mode="fleet" />
             )}
 
             {activeTab === "offline-analysis" && (
