@@ -270,3 +270,63 @@
 .siem-layout .ops-select-wrap::after { content: ""; position: absolute; top: 50%; right: 14px; width: 16px; height: 16px; transform: translateY(-50%); pointer-events: none; background-color: var(--ops-arrow-color); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 16px 16px no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 16px 16px no-repeat; }
 [data-theme="light"] .siem-layout .ops-select-wrap { --ops-arrow-color: #475569; }
 [data-theme="dark"] .siem-layout .ops-select-wrap { --ops-arrow-color: #cbd5e1; }
+
+/* Final workspace typography pass: calmer hierarchy and readable operational data. */
+.siem-layout :is(.ops-heading h2, .offline-hero h2, .sca-header h2) {
+  font-size: clamp(26px, 2.2vw, 30px) !important;
+  font-weight: 700 !important;
+  line-height: 1.18 !important;
+  letter-spacing: -.025em !important;
+}
+
+.siem-layout :is(.ops-heading p:not(.ops-eyebrow), .offline-hero p:not(.ops-eyebrow), .relay-card-heading p, .relay-setup-heading p, .evidence-form p, .evidence-detail-heading p) {
+  font-size: 14px !important;
+  line-height: 1.6 !important;
+  font-weight: 400 !important;
+}
+
+.siem-layout :is(.ops-table, .holds-table, .evidence-table) td {
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+  line-height: 1.45 !important;
+  vertical-align: middle !important;
+}
+
+.siem-layout :is(.ops-table, .holds-table, .evidence-table) th {
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  letter-spacing: .075em !important;
+  line-height: 1.3 !important;
+}
+
+/* Agent IDs are identifiers, not status pills: keep them inline and remove the gray fill. */
+.siem-layout .ops-table td.ops-code {
+  display: table-cell !important;
+  max-width: 270px;
+  overflow: hidden;
+  padding: 16px 18px !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  line-height: 1.35 !important;
+  letter-spacing: .01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.siem-layout :is(.ops-stat span, .relay-detail-grid span, .relay-device-row span, .relay-capability-grid span, .sca-metrics span, .sca-posture-meta dt, .sca-finding dt) {
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  letter-spacing: .075em !important;
+  line-height: 1.35 !important;
+}
+
+.siem-layout :is(.relay-card h3, .relay-setup-card h3, .evidence-form h3, .evidence-detail-heading h3, .hold-modal h3, .relay-device-heading h4, .evidence-section-heading h4, .sca-findings-header h3) {
+  font-weight: 700 !important;
+  line-height: 1.3 !important;
+  letter-spacing: -.01em !important;
+}
+
+[data-theme="light"] .siem-layout .ops-table td.ops-code { color: #334155 !important; }
+[data-theme="dark"] .siem-layout .ops-table td.ops-code { color: #cbd5e1 !important; }
