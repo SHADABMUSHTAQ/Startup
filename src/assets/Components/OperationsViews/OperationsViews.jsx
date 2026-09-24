@@ -22,6 +22,7 @@ import EndpointTrust from "./EndpointTrust";
 import "./OperationsViews.css";
 
 const display = (value, fallback = "Not recorded") => value === undefined || value === null || value === "" ? fallback : String(value);
+const formatVersion = (value) => display(value).split("-")[0];
 const healthLabel = (value) => ({ active: "Online", degraded: "Degraded", offline: "Offline", revoked: "Revoked" }[String(value).toLowerCase()] || "Not recorded");
 
 function Fleet({ onDownloadAgent }) {
@@ -117,7 +118,7 @@ function Fleet({ onDownloadAgent }) {
       return <tr key={endpoint.agent_id}>
         <td><div className="endpoint-name-cell"><span>{display(endpoint.endpoint_name)}</span>{view.isServer && <span className="endpoint-type-badge">Server</span>}</div></td>
         <td className="ops-code">{display(endpoint.agent_id)}</td>
-        <td>{display(endpoint.version)}</td>
+        <td>{formatVersion(endpoint.version)}</td>
         <td>{endpoint.last_seen ? new Date(endpoint.last_seen).toLocaleString() : "Not recorded"}</td>
         <td><span className={`ops-status ${String(endpoint.health || "offline").toLowerCase()}`}>{healthLabel(endpoint.health)}</span></td>
         <td>{display(endpoint.event_signing?.status)}</td>

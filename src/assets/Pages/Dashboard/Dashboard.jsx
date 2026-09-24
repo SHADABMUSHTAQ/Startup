@@ -223,7 +223,7 @@ const EndpointContextStrip = ({ fleet, selectedAgentId, onSelectAgent }) => {
         <div><dt>Agent ID</dt><dd>{endpoint ? value(endpoint.agent_id) : "Not recorded"}</dd></div>
         <div><dt>Status</dt><dd><span className={`endpoint-health ${health}`}>{endpoint ? value(endpoint.health) : "Not configured"}</span></dd></div>
         <div><dt>IP address</dt><dd>{endpoint ? value(endpoint.ip_address || endpoint.source_ip || endpoint.ip) : "Not recorded"}</dd></div>
-        <div><dt>Version</dt><dd>{endpoint ? value(endpoint.version) : "Not recorded"}</dd></div>
+        <div><dt>Version</dt><dd>{endpoint ? value(endpoint.version).split("-")[0] : "Not recorded"}</dd></div>
         <div><dt>Signing</dt><dd>{endpoint ? value(endpoint.event_signing?.status) : "Not recorded"}</dd></div>
         <div><dt>Last seen</dt><dd>{endpoint?.last_seen ? new Date(endpoint.last_seen).toLocaleString() : "Not recorded"}</dd></div>
       </dl>

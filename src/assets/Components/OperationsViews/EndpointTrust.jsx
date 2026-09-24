@@ -5,11 +5,12 @@ import { formatBackendTime } from "../../../utils/backendTime";
 import "./EndpointTrust.css";
 
 const display = (value, fallback = "Not recorded") => value === undefined || value === null || value === "" ? fallback : String(value);
+const formatVersion = (value) => display(value).split("-")[0];
 const statusClass = (value) => String(value || "unknown").toLowerCase().replace(/\s+/g, "-");
 
 export default function EndpointTrust({ endpoints = [], loading = false }) {
   return <section className="endpoint-trust-panel">
-    <div className="endpoint-trust-heading"><div><span className="ops-eyebrow">Endpoint assurance</span><h3>Endpoint Trust</h3><p>Signing, time, audit, POS, and spool state calculated by the WarSOC backend.</p></div></div>
+    <div className="endpoint-trust-heading"><div><span className="ops-eyebrow">Endpoint assurance</span><h3>Endpoint Trust</h3></div></div>
     {loading && <AsyncState status="loading" />}
     {!loading && endpoints.length === 0 && <AsyncState status="empty" title="No trust records available" description="Endpoint trust details will appear after authenticated endpoint telemetry arrives." />}
     {!loading && endpoints.length > 0 && <div className="endpoint-trust-grid">{endpoints.map((endpoint) => {
@@ -24,7 +25,7 @@ export default function EndpointTrust({ endpoints = [], loading = false }) {
               <strong>{display(endpoint.endpoint_name || endpoint.agent_id)}</strong>
               {view.isServer && <span className="endpoint-type-badge">Server</span>}
             </div>
-            <span>{display(endpoint.version)} · Last seen {endpoint.last_seen ? formatBackendTime(endpoint.last_seen) : "not recorded"}</span>
+            <span>{formatVersion(endpoint.version)} · Last seen {endpoint.last_seen ? formatBackendTime(endpoint.last_seen) : "not recorded"}</span>
           </div>
           <span className={`endpoint-trust-status ${statusClass(endpoint.health)}`}>{display(endpoint.health, "Unknown")}</span>
         </div>

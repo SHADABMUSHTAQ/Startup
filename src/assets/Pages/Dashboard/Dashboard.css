@@ -4889,6 +4889,35 @@ select.global-search option {
   stroke: #ffffff !important;
 }
 
+/* Match More to the Search primary button treatment. */
+.search-more-button,
+.search-more-button:hover,
+.search-more-button:focus-visible,
+.search-more-button.is-open,
+[data-theme="dark"] .search-more-button,
+[data-theme="dark"] .search-more-button:hover,
+[data-theme="dark"] .search-more-button:focus-visible,
+[data-theme="dark"] .search-more-button.is-open {
+  border-color: rgba(255, 255, 255, .12) !important;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+  color: #ffffff !important;
+  box-shadow: 0 8px 20px -6px rgba(37, 99, 235, .4);
+}
+.search-more-button:hover,
+.search-more-button:focus-visible,
+[data-theme="dark"] .search-more-button:hover,
+[data-theme="dark"] .search-more-button:focus-visible {
+  background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
+  color: #ffffff !important;
+  transform: translateY(-1px);
+}
+.search-more-button svg,
+.search-more-button svg :where(path, line, polyline, circle) {
+  color: #ffffff !important;
+  stroke: #ffffff !important;
+  opacity: 1 !important;
+}
+
 /* Endpoint summary cards: subtle motion and clear status hierarchy. */
 .siem-layout .ops-stats .ops-stat {
   position: relative;
