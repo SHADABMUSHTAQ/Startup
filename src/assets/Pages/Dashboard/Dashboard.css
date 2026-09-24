@@ -4867,6 +4867,28 @@ select.global-search option {
 .search-more-button:focus-visible svg,
 .search-more-button.is-open svg { color: #0f172a; stroke: #0f172a; }
 
+/* Final More hover contrast: deep navy surface with white icon and label. */
+.search-more-button:hover,
+.search-more-button:focus-visible,
+.search-more-button.is-open,
+[data-theme="dark"] .search-more-button:hover,
+[data-theme="dark"] .search-more-button:focus-visible,
+[data-theme="dark"] .search-more-button.is-open {
+  background: #1e3a8a !important;
+  border-color: #1e40af !important;
+  color: #ffffff !important;
+  box-shadow: 0 8px 18px rgba(30, 58, 138, .28);
+}
+.search-more-button:hover svg,
+.search-more-button:focus-visible svg,
+.search-more-button.is-open svg,
+.search-more-button:hover svg :where(path, line, polyline, circle),
+.search-more-button:focus-visible svg :where(path, line, polyline, circle),
+.search-more-button.is-open svg :where(path, line, polyline, circle) {
+  color: #ffffff !important;
+  stroke: #ffffff !important;
+}
+
 /* Endpoint summary cards: subtle motion and clear status hierarchy. */
 .siem-layout .ops-stats .ops-stat {
   position: relative;

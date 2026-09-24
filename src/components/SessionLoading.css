@@ -70,10 +70,12 @@
 }
 
 /* Keep the session gate legible when the app is in light theme. */
-[data-theme="light"] .session-gate {
+html[data-theme="light"] .session-gate {
   background: radial-gradient(ellipse 120% 80% at 50% -20%, rgba(37, 99, 235, .08), transparent 55%), #f8fafc;
   color: #0f172a;
 }
-[data-theme="light"] .session-gate__shield { color: #2563eb; filter: drop-shadow(0 0 12px rgba(37, 99, 235, .22)); }
-[data-theme="light"] .session-gate__ring { border-color: rgba(37, 99, 235, .18); border-top-color: #84cc16; }
-[data-theme="light"] .session-gate__label { color: #475569; }
+html[data-theme="light"] .session-gate__shield { color: #2563eb !important; filter: drop-shadow(0 0 12px rgba(37, 99, 235, .22)); }
+html[data-theme="light"] .session-gate__shield svg,
+html[data-theme="light"] .session-gate__shield svg :where(path, line, polyline, circle) { color: #2563eb !important; stroke: #2563eb !important; }
+html[data-theme="light"] .session-gate__ring { border-color: rgba(37, 99, 235, .18); border-top-color: #84cc16; }
+html[data-theme="light"] .session-gate__label { color: #334155 !important; }
