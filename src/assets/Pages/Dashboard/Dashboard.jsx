@@ -61,6 +61,7 @@ import {
   Search,
   User,
   ChevronDown,
+  MoreHorizontal,
   AlertTriangle,
   CheckCircle,
   Server,
@@ -309,6 +310,71 @@ const UserMenu = ({ user, onProfile, onLogout }) => {
           <button className="dropdown-item danger" onClick={onLogout}>
             <LogOut size={14} /> Sign Out
           </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const SearchMoreMenu = ({ items }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const closeOnOutsideClick = (event) => {
+      if (!menuRef.current?.contains(event.target)) setIsOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setIsOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick, true);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick, true);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isOpen]);
+
+  return (
+    <div
+      ref={menuRef}
+      className="search-more-anchor"
+      onMouseEnter={() => setIsOpen(true)}
+      onMouseLeave={() => setIsOpen(false)}
+    >
+      <button
+        type="button"
+        className={`search-more-button ${isOpen ? "is-open" : ""}`}
+        aria-label="More workspace pages"
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        onClick={() => setIsOpen((current) => !current)}
+      >
+        <MoreHorizontal size={17} aria-hidden="true" />
+        <span>More</span>
+      </button>
+      {isOpen && (
+        <div className="search-more-menu" role="menu" aria-label="More workspace pages">
+          {items.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                type="button"
+                className={`search-more-item ${item.active ? "active" : ""}`}
+                key={item.label}
+                role="menuitem"
+                aria-current={item.active ? "page" : undefined}
+                onClick={() => {
+                  item.onClick();
+                  setIsOpen(false);
+                }}
+              >
+                <Icon size={16} aria-hidden="true" />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1675,11 +1741,11 @@ function Dashboard() {
               <HardDrive size={18} /> Endpoints
             </button>
           )}
-          {canViewCases && (
-            <button className={activeTab === "cases" ? "active" : ""} onClick={() => setActiveTab("cases")}><FolderOpen size={18} /> Evidence Cases</button>
+          {canViewCompliance && (
+            <button className={activeTab === "compliance" ? "active" : ""} onClick={() => handleWorkspaceTab("compliance")}><ShieldCheck size={18} /> Compliance & Audit</button>
           )}
-          {canViewHolds && (
-            <button className={activeTab === "holds" ? "active" : ""} onClick={() => setActiveTab("holds")}><Scale size={18} /> Legal Holds</button>
+          {canManageTeam && (
+            <button className={activeTab === "team" ? "active" : ""} onClick={() => handleWorkspaceTab("team")}><Users size={18} /> Team & Access</button>
           )}
           {archiveEnabled && (
             <button className={activeTab === "archive" ? "active" : ""} onClick={() => setActiveTab("archive")}><FileText size={18} /> Archive Requests</button>
@@ -1761,6 +1827,13 @@ function Dashboard() {
             <button className="btn-primary" onClick={handleGlobalSearch}>
               Search
             </button>
+            <SearchMoreMenu
+              items={[
+                ...(canViewHolds ? [{ label: "Legal Holds", icon: Scale, active: activeTab === "holds", onClick: () => handleWorkspaceTab("holds") }] : []),
+                ...(canViewCases ? [{ label: "Evidence Cases", icon: FolderOpen, active: activeTab === "cases", onClick: () => handleWorkspaceTab("cases") }] : []),
+                ...(canViewSca ? [{ label: "Configuration", icon: ListChecks, active: activeTab === "configuration", onClick: () => handleWorkspaceTab("configuration") }] : []),
+              ]}
+            />
           </div>
           <div className="header-actions">
             <button
@@ -1851,9 +1924,6 @@ function Dashboard() {
 
         <WorkspacePageHeader
           items={[
-            ...(canViewCompliance ? [{ label: "Compliance & Audit", icon: ShieldCheck, active: activeTab === "compliance", onClick: () => handleWorkspaceTab("compliance") }] : []),
-            ...(canViewSca ? [{ label: "Configuration", icon: ListChecks, active: activeTab === "configuration", onClick: () => handleWorkspaceTab("configuration") }] : []),
-            ...(canManageTeam ? [{ label: "Team & Access", icon: Users, active: activeTab === "team", onClick: () => handleWorkspaceTab("team") }] : []),
             ...(canDownloadAgent ? [{ label: generatingActivation ? "Generating..." : "Download Agent", icon: generatingActivation ? RefreshCw : Download, active: false, onClick: handlePrepareAgentDownload, disabled: generatingActivation }] : []),
           ]}
           showCustomize={activeTab === "dashboard"}
