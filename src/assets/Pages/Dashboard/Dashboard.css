@@ -4835,3 +4835,53 @@ select.global-search option {
 @media (max-width: 560px) {
   .search-more-menu { position: fixed; top: 76px; right: 16px; width: min(230px, calc(100vw - 32px)); }
 }
+
+/* More control: high-contrast blue action state in both themes. */
+.search-more-button:hover,
+.search-more-button:focus-visible,
+.search-more-button.is-open,
+[data-theme="dark"] .search-more-button:hover,
+[data-theme="dark"] .search-more-button:focus-visible,
+[data-theme="dark"] .search-more-button.is-open {
+  border-color: #93c5fd;
+  background: #dbeafe;
+  color: #1e3a8a;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, .14);
+}
+.search-more-button:hover svg,
+.search-more-button:focus-visible svg,
+.search-more-button.is-open svg { color: #1e3a8a; stroke: #1e3a8a; }
+
+/* Keep the menu closer to the center/right action area on desktop. */
+@media (min-width: 901px) {
+  .search-more-menu { right: -100px; }
+}
+
+/* More-menu rows use WarSOC lime as the clear hover affordance. */
+.search-more-item:hover,
+.search-more-item:focus-visible {
+  background: #84cc16;
+  color: #ffffff;
+}
+.search-more-item:hover svg,
+.search-more-item:focus-visible svg { color: #ffffff; stroke: #ffffff; }
+
+/* Endpoint fleet: restrained card elevation and cleaner row separation. */
+.siem-layout .ops-view .ops-table-wrap {
+  border-color: var(--dash-border-strong);
+  border-radius: 14px;
+  box-shadow: 0 14px 32px -28px rgba(15, 23, 42, .5);
+}
+.siem-layout .ops-view .ops-table th {
+  background: color-mix(in srgb, var(--dash-panel-strong) 82%, #2563eb 18%);
+  border-bottom-color: var(--dash-border-strong);
+}
+.siem-layout .ops-view .ops-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--dash-panel) 94%, #2563eb 6%); }
+.siem-layout .ops-view .ops-table tbody tr:hover { background: rgba(37, 99, 235, .08); }
+.siem-layout .ops-view .ops-table td.ops-code {
+  color: #1e40af !important;
+  font-weight: 600 !important;
+}
+[data-theme="dark"] .siem-layout .ops-view .ops-table td.ops-code { color: #60a5fa !important; }
+[data-theme="light"] .siem-layout .ops-view .ops-table th { background: #f1f5f9; }
+[data-theme="light"] .siem-layout .ops-view .ops-table tbody tr:nth-child(even) { background: #fbfdff; }
