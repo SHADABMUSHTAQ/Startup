@@ -44,7 +44,6 @@ import {
   Users,
   Shield,
   Activity,
-  Lock,
   BrainCircuit,
   Zap,
   FileText,
@@ -1985,12 +1984,6 @@ function Dashboard() {
                     value={ruleMatchCount}
                     icon={Zap}
                     color="#3b82f6"
-                  />
-                  <MetricCard
-                    title="Blocked Addresses"
-                    value={blockedList.length}
-                    icon={Lock}
-                    color="#10b981"
                   />
                 </div>
 

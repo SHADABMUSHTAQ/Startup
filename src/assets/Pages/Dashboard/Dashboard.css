@@ -4885,3 +4885,37 @@ select.global-search option {
 [data-theme="dark"] .siem-layout .ops-view .ops-table td.ops-code { color: #60a5fa !important; }
 [data-theme="light"] .siem-layout .ops-view .ops-table th { background: #f1f5f9; }
 [data-theme="light"] .siem-layout .ops-view .ops-table tbody tr:nth-child(even) { background: #fbfdff; }
+
+/* Three-card metric layout after removing the Blocked Addresses metric. */
+.siem-layout .metrics-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.siem-layout .metric-card {
+  min-height: 116px;
+  padding: 20px;
+  border-radius: 14px;
+  box-shadow: 0 12px 28px -24px rgba(15, 23, 42, .52);
+}
+.siem-layout .metric-card:hover { transform: translateY(-2px); box-shadow: 0 18px 34px -24px color-mix(in srgb, var(--accent-color) 30%, rgba(15, 23, 42, .35)); }
+.siem-layout .metric-icon { width: 50px; height: 50px; border-radius: 12px; }
+.siem-layout .metric-info h3 { font-size: 28px; font-weight: 750; letter-spacing: -.025em; }
+.siem-layout .metric-info p { margin-top: 7px; font-size: 12px; font-weight: 650; letter-spacing: .01em; }
+
+@media (max-width: 900px) {
+  .siem-layout .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .siem-layout .metrics-grid { grid-template-columns: 1fr; }
+}
+
+/* Slightly deeper light-blue hover state with readable dark-blue content. */
+.search-more-button:hover,
+.search-more-button:focus-visible,
+.search-more-button.is-open,
+[data-theme="dark"] .search-more-button:hover,
+[data-theme="dark"] .search-more-button:focus-visible,
+[data-theme="dark"] .search-more-button.is-open {
+  background: #bfdbfe;
+  color: #1e3a8a;
+}
+.search-more-button:hover svg,
+.search-more-button:focus-visible svg,
+.search-more-button.is-open svg { color: #1e3a8a; stroke: #1e3a8a; }
