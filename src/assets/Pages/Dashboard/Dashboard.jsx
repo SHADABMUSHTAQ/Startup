@@ -70,6 +70,9 @@ import {
   Settings2,
   Sparkles,
   ListChecks,
+  MapPin,
+  TrendingUp,
+  BarChart3,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -97,7 +100,7 @@ const MetricCard = ({
   glow,
 }) => (
   <div
-    className={`metric-card ${glow ? "glow-danger" : ""}`}
+    className={`metric-card ${glow ? "glow-danger" : ""} ${title === "Blocked Addresses" ? "metric-card-positive" : ""}`}
     style={{ "--accent-color": color }}
   >
     <div className="metric-icon">
@@ -167,15 +170,31 @@ const readChartPreferences = () => {
   }
 };
 
-const ChartTitle = ({ title, meta, onRemove, isCustomizing }) => (
-  <div className="chart-title-row">
-    <div><h4>{title}</h4><span>{meta}</span></div>
-    {isCustomizing && <div className="chart-controls">
-      <span className="chart-drag-handle" title="Drag to reorder chart" aria-label="Drag to reorder chart" role="button" tabIndex={0}><GripVertical size={16} /></span>
-      <button type="button" className="chart-remove-button" title={`Hide ${title}`} aria-label={`Hide ${title}`} onClick={(event) => { event.stopPropagation(); onRemove?.(); }}>
-        <X size={14} />
-      </button>
-    </div>}
+const ChartTitle = ({ title, meta, onRemove, isCustomizing }) => {
+  const Icon = title === "Incident Volume Trend"
+    ? TrendingUp
+    : title === "Observed Source Locations"
+      ? MapPin
+      : title === "Threat Severity"
+        ? AlertTriangle
+        : Activity;
+  return (
+    <div className="chart-title-row">
+      <div className="chart-title-content"><div className="chart-title-heading"><Icon size={15} aria-hidden="true" /><h4>{title}</h4></div><span>{meta}</span></div>
+      {isCustomizing && <div className="chart-controls">
+        <span className="chart-drag-handle" title="Drag to reorder chart" aria-label="Drag to reorder chart" role="button" tabIndex={0}><GripVertical size={16} /></span>
+        <button type="button" className="chart-remove-button" title={`Hide ${title}`} aria-label={`Hide ${title}`} onClick={(event) => { event.stopPropagation(); onRemove?.(); }}>
+          <X size={14} />
+        </button>
+      </div>}
+    </div>
+  );
+};
+
+const ChartEmptyState = ({ icon: Icon, message }) => (
+  <div className="chart-empty-state clean-chart-empty-state">
+    <Icon size={36} strokeWidth={1.6} aria-hidden="true" />
+    <span>{message}</span>
   </div>
 );
 
@@ -444,9 +463,7 @@ function Dashboard() {
   const archiveEnabled = import.meta.env.VITE_ARCHIVE_RETRIEVAL_ENABLED === "true" && canRole("archive.retrieve");
   const canViewSca = import.meta.env.VITE_SCA_ENABLED === "true"
     && ["admin", "manager", "analyst", "auditor"].includes(normalizedRole);
-  const [activeTab, setActiveTab] = useState(
-    normalizedRole === "auditor" ? "compliance" : "dashboard",
-  );
+  const [activeTab, setActiveTab] = useState("dashboard");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(
     () => typeof window !== "undefined" && window.innerWidth > 900,
   );
@@ -553,6 +570,16 @@ function Dashboard() {
   );
 
   const navigate = useNavigate();
+  const handleWorkspaceTab = useCallback((tab) => {
+    setActiveTab(tab);
+    setIsCustomizePanelOpen(false);
+    navigate(`/dashboard?tab=${encodeURIComponent(tab)}`);
+  }, [navigate]);
+  useEffect(() => {
+    if (window.location.pathname === "/dashboard" && window.location.search) {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [navigate]);
   // 🔒 SECURITY FIX: Token moved to HttpOnly cookie, no longer in localStorage
   // WebSocket will automatically send cookie with upgrade request
   const baseForWs =
@@ -1391,6 +1418,7 @@ function Dashboard() {
     mitreData,
     originData,
     triageStats,
+    telemetryCount,
   } = useMemo(() => {
     let crit = 0,
       high = 0,
@@ -1444,9 +1472,9 @@ function Dashboard() {
 
     const severityData = [
       { name: "Critical", value: crit, color: "#ef4444" },
-      { name: "High", value: high, color: "#f97316" },
+      { name: "High", value: high, color: "#ef4444" },
       { name: "Medium", value: med, color: "#f59e0b" },
-      { name: "Info", value: info, color: "#3b82f6" },
+      { name: "Info", value: info, color: "#94a3b8" },
     ].filter((d) => d.value > 0);
 
     let volumeArray = Object.entries(timeMap)
@@ -1503,15 +1531,26 @@ function Dashboard() {
 
     return {
       volumeData: volumeArray,
-      logTypeData: logTypeData.length ? logTypeData : [{ name: "No logs", value: 1, color: "#94a3b8" }],
-      endpointData: endpointData.length ? endpointData : [{ name: "No endpoint activity", value: 0 }],
+      logTypeData,
+      endpointData,
       ruleData,
       mitreData,
-      originData: originData.length ? originData : [{ name: "No origin data", value: 0 }],
-      severityData: severityData.length ? severityData : [{ name: "No threats", value: 1, color: "#94a3b8" }],
+      originData,
+      severityData,
       triageStats,
+      telemetryCount: agentEvents.length,
     };
-  }, [logs, timeFilter]);
+  }, [agentEvents.length, logs, timeFilter]);
+
+  const hasOriginData = originData.some((item) => item.value > 0);
+  const hasVolumeData = volumeData.some((item) => item.value > 0);
+  const hasTelemetryData = logTypeData.some((item) => item.value > 0);
+  const hasEndpointData = endpointData.some((item) => item.value > 0);
+  const hasOperationsData = triageStats.some((item) => item.value > 0) || telemetryCount > 0;
+  const hasSeverityData = severityData.some((item) => item.name !== "No threats detected" && item.value > 0);
+  const severityTotal = hasSeverityData
+    ? severityData.reduce((total, item) => total + item.value, 0)
+    : 0;
 
   const chartClass = (id, base = "") => {
     return `chart-box chart-id-${id} ${base} ${draggedChart === id ? "chart-is-dragging" : ""} ${removingChartIds.includes(id) ? "chart-is-removing" : ""}`;
@@ -1812,9 +1851,9 @@ function Dashboard() {
 
         <WorkspacePageHeader
           items={[
-            ...(canViewCompliance ? [{ label: "Compliance & Audit", icon: ShieldCheck, active: activeTab === "compliance", onClick: () => setActiveTab("compliance") }] : []),
-            ...(canViewSca ? [{ label: "Configuration", icon: ListChecks, active: activeTab === "configuration", onClick: () => setActiveTab("configuration") }] : []),
-            ...(canManageTeam ? [{ label: "Team & Access", icon: Users, active: activeTab === "team", onClick: () => setActiveTab("team") }] : []),
+            ...(canViewCompliance ? [{ label: "Compliance & Audit", icon: ShieldCheck, active: activeTab === "compliance", onClick: () => handleWorkspaceTab("compliance") }] : []),
+            ...(canViewSca ? [{ label: "Configuration", icon: ListChecks, active: activeTab === "configuration", onClick: () => handleWorkspaceTab("configuration") }] : []),
+            ...(canManageTeam ? [{ label: "Team & Access", icon: Users, active: activeTab === "team", onClick: () => handleWorkspaceTab("team") }] : []),
             ...(canDownloadAgent ? [{ label: generatingActivation ? "Generating..." : "Download Agent", icon: generatingActivation ? RefreshCw : Download, active: false, onClick: handlePrepareAgentDownload, disabled: generatingActivation }] : []),
           ]}
           showCustomize={activeTab === "dashboard"}
@@ -1888,7 +1927,7 @@ function Dashboard() {
                 <div className={`soc-analytics-grid widget-count-${visibleChartCount}`}>
                   {!hiddenChartIds.includes("incident-trend") && <div className={chartClass("incident-trend", "chart-box-wide")} {...chartDragProps("incident-trend")}>
                     <ChartTitle title="Incident Volume Trend" meta={timeFilter === "7" ? "Last 7 days" : "Last 24 hours"} onRemove={() => removeChart("incident-trend")} isCustomizing={isDashboardEditMode} />
-                    <ResponsiveContainer width="100%" height={250}>
+                    {hasVolumeData ? <ResponsiveContainer width="100%" height={250}>
                       <AreaChart
                         data={volumeData}
                         margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
@@ -1901,72 +1940,72 @@ function Dashboard() {
                             x2="0"
                             y2="1"
                           >
-                            <stop
-                              offset="5%"
-                              stopColor="#3b82f6"
-                              stopOpacity={0.4}
-                            />
+                            <stop offset="5%" stopColor="#2563eb" stopOpacity={0.15} />
                             <stop
                               offset="95%"
-                              stopColor="#3b82f6"
+                              stopColor="#2563eb"
                               stopOpacity={0}
                             />
                           </linearGradient>
                         </defs>
                         <CartesianGrid
-                          strokeDasharray="3 3"
-                          stroke="rgba(148, 163, 184, 0.05)"
+                          stroke="var(--chart-grid)"
                           vertical={false}
                         />
                         <XAxis
                           dataKey="name"
-                          stroke="#64748b"
+                          stroke="var(--chart-axis)"
                           fontSize={11}
+                          tick={{ fill: "var(--chart-axis)", fontSize: 11, fontWeight: 400 }}
                           tickLine={false}
                           axisLine={false}
                         />
                         <YAxis
-                          stroke="#64748b"
+                          stroke="var(--chart-axis)"
                           fontSize={11}
+                          tick={{ fill: "var(--chart-axis)", fontSize: 11, fontWeight: 400 }}
                           tickLine={false}
                           axisLine={false}
                         />
                         <Tooltip
                           contentStyle={{
-                            backgroundColor: "#1e293b",
-                            borderColor: "#334155",
+                            backgroundColor: "var(--dash-panel-strong)",
+                            borderColor: "var(--dash-border-strong)",
                             borderRadius: "8px",
                             color: "#f8fafc",
                           }}
-                          itemStyle={{ color: "#3b82f6", fontWeight: "bold" }}
+                          itemStyle={{ color: "#2563eb", fontWeight: 600 }}
                         />
                         <Area
                           type="monotone"
                           dataKey="value"
-                          stroke="#3b82f6"
-                          strokeWidth={3}
+                          stroke="#2563eb"
+                          strokeWidth={2.5}
                           fillOpacity={1}
                           fill="url(#colorThreats)"
+                          dot={false}
+                          activeDot={{ r: 4.5, fill: "#2563eb", stroke: "var(--dash-panel-strong)", strokeWidth: 2 }}
                         />
                       </AreaChart>
-                    </ResponsiveContainer>
+                    </ResponsiveContainer> : <ChartEmptyState icon={BarChart3} message="No incident volume available yet" />}
                   </div>}
 
                   {!hiddenChartIds.includes("source-locations") && <div className={chartClass("source-locations", "origin-map-card")} {...chartDragProps("source-locations")}>
-                    <ChartTitle title="Observed Source Locations" meta={`${originData.reduce((sum, item) => sum + item.value, 0)} signals`} onRemove={() => removeChart("source-locations")} isCustomizing={isDashboardEditMode} />
-                    <ResponsiveContainer width="100%" height={250}>
+                    <ChartTitle title="Observed Source Locations" meta={hasOriginData ? `${originData.reduce((sum, item) => sum + item.value, 0)} signals` : "No signals"} onRemove={() => removeChart("source-locations")} isCustomizing={isDashboardEditMode} />
+                    {hasOriginData ? <ResponsiveContainer width="100%" height={250}>
                       <BarChart data={originData} layout="vertical" margin={{ top: 8, right: 18, left: 6, bottom: 6 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
-                        <XAxis type="number" stroke="var(--dash-dim)" fontSize={10} tickLine={false} axisLine={false} />
-                        <YAxis type="category" dataKey="name" width={78} stroke="var(--dash-dim)" fontSize={10} tickLine={false} axisLine={false} />
+                        <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+                        <XAxis type="number" stroke="var(--chart-axis)" fontSize={11} tick={{ fill: "var(--chart-axis)", fontSize: 11, fontWeight: 400 }} tickLine={false} axisLine={false} />
+                        <YAxis type="category" dataKey="name" width={78} stroke="var(--chart-category)" fontSize={11} tick={{ fill: "var(--chart-category)", fontSize: 11, fontWeight: 500 }} tickLine={false} axisLine={false} />
                         <Tooltip contentStyle={{ backgroundColor: "var(--dash-panel-strong)", borderColor: "var(--dash-border-strong)", borderRadius: "8px", color: "var(--dash-text)" }} />
-                        <Bar dataKey="value" name="Signals" radius={[0, 8, 8, 0]} fill="#38bdf8" />
+                        <Bar dataKey="value" name="Signals" radius={[0, 4, 4, 0]} fill="#2563eb" stroke="none" />
                       </BarChart>
-                    </ResponsiveContainer>
+                    </ResponsiveContainer> : <ChartEmptyState icon={MapPin} message="No origin data available yet" />}
                   </div>}
 
                   {!hiddenChartIds.includes("severity") && <div className={chartClass("severity", "chart-box-compact")} {...chartDragProps("severity")}>
                     <ChartTitle title="Threat Severity" meta="Open queue" onRemove={() => removeChart("severity")} isCustomizing={isDashboardEditMode} />
+                    {hasSeverityData ? <div className="chart-visual-shell severity-visual-shell">
                     <ResponsiveContainer width="100%" height={220}>
                       <PieChart>
                         <Pie
@@ -1978,6 +2017,7 @@ function Dashboard() {
                           paddingAngle={5}
                           dataKey="value"
                           stroke="none"
+                          isAnimationActive={false}
                         >
                           {severityData.map((entry, index) => (
                             <Cell key={`cell-${index}`} fill={entry.color} />
@@ -1999,11 +2039,14 @@ function Dashboard() {
                         />
                       </PieChart>
                     </ResponsiveContainer>
+                    <div className="severity-chart-center" aria-label={`Threat total ${severityTotal}`}>{severityTotal}</div>
+                    </div>
+                    : <ChartEmptyState icon={ShieldCheck} message="No threats detected yet" />}
                   </div>}
 
                   {!hiddenChartIds.includes("telemetry-sources") && <div className={chartClass("telemetry-sources", "chart-box-compact")} {...chartDragProps("telemetry-sources")}>
                     <ChartTitle title="Telemetry Source Breakdown" meta="Top sources" onRemove={() => removeChart("telemetry-sources")} isCustomizing={isDashboardEditMode} />
-                    <ResponsiveContainer width="100%" height={220}>
+                    {hasTelemetryData ? <ResponsiveContainer width="100%" height={220}>
                       <PieChart>
                         <Pie
                           data={logTypeData}
@@ -2034,7 +2077,7 @@ function Dashboard() {
                           wrapperStyle={{ fontSize: "11px", color: "var(--dash-muted)" }}
                         />
                       </PieChart>
-                    </ResponsiveContainer>
+                    </ResponsiveContainer> : <ChartEmptyState icon={Activity} message="No telemetry sources available yet" />}
                   </div>}
 
                   {!hiddenChartIds.includes("detection-rules") && <div className={chartClass("detection-rules", "chart-box-compact")} {...chartDragProps("detection-rules")}>
@@ -2042,12 +2085,12 @@ function Dashboard() {
                     {ruleData.length ? <ResponsiveContainer width="100%" height={250}>
                       <BarChart data={ruleData} layout="vertical" margin={{ top: 5, right: 18, left: 4, bottom: 4 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
-                        <XAxis type="number" stroke="var(--dash-dim)" fontSize={10} tickLine={false} axisLine={false} />
-                        <YAxis type="category" dataKey="name" width={112} stroke="var(--dash-dim)" fontSize={9} tickLine={false} axisLine={false} />
+                        <XAxis type="number" stroke="var(--chart-axis)" fontSize={11} tick={{ fill: "var(--chart-axis)", fontSize: 11, fontWeight: 400 }} tickLine={false} axisLine={false} />
+                        <YAxis type="category" dataKey="name" width={112} stroke="var(--chart-category)" fontSize={11} tick={{ fill: "var(--chart-category)", fontSize: 11, fontWeight: 500 }} tickLine={false} axisLine={false} />
                         <Tooltip contentStyle={{ backgroundColor: "var(--dash-panel-strong)", borderColor: "var(--dash-border-strong)", borderRadius: "8px", color: "var(--dash-text)" }} />
                         <Bar dataKey="value" name="Matches" radius={[0, 7, 7, 0]} fill="var(--primary-500)" />
                       </BarChart>
-                    </ResponsiveContainer> : <div className="chart-empty-state">No detection rule matches recorded for this period.</div>}
+                    </ResponsiveContainer> : <ChartEmptyState icon={BarChart3} message="No detection rule matches available yet" />}
                   </div>}
 
                   {!hiddenChartIds.includes("mitre") && <div className={chartClass("mitre", "chart-box-compact")} {...chartDragProps("mitre")}>
@@ -2055,29 +2098,30 @@ function Dashboard() {
                     {mitreData.length ? <ResponsiveContainer width="100%" height={250}>
                       <BarChart data={mitreData} layout="vertical" margin={{ top: 5, right: 18, left: 4, bottom: 4 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
-                        <XAxis type="number" stroke="var(--dash-dim)" fontSize={10} tickLine={false} axisLine={false} />
-                        <YAxis type="category" dataKey="name" width={88} stroke="var(--dash-dim)" fontSize={10} tickLine={false} axisLine={false} />
+                        <XAxis type="number" stroke="var(--chart-axis)" fontSize={11} tick={{ fill: "var(--chart-axis)", fontSize: 11, fontWeight: 400 }} tickLine={false} axisLine={false} />
+                        <YAxis type="category" dataKey="name" width={88} stroke="var(--chart-category)" fontSize={11} tick={{ fill: "var(--chart-category)", fontSize: 11, fontWeight: 500 }} tickLine={false} axisLine={false} />
                         <Tooltip contentStyle={{ backgroundColor: "var(--dash-panel-strong)", borderColor: "var(--dash-border-strong)", borderRadius: "8px", color: "var(--dash-text)" }} />
                         <Bar dataKey="value" name="Observed detections" radius={[0, 7, 7, 0]} fill="#8b5cf6" />
                       </BarChart>
-                    </ResponsiveContainer> : <div className="chart-empty-state">No MITRE techniques recorded for this period.</div>}
+                    </ResponsiveContainer> : <ChartEmptyState icon={ShieldCheck} message="No MITRE techniques available yet" />}
                   </div>}
 
                   {!hiddenChartIds.includes("endpoint-load") && <div className={chartClass("endpoint-load", "chart-box-compact")} {...chartDragProps("endpoint-load")}>
                     <ChartTitle title="Endpoint Event Load" meta="Top assets" onRemove={() => removeChart("endpoint-load")} isCustomizing={isDashboardEditMode} />
-                    <ResponsiveContainer width="100%" height={220}>
+                    {hasEndpointData ? <ResponsiveContainer width="100%" height={220}>
                       <BarChart
                         data={endpointData}
                         layout="vertical"
                         margin={{ top: 8, right: 12, left: 12, bottom: 8 }}
                       >
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
-                        <XAxis type="number" stroke="var(--dash-dim)" fontSize={11} tickLine={false} axisLine={false} />
+                        <XAxis type="number" stroke="var(--chart-axis)" fontSize={11} tick={{ fill: "var(--chart-axis)", fontSize: 11, fontWeight: 400 }} tickLine={false} axisLine={false} />
                         <YAxis
                           type="category"
                           dataKey="name"
-                          stroke="var(--dash-dim)"
+                          stroke="var(--chart-category)"
                           fontSize={11}
+                          tick={{ fill: "var(--chart-category)", fontSize: 11, fontWeight: 500 }}
                           tickLine={false}
                           axisLine={false}
                           width={118}
@@ -2092,12 +2136,12 @@ function Dashboard() {
                         />
                         <Bar dataKey="value" radius={[0, 8, 8, 0]} fill="#0d9488" />
                       </BarChart>
-                    </ResponsiveContainer>
+                    </ResponsiveContainer> : <ChartEmptyState icon={BarChart3} message="No endpoint events available yet" />}
                   </div>}
 
                   {!hiddenChartIds.includes("operations") && <div className={chartClass("operations", "chart-box-compact operations-card")} {...chartDragProps("operations")}>
                     <ChartTitle title="Operations Snapshot" meta="Now" onRemove={() => removeChart("operations")} isCustomizing={isDashboardEditMode} />
-                    <div className="ops-scoreboard">
+                    {hasOperationsData ? <div className="ops-scoreboard">
                       {triageStats.map((item) => (
                         <div className="ops-tile" key={item.label}>
                           <strong>{item.value}</strong>
@@ -2105,11 +2149,11 @@ function Dashboard() {
                         </div>
                       ))}
                       <div className="ops-tile">
-                        <strong>{agentEvents.length}</strong>
+                        <strong>{telemetryCount}</strong>
                         <span>Telemetry</span>
                       </div>
-                    </div>
-                    <div className="ops-list">
+                    </div> : <ChartEmptyState icon={Activity} message="No operations activity available yet" />}
+                    {hasOperationsData && <div className="ops-list">
                       <div className="ops-row">
                         <span>Blocked addresses</span>
                         <strong>{blockedList.length}</strong>
@@ -2118,7 +2162,7 @@ function Dashboard() {
                         <span>Feed mode</span>
                         <strong>{isLiveMode ? "Live" : "History"}</strong>
                       </div>
-                    </div>
+                    </div>}
                     <div className="ops-health">
                       <Server size={18} />
                       <span>{telemetryStatus === "active" ? "Collectors healthy" : telemetryStatus === "degraded" ? "Collector degraded" : "Collector offline"}</span>

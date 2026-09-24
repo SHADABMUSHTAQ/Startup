@@ -3697,6 +3697,109 @@ select.global-search option {
   -webkit-text-fill-color: #ffffff !important;
 }
 
+/* Premium dashboard visualization layer. */
+.siem-layout {
+  --chart-grid: rgba(15, 23, 42, .05);
+  --chart-axis: #94a3b8;
+  --chart-category: #334155;
+}
+[data-theme="dark"] .siem-layout {
+  --chart-grid: rgba(255, 255, 255, .06);
+  --chart-axis: #94a3b8;
+  --chart-category: #cbd5e1;
+}
+.siem-layout .recharts-cartesian-grid-horizontal line {
+  stroke: var(--chart-grid) !important;
+  stroke-width: 1 !important;
+  stroke-dasharray: none !important;
+}
+.siem-layout .recharts-cartesian-grid-vertical line {
+  display: none !important;
+}
+.siem-layout .recharts-cartesian-axis-tick-value {
+  fill: var(--chart-axis) !important;
+  font-size: 11px !important;
+  font-weight: 400 !important;
+}
+.siem-layout .recharts-yAxis .recharts-cartesian-axis-tick-value,
+.siem-layout .recharts-legend-item-text {
+  fill: var(--chart-category) !important;
+  color: var(--chart-category) !important;
+  font-weight: 500 !important;
+}
+.siem-layout .recharts-cartesian-axis-line,
+.siem-layout .recharts-cartesian-axis-tick-line {
+  stroke: transparent !important;
+}
+.siem-layout .chart-title-content { min-width: 0; }
+.siem-layout .chart-title-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.siem-layout .chart-title-heading > svg {
+  flex: 0 0 auto;
+  color: #2563eb !important;
+  stroke: currentColor !important;
+}
+.siem-layout .chart-title-row .chart-controls {
+  opacity: .4;
+  transition: opacity .15s ease;
+}
+.siem-layout .chart-box:hover .chart-controls,
+.siem-layout .chart-controls:focus-within { opacity: 1; }
+.siem-layout .chart-visual-shell {
+  position: relative;
+  min-height: 220px;
+}
+.siem-layout .chart-id-severity .recharts-pie-sector {
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, .08));
+}
+.siem-layout .severity-visual-shell {
+  min-height: 220px;
+}
+.siem-layout .severity-chart-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  transform: translate(-50%, -54%);
+  color: var(--dash-text);
+  font-size: 22px;
+  font-weight: 800;
+  pointer-events: none;
+}
+.siem-layout .chart-empty-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  padding: 24px;
+  color: #cbd5e1;
+  font-size: 12px;
+  text-align: center;
+  pointer-events: none;
+}
+.siem-layout .chart-empty-overlay svg { color: #cbd5e1; stroke: currentColor; }
+.siem-layout .severity-empty-overlay { padding-bottom: 40px; }
+.siem-layout .metric-card {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent-color) 5%, var(--dash-panel-strong)), var(--dash-panel-strong));
+}
+.siem-layout .metric-icon {
+  border: 1px solid color-mix(in srgb, var(--accent-color) 15%, transparent);
+}
+.siem-layout .metric-card-positive::before {
+  background: #10b981;
+  opacity: .85;
+}
+[data-theme="light"] .siem-layout .metric-card {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent-color) 4%, #fff), #fff);
+}
+[data-theme="dark"] .siem-layout .chart-title-heading > svg { color: #60a5fa !important; }
+
 /* Final transparent module-tab override: only blue text and blue icons remain. */
 .siem-layout .workspace-page-actions .workspace-action-segment {
   border: 0 !important;
@@ -3725,6 +3828,200 @@ select.global-search option {
   fill: none !important;
   opacity: 1 !important;
   -webkit-text-fill-color: #2563eb !important;
+}
+
+/* Final chart polish cascade: keep visualization tokens and controls consistent. */
+.siem-layout {
+  --chart-grid: rgba(15, 23, 42, .05);
+  --chart-axis: #94a3b8;
+}
+[data-theme="dark"] .siem-layout {
+  --chart-grid: rgba(255, 255, 255, .06);
+  --chart-axis: #94a3b8;
+}
+.siem-layout .recharts-cartesian-grid-horizontal line {
+  stroke: var(--chart-grid) !important;
+  stroke-width: 1 !important;
+  stroke-dasharray: none !important;
+}
+.siem-layout .recharts-cartesian-grid-vertical line { display: none !important; }
+.siem-layout .recharts-cartesian-axis-tick-value {
+  fill: var(--chart-axis) !important;
+  font-size: 11px !important;
+  font-weight: 400 !important;
+}
+.siem-layout .recharts-cartesian-axis-line,
+.siem-layout .recharts-cartesian-axis-tick-line { stroke: transparent !important; }
+.siem-layout .chart-title-content { min-width: 0; }
+.siem-layout .chart-title-heading { display: flex; align-items: center; gap: 7px; }
+.siem-layout .chart-title-heading > svg { flex: 0 0 auto; color: #2563eb !important; stroke: currentColor !important; }
+.siem-layout .chart-title-row .chart-controls { opacity: .4; transition: opacity .15s ease; }
+.siem-layout .chart-box:hover .chart-controls,
+.siem-layout .chart-controls:focus-within { opacity: 1; }
+.siem-layout .chart-visual-shell { position: relative; min-height: 220px; }
+.siem-layout .chart-id-severity .recharts-pie-sector { filter: drop-shadow(0 2px 8px rgba(0, 0, 0, .08)); }
+.siem-layout .clean-chart-empty-state {
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  border: 0;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+}
+.siem-layout .clean-chart-empty-state svg { color: #cbd5e1; stroke: currentColor; }
+.siem-layout .severity-visual-shell { min-height: 220px; }
+.siem-layout .severity-chart-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  transform: translate(-50%, -54%);
+  color: var(--dash-text);
+  font-size: 22px;
+  font-weight: 800;
+  pointer-events: none;
+}
+.siem-layout .chart-empty-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  padding: 24px;
+  color: #cbd5e1;
+  font-size: 12px;
+  text-align: center;
+  pointer-events: none;
+}
+.siem-layout .chart-empty-overlay svg { color: #cbd5e1; stroke: currentColor; }
+.siem-layout .severity-empty-overlay { padding-bottom: 40px; }
+.siem-layout .metric-card {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent-color) 5%, var(--dash-panel-strong)), var(--dash-panel-strong));
+}
+.siem-layout .metric-icon { border: 1px solid color-mix(in srgb, var(--accent-color) 15%, transparent); }
+.siem-layout .metric-card-positive::before { background: #10b981; opacity: .85; }
+[data-theme="light"] .siem-layout .metric-card { background: linear-gradient(135deg, color-mix(in srgb, var(--accent-color) 4%, #fff), #fff); }
+[data-theme="dark"] .siem-layout .chart-title-heading > svg { color: #60a5fa !important; }
+
+/* Research-based settings sub-header: grouped admin navigation on the left, action on the right. */
+.siem-layout .workspace-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 64px;
+  margin: 0 28px;
+  padding: 14px 24px;
+  border-bottom: 1px solid rgba(15, 23, 42, .06);
+  background: transparent;
+}
+.siem-layout .workspace-page-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  gap: 24px;
+}
+.siem-layout .workspace-action-segment {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  gap: 2px;
+  margin-right: 0;
+  padding: 4px;
+  overflow: visible;
+  border: 0 !important;
+  border-radius: 10px;
+  background: #f1f5f9 !important;
+  box-shadow: none;
+}
+.siem-layout .workspace-action-segment .workspace-action-item,
+.siem-layout .workspace-action-segment .workspace-action-item:hover:not(:disabled),
+.siem-layout .workspace-action-segment .workspace-action-item.active {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  min-height: 36px;
+  padding: 8px 16px;
+  border: 0 !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  color: #64748b !important;
+  font-size: 13.5px;
+  font-weight: 500;
+  transition: color .15s ease, background-color .15s ease, box-shadow .15s ease;
+  -webkit-text-fill-color: #64748b !important;
+}
+.siem-layout .workspace-action-segment .workspace-action-item:hover:not(:disabled) {
+  background: #e2e8f0 !important;
+  color: #334155 !important;
+  -webkit-text-fill-color: #334155 !important;
+}
+.siem-layout .workspace-action-segment .workspace-action-item.active {
+  background: #ffffff !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .08) !important;
+  color: #2563eb !important;
+  font-weight: 600;
+  -webkit-text-fill-color: #2563eb !important;
+}
+.siem-layout .workspace-action-segment .workspace-action-item > span,
+.siem-layout .workspace-action-segment .workspace-action-item > svg,
+.siem-layout .workspace-action-segment .workspace-action-item > svg :where(path, line, polyline, rect, circle) {
+  color: currentColor !important;
+  stroke: currentColor !important;
+  fill: none !important;
+  opacity: 1 !important;
+  -webkit-text-fill-color: currentColor !important;
+}
+.siem-layout .workspace-action-divider {
+  width: 1px;
+  height: 24px;
+  margin-left: auto;
+  background: rgba(15, 23, 42, .12);
+}
+.siem-layout .workspace-download-action,
+.siem-layout .workspace-customize-anchor {
+  flex: 0 0 auto;
+}
+[data-theme="dark"] .siem-layout .workspace-page-header {
+  border-bottom-color: rgba(255, 255, 255, .08);
+}
+[data-theme="dark"] .siem-layout .workspace-action-segment {
+  background: #1a1d23 !important;
+}
+[data-theme="dark"] .siem-layout .workspace-action-segment .workspace-action-item,
+[data-theme="dark"] .siem-layout .workspace-action-segment .workspace-action-item:hover:not(:disabled),
+[data-theme="dark"] .siem-layout .workspace-action-segment .workspace-action-item.active {
+  color: #94a3b8 !important;
+  -webkit-text-fill-color: #94a3b8 !important;
+}
+[data-theme="dark"] .siem-layout .workspace-action-segment .workspace-action-item:hover:not(:disabled) {
+  background: #262b34 !important;
+  color: #cbd5e1 !important;
+  -webkit-text-fill-color: #cbd5e1 !important;
+}
+[data-theme="dark"] .siem-layout .workspace-action-segment .workspace-action-item.active {
+  background: #2a2f3a !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .24) !important;
+  color: #60a5fa !important;
+  -webkit-text-fill-color: #60a5fa !important;
+}
+[data-theme="dark"] .siem-layout .workspace-action-divider {
+  background: rgba(255, 255, 255, .14);
+}
+@media (max-width: 900px) {
+  .siem-layout .workspace-page-header { margin: 0 18px; padding: 12px 16px; }
+  .siem-layout .workspace-action-segment { padding: 3px; }
+  .siem-layout .workspace-action-segment .workspace-action-item { padding: 7px 11px; font-size: 12px; }
 }
 
 /* Module tabs: transparent links with aligned, high-contrast blue icon and label. */
@@ -4349,4 +4646,100 @@ select.global-search option {
   fill: none !important;
   opacity: 1 !important;
   -webkit-text-fill-color: #2563eb !important;
+}
+
+/* EOF chart polish reinforcement. */
+.siem-layout .recharts-cartesian-grid-horizontal line { stroke: var(--chart-grid) !important; stroke-dasharray: none !important; }
+.siem-layout .recharts-cartesian-grid-vertical line { display: none !important; }
+.siem-layout .recharts-cartesian-axis-tick-value { fill: var(--chart-axis) !important; font-size: 11px !important; font-weight: 400 !important; }
+.siem-layout .chart-title-row .chart-controls { opacity: .4; }
+.siem-layout .chart-box:hover .chart-controls, .siem-layout .chart-controls:focus-within { opacity: 1; }
+.siem-layout .chart-id-severity .recharts-pie-sector { filter: drop-shadow(0 2px 8px rgba(0, 0, 0, .08)); }
+
+/* Let secondary workspaces use the full content area when the sidebar is closed. */
+.siem-layout.sidebar-closed .dashboard-container {
+  width: 100%;
+  max-width: none;
+}
+.siem-layout.sidebar-closed .dashboard-container > .ops-view,
+.siem-layout.sidebar-closed .dashboard-container > .case-workspace,
+.siem-layout.sidebar-closed .dashboard-container > .holds-workspace,
+.siem-layout.sidebar-closed .dashboard-container > .compliance-tab-wrapper,
+.siem-layout.sidebar-closed .dashboard-container > .team-tab-wrapper,
+.siem-layout.sidebar-closed .dashboard-container > .network-tab-wrapper,
+.siem-layout.sidebar-closed .dashboard-container > .sca-view {
+  width: 100%;
+  max-width: none;
+  margin-left: 0;
+  margin-right: 0;
+}
+.siem-layout.sidebar-closed .dashboard-container .offline-analysis-view,
+.siem-layout.sidebar-closed .dashboard-container .team-container,
+.siem-layout.sidebar-closed .dashboard-container .sca-view {
+  width: 100%;
+  max-width: none !important;
+}
+.siem-layout.sidebar-closed .dashboard-container .team-container {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
+.siem-layout.sidebar-closed .dashboard-container .compliance-dashboard,
+.siem-layout.sidebar-closed .dashboard-container .pack-detail-page {
+  width: 100%;
+  max-width: none;
+}
+.siem-layout.sidebar-closed .dashboard-container .pack-grid {
+  max-width: none;
+}
+
+/* Keep operational page copy readable in the light theme. */
+[data-theme="light"] .siem-layout .ops-view,
+[data-theme="light"] .siem-layout .case-workspace,
+[data-theme="light"] .siem-layout .holds-workspace,
+[data-theme="light"] .siem-layout .sca-view,
+[data-theme="light"] .siem-layout .team-container {
+  color: #0f172a;
+}
+[data-theme="light"] .siem-layout .ops-view h1,
+[data-theme="light"] .siem-layout .ops-view h2,
+[data-theme="light"] .siem-layout .ops-view h3,
+[data-theme="light"] .siem-layout .case-workspace h2,
+[data-theme="light"] .siem-layout .holds-workspace h2,
+[data-theme="light"] .siem-layout .sca-view h2,
+[data-theme="light"] .siem-layout .team-container h2 {
+  color: #0f172a !important;
+}
+[data-theme="light"] .siem-layout .ops-heading > div > p:not(.ops-eyebrow),
+[data-theme="light"] .siem-layout .offline-hero > div > p:not(.ops-eyebrow),
+[data-theme="light"] .siem-layout .case-workspace .ops-heading p:not(.ops-eyebrow),
+[data-theme="light"] .siem-layout .holds-workspace .ops-heading p:not(.ops-eyebrow),
+[data-theme="light"] .siem-layout .team-container .team-header p,
+[data-theme="light"] .siem-layout .sca-view p,
+[data-theme="light"] .siem-layout .sca-view label,
+[data-theme="light"] .siem-layout .sca-view dt {
+  color: #334155 !important;
+}
+[data-theme="light"] .siem-layout .ops-table th,
+[data-theme="light"] .siem-layout .ops-table td,
+[data-theme="light"] .siem-layout .evidence-table th,
+[data-theme="light"] .siem-layout .evidence-table td,
+[data-theme="light"] .siem-layout .holds-table th,
+[data-theme="light"] .siem-layout .holds-table td,
+[data-theme="light"] .siem-layout .team-table th,
+[data-theme="light"] .siem-layout .team-table td {
+  color: #334155 !important;
+}
+[data-theme="light"] .siem-layout .ops-table td strong,
+[data-theme="light"] .siem-layout .evidence-table td strong,
+[data-theme="light"] .siem-layout .holds-table td strong,
+[data-theme="light"] .siem-layout .team-table td strong,
+[data-theme="light"] .siem-layout .sca-view strong {
+  color: #0f172a !important;
+}
+[data-theme="light"] .siem-layout .ops-empty,
+[data-theme="light"] .siem-layout .async-state p,
+[data-theme="light"] .siem-layout .relay-inline-empty,
+[data-theme="light"] .siem-layout .holds-readonly,
+[data-theme="light"] .siem-layout .evidence-count {
+  color: #475569 !important;
 }

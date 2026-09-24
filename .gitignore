@@ -26,6 +26,7 @@ dist-ssr
 .env.*
 !.env.production
 !.env.*.example
+.env.local
 *.local
 
 # Test and coverage output
