@@ -5114,6 +5114,24 @@ select.global-search option {
 .search-more-item:hover svg,
 .search-more-item:focus-visible svg { color: #ffffff; stroke: #ffffff; }
 
+/* Keep every dropdown label and icon white over the lime hover state. */
+.siem-layout .search-more-item:hover,
+.siem-layout .search-more-item:focus-visible {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+.siem-layout .search-more-item:hover > span,
+.siem-layout .search-more-item:focus-visible > span,
+.siem-layout .search-more-item:hover > svg,
+.siem-layout .search-more-item:focus-visible > svg,
+.siem-layout .search-more-item:hover > svg :where(path, line, polyline, circle),
+.siem-layout .search-more-item:focus-visible > svg :where(path, line, polyline, circle) {
+  color: #ffffff !important;
+  stroke: #ffffff !important;
+  fill: none !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+
 /* Endpoint fleet: restrained card elevation and cleaner row separation. */
 .siem-layout .ops-view .ops-table-wrap {
   border-color: var(--dash-border-strong);
