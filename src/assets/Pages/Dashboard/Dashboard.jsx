@@ -2087,6 +2087,10 @@ function Dashboard() {
                           ))}
                         </Pie>
                         <Tooltip
+                          position={{ x: 12, y: 12 }}
+                          offset={0}
+                          cursor={false}
+                          wrapperStyle={{ zIndex: 10, pointerEvents: "none" }}
                           contentStyle={{
                             backgroundColor: "var(--dash-panel-strong)",
                             borderColor: "var(--dash-border-strong)",
