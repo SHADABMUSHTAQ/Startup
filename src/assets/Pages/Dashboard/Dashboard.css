@@ -4720,6 +4720,28 @@ select.global-search option {
     linear-gradient(135deg, #cbd5e1 50%, transparent 50%) !important;
 }
 
+/* More button: blue hover/open state always uses high-contrast white content. */
+.siem-layout .search-more-button:hover,
+.siem-layout .search-more-button:focus-visible,
+.siem-layout .search-more-button.is-open {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+.siem-layout .search-more-button:hover > span,
+.siem-layout .search-more-button:focus-visible > span,
+.siem-layout .search-more-button.is-open > span,
+.siem-layout .search-more-button:hover > svg,
+.siem-layout .search-more-button:focus-visible > svg,
+.siem-layout .search-more-button.is-open > svg,
+.siem-layout .search-more-button:hover > svg :where(path, line, polyline, circle),
+.siem-layout .search-more-button:focus-visible > svg :where(path, line, polyline, circle),
+.siem-layout .search-more-button.is-open > svg :where(path, line, polyline, circle) {
+  color: #ffffff !important;
+  stroke: #ffffff !important;
+  fill: none !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+
 /* Let the search controls use available desktop width instead of leaving a large dead gap. */
 @media (min-width: 1200px) {
   .siem-layout .search-wrapper {
