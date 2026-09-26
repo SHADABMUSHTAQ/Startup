@@ -1,8 +1,10 @@
 # WarSOC Wazuh Detection Target Architecture
 
 **Document status:** Final reviewed target and integration contract; governed
-22-rule v2 registry active in production shadow mode as of 2026-09-09, primary
-promotion disabled
+31-rule v3 registry active in production shadow mode as of 2026-09-21, primary
+promotion disabled. The September 26 local coverage correction preserves
+governed security projection alongside native/SCA bindings; runtime deployment
+acceptance remains separate.
 
 **Decision date:** 2026-08-10
 
@@ -29,10 +31,23 @@ block an address, and never authority to select a tenant.
 
 The current WarSOC SIEM remains authoritative unless an individual rule family
 later passes shadow acceptance and is explicitly promoted through the
-rule-ownership registry. The private OCI Wazuh manager/bridge and v2 shadow
-adapter are active, but Wazuh has no production authority. V2 expands internal
+rule-ownership registry. The private OCI Wazuh manager/bridge and v3 shadow
+adapter are active, but Wazuh has no production attack-detection authority. The adapter expands internal
 shadow observation only; it cannot create customer incidents,
 notifications, compliance evidence, or response actions.
+
+Native configuration checks can populate the separately governed SCA posture
+view. An SCA/native-agent binding is not proof that equivalent native security
+rules are admitted. Signed Windows security projections remain eligible for the
+active registry independently of that binding, preserving the security/SCA
+coverage distinction. Outbox retries retain deterministic deduplication; stock
+Wazuh rules not present in the pinned registry remain unadmitted. Do not weaken
+tenant resolution, lineage or promotion checks to expand coverage.
+
+V3 retains the 22 v2 security rules below and adds nine governed native SCA
+check rules (19007-19015). All 31 remain shadow-only; SCA posture is not an attack
+incident. The v2 details and canary below are historical security-rule proof,
+not a claim that every stock Wazuh rule or every attack is supported.
 
 ### 1.1 V2 governed expansion
 

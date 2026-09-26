@@ -957,6 +957,166 @@ def test_sender_isolates_409_conflict_without_deadlocking_later_events(monkeypat
     assert submitted[2][0]["payload"][0]["agent_signature"]
 
 
+def test_recovery_quarantine_works_while_collection_is_blocked(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    event = {"event_id": "4625", "event_uid": "full:1", "message": "x" * 500}
+    accepted = {"event_id": "7045", "event_uid": "full:accepted", "message": "y" * 500}
+    line = json.dumps(event) + "\n"
+    size = len((line + json.dumps(accepted) + "\n").encode("utf-8"))
+    spooler = agent.DiskSpooler(
+        tmp_path / "full", max_bytes=size, resume_bytes=size // 2,
+        recovery_reserve_bytes=size, min_free_bytes=1,
+    )
+    assert spooler.append(event)
+    assert spooler.append(accepted)
+    with pytest.raises(agent.SpoolWriteError):
+        spooler.append({"event_id": "7045"})
+    batch, token = spooler.consume_chunk(2, 4096)
+    original = Path(token["file_path"]).read_bytes()
+    spooler.quarantine(batch[0], "backend_rejected:409")
+    assert Path(token["file_path"]).read_bytes() == original
+    assert spooler.status()["blocked"] is True
+    assert spooler.status()["usage_bytes"] <= size * 2
+    with pytest.raises(agent.SpoolWriteError):
+        spooler.append({"event_id": "7045"})
+    spooler.acknowledge_chunk(token)
+    rejected = json.loads(spooler.dead_letter_file.read_text(encoding="utf-8"))
+    assert rejected["event"] == event
+    assert not Path(token["file_path"]).exists()
+
+
+def test_recovery_reserve_and_disk_failure_preserve_unacknowledged_bytes(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    event = {"event_id": "4625", "event_uid": "full:2", "message": "x" * 500}
+    line = json.dumps(event) + "\n"
+    size = len(line.encode("utf-8"))
+    spooler = agent.DiskSpooler(
+        tmp_path / "reserve", max_bytes=size * 2, resume_bytes=size // 2,
+        recovery_reserve_bytes=16, min_free_bytes=1,
+    )
+    spooler.append(event)
+    _, token = spooler.consume_chunk(1, 4096)
+    source = Path(token["file_path"])
+    with pytest.raises(agent.SpoolWriteError, match="recovery reserve"):
+        spooler.quarantine(event, "backend_rejected:409")
+    assert source.read_text(encoding="utf-8") == line
+    assert spooler._read_checkpoint(source) == 0
+    assert not spooler.dead_letter_file.exists()
+    spooler.recovery_reserve_bytes = size * 2
+    monkeypatch.setattr(spooler, "_capacity_snapshot_unlocked", lambda: (size, 0))
+    with pytest.raises(agent.SpoolWriteError, match="disk reserve"):
+        spooler.quarantine(event, "backend_rejected:409")
+    assert source.read_text(encoding="utf-8") == line
+    assert spooler._read_checkpoint(source) == 0
+
+
+def test_recovery_sender_checkpoints_isolated_progress_before_transient_retry(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    events = [
+        {"event_id": "4625", "event_uid": "recover:rejected", "message": "x" * 500},
+        {"event_id": "7045", "event_uid": "recover:deferred", "message": "y" * 500},
+    ]
+    lines = [json.dumps(event) + "\n" for event in events]
+    size = len("".join(lines).encode("utf-8"))
+    spooler = agent.DiskSpooler(
+        tmp_path / "retry", max_bytes=size, resume_bytes=size // 2,
+        recovery_reserve_bytes=1000, min_free_bytes=1,
+    )
+    source = spooler.spool_dir / "processing_1.jsonl"
+    source.write_text("".join(lines), encoding="utf-8")
+    spooler.backpressure_active = True
+    spooler.backpressure_reason = "full"
+    submitted = []
+    responses = iter([409, 409, 503, 202])
+    original_consume = spooler.consume_chunk
+
+    def consume(*args):
+        if not source.exists():
+            raise KeyboardInterrupt
+        return original_consume(*args)
+
+    def request(_method, _url, *, json, timeout):
+        submitted.append([item["event_uid"] for item in json["payload"]])
+        return types.SimpleNamespace(status_code=next(responses))
+
+    monkeypatch.setattr(spooler, "consume_chunk", consume)
+    monkeypatch.setattr(agent, "SPOOLER", spooler)
+    monkeypatch.setattr(agent, "_load_or_create_signing_key", ed25519.Ed25519PrivateKey.generate)
+    monkeypatch.setattr(agent, "secure_request", request)
+    monkeypatch.setattr(agent.time, "sleep", lambda _seconds: None)
+    with pytest.raises(KeyboardInterrupt):
+        agent.ingest_sender_thread()
+    assert submitted == [
+        ["recover:rejected", "recover:deferred"], ["recover:rejected"],
+        ["recover:deferred"], ["recover:deferred"],
+    ]
+    rejected = [json.loads(line) for line in spooler.dead_letter_file.read_text().splitlines()]
+    assert [row["event"] for row in rejected] == [events[0]]
+    assert not source.exists()
+
+
+def test_recovery_checkpoint_survives_restart_without_requarantining_prefix(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    spooler = agent.DiskSpooler(tmp_path / "restart", min_free_bytes=1)
+    events = [{"event_id": "4625", "event_uid": str(index)} for index in range(3)]
+    source = spooler.spool_dir / "processing_1.jsonl"
+    source.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
+    batch, token = spooler.consume_chunk(3, 4096)
+    spooler.quarantine(batch[0], "backend_rejected:409")
+    progress = dict(token, end_offset=token["record_end_offsets"][0], eof=False)
+    spooler.acknowledge_chunk(progress, compact=False)
+    restarted = agent.DiskSpooler(spooler.spool_dir, min_free_bytes=1)
+    remaining, _ = restarted.consume_chunk(3, 4096)
+    assert remaining == events[1:]
+    assert json.loads(spooler.dead_letter_file.read_text())["event"] == events[0]
+    with pytest.raises(ValueError, match="offset"):
+        restarted.acknowledge_chunk(dict(token, end_offset=0, eof=False))
+
+
+def test_recovery_legacy_epoch_is_stable_across_runtime_restarts(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    key = ed25519.Ed25519PrivateKey.generate()
+    event = {"event_id": "4625", "event_uid": "legacy:42", "timestamp": "2026-08-30T12:00:00Z"}
+    first = agent._sign_event_for_delivery(event, key)
+    monkeypatch.setattr(agent, "AGENT_RUNTIME_EPOCH", "different-runtime")
+    second = agent._sign_event_for_delivery(event, key)
+    assert first == second
+    assert "source_channel_epoch" not in event
+    original = dict(event, source_channel_epoch="authenticated-original-epoch")
+    assert agent._sign_event_for_delivery(original, key)["source_channel_epoch"] == original["source_channel_epoch"]
+
+
+def test_recovery_live_queue_precedes_history_without_starving_it(monkeypatch, tmp_path):
+    agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
+    spooler = agent.DiskSpooler(tmp_path / "live-fairness", min_free_bytes=1)
+    historical = [{"event_id": "4688", "event_uid": f"old:{i}", "timestamp": "2026-08-30T12:00:00Z"} for i in range(3)]
+    current = [{"event_id": "4688", "event_uid": f"live:{i}", "timestamp": datetime.now(timezone.utc).isoformat()} for i in range(4)]
+    source = spooler.spool_dir / "processing_1.jsonl"
+    source.write_text("".join(json.dumps(event) + "\n" for event in historical), encoding="utf-8")
+    for event in current:
+        spooler.append(event)
+    delivered = []
+    for _ in range(5):
+        batch, token = spooler.consume_chunk(1, 4096)
+        delivered.append(batch[0]["event_uid"])
+        spooler.acknowledge_chunk(token)
+    assert delivered == ["live:0", "live:1", "live:2", "old:0", "live:3"]
+    remaining, _ = spooler.consume_chunk(3, 4096)
+    assert remaining == historical[1:]
+
+
+def test_recovery_health_reserve_is_bounded_and_does_not_expand_collection_limit():
+    result = _sanitize_sensor_status({"spool": {
+        "usage_bytes": 500 * 1024 * 1024, "max_bytes": 500 * 1024 * 1024,
+        "resume_bytes": 400 * 1024 * 1024, "recovery_reserve_bytes": 10 ** 12,
+        "blocked": True,
+    }})["spool"]
+    assert result["recovery_reserve_bytes"] == 16 * 1024 * 1024
+    assert result["max_bytes"] == 500 * 1024 * 1024
+    assert result["resume_bytes"] == 400 * 1024 * 1024
+    assert result["blocked"] is True
+
+
 def test_native_spool_hard_limit_blocks_without_deleting_unacknowledged_data(monkeypatch, tmp_path):
     agent = _load_windows_agent_with_stubs(monkeypatch, tmp_path)
     spooler = agent.DiskSpooler(

@@ -190,6 +190,7 @@ def _sanitize_sensor_status(raw_status: dict[str, Any] | None) -> dict[str, Any]
             "usage_bytes": _bounded_non_negative_int("usage_bytes"),
             "max_bytes": _bounded_non_negative_int("max_bytes"),
             "resume_bytes": _bounded_non_negative_int("resume_bytes"),
+            "recovery_reserve_bytes": _bounded_non_negative_int("recovery_reserve_bytes", 16 * 1024 * 1024),
             "min_free_bytes": _bounded_non_negative_int("min_free_bytes"),
             "free_bytes": _bounded_non_negative_int("free_bytes"),
             "blocked": bool(raw_spool.get("blocked", False)),

@@ -89,7 +89,7 @@ def test_oci_release_starts_evidence_governance_workers():
     ) in deploy
     prepare = deploy.split("prepare_release()", 1)[1].split("activate_edge()", 1)[0]
     assert 'cd "${RELEASE_DIR}"' in prepare
-    assert prepare.index('compose build warsoc-api') < prepare.index(
+    assert prepare.index('compose --profile wazuh-detection build "${application_services[@]}"') < prepare.index(
         'ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"'
     )
     assert prepare.index('compose ps') < prepare.index(
@@ -214,7 +214,7 @@ def test_normal_exports_are_explicitly_hot_tier_only():
 
 def test_pilot_manifest_covers_complete_executable_installation_chain():
     manifest_script = _read("scripts/generate_pilot_hash_manifest.ps1")
-    assert '[string]$Version = "4.2.14"' in manifest_script
+    assert '[string]$Version = "4.2.15"' in manifest_script
     assert '"Output\\warsoc_installer-$Version.exe"' in manifest_script
     assert '"Output\\pilot_hash_manifest-$Version.json"' in manifest_script
     assert "warsoc_agent.exe" in manifest_script

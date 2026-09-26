@@ -85,12 +85,10 @@ def _source_identity(
     document: dict[str, Any],
     *,
     network_enabled: bool,
-    native_endpoint_enabled: bool = False,
 ) -> tuple[str, str, str] | None:
     family = str(document.get("telemetry_family") or "").strip().lower()
     if (
-        not native_endpoint_enabled
-        and family == "windows"
+        family == "windows"
         and document.get("signature_verified") is True
         and document.get("source_assurance") == "agent_signed"
     ):
@@ -300,30 +298,12 @@ async def project_canonical_event(
 
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
 
-    # Point 4: Per-endpoint native Wazuh binding check.
-    # Only skip Windows custom-JSON projection for endpoints that have
-    # an active native Wazuh agent binding. Endpoints without a binding
-    # continue to be projected normally.
-    endpoint_has_native_wazuh = False
-    doc_family = str(document.get("telemetry_family") or "").strip().lower()
-    if doc_family == "windows":
-        endpoint_id = str(document.get("agent_id") or "").strip()
-        if endpoint_id:
-            bindings_col = getattr(db, "detection_engine_agent_bindings", None)
-            if bindings_col is not None:
-                native_binding = await bindings_col.find_one(
-                    {
-                        "engine": "wazuh",
-                        "warsoc_agent_id": endpoint_id,
-                        "status": "active",
-                    }
-                )
-                endpoint_has_native_wazuh = native_binding is not None
-
+    # Native/SCA enrollment is not proof of equivalent security-rule coverage.
+    # Project governed signed events independently; the outbox UID deduplicates
+    # retries, and candidate admission still owns lineage and promotion.
     identity = _source_identity(
         document,
         network_enabled=bool(settings.network_relay_enabled),
-        native_endpoint_enabled=endpoint_has_native_wazuh,
     )
     if identity is None:
         return ProjectionResult(status="ineligible", reason="source_assurance")

@@ -80,6 +80,7 @@ scripts/*
 !scripts/launch_readiness_validator.py
 !scripts/ci_validate.py
 !scripts/measure_dashboard_reads.py
+!scripts/diagnose_endpoint_health.ps1
 !scripts/migrate_fbr_encryption.py
 !scripts/purge_legacy_upload_sources.py
 !scripts/native_50_agent_soak.py

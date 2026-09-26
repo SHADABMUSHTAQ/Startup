@@ -87,3 +87,34 @@ async def test_malformed_or_missing_sensor_data_never_looks_healthy(
 @pytest.mark.asyncio
 async def test_fleet_rejects_unauthenticated_read(client):
     assert (await client.get("/api/v1/data/status")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_blocked_spool_has_actionable_health_guidance_and_recovers(
+    client, authenticated_user, db, redis_client, agent_public_key_pem, monkeypatch,
+):
+    monkeypatch.setenv("AGENT_EVENT_SIGNATURE_MODE", "required")
+    tenant_id = (await client.get("/api/v1/auth/me", headers=authenticated_user)).json()["user"]["tenant_id"]
+    await db.agents.insert_one({
+        "tenant_id": tenant_id, "agent_id": "BACKPRESSURE", "public_key": agent_public_key_pem,
+        "status": "active", "version": "4.2.12",
+    })
+    await redis_client.set(f"status:{tenant_id}:BACKPRESSURE", datetime.now(timezone.utc).isoformat())
+    await redis_client.set(f"warsoc:agent_event_signature:{tenant_id}:BACKPRESSURE", json.dumps({"status": "verified"}))
+    sensor = {
+        "audit_policy_status": "configured",
+        "channels": {name: {"status": "degraded"} for name in ("Security", "System")},
+        "spool": {"blocked": True, "usage_bytes": 500 * 1024 * 1024, "max_bytes": 500 * 1024 * 1024},
+    }
+    await redis_client.set("warsoc:agent_sensor:BACKPRESSURE", json.dumps(sensor))
+    row = (await client.get("/api/v1/data/status", headers=authenticated_user)).json()["data"][0]
+    assert row["health"] == "degraded"
+    assert [issue["code"] for issue in row["health_issues"]] == ["SPOOL_BLOCKED"]
+    assert row["health_issues"][0]["affected_channels"] == ["Security", "System"]
+    assert "do not delete" in " ".join(row["health_issues"][0]["remediation"])
+    sensor["spool"]["blocked"] = False
+    sensor["channels"] = {name: {"status": "ok"} for name in ("Security", "System")}
+    await redis_client.set("warsoc:agent_sensor:BACKPRESSURE", json.dumps(sensor))
+    row = (await client.get("/api/v1/data/status", headers=authenticated_user)).json()["data"][0]
+    assert row["health"] == "active"
+    assert row["health_issues"] == []

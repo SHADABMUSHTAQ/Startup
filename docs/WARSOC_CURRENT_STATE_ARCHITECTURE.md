@@ -2,6 +2,25 @@
 
 **Document status:** Authoritative as-built map
 **Snapshot date:** 2026-09-21
+**Hybrid/health engineering delta:** 2026-09-26 (local candidate, not deployed).
+WarSOC-native detection remains authoritative; Wazuh remains shadow with primary
+approval false. Native/SCA binding must not suppress the independent governed
+security projections. `/data/status` now supplies safe `health_summary` and
+`health_issues` recovery guidance; relay/device status supplies `health_issues`.
+New watchdog warnings explicitly mean telemetry health, not a proven attack.
+Repeated OFFLINE/SILENT evidence shares one incident per unchanged outage anchor;
+known unavailable parents suppress redundant child warnings. Existing evidence
+and historical incidents remain untouched. See
+`docs/WARSOC_HYBRID_HEALTH_CLOSURE_2026-09-26.md` for map, verification and the
+administrator recovery boundary. The live September 26 workstation reports a
+full 500 MiB spool before recovery; Running/Automatic and verified signatures do
+not mean its Security/System collection is healthy. The 4.2.15 recovery candidate
+adds a maximum 16 MiB quarantine working reserve, per-record retry checkpoints,
+restart-stable legacy signature metadata and fair live/history scheduling. The
+collection cap remains 500 MiB, its resume boundary remains 400 MiB, and no
+rejection is silently treated as an acknowledged duplicate. Backed-up recovery
+is progressing; fresh-event/resume acceptance is recorded separately in the
+closure ledger. Old healthy snapshots below remain dated historical evidence.
 **Windows Server engineering delta:** 2026-09-15. General Server V1 is a
 deployed engineering/pilot capability with target-host functional and offline
 spool-recovery proof. Customer support remains gated on the remaining event

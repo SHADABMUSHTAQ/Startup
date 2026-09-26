@@ -176,7 +176,19 @@ def build_incident_identity(alert: Mapping[str, Any]) -> dict[str, Any]:
         identity_rule_id = rule_id
         identity_event_id = event_id
     pack = _normalized(alert.get("pack") or alert.get("compliance_pack") or "siem")
-    if is_service_install:
+    health_condition_id = _text(alert.get("health_condition_id"))
+    is_health_condition = (
+        alert.get("source") == "network_relay_watchdog"
+        and _text(alert.get("alert_type")) in {"RELAY_OFFLINE", "DEVICE_SILENT"}
+        and re.fullmatch(r"[a-f0-9]{64}", health_condition_id) is not None
+    )
+    if is_health_condition:
+        fields = (
+            _text(alert.get("tenant_id")), pack, rule_id,
+            _text(alert.get("relay_id")), _text(alert.get("device_id")),
+            health_condition_id,
+        )
+    elif is_service_install:
         service_object = _normalized(
             context.get("protected_object")
             or context.get("target")

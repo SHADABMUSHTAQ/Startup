@@ -7,6 +7,16 @@
 **Retention, detector, and Security Stories production delta:** 2026-09-08
 **Historical retrieval and firewall/Wazuh acceptance delta:** 2026-09-10
 **Controlled SCA shadow acceptance delta:** 2026-09-21
+**Hybrid/health candidate delta:** 2026-09-26. Independent signed security
+projection now coexists with native/SCA enrollment. Endpoint/relay APIs provide
+additive health causes and recovery guidance; outage evidence remains durable
+while repeated unchanged OFFLINE/SILENT warnings group into one incident.
+These source edits are not production acceptance. Agent 4.2.15 adds bounded
+quarantine recovery, durable isolated-record progress and fair live/history
+draining without changing collection limits or discarding evidence. Backed-up
+workstation recovery is progressing, but complete fresh-event acceptance,
+candidate deployment and frontend consumption of guidance remain separate
+closures. See `docs/WARSOC_HYBRID_HEALTH_CLOSURE_2026-09-26.md`.
 **Audience:** WarSOC engineering, operations, security review, and product leadership
 **Applies to:** The backend and frontend release state, the published Windows agent boundary, the entitled network relay, and the controlled Wazuh shadow boundary
 

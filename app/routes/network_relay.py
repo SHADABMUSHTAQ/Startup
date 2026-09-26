@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.config.config import get_settings
 from app.database import get_db
 from app.network_relay.runtime import RelayRuntimeConfig
+from app.network_relay.health import relay_health_issues
 from app.routes.auth import (
     AGENT_TOKEN_EXPIRE_MINUTES,
     ALGORITHM,
@@ -904,6 +905,7 @@ def _device_public_status(
         "transport": device.get("transport"),
         "expected_eps": device.get("expected_eps"),
         "health": health,
+        "health_issues": relay_health_issues(health),
         "last_event_at": (
             last_event_at.isoformat() if isinstance(last_event_at, datetime) else None
         ),
@@ -966,6 +968,7 @@ def _relay_public_status(
         "version": relay.get("version"),
         "status": status,
         "health": health,
+        "health_issues": relay_health_issues(health),
         "last_seen": last_seen.isoformat() if isinstance(last_seen, datetime) else None,
         "last_seen_age_seconds": age_seconds,
         "last_health_state": relay.get("last_health_state"),

@@ -7,6 +7,7 @@ from app.utils.rbac import RoleChecker
 from app.utils.endpoint_health import (
     EVENT_SIGNATURE_STATUS_KEY_PREFIX,
     decode_event_signature_status,
+    endpoint_health_issues,
     event_signature_mode,
 )
 from app.utils.security_policy import effective_agent_limit
@@ -366,6 +367,12 @@ async def agent_status(
             last_seen = live_last_seen if online else agent.get("last_seen")
             if isinstance(last_seen, datetime):
                 last_seen = _coerce_dt(last_seen).isoformat()
+            health_issues = endpoint_health_issues(
+                online=online, sensor_status=sensor_status,
+                signing_required=signature_mode == "required",
+                signing_ready=signature_ready, server_required=server_required,
+                server_health=server_health, audit_configured=audit_configured,
+            )
             endpoint_status = {
                     "agent_id": agent_id,
                     "endpoint_name": signature_status["endpoint_name"] or agent_id,
@@ -378,6 +385,11 @@ async def agent_status(
                     "response_mode": agent.get("response_mode") or "LEGACY_ENDPOINT",
                     "online": online,
                     "health": health,
+                    "health_issues": health_issues,
+                    "health_summary": (
+                        health_issues[0]["summary"] if health_issues
+                        else "Required endpoint telemetry is reporting normally."
+                    ),
                     "sensor_status": sensor_status,
                     "event_signing": {
                         "mode": signature_mode,

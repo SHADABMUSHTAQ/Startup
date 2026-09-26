@@ -24,6 +24,7 @@ Architecture: Called periodically by compliance_cron (every watchdog_interval_se
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -32,6 +33,7 @@ from typing import Any
 from pymongo.errors import DuplicateKeyError
 
 from app.actions.alerting import dispatch_alert_if_entitled
+from app.network_relay.health import relay_health_issues
 from app.utils.security_incidents import project_and_publish_incident
 
 logger = logging.getLogger(__name__)
@@ -202,9 +204,41 @@ async def _scan_offline_relays(db, *, now: datetime) -> list[dict[str, Any]]:
             "relay_id": 1,
             "last_seen": 1,
             "version": 1,
+            "relay_name": 1,
+            "hostname": 1,
+            "created_at": 1,
         },
     )
     return await cursor.to_list(length=1000)
+
+
+def _condition_id(kind: str, relay_id: str, device_id: str, anchor) -> str:
+    parsed = _parse_utc(anchor)
+    reference = parsed.isoformat() if parsed else "never-reported"
+    material = "\x00".join((kind, relay_id, device_id, reference))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+async def _devices_with_reachable_parent(db, devices, *, now: datetime):
+    """A known inactive/offline parent explains child silence; do not duplicate it."""
+    if not devices:
+        return []
+    relay_ids = sorted({str(row.get("relay_id") or "") for row in devices})
+    parents = await db["network_relays"].find(
+        {"relay_id": {"$in": relay_ids}},
+        {"tenant_id": 1, "relay_id": 1, "status": 1, "last_seen": 1},
+    ).to_list(length=1000)
+    unavailable = set()
+    cutoff = now - timedelta(seconds=RELAY_OFFLINE_SECONDS)
+    for parent in parents:
+        last_seen = _parse_utc(parent.get("last_seen"))
+        if (
+            str(parent.get("status") or "active").lower() in {"revoked", "inactive"}
+            or last_seen is None or last_seen < cutoff
+        ):
+            unavailable.add((parent.get("tenant_id"), parent.get("relay_id")))
+    # Preserve visibility for legacy observations without a registered parent.
+    return [row for row in devices if (row.get("tenant_id"), row.get("relay_id")) not in unavailable]
 
 
 async def _retry_fanout(
@@ -470,6 +504,17 @@ async def _emit_alert(
         "status": "NEW",
         "source": "network_relay_watchdog",
         "engine_source": "network_relay_watchdog",
+        "signal_kind": "telemetry_health",
+        "attack_detected": False,
+        "display_title": {
+            "RELAY_OFFLINE": "Firewall log relay offline",
+            "DEVICE_SILENT": "Firewall device not reporting logs",
+            "DEVICE_DEGRADED": "Firewall log delivery degraded",
+        }.get(alert_type, "Firewall monitoring health warning"),
+        "remediation": relay_health_issues({
+            "RELAY_OFFLINE": "OFFLINE", "DEVICE_SILENT": "SILENT",
+            "DEVICE_DEGRADED": "DEGRADED",
+        }.get(alert_type, "DEGRADED"))[0]["remediation"],
         "event_uid": alert_key,
         "watchdog_delivery": _new_delivery_state(now),
         # Seven-day hot window: the storage archiver removes the evidence only
@@ -522,9 +567,11 @@ async def run_network_relay_watchdog(
         if not tenant_id or not relay_id:
             continue
         last_seen = relay.get("last_seen")
+        relay_label = str(relay.get("relay_name") or relay.get("hostname") or relay_id)[:128]
         summary = (
-            f"Network relay {relay_id} has not delivered a batch in over "
-            f"{RELAY_OFFLINE_SECONDS}s while still marked active."
+            f'Firewall log relay "{relay_label}" is offline: no accepted batch for '
+            f"at least {RELAY_OFFLINE_SECONDS // 60} minutes. Restore the relay host, "
+            "service and backend connection. This is lost visibility, not a confirmed attack."
         )
         if await _emit_alert(
             db,
@@ -540,6 +587,10 @@ async def run_network_relay_watchdog(
                 "event_id": relay_id,
                 "relay_id": relay_id,
                 "last_seen": last_seen,
+                "relay_name": relay_label,
+                "health_condition_id": _condition_id(
+                    "RELAY_OFFLINE", relay_id, "", last_seen or relay.get("created_at")
+                ),
                 "version": relay.get("version"),
             },
             now=now,
@@ -548,7 +599,10 @@ async def run_network_relay_watchdog(
             emitted["relay_offline"] += 1
 
     # 2. DEVICE_SILENT — device stopped sending evidence (or never started)
-    for device in await _scan_silent_devices(db, silence_seconds=silence_seconds, now=now):
+    silent_devices = await _devices_with_reachable_parent(
+        db, await _scan_silent_devices(db, silence_seconds=silence_seconds, now=now), now=now,
+    )
+    for device in silent_devices:
         found["device_silent"] += 1
         tenant_id = device.get("tenant_id")
         relay_id = device.get("relay_id")
@@ -558,8 +612,9 @@ async def run_network_relay_watchdog(
         last_event_at = _parse_utc(device.get("last_event_at"))
         if last_event_at is not None:
             summary = (
-                f"Network relay device {device_id} (vendor={device.get('vendor')}) "
-                f"has not sent evidence for {silence_seconds}s."
+                f"Firewall device {device_id} ({device.get('vendor') or 'unknown vendor'}) "
+                f"has not sent log evidence for at least {silence_seconds // 60} minutes. "
+                "Check remote syslog and the device-to-relay connection. Silence is not proof of an attack."
             )
             reference_iso = last_event_at.isoformat()
         else:
@@ -587,6 +642,10 @@ async def run_network_relay_watchdog(
                 "model": device.get("model"),
                 "last_event_at": last_event_at,
                 "silence_seconds": silence_seconds,
+                "health_condition_id": _condition_id(
+                    "DEVICE_SILENT", relay_id, device_id,
+                    last_event_at or device.get("created_at"),
+                ),
                 "window_key": window_key,
             },
             now=now,
@@ -595,7 +654,10 @@ async def run_network_relay_watchdog(
             emitted["device_silent"] += 1
 
     # 3. DEVICE_DEGRADED — device is delivering but reporting failures
-    for device in await _scan_degraded_devices(db, silence_seconds=silence_seconds, now=now):
+    degraded_devices = await _devices_with_reachable_parent(
+        db, await _scan_degraded_devices(db, silence_seconds=silence_seconds, now=now), now=now,
+    )
+    for device in degraded_devices:
         found["device_degraded"] += 1
         tenant_id = device.get("tenant_id")
         relay_id = device.get("relay_id")

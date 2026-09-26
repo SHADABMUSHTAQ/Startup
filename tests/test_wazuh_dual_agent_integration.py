@@ -6,18 +6,21 @@ Covers:
 3. Tenant resolution strictly via binding (never label string parsing)
 4. Deterministic linkage to WarSOC canonical Windows evidence via event_record_id
 5. True side-effect-free shadow mode & shadow comparison metrics
-6. Prevention of double-dispatch for Windows endpoint telemetry
+6. Independent security projection alongside native/SCA agent enrollment
 7. Per-rule-family promotion authority & incident reconciliation
 """
 
 from __future__ import annotations
 
 import secrets
+import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import pytest
 import pytest_asyncio
+from cryptography.fernet import Fernet
 
 from app.wazuh_integration.contracts import (
     DetectionCandidate,
@@ -27,7 +30,7 @@ from app.wazuh_integration.candidate_service import (
     admit_candidate,
     admit_candidate_batch,
 )
-from app.wazuh_integration.projector import _source_identity
+from app.wazuh_integration.projector import _source_identity, project_canonical_event
 
 
 @pytest.fixture
@@ -410,8 +413,8 @@ async def test_native_sca_check_never_borrows_unrelated_endpoint_event_lineage(
     ) == 0
 
 
-def test_projector_prevents_duplicate_windows_dispatch_when_native_agent_active():
-    """Requirement 3E: Windows endpoint events must not be dual-dispatched to custom-JSON outbox."""
+def test_projector_keeps_signed_windows_and_network_source_boundaries():
+    """A native/SCA binding is independent of the signed projection contract."""
     windows_doc = {
         "telemetry_family": "windows",
         "signature_verified": True,
@@ -426,11 +429,53 @@ def test_projector_prevents_duplicate_windows_dispatch_when_native_agent_active(
         "agent_id": "WARSOC_RELAY_01",
     }
 
-    # When native_endpoint_enabled is True (Dual-agent mode)
-    assert _source_identity(windows_doc, network_enabled=True, native_endpoint_enabled=True) is None
-    # Network telemetry remains active
-    assert _source_identity(network_doc, network_enabled=True, native_endpoint_enabled=True) == (
+    assert _source_identity(windows_doc, network_enabled=True) == (
+        "windows_endpoint", "endpoint_signed", "WARSOC_AGENT_01",
+    )
+    assert _source_identity(network_doc, network_enabled=True) == (
         "network_device",
         "relay_attested",
         "WARSOC_RELAY_01",
     )
+    assert _source_identity({**windows_doc, "signature_verified": False}, network_enabled=True) is None
+    assert _source_identity(network_doc, network_enabled=False) is None
+
+
+@pytest.mark.asyncio
+async def test_sca_binding_preserves_v3_security_projection_and_retry_dedup(
+    db, wazuh_mock_settings, setup_dual_agent_env,
+):
+    settings = wazuh_mock_settings
+    settings.wazuh_ruleset_version = "warsoc-projected-shadow-v3"
+    settings.network_relay_enabled = True
+    settings.wazuh_correlation_hmac_key = "c" * 64
+    settings.wazuh_correlation_key_version = "corr-v1"
+    settings.wazuh_outbox_encryption_key = Fernet.generate_key().decode("ascii")
+    settings.wazuh_live_event_max_age_seconds = 3600
+    settings.wazuh_max_body_bytes = 1024 * 1024
+    settings.wazuh_outbox_max_bytes = 1024 * 1024
+    settings.wazuh_outbox_record_ttl_days = 7
+    registry_path = Path(__file__).resolve().parents[1] / "deploy/wazuh/registry/warsoc-projected-shadow-v3.json"
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    await db.detection_rule_registry.insert_many([
+        {**rule, "engine": "wazuh", "ruleset_version": registry["ruleset_version"],
+         "status": "approved", "dispatch_enabled": bool(rule.get("input_field_map"))}
+        for rule in registry["rules"]
+    ])
+    now = datetime.now(timezone.utc)
+    event = {
+        "tenant_id": setup_dual_agent_env["tenant_id"],
+        "agent_id": setup_dual_agent_env["warsoc_agent_id"],
+        "event_uid": "bound-security-canary", "event_id": "1102",
+        "telemetry_family": "windows", "signature_verified": True,
+        "source_assurance": "agent_signed", "timestamp": now, "ingested_at": now,
+    }
+    result = await project_canonical_event(db, event, settings, now=now)
+    assert result.status == "created"
+    row = await db.detection_dispatch_outbox.find_one({"dispatch_uid": result.dispatch_uid})
+    assert row["tenant_id"] == event["tenant_id"]
+    assert row["eligible_rule_ids"] == ["100612"]
+    assert row["source_family"] == "windows_endpoint"
+    assert (await project_canonical_event(db, event, settings, now=now)).status == "duplicate"
+    assert await db.detection_dispatch_outbox.count_documents({}) == 1
+    assert await db.security_incidents.count_documents({}) == 0

@@ -2202,6 +2202,53 @@ async def test_watchdog_alerts_new_window_after_device_stays_silent(
         {"tenant_id": tenant_id, "device_id": device_id}
     )
     assert total == 2
+    # Keep both immutable health observations but group the unchanged outage
+    # into one customer incident across notification windows.
+    assert await db["security_incidents"].count_documents({"tenant_id": tenant_id}) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent_state", ["offline", "revoked", "active"])
+async def test_watchdog_parent_outage_explains_child_and_guidance_survives_projection(
+    db, redis_client, parent_state,
+):
+    from app.workers.network_relay_watchdog import run_network_relay_watchdog
+
+    now = datetime.now(timezone.utc)
+    tenant_id = f"WATCHDOG_PARENT_{uuid.uuid4().hex[:8]}"
+    relay_id = f"WARSOC_RELAY_PARENT_{uuid.uuid4().hex[:8]}"
+    await db.network_relays.insert_one({
+        "tenant_id": tenant_id, "relay_id": relay_id, "relay_name": "Office Firewall Relay",
+        "status": "revoked" if parent_state == "revoked" else "active",
+        "last_seen": now - timedelta(minutes=30 if parent_state == "offline" else 1),
+    })
+    await db.network_relay_device_status.insert_one({
+        "tenant_id": tenant_id, "relay_id": relay_id, "device_id": "office-pfsense",
+        "vendor": "pfsense", "last_event_at": now - timedelta(minutes=30),
+    })
+    first = await run_network_relay_watchdog(db, redis_client, silence_seconds=900, now=now)
+    if parent_state == "revoked":
+        assert first["alerts_emitted"] == 0
+        return
+    assert first["alerts_emitted"] == 1
+    assert first["alerts_device_silent_emitted"] == (parent_state == "active")
+    alert = await db.security_alerts.find_one({"tenant_id": tenant_id})
+    assert alert["signal_kind"] == "telemetry_health"
+    assert alert["attack_detected"] is False
+    assert alert["remediation"]
+    incident = await db.security_incidents.find_one({"tenant_id": tenant_id})
+    assert incident["context"]["signal_kind"] == "telemetry_health"
+    assert incident["context"]["remediation"] == alert["remediation"]
+    if parent_state == "offline":
+        assert "Office Firewall Relay" in alert["summary"]
+        later = now + timedelta(minutes=15)
+        await run_network_relay_watchdog(db, redis_client, silence_seconds=900, now=later)
+        assert await db.security_alerts.count_documents({"tenant_id": tenant_id}) == 2
+        assert await db.security_incidents.count_documents({"tenant_id": tenant_id}) == 1
+        # A later loss after fresh reporting is a new outage, not swallowed by dedup.
+        await db.network_relays.update_one({"tenant_id": tenant_id, "relay_id": relay_id}, {"$set": {"last_seen": later}})
+        await run_network_relay_watchdog(db, redis_client, silence_seconds=900, now=later + timedelta(minutes=20))
+        assert await db.security_incidents.count_documents({"tenant_id": tenant_id}) == 2
 
 
 @pytest.mark.asyncio

@@ -57,7 +57,7 @@ if not env_loaded:
     print(f"[WARN] .env not found in any standard location. Using system environment variables.")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip('/')
-AGENT_VERSION = "4.2.14-Native-Signed-Server-V1"
+AGENT_VERSION = "4.2.15-Native-Signed-Server-V1"
 EVENT_SIGNATURE_VERSION = "ed25519-v2"
 COLLECTION_PROTOCOL_VERSION = "warsoc-agent-collection-v4"
 WINDOWS_EVENT_XML_ENCODING = "zlib-base64-v1"
@@ -439,7 +439,8 @@ def _sign_event_for_delivery(payload, signing_key):
         event["collection_protocol_version"] = "warsoc-agent-legacy-spool-v1"
     event.setdefault("collection_protocol_version", COLLECTION_PROTOCOL_VERSION)
     event.setdefault("source_channel", "legacy_spool")
-    event.setdefault("source_channel_epoch", f"legacy-{AGENT_RUNTIME_EPOCH}")
+    legacy_epoch = hashlib.sha256(str(event["event_uid"]).encode("utf-8")).hexdigest()[:32]
+    event.setdefault("source_channel_epoch", f"legacy-{legacy_epoch}")
     event.setdefault("source_sequence", event["event_uid"])
     event["signature_version"] = EVENT_SIGNATURE_VERSION
 
@@ -747,6 +748,7 @@ class DiskSpooler:
         min_free_bytes=None,
         segment_bytes=None,
         compact_after_bytes=None,
+        recovery_reserve_bytes=None,
     ):
         self.spool_dir = Path(spool_dir)
         self.pending_file = self.spool_dir / "pending_logs.jsonl"
@@ -763,6 +765,11 @@ class DiskSpooler:
             compact_after_bytes
             or os.getenv("AGENT_SPOOL_COMPACT_AFTER_BYTES", str(64 * 1024 * 1024))
         )
+        self.recovery_reserve_bytes = int(
+            recovery_reserve_bytes
+            if recovery_reserve_bytes is not None
+            else min(16 * 1024 * 1024, self.max_bytes)
+        )
         if self.max_bytes <= 0:
             raise ValueError("AGENT_SPOOL_MAX_BYTES must be positive")
         if not 0 <= self.resume_bytes < self.max_bytes:
@@ -773,8 +780,11 @@ class DiskSpooler:
             raise ValueError("AGENT_SPOOL_SEGMENT_BYTES must be positive and no larger than AGENT_SPOOL_MAX_BYTES")
         if self.compact_after_bytes <= 0:
             raise ValueError("AGENT_SPOOL_COMPACT_AFTER_BYTES must be positive")
+        if not 0 < self.recovery_reserve_bytes <= min(16 * 1024 * 1024, self.max_bytes):
+            raise ValueError("Spool recovery reserve must be positive and at most 16 MiB")
         self.backpressure_active = False
         self.backpressure_reason = ""
+        self._live_chunks_since_replay = 0
 
         # Ensure spool environment exists
         self.spool_dir.mkdir(parents=True, exist_ok=True)
@@ -842,6 +852,7 @@ class DiskSpooler:
                 "usage_bytes": usage_bytes,
                 "max_bytes": self.max_bytes,
                 "resume_bytes": self.resume_bytes,
+                "recovery_reserve_bytes": self.recovery_reserve_bytes,
                 "min_free_bytes": self.min_free_bytes,
                 "free_bytes": free_bytes,
                 "blocked": self.backpressure_active,
@@ -858,7 +869,7 @@ class DiskSpooler:
                 pending_size = self.pending_file.stat().st_size if self.pending_file.exists() else 0
                 if pending_size and pending_size + encoded_size > self.segment_bytes:
                     self._rotate_pending_unlocked()
-                with open(self.pending_file, "a", encoding="utf-8") as f:
+                with open(self.pending_file, "a", encoding="utf-8", newline="\n") as f:
                     f.write(line)
                     f.flush()
                     os.fsync(f.fileno())
@@ -900,18 +911,61 @@ class DiskSpooler:
             os.fsync(handle.fileno())
         os.replace(temporary, checkpoint)
 
+    def _has_recent_head(self, file_path):
+        try:
+            with open(file_path, "rb") as handle:
+                handle.seek(self._read_checkpoint(file_path))
+                line = handle.readline(MAX_OUTBOUND_BYTES + 1)
+            if len(line) > MAX_OUTBOUND_BYTES:
+                return False
+            timestamp = json.loads(line).get("timestamp")
+            if not isinstance(timestamp, str):
+                return False
+            parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds()
+            return -300 <= age < REPLAY_AGE_SECONDS
+        except (OSError, ValueError, TypeError, AttributeError):
+            return False
+
     def consume_chunk(self, max_records, max_bytes):
         """Read a bounded processing chunk and return it with an acknowledgement token."""
         max_records = max(1, int(max_records))
         max_bytes = max(1, int(max_bytes))
         with self.lock:
             processing_files = sorted(self.spool_dir.glob("processing_*.jsonl"))
-            processing_file = processing_files[0] if processing_files else self._rotate_pending_unlocked()
+            if self.pending_file.exists() and (
+                not processing_files or self._has_recent_head(self.pending_file)
+            ):
+                rotated = self._rotate_pending_unlocked()
+                if rotated is not None:
+                    processing_files = sorted([*processing_files, rotated])
+            live_files = []
+            replay_files = []
+            for path in processing_files:
+                (live_files if self._has_recent_head(path) else replay_files).append(path)
+            # Fresh telemetry must not wait hours behind an outage spool, but
+            # reserve every fourth chunk for historical evidence when both exist.
+            if live_files and (not replay_files or self._live_chunks_since_replay < 3):
+                processing_file = live_files[0]
+                self._live_chunks_since_replay += 1
+            elif replay_files:
+                processing_file = replay_files[0]
+                self._live_chunks_since_replay = 0
+            else:
+                processing_file = None
         if processing_file is None:
             return None, None
 
         start_offset = self._read_checkpoint(processing_file)
+        with self.lock:
+            usage_bytes = self._usage_bytes_unlocked()
+            if start_offset and usage_bytes >= self.max_bytes + self.recovery_reserve_bytes // 2:
+                self._compact_processing_file(processing_file, start_offset)
+                start_offset = 0
         records = []
+        record_end_offsets = []
         end_offset = start_offset
         malformed_count = 0
         lines_seen = 0
@@ -935,6 +989,7 @@ class DiskSpooler:
                     if not isinstance(parsed, dict):
                         raise ValueError("spool record is not a JSON object")
                     records.append(parsed)
+                    record_end_offsets.append(line_end)
                 except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                     malformed_count += 1
                     self.quarantine(
@@ -950,6 +1005,7 @@ class DiskSpooler:
             "start_offset": start_offset,
             "end_offset": end_offset,
             "eof": eof,
+            "record_end_offsets": record_end_offsets,
         }
         return records, token
 
@@ -971,7 +1027,7 @@ class DiskSpooler:
         # crash; replacing first could skip unacknowledged evidence.
         os.replace(temporary, source)
 
-    def acknowledge_chunk(self, token):
+    def acknowledge_chunk(self, token, *, compact=True):
         """Advance a durable cursor only after the chunk reached the backend."""
         file_path = Path(str(token.get("file_path") or ""))
         if file_path.parent.resolve() != self.spool_dir.resolve() or not file_path.name.startswith("processing_"):
@@ -984,11 +1040,19 @@ class DiskSpooler:
         with self.lock:
             if not file_path.exists():
                 return
+            if not self._read_checkpoint(file_path) <= end_offset <= file_path.stat().st_size:
+                raise ValueError("Invalid spool acknowledgement offset")
             if token.get("eof"):
+                if end_offset != file_path.stat().st_size:
+                    raise ValueError("Incomplete spool acknowledgement cannot remove a file")
                 self.clear_batch(file_path)
                 return
             self._write_checkpoint(file_path, end_offset)
-            if end_offset >= self.compact_after_bytes:
+            recovery_pressure = (
+                self._usage_bytes_unlocked()
+                >= self.max_bytes + self.recovery_reserve_bytes // 2
+            )
+            if compact and (end_offset >= self.compact_after_bytes or recovery_pressure):
                 self._compact_processing_file(file_path, end_offset)
 
     def quarantine(self, log_dict, reason):
@@ -1001,8 +1065,16 @@ class DiskSpooler:
         line = json.dumps(entry, ensure_ascii=False, default=str) + "\n"
         try:
             with self.lock:
-                self._ensure_capacity_unlocked(len(line.encode("utf-8")))
-                with open(self.dead_letter_file, "a", encoding="utf-8") as f:
+                # Existing evidence needs bounded working space to be preserved
+                # before its processing cursor advances, even while collection
+                # is paused. This reserve never admits new collected events.
+                encoded_size = len(line.encode("utf-8"))
+                usage_bytes, free_bytes = self._capacity_snapshot_unlocked()
+                if usage_bytes + encoded_size > self.max_bytes + self.recovery_reserve_bytes:
+                    self._raise_backpressure_unlocked("Agent quarantine recovery reserve reached")
+                if free_bytes - encoded_size < self.min_free_bytes:
+                    self._raise_backpressure_unlocked("Agent quarantine disk reserve reached")
+                with open(self.dead_letter_file, "a", encoding="utf-8", newline="\n") as f:
                     f.write(line)
                     f.flush()
                     os.fsync(f.fileno())
@@ -1697,7 +1769,9 @@ def ingest_sender_thread():
             if resp is not None and resp.status_code in (409, 422):
                 print(f"[WARN] Batch chunk rejected ({resp.status_code}). Isolating conflicting records...")
                 transient_retry = False
-                for single_log in batch:
+                progress_token = None
+                record_offsets = batch_token.get("record_end_offsets") or []
+                for index, single_log in enumerate(batch):
                     signed_single = _sign_event_for_delivery(single_log, signing_key)
                     sr = secure_request(
                         "POST",
@@ -1706,11 +1780,17 @@ def ingest_sender_thread():
                         timeout=10,
                     )
                     if sr is not None and sr.status_code in (200, 202):
+                        if index < len(record_offsets):
+                            progress_token = dict(batch_token, end_offset=record_offsets[index], eof=False)
+                            SPOOLER.acknowledge_chunk(progress_token, compact=False)
                         time.sleep(_successful_delivery_delay_seconds([single_log]))
                         continue
                     status = sr.status_code if sr is not None else "timeout"
                     if sr is not None and sr.status_code in (400, 409, 422):
                         SPOOLER.quarantine(single_log, f"backend_rejected:{status}")
+                        if index < len(record_offsets):
+                            progress_token = dict(batch_token, end_offset=record_offsets[index], eof=False)
+                            SPOOLER.acknowledge_chunk(progress_token, compact=False)
                         print(f"[QUARANTINE] Backend rejected forensic event: {single_log.get('event_id')}")
                         continue
                     transient_retry = True
@@ -1719,6 +1799,8 @@ def ingest_sender_thread():
                 if not transient_retry:
                     SPOOLER.acknowledge_chunk(batch_token)
                 else:
+                    if progress_token is not None:
+                        SPOOLER.acknowledge_chunk(progress_token)
                     time.sleep(5)
                 continue
 

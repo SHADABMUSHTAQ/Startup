@@ -29,6 +29,13 @@ def redact_sensitive_text(value: Any, *, limit: int = 600) -> str:
     return text[:limit]
 
 
+def _safe_remediation(value: Any) -> list[str] | None:
+    if not isinstance(value, (list, tuple)):
+        return None
+    steps = [redact_sensitive_text(step, limit=300) for step in value[:6] if isinstance(step, str) and step.strip()]
+    return steps or None
+
+
 def _mapping_layers(payloads: Iterable[Mapping[str, Any] | None]) -> list[Mapping[str, Any]]:
     layers: list[Mapping[str, Any]] = []
     queue = [payload for payload in payloads if isinstance(payload, Mapping)]
@@ -121,6 +128,10 @@ def build_alert_context(alert: Mapping[str, Any], source_event: Mapping[str, Any
 
     context = {
         "schema_version": "operator-context-v1",
+        "signal_kind": (
+            "telemetry_health" if _first(layers, "signal_kind") == "telemetry_health" else None
+        ),
+        "remediation": _safe_remediation(_first(layers, "remediation")),
         "rule_id": _first(layers, "rule_id", "matched_rule_id", "type"),
         "event_id": _first(layers, "event_id"),
         "event_uid": _first(layers, "event_uid"),
