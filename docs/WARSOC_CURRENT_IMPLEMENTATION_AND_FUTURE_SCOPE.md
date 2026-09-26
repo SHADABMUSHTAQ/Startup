@@ -1,22 +1,25 @@
 # WarSOC Current Implementation and Future Scope Register
 
 **Document role:** Consolidated source-of-truth index
-**Snapshot date:** 2026-09-21
+**Snapshot date:** 2026-09-26
 **Windows Server engineering delta:** 2026-09-15
 **Evidence governance delta:** 2026-09-06
 **Retention, detector, and Security Stories production delta:** 2026-09-08
 **Historical retrieval and firewall/Wazuh acceptance delta:** 2026-09-10
 **Controlled SCA shadow acceptance delta:** 2026-09-21
-**Hybrid/health candidate delta:** 2026-09-26. Independent signed security
+**Hybrid/health production delta:** 2026-09-26, OCI `893b190`. Independent signed security
 projection now coexists with native/SCA enrollment. Endpoint/relay APIs provide
 additive health causes and recovery guidance; outage evidence remains durable
 while repeated unchanged OFFLINE/SILENT warnings group into one incident.
-These source edits are not production acceptance. Agent 4.2.15 adds bounded
+The scoped source and runtime checks passed. Agent 4.2.15 adds bounded
 quarantine recovery, durable isolated-record progress and fair live/history
 draining without changing collection limits or discarding evidence. Backed-up
-workstation recovery is progressing, but complete fresh-event acceptance,
-candidate deployment and frontend consumption of guidance remain separate
-closures. See `docs/WARSOC_HYBRID_HEALTH_CLOSURE_2026-09-26.md`.
+workstation recovery crossed the resume boundary and authenticated status is
+Active with fresh signed Security/System delivery. Old 409 rejects are retained
+hash-verified in protected recovery storage, not deleted or accepted; pending
+history continues draining. The ALPHABAY relay recovery, frontend consumption
+of guidance and derived/source timestamp consistency remain open. See
+`docs/WARSOC_HYBRID_HEALTH_CLOSURE_2026-09-26.md` for the exact limits of proof.
 **Audience:** WarSOC engineering, operations, security review, and product leadership
 **Applies to:** The backend and frontend release state, the published Windows agent boundary, the entitled network relay, and the controlled Wazuh shadow boundary
 
@@ -44,12 +47,29 @@ implementation contracts remain in the documents listed in Section 16.
 
 ## 2. Repository and Release Truth
 
-At this snapshot:
+Current scoped release:
 
-- The deployed core backend revision is `7e9f00d` from authoritative branch
+- Backend `893b190` is pushed to `origin/backend` and active on OCI at
+  `/opt/warsoc/releases/893b190`; deployed source hash parity was verified.
+- API/Mongo/Redis health passed; authenticated endpoint status reported Active
+  at 15:09:07 UTC with version 4.2.15 and no health issues. Additive endpoint and
+  relay recovery guidance is live. No frontend deployment occurred in this scope.
+- Native WarSOC remains authoritative; Wazuh v3 remains shadow with primary
+  approval false and SCA enabled. A fresh SCA-bound Windows source reached the
+  durable shadow dispatch path. This does not promote attack families.
+- The ALPHABAY pfSense relay remains offline at this recovery checkpoint; older
+  physical integration proof does not establish present delivery.
+- Thirty scoped cases passed; passing full campaigns were not repeated. The
+  runtime timestamp discrepancy and pending/rejected historical evidence remain
+  explicit follow-ups rather than being counted as fully closed.
+
+Historical acceptance baseline (the following older release identities and
+preflight results are retained evidence, not the current runtime revision):
+
+- The then-deployed core backend revision was `7e9f00d` from authoritative branch
   `backend`; later documentation-only commits do not change that runtime identity.
-- The authoritative frontend branch is `main` at deployed commit `e7c5aa0`.
-- OCI runs the exact core backend release from `/opt/warsoc/releases/7e9f00d`.
+- The authoritative frontend branch was `main` at deployed commit `e7c5aa0`.
+- OCI ran that core backend release from `/opt/warsoc/releases/7e9f00d`.
   The API, unified worker, compliance cron, archiver, evidence-export worker,
   evidence-hold worker, and archive-retrieval worker are running. The existing
   Wazuh dispatcher/candidate/manager bridge remained online across this scoped
@@ -73,11 +93,12 @@ capture for a formal paid-customer freeze.
 
 | Item | State |
 |---|---|
-| Published/accepted agent | `4.2.8-Native-Signed`; public Azure artifact and local manifest match exactly. |
+| Current published agent | `4.2.15-Native-Signed-Server-V1`; public installer and manifest match SHA-256 `DB98CD8B...93C0B660`, 18,885,226 bytes. |
+| Current workstation recovery | Final executable installed with preserved identity/configuration; Active and fresh Security/System delivery at the September 26 checkpoint. Historical backlog remains; this is not repeated clean-install or Windows Server fleet qualification. |
 | Historical exact-machine proof | `4.2.6-Native-Signed` completed enrollment, signed ingestion, SIEM, PECA, and FBR validation on the test endpoint. |
-| Working source agent | `4.2.8-Native-Signed`. |
+| Working source agent | `4.2.15-Native-Signed-Server-V1`. |
 | 4.2.8 additions | Bounded XML parsing with DTD/entity rejection, bounded historical replay, and a build gate for required Windows/DPAPI dependencies. |
-| 4.2.8 release state | Published and preflight-proven: 17,797,079 bytes, SHA-256 `04D594A771B0E7F047D4CFDFF5359AC83B8934E5C592D2843ADD59D276E72F67`. Exact clean-machine workflow acceptance remains inherited from 4.2.6 until repeated on 4.2.8. |
+| Historical 4.2.8 release state | Published and preflight-proven at that checkpoint: 17,797,079 bytes, SHA-256 `04D594A771B0E7F047D4CFDFF5359AC83B8934E5C592D2843ADD59D276E72F67`. Retained history, not the current CDN target. |
 | Installer trust | Hash allowlisting supports controlled pilots while Defender remains enabled. The installer is not publisher code-signed. |
 
 ## 3. Current Product Boundary
@@ -94,7 +115,7 @@ platform for SMB environments. Its active scope is:
 - FBR protected-path file-tamper evidence when POS/database paths are configured;
 - seven-day operational hot storage and immutable Azure archival;
 - explicit asynchronous historical retrieval with direct Azure downloads;
-- entitlement-gated pfSense relay ingestion and governed Wazuh v2 shadow
+- entitlement-gated pfSense relay ingestion and governed Wazuh v3 shadow
   observation, neither of which changes WarSOC evidence authority;
 - tenant isolation, RBAC, reports, team access, agent activation, quotas, health,
   and operational metrics.
@@ -524,7 +545,7 @@ when the customer POS explicitly supplies it under the agreed contract.
 
 **Priority:** P0
 **Outcome:** One reviewed release candidate.
-**Current status:** Superseded by deployed core backend `7e9f00d`; the frontend
+**Current status:** Superseded by deployed core backend `893b190`; the frontend
 and agent retain their independently recorded release identities.
 
 - Reconcile the local branch with `origin/backend` without losing dirty work.

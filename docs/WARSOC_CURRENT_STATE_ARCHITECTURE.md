@@ -1,8 +1,8 @@
 # WarSOC Current-State Architecture and Operational Contract
 
 **Document status:** Authoritative as-built map
-**Snapshot date:** 2026-09-21
-**Hybrid/health engineering delta:** 2026-09-26 (local candidate, not deployed).
+**Snapshot date:** 2026-09-26
+**Hybrid/health production delta:** 2026-09-26, OCI release `893b190`.
 WarSOC-native detection remains authoritative; Wazuh remains shadow with primary
 approval false. Native/SCA binding must not suppress the independent governed
 security projections. `/data/status` now supplies safe `health_summary` and
@@ -12,30 +12,36 @@ Repeated OFFLINE/SILENT evidence shares one incident per unchanged outage anchor
 known unavailable parents suppress redundant child warnings. Existing evidence
 and historical incidents remain untouched. See
 `docs/WARSOC_HYBRID_HEALTH_CLOSURE_2026-09-26.md` for map, verification and the
-administrator recovery boundary. The live September 26 workstation reports a
-full 500 MiB spool before recovery; Running/Automatic and verified signatures do
-not mean its Security/System collection is healthy. The 4.2.15 recovery candidate
+administrator recovery record. The September 26 workstation initially reported
+a full 500 MiB spool; Running/Automatic and verified signatures alone did not
+prove healthy Security/System collection. The published 4.2.15 recovery agent
 adds a maximum 16 MiB quarantine working reserve, per-record retry checkpoints,
 restart-stable legacy signature metadata and fair live/history scheduling. The
 collection cap remains 500 MiB, its resume boundary remains 400 MiB, and no
 rejection is silently treated as an acknowledged duplicate. Backed-up recovery
-is progressing; fresh-event/resume acceptance is recorded separately in the
-closure ledger. Old healthy snapshots below remain dated historical evidence.
+crossed below the resume boundary; at 15:09:07 UTC authenticated status reported
+`active`, both channels `ok`, no health issues and verified signatures. Old 409
+rejects remain hash-verified in protected recovery storage, not accepted or
+deleted. Pending history continues draining normally. The ALPHABAY relay is
+still a separate recovery item. A derived/source timestamp discrepancy is
+recorded in the closure ledger and limits historical-age acceptance claims.
+Older release identities and healthy snapshots below are dated historical evidence.
 **Windows Server engineering delta:** 2026-09-15. General Server V1 is a
 deployed engineering/pilot capability with target-host functional and offline
 spool-recovery proof. Customer support remains gated on the remaining event
 matrix and 24-to-72-hour soak.
-**Release acceptance delta:** 2026-09-21. Core OCI application release
-`3335112` is active and healthy. Its historical-retrieval path retains its named
+**Previous release acceptance delta:** 2026-09-21. Core OCI application release
+`3335112` was active and healthy at that checkpoint. Its historical-retrieval path retains its named
 live Azure canary. The Wazuh candidate and dispatch services are reconciled to
 the same release; the manager and bridge retain their separate detector
 foundation identity.
 **Scope:** Windows agent, ingestion, Redis, SIEM, FBR, PECA, MongoDB hot storage, Azure cold storage, retrieval, reports, dashboard, RBAC, email, deployment, launch proof, the controlled pfSense network-relay path, and the controlled Wazuh shadow-detector path.
 
-**Current OCI application identity:** `3335112`
+**Current OCI application identity:** `893b190`
 **Always-on Wazuh deployment foundation:** `7cd02e0`
 **Repository note:** the manager-only deployment package changes the Wazuh runtime boundary; it does not replace the core application image identity
-**Current Vercel frontend identity:** `1e64b79`
+**Last separately recorded Vercel frontend identity:** `1e64b79`; no frontend
+verification or deployment was repeated in the September 26 recovery scope.
 
 This document describes what the current source code does. It is not a sales claim and it does not treat an implemented path as production-proven unless verification evidence exists.
 
@@ -55,15 +61,18 @@ WarSOC currently has a coherent end-to-end architecture. The application enforce
 10. Normal compliance views, search, CSV exports, and PDF reports read bounded hot Mongo data and archive-ledger availability. The asynchronous historical-retrieval backend is active on OCI and returns direct, short-lived Azure links; the customer-facing browser workflow remains a separate frontend acceptance item.
 11. The dashboard separates normal endpoint telemetry, immutable detection evidence, and mutable operator incidents.
 
-The newest public Azure engineering artifact is Windows agent `4.2.14` at its
+The newest public Azure engineering artifact is Windows agent `4.2.15` at its
 immutable versioned URL. Its installer SHA-256 is
-`87FC6FF1B08F2BF5AB4742B3F2C4144EBC774AEF5EABF4E392DC74294F49E1E9`.
+`DB98CD8BA1519F946F66D86740143CD31181D4F5211F544ABDA9A11D93C0B660`.
+The 18,885,226-byte installer and 4.2.15 pilot manifest were published without
+overwrite and verified by public download. The affected workstation runs the
+matching final executable; production `AGENT_CDN_URL` points to 4.2.15.
 The production backend requires signed endpoint events. The executable is still
 not Authenticode publisher-signed, so exact-hash verification remains a pilot
 control rather than an enterprise publisher-trust claim.
 
-Agent `4.2.12-Native-Signed-Compact` is the current tested source candidate, not
-yet a published or production-accepted artifact. It preserves the 4.2.11
+Historical compact-agent checkpoint: `4.2.12-Native-Signed-Compact` was a tested
+source candidate at that review. It preserved the 4.2.11
 lossless compact XML representation and every normalized SIEM/Wazuh/PECA field.
 It additionally scopes each native Windows event UID to the persisted channel
 epoch as well as the channel and record ID. This prevents a cleared or recreated
@@ -76,15 +85,17 @@ Existing signed collection-v2 and collection-v3 agents remain accepted. The
 candidate becomes the public release only after immutable artifact upload,
 exact-hash verification, installation, and runtime acceptance proof.
 
-Agent `4.2.14-Native-Signed-Server-V1` is now the deployed engineering pilot.
+The September 15 `4.2.14-Native-Signed-Server-V1` engineering pilot is preserved
+as historical Windows Server qualification evidence; 4.2.15 is the current
+published recovery artifact.
 It preserves the 4.2.12 workstation pipeline and adds a backend-owned,
 revisioned and hash-bound `general_server` monitoring profile for Windows Server
 2022 Standard Desktop Experience AMD64. Profile delivery is nonce-bound to the
 signed heartbeat, server response is permanently monitor-only, and collected
 events carry the exact profile provenance before endpoint signing and durable
 spooling. Effective audit state is read through the native Windows API and drift
-degrades health without runtime GPO or firewall remediation. Production OCI
-release `b0d02db` has the feature flag enabled. This remains an engineering/pilot
+degrades health without runtime GPO or firewall remediation. At that checkpoint,
+OCI release `b0d02db` had the feature flag enabled. This remains an engineering/pilot
 capability, not a customer-support claim, until the remaining event, failure and
 soak qualification passes.
 Its spool drain reads bounded chunks, persists crash-safe acknowledgement
@@ -703,7 +714,8 @@ cannot promote incidents.
 
 ### 1.19 September 10 retrieval and firewall/Wazuh acceptance delta
 
-Core OCI application release `7e9f00d` is active at `api.warsoc.tech`. The API,
+At the September 10 checkpoint, core OCI application release `7e9f00d` was
+active at `api.warsoc.tech`. The API,
 MongoDB and Redis passed health checks and the isolated
 `archive-retrieval-worker` is running. Production canary
 `ARCHIVE-RETRIEVAL-CANARY-20260910T133007Z-413b5717` proved the complete
@@ -754,6 +766,33 @@ ingested real filterlog events, signed via Ed25519 in batch sequences 165 and 16
 creating and updating the production `network_relay_device_status` record with
 `last_event_type: network_connection_blocked` and cloud acceptance at
 `https://api.warsoc.tech`. The physical data path is closed and certified.
+
+### 1.20 September 26 hybrid health and workstation recovery
+
+OCI release `893b190` is pushed and deployed. Native WarSOC remains
+authoritative, the governed Wazuh v3 registry remains shadow-only, and primary
+approval remains false. SCA enrollment no longer suppresses independent signed
+Windows security projections. Endpoint and relay APIs expose additive bounded
+recovery guidance; ongoing unchanged relay outages group into one incident,
+without deleting old alerts or changing attack thresholds.
+
+The affected workstation was upgraded in place to final agent 4.2.15 with
+verified backups and preserved enrollment, keys, audit policy and firewall.
+Its old 80,949,019-byte rejection file is retained hash-verified and read-only
+under protected recovery storage, not silently accepted or deleted. Pending
+evidence and cursors were preserved. Temporary replay overrides ended with the
+original environment restored; the agent now uses its normal bounded limits.
+At 15:09:07 UTC the authenticated endpoint API reported Active, both required
+channels healthy and fresh signed delivery, with an unblocked 413,609,091-byte
+spool. Remaining history is draining, not claimed fully delivered.
+
+The labelled never-started System-service canary reached canonical storage,
+the source outbox and Wazuh dispatch. Its benign service features intentionally
+produced no Wazuh attack candidate. Thirty scoped tests passed without
+repeating the full campaign. The ALPHABAY relay remains offline; frontend use
+of the new guidance and a discovered derived/source timestamp discrepancy
+remain separate closures. Exact evidence, artifact hashes and acceptance limits
+are recorded in `docs/WARSOC_HYBRID_HEALTH_CLOSURE_2026-09-26.md`.
 
 ## 2. Product Boundary
 
@@ -1978,21 +2017,26 @@ Status meanings:
 - **UNPROVEN:** configured or implemented but not demonstrated with current production evidence.
 - **OUT OF SCOPE:** deliberately excluded from the Windows SMB pilot.
 
-| Component | Responsibility and data path | Status | Current production truth |
+The table combines dated acceptance evidence with the September 26 scoped
+updates. Older canaries were not rerun, and an earlier successful workflow is
+not a claim that an offline source is delivering now. Section 1.20 and the
+hybrid closure ledger record the latest recovery checkpoint.
+
+| Component | Responsibility and data path | Status | Recorded acceptance and current boundaries |
 |---|---|---|---|
 | DNS and TLS | `warsoc.tech` to Vercel; `api.warsoc.tech` to OCI/Nginx | PROVEN | DNS separation, HTTPS certificates, HSTS and certificate validity passed OCI production acceptance. |
 | Vercel frontend | Browser UI, auth hydration, dashboard, endpoint fleet, compliance and team workflows | PROVEN for evidence-governance bundle | Frontend `e7c5aa0` from `origin/main` is live. Its production bundle points to `https://api.warsoc.tech/api/v1` and contains Evidence Cases, Legal Holds, Firewall Relays, and evidence-export support. |
 | Nginx gateway | TLS termination, security headers and reverse proxy | PROVEN with observation | Public headers/CORS/private-port checks pass. Real ingest returns 200. Some request bodies are buffered to temporary files; disk impact needs pilot measurement. |
-| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | PROVEN for core revision `7e9f00d` | OCI runs `/opt/warsoc/releases/7e9f00d`; public health is green. This scoped release recreated the core API, workers and archiver and added the retrieval worker. Existing Wazuh shadow containers were preserved and retain their separate accepted image identity. |
+| FastAPI application | Authentication, tenant APIs, validation, orchestration and reads | SCOPED PRODUCTION PROOF ON `893b190` | OCI runs `/opt/warsoc/releases/893b190`; API/Mongo/Redis are healthy. Authenticated endpoint status and additive relay guidance were verified; application workers and Wazuh candidate/dispatch use the release. Manager/bridge retain their separate foundation. Older flow acceptance is dated evidence, not a rerun of all workflows. |
 | Authentication/session | Login, HttpOnly access cookie, CSRF double-submit and `/auth/me` | PROVEN | Existing tenant login, auth context and profile returned 200. Public signup returned 403. |
 | Manual sales flow | Quote/contact to operator follow-up; no automatic payment | PROVEN | Quote and contact requests returned 200; legacy payment webhook returned 404. No Safepay dependency is required. |
 | Tenant provisioning | Super-admin creates tenant, admin, packs and seat limit | PROVEN | Disposable production tenant provisioning and login passed in run `b87116c8af`. |
 | Team invitation | Admin creates role-specific one-time activation link; SMTP delivery is optional | CANDIDATE-PROVEN | The response is non-cacheable and returns the 24-hour single-use link once to the authenticated admin. Pending login denial, atomic activation, replay rejection and login with the chosen password pass. Remote browser copy/share activation remains an acceptance step. |
 | RBAC | Admin/manager/analyst/auditor route restrictions | PARTIAL | Regression and earlier production-assisted checks cover route denial/allow rules. A current invited auditor click-through remains required. |
-| Azure agent artifact | Public versioned installer delivery outside the backend host | PROVEN OBJECT / ROUTE CHECK PENDING | Public and local `warsoc_installer-4.2.8.exe` are 17,797,079 bytes and match SHA-256 `04D594A7...76E72F67`; the deployment environment targets 4.2.8, while an authenticated API 307 remains. |
-| Installer and Windows service | Validate activation, configure telemetry and run agent under NSSM | PROVEN on exact machine | Agent `4.2.8-Native-Signed` is currently running with healthy channels, bounded spool and fresh telemetry. The last complete controlled SIEM/PECA/FBR destructive workflow remains the recorded 4.2.6 run. |
+| Azure agent artifact | Public versioned installer delivery outside the backend host | 4.2.15 PUBLIC HASH VERIFIED | Public/local installer are 18,885,226 bytes with SHA-256 `DB98CD8B...93C0B660`; manifest and download match, older objects remain untouched, and production CDN configuration targets 4.2.15. The artifact remains unsigned. |
+| Installer and Windows service | Validate activation, configure telemetry and run agent under NSSM | 4.2.15 IN-PLACE RECOVERY PROVEN | The workstation runs the final hash-verified executable with preserved enrollment/configuration, Running/Automatic service, fresh channels and Active status. This was an enrolled executable-only recovery, not a repeated clean installation or full SIEM/PECA/FBR destructive campaign. |
 | Native Windows telemetry | Security/System XML collection without Sysmon | PROVEN | Audit policy is configured; Security and System channels report `ok`; current native Event 4688 evidence continues to arrive. |
-| Agent durability boundary | Local spool, retry, disk reserve and 500 MiB cap | PROVEN for current agent state | Metrics report zero spool bytes, zero blocked agents and zero spool-limit hits. Failure/recovery behavior remains covered by regression and prior native tests. |
+| Agent durability boundary | Local spool, retry, disk reserve and 500 MiB cap | SCOPED FULL-SPOOL RECOVERY PROVEN | The affected spool is unblocked at 413,609,091 bytes with 500 MiB collection cap, 400 MiB resume boundary and maximum 16 MiB quarantine reserve. Historical rejects are preserved separately; pending history remains. Durable retry/fairness tests passed and temporary overrides were restored. No unlimited spool or silent 409 acknowledgement exists. |
 | Agent ingestion | Signed authenticated batches to `/api/v1/ingest/pulse` | PROVEN | Real agent batches and run-specific validation batches returned HTTP 200; zero parse/channel failures are reported. |
 | POS invoice ingestion | Strict JSONL or authenticated `/api/v1/fbr/pos/ingest` | PROVEN | Authenticated production POS ingest returned 202 and produced run-specific FBR invoice evidence. Proprietary databases are not read automatically. |
 | Redis Streams | Buffer and fan out accepted events to independent consumers | PROVEN | Redis health is 1. All four consumer groups are at the current stream tail with zero pending messages; DLQ depth/ejections are zero. |
@@ -2026,8 +2070,8 @@ Status meanings:
 | Installer code signing | Publisher reputation and Defender trust | PARTIAL | Exact hash allowlisting supports the pilot while Defender stays enabled; the binary remains unsigned. |
 | Capacity ceiling | Maximum 50 active agents per tenant and 50 aggregate active agents on the shared host | PROVEN by contract tests; prior synthetic soak | Mongo-backed floors prevent Redis restarts from bypassing either boundary. Real customer mix must still be monitored because event volume per endpoint varies. |
 | Linux/syslog | Linux endpoint telemetry | OUT OF SCOPE | Linux remains outside the Windows SMB pilot and no Linux agent/intake is claimed. |
-| Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | ACCEPTED AND CERTIFIED | The earlier pfSense lab proved pass/block parsing, relay attestation, encrypted outage retention, restart recovery, deduplication and chain continuity. The colleague installation on alphabay additionally proved the exact configuration, one-time activation, Automatic Windows service, source-restricted `192.168.56.1:5514` listener, active backend relay and heartbeat for `host-pfsense-relay-01`. Live authentic pfSense filterlog events were transmitted, batch-signed, and verified in production MongoDB (`network_relay_device_status` updated with `last_event_type: network_connection_blocked` and cloud acceptance at `https://api.warsoc.tech`). The physical customer-style event acceptance gate is closed. The kit is still unsigned; other vendors remain parser-only. |
-| Internal Wazuh detector and SCA posture | Receive minimized WarSOC projections and tenant-bound native SCA checks | V3 CONTROLLED SHADOW ACTIVE / PRIMARY DISABLED | The OCI-local Wazuh 4.14.7 manager/bridge uses private Docker networks, Tailscale-only listeners, mTLS, signed batches, bounded resources and encrypted spools. Registry `warsoc-projected-shadow-v3` governs 31 shadow rules. The network canary proved rule `100630`; native agent `001` proved scan `573050547` with 424 check observations and zero summary-row, promotion, or incident pollution. Backend `3335112` aligns candidate/dispatch services to the active release. WarSOC remains authoritative; Windows Server SCA, measured customer precision, fleet capacity/HA and all primary promotion remain gated. |
+| Customer network relay | Firewall/VPN metadata through a customer-side relay and signed HTTPS batches | HISTORICAL PHYSICAL PROOF / ALPHABAY CURRENTLY OFFLINE | Earlier pfSense runs proved pass/block parsing, attestation, encrypted outage retention, restart recovery, deduplication and chain continuity. The colleague installation proved activation, restricted listener, heartbeat and authentic filterlog acceptance. At the September 26 checkpoint the ALPHABAY relay needs host/service/connectivity recovery; no fresh device delivery is claimed. The backend remains entitlement-enabled, its additive guidance is live, the kit is unsigned and other vendors remain parser-only. |
+| Internal Wazuh detector and SCA posture | Receive minimized WarSOC projections and tenant-bound native SCA checks | V3 CONTROLLED SHADOW ACTIVE / PRIMARY DISABLED | The OCI-local 4.14.7 manager/bridge retains its private signed/mTLS boundary; registry v3 governs 31 shadow rules. Previous network canary 100630 and native scan 573050547/424 checks remain dated proof. Application `893b190` removes SCA-binding suppression; fresh signed Windows input reached the shadow dispatch path. No benign-service attack candidate was expected. Native WarSOC stays authoritative. Derived/source timestamp consistency, Windows Server SCA, precision/capacity/HA and all primary promotion remain open. |
 | External threat-intelligence enrichment | Third-party reputation/provider lookups | OUT OF SCOPE | No live provider integration is claimed for the current pilot. Native SIEM/FBR/PECA operation does not depend on it. |
 
 ## 23. Failure Map

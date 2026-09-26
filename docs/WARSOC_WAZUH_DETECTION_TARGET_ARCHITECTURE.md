@@ -2,9 +2,14 @@
 
 **Document status:** Final reviewed target and integration contract; governed
 31-rule v3 registry active in production shadow mode as of 2026-09-21, primary
-promotion disabled. The September 26 local coverage correction preserves
-governed security projection alongside native/SCA bindings; runtime deployment
-acceptance remains separate.
+promotion disabled. The September 26 coverage correction is deployed on OCI
+application release `893b190`: governed security projection now coexists with
+native/SCA bindings. Fresh signed Windows input reached the durable outbox and
+private shadow dispatch path. This closes the scoped delivery gap, not primary
+promotion, complete attack-rule runtime acceptance, or measured fleet precision.
+The derived/source timestamp discrepancy recorded in
+`docs/WARSOC_HYBRID_HEALTH_CLOSURE_2026-09-26.md` limits historical-age acceptance
+claims until it is resolved. Wazuh remains shadow with primary approval false.
 
 **Decision date:** 2026-08-10
 
@@ -88,7 +93,9 @@ or vulnerability inventory.
 
 The target must preserve these existing facts:
 
-1. The WarSOC Windows agent is the only endpoint agent in the current product.
+1. The WarSOC Windows agent owns signed security collection. The separately
+   governed native Wazuh binding supports controlled SCA posture and must not
+   disable that security path or become an alternate tenant authority.
 2. Endpoint events are enrolled, authenticated and Ed25519-signed before backend admission.
 3. Redis Streams have independent SIEM, FBR and PECA consumer groups.
 4. Canonical evidence is persisted by WarSOC, not by a third-party detector.
