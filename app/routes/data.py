@@ -377,7 +377,7 @@ async def agent_status(
                     "agent_id": agent_id,
                     "endpoint_name": signature_status["endpoint_name"] or agent_id,
                     "last_seen": last_seen,
-                    "version": signature_status["agent_version"] or agent.get("version"),
+                    "version": agent.get("version") or signature_status["agent_version"],
                     "asset_class": agent.get("asset_class") or "unclassified",
                     "server_role": agent.get("server_role"),
                     "environment": agent.get("environment"),

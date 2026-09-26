@@ -118,3 +118,24 @@ async def test_blocked_spool_has_actionable_health_guidance_and_recovers(
     row = (await client.get("/api/v1/data/status", headers=authenticated_user)).json()["data"][0]
     assert row["health"] == "active"
     assert row["health_issues"] == []
+
+
+@pytest.mark.asyncio
+async def test_replayed_event_version_does_not_replace_installed_heartbeat_version(
+    client, authenticated_user, db, redis_client, agent_public_key_pem,
+):
+    tenant_id = (await client.get("/api/v1/auth/me", headers=authenticated_user)).json()["user"]["tenant_id"]
+    await db.agents.insert_one({
+        "tenant_id": tenant_id, "agent_id": "UPGRADED", "public_key": agent_public_key_pem,
+        "status": "active", "version": "4.2.15-Native-Signed-Server-V1",
+    })
+    key = f"warsoc:agent_event_signature:{tenant_id}:UPGRADED"
+    await redis_client.set(key, json.dumps({"status": "verified", "agent_version": "4.2.12-Native-Signed-Compact"}))
+    response = await client.get("/api/v1/data/status", headers=authenticated_user)
+    assert response.status_code == 200, response.text
+    row = response.json()["data"][0]
+    assert row["version"] == "4.2.15-Native-Signed-Server-V1"
+    assert row["event_signing"]["status"] == "verified"
+    await db.agents.update_one({"tenant_id": tenant_id, "agent_id": "UPGRADED"}, {"$unset": {"version": ""}})
+    response = await client.get("/api/v1/data/status", headers=authenticated_user)
+    assert response.json()["data"][0]["version"] == "4.2.12-Native-Signed-Compact"
